@@ -1,0 +1,26 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Wrangler / Cloudflare
+.wrangler/
+node_modules/
+
+# Screenshots (local testing)
+screenshots/
+
+# Temp files
+*.tmp
+*.bak
