@@ -38,15 +38,20 @@ meshcraft.html
 ## Deployment
 
 **Platform**: Cloudflare Pages (static site hosting)
-**Domain**: `meshcraft.sawyerdesign.io`
+**Pages URL**: `meshcraft.pages.dev`
+**Custom domain**: `meshcraft.sawyerdesign.io` (pending DNS CNAME)
+**Account ID**: `ff4a53e6bc626ee548c280edfbb6aa16`
+
 **Deploy command**:
 
 ```bash
-# From project root
-wrangler pages deploy . --project-name=meshcraft
+# From project root — uses CLOUDFLARE_WORKERS_API token from ~/.env.zsh
+CLOUDFLARE_API_TOKEN=$CLOUDFLARE_WORKERS_API \
+CLOUDFLARE_ACCOUNT_ID=ff4a53e6bc626ee548c280edfbb6aa16 \
+wrangler pages deploy . --project-name=meshcraft --branch=main
 ```
 
-The Cloudflare API token is sourced from `~/.env.zsh` as `CLOUDFLARE_TOKEN_API`.
+**Root URL routing**: `_redirects` file rewrites `/` → `/meshcraft.html` (Cloudflare Pages expects `index.html` by default).
 
 ---
 
