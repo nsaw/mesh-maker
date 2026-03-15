@@ -484,8 +484,17 @@ body.mode-depthmap .noise-only { display: none; }
 
 /* RESPONSIVE */
 @media (max-width: 900px) {
-  .main { flex-direction: column; }
-  .sidebar { width: 100%; min-width: unset; max-height: 40vh; border-right: none; border-bottom: 1px solid var(--bg4); }
+  .header { padding: 6px 10px; height: 42px; }
+  .header-left { gap: 6px; }
+  .brand { font-size: 14px; }
+  .mode-tab { padding: 3px 8px; font-size: 10px; letter-spacing: 0.4px; }
+  .header-right { display: none; }
+  .main { flex-direction: column; min-height: 0; }
+  .sidebar { width: 100%; min-width: unset; max-height: 35vh; border-right: none; border-bottom: 1px solid var(--bg4); }
+  .viewport { min-height: 0; }
+  .viewport-toolbar { flex-wrap: wrap; height: auto; gap: 4px; padding: 4px 8px; }
+  .export-bar { flex-wrap: wrap; gap: 6px; padding: 8px 10px; padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)); }
+  .export-bar .filename-input { max-width: none; flex-basis: 100%; }
 }
 </style>
 </head>
@@ -1616,10 +1625,26 @@ function wireControls() {
     });
   });
 
-  // Section collapse
+  // Section collapse — exclusive accordion on mobile, independent toggle on desktop
+  const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+  const sections = document.querySelectorAll('.section');
   document.querySelectorAll('.section-header').forEach(h => {
-    h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed'));
+    h.addEventListener('click', () => {
+      const section = h.parentElement;
+      if (isMobile()) {
+        const wasCollapsed = section.classList.contains('collapsed');
+        sections.forEach(s => s.classList.add('collapsed'));
+        if (wasCollapsed) section.classList.remove('collapsed');
+      } else {
+        section.classList.toggle('collapsed');
+      }
+    });
   });
+  // On mobile init, collapse all visible sections except the first
+  if (isMobile()) {
+    const visible = [...sections].filter(s => s.offsetParent !== null);
+    visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
+  }
 
   // Noise type select
   const sel = document.getElementById('selNoiseType');
