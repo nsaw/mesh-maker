@@ -499,6 +499,153 @@ canvas {
 body.mode-depthmap .depth-map-only { display: block; }
 body.mode-depthmap .noise-only { display: none; }
 
+/* SPONSOR MODAL */
+.sponsor-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+.sponsor-backdrop.visible { opacity: 1; pointer-events: auto; }
+.sponsor-modal {
+  background: var(--bg2);
+  border: 1px solid var(--bg4);
+  border-radius: 12px;
+  max-width: 480px;
+  width: 90vw;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  transform: translateY(20px) scale(0.97);
+  transition: transform 0.25s;
+}
+.sponsor-backdrop.visible .sponsor-modal { transform: translateY(0) scale(1); }
+.sponsor-img-wrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #0d0d10;
+}
+.sponsor-img-wrap img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.sponsor-img-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.sponsor-img-nav:hover { background: rgba(78,170,255,0.4); }
+.sponsor-img-nav.prev { left: 8px; }
+.sponsor-img-nav.next { right: 8px; }
+.sponsor-body {
+  padding: 20px 24px;
+  text-align: center;
+}
+.sponsor-label {
+  font-family: 'Teko', sans-serif;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+.sponsor-name {
+  font-family: 'Righteous', sans-serif;
+  font-size: 22px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.sponsor-product {
+  font-size: 13px;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+.sponsor-desc {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.sponsor-cta {
+  display: inline-block;
+  padding: 8px 24px;
+  font-family: 'Ubuntu', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  color: #fff;
+  background: var(--accent2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  letter-spacing: 0.5px;
+  transition: all 0.15s;
+}
+.sponsor-cta:hover { background: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(78,170,255,0.3); }
+.sponsor-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  z-index: 1;
+}
+.sponsor-close:hover { background: rgba(255,78,106,0.5); }
+
+/* SCROLL-TO-EXPORT BUTTON */
+.scroll-export-btn {
+  display: none;
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent2);
+  border: 1px solid var(--accent);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  transition: all 0.15s;
+}
+.scroll-export-btn:hover { background: var(--accent); transform: translateY(-2px); }
+@media (max-width: 900px) {
+  .scroll-export-btn { display: flex; }
+}
+
 /* RESPONSIVE */
 @media (max-width: 900px) {
   .header { padding: 6px 10px; height: 42px; }
@@ -509,6 +656,7 @@ body.mode-depthmap .noise-only { display: none; }
   .tip-btn { font-size: 10px; padding: 3px 8px; }
   .main { flex-direction: column; min-height: 0; }
   .sidebar { width: 100%; min-width: unset; max-height: 35vh; border-right: none; border-bottom: 1px solid var(--bg4); }
+  body { height: auto; overflow: auto; }
   .viewport { min-height: 0; }
   .viewport-toolbar { flex-wrap: wrap; height: auto; gap: 4px; padding: 4px 8px; }
   .export-bar { flex-wrap: wrap; gap: 6px; padding: 8px 10px; padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)); }
@@ -531,6 +679,7 @@ body.mode-depthmap .noise-only { display: none; }
   </div>
   <div class="header-right">
     <a href="https://www.paypal.com/ncp/payment/X76TNFLB3Z6RL" target="_blank" rel="noopener" class="tip-btn" title="Buy me a beer!">Buy me a beer</a>
+    <button class="btn btn-sm" id="btnSponsor" style="font-size:10px;color:var(--green);border-color:rgba(78,255,158,0.3);background:rgba(78,255,158,0.08);" title="Our sponsor">ShopBot &#9825;</button>
     <span style="font-family:'Teko',sans-serif;text-transform:uppercase;font-size:12px;color:var(--text3);letter-spacing:1px;">Sawyer Design</span>
     <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a6a81465-03b8-4c25-149d-093d7f99b800/w=400" alt="SD" class="logo" crossorigin="anonymous" onerror="this.style.display='none'"/>
   </div>
@@ -2142,6 +2291,90 @@ function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+</script>
+
+<!-- SPONSOR MODAL -->
+<div class="sponsor-backdrop" id="sponsorBackdrop">
+  <div class="sponsor-modal">
+    <div class="sponsor-img-wrap">
+      <button class="sponsor-close" id="sponsorClose" aria-label="Close">&times;</button>
+      <img id="sponsorImg" src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800" alt="ShopBot Desktop Max ATC" />
+      <button class="sponsor-img-nav prev" id="sponsorPrev">&#8249;</button>
+      <button class="sponsor-img-nav next" id="sponsorNext">&#8250;</button>
+    </div>
+    <div class="sponsor-body">
+      <div class="sponsor-label">Sponsored by</div>
+      <div class="sponsor-name">ShopBot Tools</div>
+      <div class="sponsor-product">Desktop Max ATC</div>
+      <div class="sponsor-desc">MeshCraft 3000 was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
+      <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Learn More</a>
+    </div>
+  </div>
+</div>
+
+<!-- SCROLL TO EXPORT (mobile) -->
+<button class="scroll-export-btn" id="scrollExportBtn" aria-label="Scroll to export">&#8595;</button>
+
+<script>
+(function() {
+  // Sponsor modal
+  const SPONSOR_IMGS = [
+    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800',
+    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/04acb407-564f-4b6e-8c91-9506c2f52300/w=800'
+  ];
+  let sponsorIdx = 0;
+  const backdrop = document.getElementById('sponsorBackdrop');
+  const sImg = document.getElementById('sponsorImg');
+
+  function showSponsor() { backdrop.classList.add('visible'); }
+  function hideSponsor() { backdrop.classList.remove('visible'); }
+
+  document.getElementById('sponsorClose').addEventListener('click', hideSponsor);
+  backdrop.addEventListener('click', function(e) { if (e.target === backdrop) hideSponsor(); });
+  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') hideSponsor(); });
+
+  document.getElementById('sponsorPrev').addEventListener('click', function() {
+    sponsorIdx = (sponsorIdx - 1 + SPONSOR_IMGS.length) % SPONSOR_IMGS.length;
+    sImg.src = SPONSOR_IMGS[sponsorIdx];
+  });
+  document.getElementById('sponsorNext').addEventListener('click', function() {
+    sponsorIdx = (sponsorIdx + 1) % SPONSOR_IMGS.length;
+    sImg.src = SPONSOR_IMGS[sponsorIdx];
+  });
+
+  // Header button opens modal
+  var sponsorBtn = document.getElementById('btnSponsor');
+  if (sponsorBtn) sponsorBtn.addEventListener('click', showSponsor);
+
+  // Show on first visit (once per session)
+  if (!sessionStorage.getItem('sponsorSeen')) {
+    setTimeout(showSponsor, 1500);
+    sessionStorage.setItem('sponsorSeen', '1');
+  }
+
+  // Scroll-to-export button
+  var scrollBtn = document.getElementById('scrollExportBtn');
+  var atBottom = false;
+
+  scrollBtn.addEventListener('click', function() {
+    if (atBottom) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      document.querySelector('.export-bar').scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  });
+
+  window.addEventListener('scroll', function() {
+    var scrolledToBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 20);
+    if (scrolledToBottom) {
+      atBottom = true;
+      scrollBtn.innerHTML = '&#8593;';
+    } else {
+      atBottom = false;
+      scrollBtn.innerHTML = '&#8595;';
+    }
+  });
+})();
 </script>
 </body>
 </html>
