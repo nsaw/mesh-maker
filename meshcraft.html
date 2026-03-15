@@ -477,6 +477,23 @@ canvas {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* TIP BUTTON */
+.tip-btn {
+  display: inline-block;
+  padding: 4px 12px;
+  font-family: 'Ubuntu', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  color: #000;
+  background: var(--warn);
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tip-btn:hover { background: #ffbb33; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(255,170,78,0.3); }
+
 /* DEPTH MAP ONLY */
 .depth-map-only { display: none; }
 body.mode-depthmap .depth-map-only { display: block; }
@@ -488,7 +505,8 @@ body.mode-depthmap .noise-only { display: none; }
   .header-left { gap: 6px; }
   .brand { font-size: 14px; }
   .mode-tab { padding: 3px 8px; font-size: 10px; letter-spacing: 0.4px; }
-  .header-right { display: none; }
+  .header-right > span, .header-right > img { display: none; }
+  .tip-btn { font-size: 10px; padding: 3px 8px; }
   .main { flex-direction: column; min-height: 0; }
   .sidebar { width: 100%; min-width: unset; max-height: 35vh; border-right: none; border-bottom: 1px solid var(--bg4); }
   .viewport { min-height: 0; }
@@ -512,6 +530,7 @@ body.mode-depthmap .noise-only { display: none; }
     </div>
   </div>
   <div class="header-right">
+    <a href="https://www.paypal.com/ncp/payment/X76TNFLB3Z6RL" target="_blank" rel="noopener" class="tip-btn" title="Buy me a beer!">Buy me a beer</a>
     <span style="font-family:'Teko',sans-serif;text-transform:uppercase;font-size:12px;color:var(--text3);letter-spacing:1px;">Sawyer Design</span>
     <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a6a81465-03b8-4c25-149d-093d7f99b800/w=400" alt="SD" class="logo" crossorigin="anonymous" onerror="this.style.display='none'"/>
   </div>
