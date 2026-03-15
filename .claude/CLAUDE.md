@@ -96,7 +96,7 @@ When modifying the file, verify:
 |----------|-----|----------|
 | Google Fonts | `fonts.googleapis.com` | System fonts (Ubuntu → sans-serif) |
 | Logo image | `imagedelivery.net/...` | Hidden via `onerror` attribute |
-| Demo depth map | `sawyerdesign.io/.../monalisa-1.jpeg` | Null (user uploads their own) |
+| Demo depth map | `imagedelivery.net/.../w=800` (Mona Lisa) | Null (user uploads their own) |
 
 All external resources have graceful fallbacks. The tool is fully functional offline except for font loading.
 
