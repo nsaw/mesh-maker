@@ -635,7 +635,7 @@ body.mode-depthmap .noise-only { display: none; }
   color: #fff;
   font-size: 18px;
   cursor: pointer;
-  z-index: 100;
+  z-index: 999;
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
@@ -2365,11 +2365,27 @@ document.addEventListener('DOMContentLoaded', init);
   var scrollBtn = document.getElementById('scrollExportBtn');
   var atBottom = false;
 
-  scrollBtn.addEventListener('click', function() {
+  scrollBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
     if (atBottom) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      document.querySelector('.export-bar').scrollIntoView({ behavior: 'smooth', block: 'end' });
+      var bar = document.querySelector('.export-bar');
+      var barRect = bar.getBoundingClientRect();
+      var scrollTarget = window.scrollY + barRect.bottom - window.innerHeight + 20;
+      if (scrollTarget <= window.scrollY) {
+        // Bar is in view but page can't scroll — force body taller temporarily
+        document.body.style.paddingBottom = barRect.height + 40 + 'px';
+        setTimeout(function() {
+          window.scrollTo({ top: document.body.scrollHeight - window.innerHeight, behavior: 'smooth' });
+        }, 10);
+        setTimeout(function() {
+          document.body.style.paddingBottom = '';
+        }, 600);
+      } else {
+        window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+      }
     }
   });
 
