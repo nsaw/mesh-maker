@@ -1,4 +1,4 @@
-import { STATE, _noiseDims, demoDepthMap, serializeConfig } from './state';
+import { STATE, noiseDims, demoDepthMap, serializeConfig } from './state';
 import { generateMesh } from './mesh';
 import { renderViewport, resetCanvasSize } from './render';
 import { doExport } from './export';
@@ -18,16 +18,16 @@ export function setupTabs(): void {
 
       // Save noise dimensions before depth map overwrites them
       if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'blend')) {
-        _noiseDims.meshX = STATE.meshX;
-        _noiseDims.meshY = STATE.meshY;
-        _noiseDims.resolution = STATE.resolution;
+        noiseDims.meshX = STATE.meshX;
+        noiseDims.meshY = STATE.meshY;
+        noiseDims.resolution = STATE.resolution;
       }
 
       // Restore noise dimensions when switching back
       if (STATE.mode === 'noise' && prevMode !== 'noise') {
-        STATE.meshX = _noiseDims.meshX;
-        STATE.meshY = _noiseDims.meshY;
-        STATE.resolution = _noiseDims.resolution;
+        STATE.meshX = noiseDims.meshX;
+        STATE.meshY = noiseDims.meshY;
+        STATE.resolution = noiseDims.resolution;
         STATE.aspectLocked = false;
         buildSidebar();
       }
@@ -93,7 +93,8 @@ export function setupToolbar(): void {
       navigator.clipboard.writeText(url).then(() => {
         showToast('Link copied!');
       }).catch(() => {
-        // Fallback for insecure contexts
+        // Fallback for insecure contexts (HTTP) where navigator.clipboard is unavailable.
+      // execCommand('copy') is deprecated but still the only option without HTTPS.
         const ta = document.createElement('textarea');
         ta.value = url;
         ta.style.position = 'fixed';

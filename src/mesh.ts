@@ -22,6 +22,8 @@ export function generateNoiseMesh(): void {
       const u = i / (cols - 1), v = j / (rows - 1);
       let x = u * meshX, y = v * meshY;
 
+      // Domain warp: x is warped first, then the warped x feeds into y's displacement.
+      // This cascading is intentional — it produces richer, asymmetric distortion patterns.
       if (distortion > 0) {
         x += warpGen.noise(x * 0.1, y * 0.1) * distortion * 5;
         y += warpGen.noise((x + 100) * 0.1, (y + 100) * 0.1) * distortion * 5;
@@ -69,8 +71,8 @@ export function generateNoiseMesh(): void {
 
 export function generateDepthMapMesh(): void {
   const t0 = performance.now();
-  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency, amplitude,
-          noiseExp, seed, meshX, meshY, resolution, noiseType } = STATE;
+  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency,
+          seed, meshX, meshY, resolution, noiseType } = STATE;
 
   if (!depthMap) { STATE.vertices = null; return; }
 

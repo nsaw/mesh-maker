@@ -199,12 +199,7 @@ export async function doExport(): Promise<void> {
   if (fmt === 'heightmap') {
     const blob = await exportHeightmapPNG();
     if (!blob) { alert('Generate a mesh first'); return; }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${STATE.filename}_heightmap.png`;
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(URL.createObjectURL(blob), `${STATE.filename}_heightmap.png`);
     return;
   }
 
@@ -227,18 +222,26 @@ export async function doExport(): Promise<void> {
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
   } else if (fmt === '3dm') {
-    exportRhino3DM();
-    const txt = exportOBJ(mesh);
-    blob = new Blob([txt], { type: 'text/plain' });
-    ext = 'obj';
+    if (exportRhino3DM() === null) {
+      const txt = exportOBJ(mesh);
+      blob = new Blob([txt], { type: 'text/plain' });
+      ext = 'obj';
+    } else {
+      return;
+    }
   } else {
     return;
   }
 
-  const url = URL.createObjectURL(blob);
+  triggerDownload(URL.createObjectURL(blob), `${STATE.filename}.${ext}`);
+}
+
+function triggerDownload(url: string, filename: string): void {
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${STATE.filename}.${ext}`;
+  a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }

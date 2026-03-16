@@ -77,10 +77,8 @@ export function setupInteraction(): void {
         dy = dx;
         dx = 0;
       }
-      const orbRad = STATE.orbit * Math.PI / 180;
-      const cosO = Math.cos(orbRad);
       const panSpeed = 1.2;
-      STATE.panX = (STATE.panX || 0) - (dx * cosO) * panSpeed;
+      STATE.panX = (STATE.panX || 0) - dx * panSpeed;
       STATE.panY = (STATE.panY || 0) - dy * panSpeed;
       queueRender();
     } else {
