@@ -211,9 +211,8 @@ function wireControls(): void {
     });
   }
 
-  // Random seed buttons
+  // Random seed button (sidebar-only — toolbar's #btnRandomSeed is bound once in setupToolbar)
   document.getElementById('btnRandSeed2')?.addEventListener('click', randomSeed);
-  document.getElementById('btnRandomSeed')?.addEventListener('click', randomSeed);
 
   // Aspect lock toggle
   const lockBtn = document.getElementById('btnAspectLock');
