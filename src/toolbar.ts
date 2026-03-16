@@ -4,6 +4,7 @@ import { renderViewport, resetCanvasSize } from './render';
 import { doExport } from './export';
 import { buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
+import { showToast } from './toast';
 
 export function setupTabs(): void {
   // Mode tabs
@@ -117,17 +118,6 @@ function copyFallback(text: string): void {
   showToast(ok ? 'Link copied!' : 'Copy failed — use Ctrl+C');
 }
 
-function showToast(message: string): void {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  toast.textContent = message;
-  toast.style.display = 'block';
-  toast.classList.add('visible');
-  setTimeout(() => {
-    toast.classList.remove('visible');
-    setTimeout(() => { toast.style.display = 'none'; }, 300);
-  }, 1500);
-}
 
 export function setupResize(): void {
   window.addEventListener('resize', () => { resetCanvasSize(); renderViewport(); });

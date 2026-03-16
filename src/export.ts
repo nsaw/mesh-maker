@@ -1,5 +1,6 @@
 import { STATE } from './state';
 import type { Vertex3D, Triangle, MeshData } from './types';
+import { showToast } from './toast';
 
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
@@ -294,25 +295,6 @@ function exportHeightmapPNG(): Promise<Blob | null> {
   });
 }
 
-// --- Toast helper (self-contained to avoid circular deps with toolbar.ts) ---
-
-let _toastHideTimer: ReturnType<typeof setTimeout> | null = null;
-let _toastFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
-
-function showExportToast(message: string): void {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  if (_toastHideTimer !== null) clearTimeout(_toastHideTimer);
-  if (_toastFinalizeTimer !== null) clearTimeout(_toastFinalizeTimer);
-  toast.textContent = message;
-  toast.style.display = 'block';
-  toast.classList.add('visible');
-  _toastHideTimer = setTimeout(() => {
-    toast.classList.remove('visible');
-    _toastFinalizeTimer = setTimeout(() => { toast.style.display = 'none'; }, 300);
-  }, 1500);
-}
-
 // --- Main export dispatcher ---
 
 export async function doExport(): Promise<void> {
@@ -345,15 +327,14 @@ export async function doExport(): Promise<void> {
     ext = 'obj';
   } else if (fmt === '3dm') {
     try {
-      showExportToast('Loading Rhino3DM\u2026');
+      showToast('Loading Rhino3DM\u2026');
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
     } catch {
-      // CDN or WASM load failed — fall back to OBJ
       const txt = exportOBJ(mesh);
       blob = new Blob([txt], { type: 'text/plain' });
       ext = 'obj';
-      showExportToast('3DM unavailable \u2014 exported as OBJ');
+      showToast(_rhino ? '3DM export failed \u2014 exported as OBJ' : '3DM unavailable \u2014 exported as OBJ');
     }
   } else {
     return;
