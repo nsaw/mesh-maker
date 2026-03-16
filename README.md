@@ -41,7 +41,7 @@ Generate 3D meshes from procedural noise or depth map images, tuned for CNC mach
 - **Watertight export** — Bottom face + side walls for CNC-ready meshes
 - **Multiple formats** — STL (binary/ASCII), OBJ, 3DM, heightmap PNG
 - **Real-time 3D preview** — Orbit, pan, zoom with mouse or touch
-- **Zero dependencies** — Single HTML file, no build step, runs in any browser
+- **Shareable configs** — Copy Link encodes your mesh settings into a URL
 
 ### View Modes
 
@@ -49,17 +49,17 @@ Solid, Wireframe, Both, Points — switch between render modes to inspect your m
 
 ## Usage
 
-Open [`meshcraft.html`](meshcraft.html) in any browser, or visit the live site:
+Visit the live site — no install required:
 
 **https://meshcraft.sawyerdesign.io**
-
-No install, no server, no build step required.
 
 ### Local Development
 
 ```bash
-python3 -m http.server 8765
-# Open http://localhost:8765/meshcraft.html
+npm install        # First time
+npm run dev        # Vite dev server with HMR (http://localhost:5173)
+npm run build      # TypeScript + Vite production build → dist/
+npm run preview    # Preview production build locally
 ```
 
 ## Export Workflow
@@ -73,13 +73,27 @@ Exported STL/OBJ files are ready for CAM software like VCarve, Aspire, or Fusion
 
 ## Architecture
 
-Single file: `meshcraft.html` (~2100 lines)
+Vite + TypeScript, 13 ES modules:
 
-- **CSS** — Dark theme, responsive layout, custom controls
-- **HTML** — Header, sidebar, viewport canvas, export bar
-- **JavaScript** — Noise generation, mesh construction, Canvas 2D rendering (painter's algorithm + Gouraud shading), file export
+```text
+src/
+├── main.ts              # Entry point, URL state, demo preload
+├── state.ts             # Typed STATE singleton, URL serialize/deserialize
+├── types.ts             # Shared interfaces (Vertex3D, Triangle, MeshData)
+├── noise/
+│   ├── generators.ts    # 5 noise classes + factory
+│   └── presets.ts       # 9 CNC presets, 6 texture profiles
+├── mesh.ts              # Mesh generation + smoothing
+├── render.ts            # Canvas 2D 3D rendering (painter's algo, Gouraud shading)
+├── export.ts            # STL, OBJ, heightmap PNG export
+├── ui.ts                # Sidebar, sliders, depth map upload
+├── interaction.ts       # Mouse/touch orbit, pan, zoom
+├── toolbar.ts           # Mode tabs, toolbar, Copy Link
+├── stats.ts             # Stats overlay, zoom extents
+└── sponsor.ts           # Sponsor modal
+```
 
-No WebGL, no frameworks, no external JS dependencies. Canvas 2D is intentional — simpler, more portable, and performant enough for CNC mesh resolutions.
+No WebGL, no frameworks. Canvas 2D is intentional — simpler, more portable, and performant enough for CNC mesh resolutions (<256x256 grids).
 
 ## License
 
