@@ -27,14 +27,10 @@ export function setupSponsorModal(): void {
   if (sponsorBtn) sponsorBtn.addEventListener('click', showSponsor);
 
   if (!sessionStorage.getItem('sponsorSeen')) {
-    const triggerOnce = () => {
+    setTimeout(() => {
       showSponsor();
       sessionStorage.setItem('sponsorSeen', '1');
-      document.removeEventListener('click', triggerOnce);
-      document.removeEventListener('scroll', triggerOnce);
-    };
-    document.addEventListener('click', triggerOnce);
-    document.addEventListener('scroll', triggerOnce);
+    }, 4000);
   }
 
   // Scroll-to-export button — uses static arrow characters only (no user input)
