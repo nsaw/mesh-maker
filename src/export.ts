@@ -154,17 +154,95 @@ function exportOBJ(mesh: MeshData): string {
   return s;
 }
 
-function notify3dmFallback(): void {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  toast.textContent = '3DM unavailable \u2014 exported as OBJ';
-  toast.style.display = 'block';
-  toast.classList.add('visible');
-  setTimeout(() => {
-    toast.classList.remove('visible');
-    setTimeout(() => { toast.style.display = 'none'; }, 300);
-  }, 1500);
+// --- Rhino 3DM export via lazy-loaded rhino3dm.js WASM from CDN ---
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _rhino: any = null;
+
+const RHINO3DM_URL = 'https://cdn.jsdelivr.net/npm/rhino3dm@8.4.0/rhino3dm.module.min.js';
+
+async function loadRhino3dm(): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  if (_rhino) return _rhino;
+  // Dynamic import from CDN — @vite-ignore prevents Vite from trying to bundle it.
+  // @ts-ignore: TS2307 — runtime CDN URL, no type declarations available
+  const mod = await import(/* @vite-ignore */ RHINO3DM_URL);
+  _rhino = await mod.default();
+  return _rhino;
 }
+
+async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
+  const rhino = await loadRhino3dm();
+
+  const { top, cols, rows, watertight, baseThickness } = mesh;
+  const zBase = -baseThickness;
+
+  const m = new rhino.Mesh();
+
+  // Top surface vertices: index = j * cols + i
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++)
+      m.vertices().add(top[j][i].x, top[j][i].y, top[j][i].z);
+
+  // Bottom vertices (watertight): index = botStart + j * cols + i
+  const botStart = rows * cols;
+  if (watertight)
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++)
+        m.vertices().add(top[j][i].x, top[j][i].y, zBase);
+
+  // Top surface quads
+  for (let j = 0; j < rows - 1; j++)
+    for (let i = 0; i < cols - 1; i++) {
+      const a = j * cols + i;
+      m.faces().addFace(a, a + 1, a + cols + 1, a + cols);
+    }
+
+  if (watertight) {
+    // Bottom surface quads (reversed winding)
+    for (let j = 0; j < rows - 1; j++)
+      for (let i = 0; i < cols - 1; i++) {
+        const a = botStart + j * cols + i;
+        m.faces().addFace(a, a + cols, a + cols + 1, a + 1);
+      }
+
+    // Front wall (j=0)
+    for (let i = 0; i < cols - 1; i++)
+      m.faces().addFace(i, botStart + i, botStart + i + 1, i + 1);
+
+    // Back wall (j=rows-1)
+    for (let i = 0; i < cols - 1; i++) {
+      const t = (rows - 1) * cols + i, b = botStart + (rows - 1) * cols + i;
+      m.faces().addFace(t, t + 1, b + 1, b);
+    }
+
+    // Left wall (i=0)
+    for (let j = 0; j < rows - 1; j++) {
+      const t = j * cols, b = botStart + j * cols;
+      m.faces().addFace(t, t + cols, b + cols, b);
+    }
+
+    // Right wall (i=cols-1)
+    for (let j = 0; j < rows - 1; j++) {
+      const t = j * cols + (cols - 1), b = botStart + j * cols + (cols - 1);
+      m.faces().addFace(t, b, b + cols, t + cols);
+    }
+  }
+
+  m.normals().computeNormals();
+  m.compact();
+
+  const file = new rhino.File3dm();
+  file.objects().add(m, null);
+
+  const bytes: Uint8Array = file.toByteArray();
+
+  m.delete();
+  file.delete();
+
+  return new Blob([bytes], { type: 'application/octet-stream' });
+}
+
+// --- Heightmap PNG export ---
 
 function exportHeightmapPNG(): Promise<Blob | null> {
   const { vertices, cols, rows } = STATE;
@@ -200,6 +278,22 @@ function exportHeightmapPNG(): Promise<Blob | null> {
   });
 }
 
+// --- Toast helper (self-contained to avoid circular deps with toolbar.ts) ---
+
+function showExportToast(message: string): void {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.style.display = 'block';
+  toast.classList.add('visible');
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => { toast.style.display = 'none'; }, 300);
+  }, 1500);
+}
+
+// --- Main export dispatcher ---
+
 export async function doExport(): Promise<void> {
   const fmt = STATE.exportFormat;
 
@@ -229,10 +323,17 @@ export async function doExport(): Promise<void> {
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
   } else if (fmt === '3dm') {
-    const txt = exportOBJ(mesh);
-    blob = new Blob([txt], { type: 'text/plain' });
-    ext = 'obj';
-    notify3dmFallback();
+    try {
+      showExportToast('Loading Rhino3DM\u2026');
+      blob = await exportRhino3DM(mesh);
+      ext = '3dm';
+    } catch {
+      // CDN or WASM load failed — fall back to OBJ
+      const txt = exportOBJ(mesh);
+      blob = new Blob([txt], { type: 'text/plain' });
+      ext = 'obj';
+      showExportToast('3DM unavailable \u2014 exported as OBJ');
+    }
   } else {
     return;
   }
