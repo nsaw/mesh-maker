@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MeshCraft 3000 // Sawyer Design</title>
+<title>MESHCRAFT 3000 // Sawyer Design</title>
 <link href="https://fonts.googleapis.com/css2?family=Righteous&family=Teko:wght@400;500;600&family=Ubuntu:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -1497,7 +1497,7 @@ function exportSTL_Binary(mesh) {
   const buf = new ArrayBuffer(84 + tris.length * 50);
   const view = new DataView(buf);
   // 80 byte header
-  const header = 'MeshCraft 3000 // Sawyer Design';
+  const header = 'MESHCRAFT 3000 // Sawyer Design';
   for (let i = 0; i < 80; i++) view.setUint8(i, i < header.length ? header.charCodeAt(i) : 0);
   view.setUint32(80, tris.length, true);
   let off = 84;
@@ -1519,7 +1519,7 @@ function exportSTL_Binary(mesh) {
 function exportOBJ(mesh) {
   const { top, cols, rows, watertight, baseThickness } = mesh;
   const zBase = -baseThickness;
-  let s = '# MeshCraft 3000 - Sawyer Design\n# OBJ Export\n\n';
+  let s = '# MESHCRAFT 3000 - Sawyer Design\n# OBJ Export\n\n';
 
   // Top surface vertices
   const topStart = 1;
@@ -1693,8 +1693,8 @@ function buildSidebar() {
   // -- MESH DIMENSIONS --
   sb.innerHTML += buildSection('Mesh Dimensions', `
     <div class="inline-row">
-      ${slider('meshW', 'X (inches)', 1, 36, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
-      ${slider('meshH', 'Y (inches)', 1, 24, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
+      ${slider('meshW', 'X (inches)', 1, 96, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
+      ${slider('meshH', 'Y (inches)', 1, 48, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
     </div>
     ${slider('resolution', 'Grid Resolution', 16, 256, 4)}
     ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
@@ -1895,6 +1895,18 @@ function updateSectionVisibility() {
   });
 }
 
+function fitMeshToAspect(imgW, imgH) {
+  const ar = imgW / imgH;
+  if (ar >= 96 / 48) {
+    STATE.meshW = 96;
+    STATE.meshH = Math.max(1, Math.round(96 / ar));
+  } else {
+    STATE.meshH = 48;
+    STATE.meshW = Math.max(1, Math.round(48 * ar));
+  }
+  STATE.resolution = 256;
+}
+
 function loadDepthMap(file) {
   const img = new Image();
   const objUrl = URL.createObjectURL(file);
@@ -1902,11 +1914,13 @@ function loadDepthMap(file) {
     URL.revokeObjectURL(objUrl);
     STATE.depthMap = img;
     STATE.depthMapName = file.name;
+    fitMeshToAspect(img.width, img.height);
     const zone = document.getElementById('uploadZone');
     if (zone) {
       zone.classList.add('has-image');
       zone.querySelector('.upload-text').textContent = file.name;
     }
+    buildSidebar();
     generateMesh();
   };
   img.onerror = () => {
@@ -2207,11 +2221,13 @@ function setupTabs() {
       if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap && demoDepthMap) {
         STATE.depthMap = demoDepthMap;
         STATE.depthMapName = 'Mona Lisa (demo)';
+        fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
         const zone = document.getElementById('uploadZone');
         if (zone) {
           zone.classList.add('has-image');
           zone.querySelector('.upload-text').textContent = STATE.depthMapName;
         }
+        buildSidebar();
       }
       generateMesh();
     });
@@ -2274,11 +2290,13 @@ function preloadDemoDepthMap() {
     if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap) {
       STATE.depthMap = demoDepthMap;
       STATE.depthMapName = 'Mona Lisa (demo)';
+      fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
       const zone = document.getElementById('uploadZone');
       if (zone) {
         zone.classList.add('has-image');
         zone.querySelector('.upload-text').textContent = STATE.depthMapName;
       }
+      buildSidebar();
       generateMesh();
     }
   };
@@ -2315,7 +2333,7 @@ document.addEventListener('DOMContentLoaded', init);
       <div class="sponsor-label">Sponsored by</div>
       <div class="sponsor-name">ShopBot Tools</div>
       <div class="sponsor-product">Desktop Max ATC</div>
-      <div class="sponsor-desc">MeshCraft 3000 was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
+      <div class="sponsor-desc">MESHCRAFT 3000 was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
       <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Learn More</a>
     </div>
   </div>
