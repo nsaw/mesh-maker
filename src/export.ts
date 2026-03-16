@@ -199,7 +199,7 @@ export async function doExport(): Promise<void> {
   if (fmt === 'heightmap') {
     const blob = await exportHeightmapPNG();
     if (!blob) { alert('Generate a mesh first'); return; }
-    triggerDownload(URL.createObjectURL(blob), `${STATE.filename}_heightmap.png`);
+    triggerDownload(blob, `${STATE.filename}_heightmap.png`);
     return;
   }
 
@@ -222,21 +222,20 @@ export async function doExport(): Promise<void> {
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
   } else if (fmt === '3dm') {
-    if (exportRhino3DM() === null) {
-      const txt = exportOBJ(mesh);
-      blob = new Blob([txt], { type: 'text/plain' });
-      ext = 'obj';
-    } else {
-      return;
-    }
+    // rhino3dm.js not loaded — alert user (inside exportRhino3DM) and fall back to OBJ
+    exportRhino3DM();
+    const txt = exportOBJ(mesh);
+    blob = new Blob([txt], { type: 'text/plain' });
+    ext = 'obj';
   } else {
     return;
   }
 
-  triggerDownload(URL.createObjectURL(blob), `${STATE.filename}.${ext}`);
+  triggerDownload(blob, `${STATE.filename}.${ext}`);
 }
 
-function triggerDownload(url: string, filename: string): void {
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;

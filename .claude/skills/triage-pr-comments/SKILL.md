@@ -45,7 +45,7 @@ When `autofix` is present, after completing Phase 5 (commit and push):
 6. **If ANY unaddressed findings exist** (new OR carried over): Run Phases 1–5
    again as a new round. Increment the round counter. Commit message for
    subsequent rounds:
-   ```
+   ```text
    fix: address PR #<number> round-<N> review findings
    ```
 7. **If NO new unresolved comments BUT Greptile score is stale or < 4/5**: Wait
@@ -99,7 +99,7 @@ including whether it was fresh or stale at the time of the check.
 
 The autofix loop summary should include all rounds:
 
-```
+```text
 ## Autofix Summary — PR #[number]
 Rounds completed: [N]
 Total comments addressed: [N]
@@ -234,7 +234,7 @@ Before declaring a round complete, verify:
    the full body text to extract them.
 
    **CodeRabbit** (`coderabbitai[bot]`) top-level comment structure:
-   ```
+   ```text
    Actionable comments posted: N
 
    <details> ⚠️ Outside diff range comments (N)
@@ -253,7 +253,7 @@ Before declaring a round complete, verify:
    ```
 
    **Greptile** (`greptile-bot` or `greptile[bot]`) review body structure:
-   ```
+   ```text
    [N inline comments, N additional comments]
 
    (inline comments appear as threaded review comments — already in SOURCE 1)
@@ -300,7 +300,7 @@ Before declaring a round complete, verify:
      as an actionable finding and include in the findings table.
 
    Report the Greptile confidence score in the Phase 0 summary output:
-   ```
+   ```text
    Greptile confidence: [N]/5 (updated: [timestamp])
    ```
 
@@ -308,8 +308,9 @@ Present a summary table before investigating:
 
 | # | File | Line | Reviewer | Source | Category | Summary |
 |---|------|------|----------|--------|----------|---------|
-(Source: inline, review-body, details-dropdown, greptile-summary)
-(Category: bug, outside-diff, nitpick, additional-comment, security, performance)
+
+Source values: inline, review-body, details-dropdown, greptile-summary.
+Category values: bug, outside-diff, nitpick, additional-comment, security, performance.
 
 ## Phase 1: Investigate Each Comment
 
@@ -474,7 +475,7 @@ Before proceeding to Phase 5, verify:
 
 1. Stage only the files changed for fixes (explicit paths, never `git add -A`)
 2. Commit with a descriptive message:
-   ```
+   ```text
    fix: address PR #<number> code review findings
    ```
 3. Push to the current branch
@@ -568,22 +569,27 @@ After completing triage, present a final summary:
 ## PR Comment Triage Summary — PR #[number]
 
 ### Fixed
+
 | # | File:Line | Reviewer | Issue | Fix Description |
 |---|-----------|----------|-------|-----------------|
 
 ### False Positives
+
 | # | File:Line | Reviewer | Issue | Why Not Valid |
 |---|-----------|----------|-------|---------------|
 
 ### Already Fixed / N/A
+
 | # | File:Line | Reviewer | Issue | Status |
 |---|-----------|----------|-------|--------|
 
 ### Pattern Fixes (bonus — same bug found elsewhere)
+
 | # | File:Line | Original Comment | Fix Description |
 |---|-----------|------------------|-----------------|
 
 ### Coverage by Category (MANDATORY — no silent omissions)
+
 | Category | Found | Addressed | Skipped |
 |----------|-------|-----------|---------|
 | Inline comments | N | N | 0 |

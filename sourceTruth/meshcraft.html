@@ -969,7 +969,7 @@ const STATE = {
   genTime: 0
 };
 
-let _noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
+const _noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
 
 
 // ---- MESH GENERATION ----
@@ -1678,8 +1678,10 @@ async function doExport() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `${STATE.filename}_heightmap.png`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
     return;
   }
 
@@ -1702,7 +1704,7 @@ async function doExport() {
     ext = 'obj';
   } else if (fmt === '3dm') {
     exportRhino3DM();
-    // Fall back to OBJ
+    // Fall back to OBJ — suffix filename so user knows it's a fallback
     const txt = exportOBJ(mesh);
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
@@ -1712,8 +1714,10 @@ async function doExport() {
   const a = document.createElement('a');
   a.href = url;
   a.download = `${STATE.filename}.${ext}`;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
 
@@ -1927,9 +1931,8 @@ function wireControls() {
     });
   }
 
-  // Random seed buttons
+  // Random seed button (sidebar-only — toolbar's #btnRandomSeed is bound once in setupToolbar)
   document.getElementById('btnRandSeed2')?.addEventListener('click', randomSeed);
-  document.getElementById('btnRandomSeed')?.addEventListener('click', randomSeed);
 
   // Aspect lock toggle
   const lockBtn = document.getElementById('btnAspectLock');
@@ -2232,11 +2235,10 @@ function setupInteraction() {
         dy = dx;
         dx = 0;
       }
-      // Mesh-relative pan: horizontal component respects orbit angle
-      const orbRad = STATE.orbit * Math.PI / 180;
-      const cosO = Math.cos(orbRad);
+      // Screen-space pan, consistent with mouse-drag pan behavior.
+      // No orbit compensation — panX/panY are screen-space offsets in renderViewport.
       const panSpeed = 1.2;
-      STATE.panX = (STATE.panX || 0) - (dx * cosO) * panSpeed;
+      STATE.panX = (STATE.panX || 0) - dx * panSpeed;
       STATE.panY = (STATE.panY || 0) - dy * panSpeed;
       queueRender();
     } else {
@@ -2492,14 +2494,21 @@ document.addEventListener('DOMContentLoaded', init);
     sImg.src = SPONSOR_IMGS[sponsorIdx];
   });
 
-  // Header button opens modal
+  // Header button opens modal — clear pending auto-show timer on manual click
+  var sponsorTimeout = null;
   var sponsorBtn = document.getElementById('btnSponsor');
-  if (sponsorBtn) sponsorBtn.addEventListener('click', showSponsor);
+  if (sponsorBtn) sponsorBtn.addEventListener('click', function() {
+    if (sponsorTimeout) { clearTimeout(sponsorTimeout); sponsorTimeout = null; }
+    showSponsor();
+  });
 
-  // Show on first visit (once per session)
+  // Show on first visit (once per session) — set flag immediately to prevent re-trigger on reload
   if (!sessionStorage.getItem('sponsorSeen')) {
-    setTimeout(showSponsor, 1500);
     sessionStorage.setItem('sponsorSeen', '1');
+    sponsorTimeout = setTimeout(function() {
+      sponsorTimeout = null;
+      showSponsor();
+    }, 4000);
   }
 
   // Scroll-to-export button

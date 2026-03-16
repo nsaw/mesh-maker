@@ -49,6 +49,7 @@ Use CSS custom properties exclusively. Never hardcode color values.
 ```
 
 ### Semantic Usage
+
 | Token | When to use |
 |-------|-------------|
 | `--bg` | Page-level background, canvas area |
@@ -73,7 +74,7 @@ Three fonts, each with a specific role:
 | **JetBrains Mono** | 400, 500 | Data values, code, badges | Slider values, version badge, stats |
 
 ### Font Sizing Scale
-```
+```text
 9px   — Sub-labels (profile pills, CNC badges)
 10px  — Small buttons (btn-sm), stat text, hints
 11px  — Control labels, checkbox labels, select inputs
@@ -97,7 +98,7 @@ Three fonts, each with a specific role:
 ### Buttons
 
 Three tiers:
-```
+```text
 .btn              — Default: bg3 fill, bg4 border, text color. Hover → bg4/text3 border.
 .btn.btn-accent   — Primary action: accent2 fill, accent border, white text. Hover → accent fill.
 .btn.btn-sm       — Compact: 4px 10px padding, 10px font.
@@ -132,7 +133,7 @@ input[type="range"] {
 Label pattern: `<label text> ........... <monospace value>` using flexbox `justify-content: space-between`.
 
 ### Sections (Collapsible)
-```
+```text
 .section-header → flex row: title (left) + arrow (right)
 .section-body   → content with 4px 14px 14px padding
 .section.collapsed → arrow rotated -90deg, body hidden
@@ -192,7 +193,7 @@ font-size: 12px; font-weight: 600;
 ## Layout Architecture
 
 ### Desktop (>900px)
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │ HEADER (48px fixed)                                 │
 ├──────────┬──────────────────────────────────────────┤
@@ -212,7 +213,7 @@ font-size: 12px; font-weight: 600;
 ```
 
 ### Mobile (≤900px)
-```
+```text
 ┌────────────────────┐
 │ HEADER (42px)      │
 ├────────────────────┤
@@ -335,4 +336,4 @@ When adding a new component, follow this checklist:
    must all still work after UI changes.
 
 7. **Verify Playwright screenshots** — capture verification screenshots to
-   `/Users/sawyer/Code/mesh-maker/verification/` to confirm visual correctness.
+   `verification/` (repo root) to confirm visual correctness.
