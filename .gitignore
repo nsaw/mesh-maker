@@ -16,11 +16,7 @@ Thumbs.db
 
 # Wrangler / Cloudflare
 .wrangler/
-
-# Build
 node_modules/
-dist/
-.vite/
 
 # Screenshots (local testing)
 screenshots/
@@ -28,9 +24,4 @@ screenshots/
 # Temp files
 *.tmp
 *.bak
-assets/*.png
-assets/*.jpg
-assets/*.jpeg
-assets/*.psd
-verification/*.png
-assets/meshcraft-logo.psd
+assets/meshcraft-logo-2.png
