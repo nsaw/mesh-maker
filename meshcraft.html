@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MESHCRAFT 3000 // Sawyer Design</title>
+<meta name="description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
 <meta property="og:title" content="MeshCraft 3000">
 <meta property="og:description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
 <meta property="og:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
@@ -13,7 +14,7 @@
 <meta name="twitter:title" content="MeshCraft 3000">
 <meta name="twitter:description" content="Browser-based 3D mesh generator for CNC machining.">
 <meta name="twitter:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
-<link href="https://fonts.googleapis.com/css2?family=Righteous&family=Teko:wght@400;500;600&family=Ubuntu:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600&family=Ubuntu:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
   --bg: #141418;
@@ -56,7 +57,9 @@ body {
 }
 .header-left { display: flex; align-items: center; gap: 12px; }
 .brand {
-  font-family: 'Righteous', sans-serif;
+  font-family: 'Ubuntu', sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
   font-size: 16px;
   color: var(--text);
   letter-spacing: 0.5px;
@@ -449,6 +452,27 @@ canvas {
 }
 .inline-row .control-row { flex: 1; }
 
+/* ASPECT LOCK */
+.aspect-lock-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--bg4);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text3);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  line-height: 1;
+}
+.aspect-lock-btn:hover { border-color: var(--accent); color: var(--accent); }
+.aspect-lock-btn.locked { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+
 /* DIMS OVERLAY */
 .dims-overlay {
   position: absolute;
@@ -582,7 +606,9 @@ body.mode-depthmap .noise-only { display: none; }
   margin-bottom: 4px;
 }
 .sponsor-name {
-  font-family: 'Righteous', sans-serif;
+  font-family: 'Ubuntu', sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
   font-size: 22px;
   color: var(--text);
   margin-bottom: 4px;
@@ -868,15 +894,15 @@ const PROFILES = {
 
 // CNC Presets (ShopBot Desktop Max ATC defaults)
 const CNC_PRESETS = {
-  'gentle-waves': { noiseType:'simplex', frequency:0.06, amplitude:0.5, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:2, persistence:0.3, lacunarity:2, distortion:0, contrast:1, sharpness:0, meshW:36, meshH:24, smoothIter:3, smoothStr:0.5 },
-  'organic-terrain': { noiseType:'fbm', frequency:0.1, amplitude:0.8, noiseExp:0.7, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:4, persistence:0.55, lacunarity:2, distortion:0.3, contrast:1.2, sharpness:0.2, meshW:36, meshH:24, smoothIter:1, smoothStr:0.4 },
-  'sharp-ridges': { noiseType:'ridged', frequency:0.08, amplitude:1.0, noiseExp:1.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:-0.2, octaves:3, persistence:0.5, lacunarity:2.2, distortion:0, contrast:1.5, sharpness:0.8, meshW:36, meshH:24, smoothIter:0, smoothStr:0 },
-  'voronoi-cells': { noiseType:'voronoi', frequency:0.15, amplitude:0.6, noiseExp:0.8, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, contrast:1, sharpness:0, meshW:36, meshH:24, smoothIter:2, smoothStr:0.6 },
-  'subtle-texture': { noiseType:'perlin', frequency:0.12, amplitude:0.25, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.4, lacunarity:2.5, distortion:0.1, contrast:0.8, sharpness:0, meshW:36, meshH:24, smoothIter:2, smoothStr:0.7 },
-  'deep-carve': { noiseType:'fbm', frequency:0.05, amplitude:2.0, noiseExp:1.2, peakExp:1, valleyExp:1, valleyFloor:0, offset:-0.3, octaves:5, persistence:0.6, lacunarity:1.8, distortion:0.4, contrast:1.8, sharpness:0.5, meshW:24, meshH:18, smoothIter:0, smoothStr:0 },
-  'sculptural': { noiseType:'fbm', frequency:0.04, amplitude:1.5, noiseExp:0.7, peakExp:1.8, valleyExp:0.35, valleyFloor:0.6, offset:0, octaves:3, persistence:0.55, lacunarity:1.8, distortion:0.4, contrast:1.3, sharpness:0.15, meshW:36, meshH:24, smoothIter:2, smoothStr:0.45 },
-  'hard-wave': { noiseType:'simplex', frequency:0.05, amplitude:1.2, noiseExp:0.6, peakExp:2.0, valleyExp:0.3, valleyFloor:0.75, offset:0.1, octaves:2, persistence:0.4, lacunarity:2, distortion:0.25, contrast:1.4, sharpness:0.1, meshW:36, meshH:24, smoothIter:3, smoothStr:0.5 },
-  'eroded-stone': { noiseType:'ridged', frequency:0.06, amplitude:1.0, noiseExp:0.8, peakExp:1.5, valleyExp:0.4, valleyFloor:0.5, offset:-0.1, octaves:4, persistence:0.5, lacunarity:2.2, distortion:0.35, contrast:1.6, sharpness:0.3, meshW:36, meshH:24, smoothIter:1, smoothStr:0.3 }
+  'gentle-waves': { noiseType:'simplex', frequency:0.06, amplitude:0.5, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:2, persistence:0.3, lacunarity:2, distortion:0, contrast:1, sharpness:0, meshX:36, meshY:24, smoothIter:3, smoothStr:0.5 },
+  'organic-terrain': { noiseType:'fbm', frequency:0.1, amplitude:0.8, noiseExp:0.7, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:4, persistence:0.55, lacunarity:2, distortion:0.3, contrast:1.2, sharpness:0.2, meshX:36, meshY:24, smoothIter:1, smoothStr:0.4 },
+  'sharp-ridges': { noiseType:'ridged', frequency:0.08, amplitude:1.0, noiseExp:1.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:-0.2, octaves:3, persistence:0.5, lacunarity:2.2, distortion:0, contrast:1.5, sharpness:0.8, meshX:36, meshY:24, smoothIter:0, smoothStr:0 },
+  'voronoi-cells': { noiseType:'voronoi', frequency:0.15, amplitude:0.6, noiseExp:0.8, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, contrast:1, sharpness:0, meshX:36, meshY:24, smoothIter:2, smoothStr:0.6 },
+  'subtle-texture': { noiseType:'perlin', frequency:0.12, amplitude:0.25, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.4, lacunarity:2.5, distortion:0.1, contrast:0.8, sharpness:0, meshX:36, meshY:24, smoothIter:2, smoothStr:0.7 },
+  'deep-carve': { noiseType:'fbm', frequency:0.05, amplitude:2.0, noiseExp:1.2, peakExp:1, valleyExp:1, valleyFloor:0, offset:-0.3, octaves:5, persistence:0.6, lacunarity:1.8, distortion:0.4, contrast:1.8, sharpness:0.5, meshX:24, meshY:18, smoothIter:0, smoothStr:0 },
+  'sculptural': { noiseType:'fbm', frequency:0.04, amplitude:1.5, noiseExp:0.7, peakExp:1.8, valleyExp:0.35, valleyFloor:0.6, offset:0, octaves:3, persistence:0.55, lacunarity:1.8, distortion:0.4, contrast:1.3, sharpness:0.15, meshX:36, meshY:24, smoothIter:2, smoothStr:0.45 },
+  'hard-wave': { noiseType:'simplex', frequency:0.05, amplitude:1.2, noiseExp:0.6, peakExp:2.0, valleyExp:0.3, valleyFloor:0.75, offset:0.1, octaves:2, persistence:0.4, lacunarity:2, distortion:0.25, contrast:1.4, sharpness:0.1, meshX:36, meshY:24, smoothIter:3, smoothStr:0.5 },
+  'eroded-stone': { noiseType:'ridged', frequency:0.06, amplitude:1.0, noiseExp:0.8, peakExp:1.5, valleyExp:0.4, valleyFloor:0.5, offset:-0.1, octaves:4, persistence:0.5, lacunarity:2.2, distortion:0.35, contrast:1.6, sharpness:0.3, meshX:36, meshY:24, smoothIter:1, smoothStr:0.3 }
 };
 
 
@@ -903,8 +929,8 @@ const STATE = {
   contrast: 1.0,
   sharpness: 0,
   // Mesh params
-  meshW: 36,   // ShopBot X max
-  meshH: 24,   // ShopBot Y max
+  meshX: 36,   // ShopBot X max
+  meshY: 24,   // ShopBot Y max
   resolution: 96,
   smoothIter: 0,
   smoothStr: 0.5,
@@ -927,6 +953,12 @@ const STATE = {
   watertight: true,
   binary: true,
   filename: 'meshcraft_export',
+  // Depth map
+  depthMapAR: null,
+  aspectLocked: false,
+  // Presets
+  activePreset: null,
+  activeProfile: null,
   // Internal
   vertices: null,
   cols: 96,
@@ -935,6 +967,8 @@ const STATE = {
   lastMX: 0, lastMY: 0,
   genTime: 0
 };
+
+let _noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
 
 
 // ---- MESH GENERATION ----
@@ -952,9 +986,9 @@ function createNoiseGen(type, seed) {
 function generateNoiseMesh() {
   const t0 = performance.now();
   const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, contrast, sharpness, meshW, meshH, resolution, smoothIter, smoothStr, noiseType } = STATE;
+          distortion, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType } = STATE;
 
-  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshH / meshW)));
+  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
 
   const gen = createNoiseGen(noiseType, seed);
@@ -966,7 +1000,7 @@ function generateNoiseMesh() {
     verts[j] = [];
     for (let i = 0; i < cols; i++) {
       const u = i / (cols - 1), v = j / (rows - 1);
-      let x = u * meshW, y = v * meshH;
+      let x = u * meshX, y = v * meshY;
 
       // Domain warping
       if (distortion > 0) {
@@ -1026,11 +1060,11 @@ function generateNoiseMesh() {
 function generateDepthMapMesh() {
   const t0 = performance.now();
   const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency, amplitude,
-          noiseExp, seed, meshW, meshH, resolution, noiseType } = STATE;
+          noiseExp, seed, meshX, meshY, resolution, noiseType } = STATE;
 
   if (!depthMap) { STATE.vertices = null; return; }
 
-  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshH / meshW)));
+  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
 
   const gen = createNoiseGen(noiseType, seed);
@@ -1048,7 +1082,7 @@ function generateDepthMapMesh() {
     verts[j] = [];
     for (let i = 0; i < cols; i++) {
       const u = i / (cols - 1), v = j / (rows - 1);
-      const x = u * meshW, y = v * meshH;
+      const x = u * meshX, y = v * meshY;
 
       // Sample depth map
       const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
@@ -1154,14 +1188,14 @@ function renderViewport() {
     return;
   }
 
-  const { vertices, cols, rows, meshW, meshH, orbit, tilt, roll, zoom, viewMode, panX, panY } = STATE;
+  const { vertices, cols, rows, meshX, meshY, orbit, tilt, roll, zoom, viewMode, panX, panY } = STATE;
   const rotRad = orbit * Math.PI / 180;
   const tiltRad = tilt * Math.PI / 180;
   const rollRad = roll * Math.PI / 180;
   const cx = W / 2 + (panX || 0), cy = H / 2 + (panY || 0);
   const fov = Math.PI / 3;
   const projScale = (H / 2) / Math.tan(fov / 2);
-  const camDist = Math.max(meshW, meshH) * 1.2 / zoom;
+  const camDist = Math.max(meshX, meshY) * 1.2 / zoom;
 
   // Compute Z center so rotation pivots around actual mesh center
   let zMin = Infinity, zMax = -Infinity;
@@ -1174,7 +1208,7 @@ function renderViewport() {
 
   function project(x, y, z) {
     // Center mesh at origin (including Z so rotation pivot = mesh center)
-    const mx = x - meshW / 2, my = y - meshH / 2, mz = z - zMid;
+    const mx = x - meshX / 2, my = y - meshY / 2, mz = z - zMid;
     // Rotate Y (orbit)
     const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
     const rx = mx * cosR - mz * sinR, rz = mx * sinR + mz * cosR;
@@ -1196,7 +1230,7 @@ function renderViewport() {
     proj[j] = [];
     for (let i = 0; i < cols; i++) {
       const u = i / (cols - 1), v = j / (rows - 1);
-      proj[j][i] = project(u * meshW, v * meshH, vertices[j][i]);
+      proj[j][i] = project(u * meshX, v * meshY, vertices[j][i]);
     }
   }
 
@@ -1210,8 +1244,8 @@ function renderViewport() {
     const lightDir = { x: -0.4, y: -0.5, z: 0.75 };
     const lLen = Math.sqrt(lightDir.x*lightDir.x + lightDir.y*lightDir.y + lightDir.z*lightDir.z);
     lightDir.x /= lLen; lightDir.y /= lLen; lightDir.z /= lLen;
-    const dxW = meshW / (cols - 1);
-    const dyW = meshH / (rows - 1);
+    const dxW = meshX / (cols - 1);
+    const dyW = meshY / (rows - 1);
 
     // -- PASS 1: Draw watertight enclosure (bottom + sides) via depth sort --
     if (STATE.watertight && STATE.baseThickness > 0) {
@@ -1223,10 +1257,10 @@ function renderViewport() {
         const jn = Math.min(j + step, rows - 1);
         for (let i = 0; i < cols - 1; i += step) {
           const in2 = Math.min(i + step, cols - 1);
-          const b1 = project((i/(cols-1))*meshW, (j/(rows-1))*meshH, zBase);
-          const b2 = project((in2/(cols-1))*meshW, (j/(rows-1))*meshH, zBase);
-          const b3 = project((i/(cols-1))*meshW, (jn/(rows-1))*meshH, zBase);
-          const b4 = project((in2/(cols-1))*meshW, (jn/(rows-1))*meshH, zBase);
+          const b1 = project((i/(cols-1))*meshX, (j/(rows-1))*meshY, zBase);
+          const b2 = project((in2/(cols-1))*meshX, (j/(rows-1))*meshY, zBase);
+          const b3 = project((i/(cols-1))*meshX, (jn/(rows-1))*meshY, zBase);
+          const b4 = project((in2/(cols-1))*meshX, (jn/(rows-1))*meshY, zBase);
           encFaces.push({ pts: [b1, b3, b4, b2], avgZ: (b1.z+b2.z+b3.z+b4.z)/4, color: '#1a2030' });
         }
       }
@@ -1237,11 +1271,11 @@ function renderViewport() {
         let t1, t2, b1, b2;
         // Front
         t1 = proj[0][i]; t2 = proj[0][in2];
-        b1 = project((i/(cols-1))*meshW, 0, zBase); b2 = project((in2/(cols-1))*meshW, 0, zBase);
+        b1 = project((i/(cols-1))*meshX, 0, zBase); b2 = project((in2/(cols-1))*meshX, 0, zBase);
         encFaces.push({ pts: [t1, t2, b2, b1], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
         // Back
         t1 = proj[rows-1][i]; t2 = proj[rows-1][in2];
-        b1 = project((i/(cols-1))*meshW, meshH, zBase); b2 = project((in2/(cols-1))*meshW, meshH, zBase);
+        b1 = project((i/(cols-1))*meshX, meshY, zBase); b2 = project((in2/(cols-1))*meshX, meshY, zBase);
         encFaces.push({ pts: [t1, b1, b2, t2], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
       }
       for (let j = 0; j < rows - 1; j += step) {
@@ -1249,11 +1283,11 @@ function renderViewport() {
         let t1, t2, b1, b2;
         // Left
         t1 = proj[j][0]; t2 = proj[jn][0];
-        b1 = project(0, (j/(rows-1))*meshH, zBase); b2 = project(0, (jn/(rows-1))*meshH, zBase);
+        b1 = project(0, (j/(rows-1))*meshY, zBase); b2 = project(0, (jn/(rows-1))*meshY, zBase);
         encFaces.push({ pts: [t1, b1, b2, t2], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
         // Right
         t1 = proj[j][cols-1]; t2 = proj[jn][cols-1];
-        b1 = project(meshW, (j/(rows-1))*meshH, zBase); b2 = project(meshW, (jn/(rows-1))*meshH, zBase);
+        b1 = project(meshX, (j/(rows-1))*meshY, zBase); b2 = project(meshX, (jn/(rows-1))*meshY, zBase);
         encFaces.push({ pts: [t1, t2, b2, b1], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
       }
       encFaces.sort((a, b) => b.avgZ - a.avgZ);
@@ -1422,7 +1456,7 @@ function renderViewport() {
 
 function getFullMeshData() {
   // Returns vertices as {x,y,z} arrays for export, including bottom/sides if watertight
-  const { vertices, cols, rows, meshW, meshH, watertight } = STATE;
+  const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
   // Enforce minimum base thickness when watertight to avoid degenerate zero-height side triangles
   const baseThickness = watertight ? Math.max(STATE.baseThickness, 0.01) : STATE.baseThickness;
   if (!vertices) return null;
@@ -1431,10 +1465,10 @@ function getFullMeshData() {
   for (let j = 0; j < rows; j++) {
     top[j] = [];
     for (let i = 0; i < cols; i++) {
-      top[j][i] = { x: (i/(cols-1))*meshW, y: (j/(rows-1))*meshH, z: vertices[j][i] };
+      top[j][i] = { x: (i/(cols-1))*meshX, y: (j/(rows-1))*meshY, z: vertices[j][i] };
     }
   }
-  return { top, cols, rows, meshW, meshH, baseThickness, watertight };
+  return { top, cols, rows, meshX, meshY, baseThickness, watertight };
 }
 
 function triNormal(a, b, c) {
@@ -1596,7 +1630,7 @@ function exportRhino3DM() {
 function exportHeightmapPNG() {
   // Generates an 8-bit grayscale heightmap PNG for Vectric (VCarve/Aspire)
   // Vectric: File > Import > Import Component/3D Model > select the PNG
-  // Set dimensions to match meshW x meshH
+  // Set dimensions to match meshX x meshY
   const { vertices, cols, rows } = STATE;
   if (!vertices) return null;
 
@@ -1692,12 +1726,12 @@ function buildSidebar() {
   sb.innerHTML += buildSection('Presets', `
     <div class="btn-row" id="presetRow">
       ${Object.keys(CNC_PRESETS).map(k =>
-        `<button class="preset-pill" data-preset="${k}">${k.replace(/-/g,' ')}</button>`
+        `<button class="preset-pill${STATE.activePreset === k ? ' active' : ''}" data-preset="${k}">${k.replace(/-/g,' ')}</button>`
       ).join('')}
     </div>
     <div class="btn-row" style="margin-top:6px;">
       ${Object.keys(PROFILES).filter(k=>k!=='custom').map(k =>
-        `<button class="preset-pill" data-profile="${k}" style="border-color:var(--bg4);font-size:9px;">${k}</button>`
+        `<button class="preset-pill${STATE.activeProfile === k ? ' active' : ''}" data-profile="${k}" style="border-color:var(--bg4);font-size:9px;">${k}</button>`
       ).join('')}
     </div>
   `);
@@ -1705,8 +1739,11 @@ function buildSidebar() {
   // -- MESH DIMENSIONS --
   sb.innerHTML += buildSection('Mesh Dimensions', `
     <div class="inline-row">
-      ${slider('meshW', 'X (inches)', 1, 96, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
-      ${slider('meshH', 'Y (inches)', 1, 48, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
+      ${slider('meshX', 'X (inches)', 1, 96, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
+      <button class="aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}" id="btnAspectLock" title="${STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}">
+        ${STATE.aspectLocked ? '&#x1f512;' : '&#x1f513;'}
+      </button>
+      ${slider('meshY', 'Y (inches)', 1, 48, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
     </div>
     ${slider('resolution', 'Grid Resolution', 16, 256, 4)}
     ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
@@ -1810,6 +1847,36 @@ function wireControls() {
       STATE[key] = v;
       const valEl = document.getElementById('val_' + key);
       if (valEl) valEl.textContent = Number.isInteger(parseFloat(sl.step)) ? v : v.toFixed(2);
+
+      // Aspect ratio lock — sync the other dimension
+      if (STATE.aspectLocked && STATE.depthMapAR) {
+        if (key === 'meshX') {
+          STATE.meshY = Math.max(1, Math.min(48, Math.round(v / STATE.depthMapAR)));
+          const ySlider = document.querySelector('input[data-key="meshY"]');
+          const yVal = document.getElementById('val_meshY');
+          if (ySlider) ySlider.value = STATE.meshY;
+          if (yVal) yVal.textContent = STATE.meshY;
+        } else if (key === 'meshY') {
+          STATE.meshX = Math.max(1, Math.min(96, Math.round(v * STATE.depthMapAR)));
+          const xSlider = document.querySelector('input[data-key="meshX"]');
+          const xVal = document.getElementById('val_meshX');
+          if (xSlider) xSlider.value = STATE.meshX;
+          if (xVal) xVal.textContent = STATE.meshX;
+        }
+      }
+
+      // Clear active preset/profile on manual change
+      if (STATE.activePreset) {
+        STATE.activePreset = null;
+        const pill = document.querySelector('.preset-pill.active[data-preset]');
+        if (pill) pill.classList.remove('active');
+      }
+      if (STATE.activeProfile) {
+        STATE.activeProfile = null;
+        const pill = document.querySelector('.preset-pill.active[data-profile]');
+        if (pill) pill.classList.remove('active');
+      }
+
       debouncedGenerate(key);
     });
   });
@@ -1839,7 +1906,15 @@ function wireControls() {
   const sel = document.getElementById('selNoiseType');
   if (sel) {
     sel.value = STATE.noiseType;
-    sel.addEventListener('change', () => { STATE.noiseType = sel.value; generateMesh(); });
+    sel.addEventListener('change', () => {
+      STATE.noiseType = sel.value;
+      if (STATE.activePreset) {
+        STATE.activePreset = null;
+        const pill = document.querySelector('.preset-pill.active[data-preset]');
+        if (pill) pill.classList.remove('active');
+      }
+      generateMesh();
+    });
   }
 
   // Seed input
@@ -1855,12 +1930,25 @@ function wireControls() {
   document.getElementById('btnRandSeed2')?.addEventListener('click', randomSeed);
   document.getElementById('btnRandomSeed')?.addEventListener('click', randomSeed);
 
+  // Aspect lock toggle
+  const lockBtn = document.getElementById('btnAspectLock');
+  if (lockBtn) {
+    lockBtn.addEventListener('click', () => {
+      STATE.aspectLocked = !STATE.aspectLocked;
+      lockBtn.classList.toggle('locked', STATE.aspectLocked);
+      lockBtn.textContent = STATE.aspectLocked ? '\u{1F512}' : '\u{1F513}';
+      lockBtn.title = STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio';
+    });
+  }
+
   // Presets
   document.querySelectorAll('[data-preset]').forEach(btn => {
     btn.addEventListener('click', () => {
       const p = CNC_PRESETS[btn.dataset.preset];
       if (!p) return;
       Object.keys(p).forEach(k => { STATE[k] = p[k]; });
+      STATE.activePreset = btn.dataset.preset;
+      STATE.activeProfile = null;
       buildSidebar();
       generateMesh();
     });
@@ -1872,6 +1960,8 @@ function wireControls() {
       const p = PROFILES[btn.dataset.profile];
       if (!p) return;
       Object.keys(p).forEach(k => { STATE[k] = p[k]; });
+      STATE.activeProfile = btn.dataset.profile;
+      STATE.activePreset = null;
       buildSidebar();
       generateMesh();
     });
@@ -1909,14 +1999,16 @@ function updateSectionVisibility() {
 
 function fitMeshToAspect(imgW, imgH) {
   const ar = imgW / imgH;
-  if (ar >= 96 / 48) {
-    STATE.meshW = 96;
-    STATE.meshH = Math.max(1, Math.round(96 / ar));
+  if (ar >= 36 / 24) {
+    STATE.meshX = 36;
+    STATE.meshY = Math.max(1, Math.round(36 / ar));
   } else {
-    STATE.meshH = 48;
-    STATE.meshW = Math.max(1, Math.round(48 * ar));
+    STATE.meshY = 24;
+    STATE.meshX = Math.max(1, Math.round(24 * ar));
   }
   STATE.resolution = 256;
+  STATE.depthMapAR = ar;
+  STATE.aspectLocked = true;
 }
 
 function loadDepthMap(file) {
@@ -1975,14 +2067,14 @@ function debouncedGenerate(key) {
 function zoomExtents() {
   if (!STATE.vertices) return;
   // Compute bounding sphere radius of the mesh
-  const { meshW, meshH, vertices, rows, cols } = STATE;
+  const { meshX, meshY, vertices, rows, cols } = STATE;
   let zMin = Infinity, zMax = -Infinity;
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
     const z = vertices[j][i];
     if (z < zMin) zMin = z;
     if (z > zMax) zMax = z;
   }
-  const halfW = meshW / 2, halfH = meshH / 2, halfZ = (zMax - zMin) / 2;
+  const halfW = meshX / 2, halfH = meshY / 2, halfZ = (zMax - zMin) / 2;
   const radius = Math.sqrt(halfW * halfW + halfH * halfH + halfZ * halfZ);
 
   // Compute zoom so bounding sphere fits in viewport
@@ -1990,8 +2082,8 @@ function zoomExtents() {
   const viewH = wrap.clientHeight;
   const fov = Math.PI / 3;
   const fitDist = radius / Math.tan(fov / 2);
-  // camDist = max(meshW,meshH) * 1.2 / zoom, so zoom = max(meshW,meshH) * 1.2 / fitDist
-  const targetZoom = Math.max(meshW, meshH) * 1.2 / fitDist;
+  // camDist = max(meshX,meshY) * 1.2 / zoom, so zoom = max(meshX,meshY) * 1.2 / fitDist
+  const targetZoom = Math.max(meshX, meshY) * 1.2 / fitDist;
 
   STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85)); // 85% fill
   STATE.panX = 0; STATE.panY = 0;
@@ -2024,7 +2116,7 @@ function updateStats() {
     <div class="stat-row"><span>Triangles</span><span class="stat-val">${totalTris.toLocaleString()}</span></div>
     <div class="stat-row"><span>Gen time</span><span class="stat-val">${genTime.toFixed(0)}ms</span></div>
     <div class="stat-row"><span>Est. size</span><span class="stat-val">${formatBytes(estSize)}</span></div>
-    ${STATE.resolution > 160 ? '<div class="stat-row"><span>Warning</span><span class="stat-warn">High res - may be slow</span></div>' : ''}
+    ${(cols * rows) > 50000 ? '<div class="stat-row"><span>Warning</span><span class="stat-warn">High res - may be slow</span></div>' : ''}
   `;
 }
 
@@ -2039,7 +2131,7 @@ function updateDimsOverlay() {
   }
   const totalZ = (zMax - zMin) + STATE.baseThickness;
   el.innerHTML = `
-    <span>${STATE.meshW}" x ${STATE.meshH}"</span>
+    <span>${STATE.meshX}" x ${STATE.meshY}"</span>
     <span style="margin-left:12px;">Z: ${zMin.toFixed(2)}" to ${zMax.toFixed(2)}"</span>
     <span style="margin-left:12px;">Total: ${totalZ.toFixed(2)}"</span>
     ${totalZ > 6 ? '<span class="cnc-warn" style="margin-left:8px;">EXCEEDS 6" Z</span>' : ''}
@@ -2224,11 +2316,29 @@ function setupTabs() {
   // Mode tabs
   document.querySelectorAll('.mode-tab').forEach(btn => {
     btn.addEventListener('click', () => {
+      const prevMode = STATE.mode;
       document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       STATE.mode = btn.dataset.mode;
       document.body.className = 'mode-' + STATE.mode;
       updateSectionVisibility();
+
+      // Save noise dimensions before depth map overwrites them
+      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'blend')) {
+        _noiseDims.meshX = STATE.meshX;
+        _noiseDims.meshY = STATE.meshY;
+        _noiseDims.resolution = STATE.resolution;
+      }
+
+      // Restore noise dimensions when switching back
+      if (STATE.mode === 'noise' && prevMode !== 'noise') {
+        STATE.meshX = _noiseDims.meshX;
+        STATE.meshY = _noiseDims.meshY;
+        STATE.resolution = _noiseDims.resolution;
+        STATE.aspectLocked = false;
+        buildSidebar();
+      }
+
       // Auto-apply demo depth map if switching to depthmap/blend with no user image
       if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap && demoDepthMap) {
         STATE.depthMap = demoDepthMap;
