@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MESHCRAFT 3000 // Sawyer Design</title>
+<meta property="og:title" content="MeshCraft 3000">
+<meta property="og:description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
+<meta property="og:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
+<meta property="og:url" content="https://meshcraft.sawyerdesign.io">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MeshCraft 3000">
+<meta name="twitter:description" content="Browser-based 3D mesh generator for CNC machining.">
+<meta name="twitter:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
 <link href="https://fonts.googleapis.com/css2?family=Righteous&family=Teko:wght@400;500;600&family=Ubuntu:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -93,6 +102,7 @@ body {
 .main {
   display: flex;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -282,6 +292,7 @@ input[type="range"]::-moz-range-thumb {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   background: var(--bg);
   position: relative;
   overflow: hidden;
@@ -316,6 +327,7 @@ input[type="range"]::-moz-range-thumb {
 
 .canvas-wrap {
   flex: 1;
+  min-height: 0;
   position: relative;
   cursor: grab;
   touch-action: none;
@@ -678,7 +690,7 @@ body.mode-depthmap .noise-only { display: none; }
 <!-- HEADER -->
 <div class="header">
   <div class="header-left">
-    <div class="brand">Mesh<span>Craft</span> 3000</div>
+    <div class="brand">MESH<span>CRAFT</span> 3000</div>
     <div class="version">v5.0</div>
     <div class="mode-tabs">
       <button class="mode-tab active" data-mode="noise">Noise</button>
@@ -690,7 +702,7 @@ body.mode-depthmap .noise-only { display: none; }
     <a href="https://www.paypal.com/ncp/payment/X76TNFLB3Z6RL" target="_blank" rel="noopener" class="tip-btn" title="Buy me a coffee!">Buy me a coffee</a>
     <button class="btn btn-sm" id="btnSponsor" style="font-size:10px;color:var(--green);border-color:rgba(78,255,158,0.3);background:rgba(78,255,158,0.08);" title="Our sponsor">ShopBot &#9825;</button>
     <span style="font-family:'Teko',sans-serif;text-transform:uppercase;font-size:12px;color:var(--text3);letter-spacing:1px;">Sawyer Design</span>
-    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a6a81465-03b8-4c25-149d-093d7f99b800/w=400" alt="SD" class="logo" crossorigin="anonymous" onerror="this.style.display='none'"/>
+    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/59f91699-ef0d-4c39-1cab-822e0c835300/w=200" alt="SD" class="logo" crossorigin="anonymous" onerror="this.style.display='none'"/>
   </div>
 </div>
 

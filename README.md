@@ -1,5 +1,9 @@
 # MeshCraft 3000
 
+<p align="center">
+  <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800" alt="MeshCraft 3000" width="600">
+</p>
+
 **Browser-based 3D mesh generator for CNC machining.**
 
 [**Try it live**](https://meshcraft.sawyerdesign.io) &nbsp;|&nbsp; Built by [Sawyer Design](https://sawyerdesign.io)
