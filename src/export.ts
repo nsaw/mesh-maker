@@ -168,11 +168,17 @@ async function loadRhino3dm(): Promise<any> { // eslint-disable-line @typescript
   if (_rhino) return _rhino;
   if (!_rhinoPromise) {
     // Cache the in-flight promise to prevent concurrent WASM downloads on rapid clicks.
+    // Reset on failure so subsequent attempts can retry.
     _rhinoPromise = (async () => {
-      // @ts-ignore: TS2307 — runtime CDN URL, no type declarations available
-      const mod = await import(/* @vite-ignore */ RHINO3DM_URL);
-      _rhino = await mod.default();
-      return _rhino;
+      try {
+        // @ts-ignore: TS2307 — runtime CDN URL, no type declarations available
+        const mod = await import(/* @vite-ignore */ RHINO3DM_URL);
+        _rhino = await mod.default();
+        return _rhino;
+      } catch (e) {
+        _rhinoPromise = null;
+        throw e;
+      }
     })();
   }
   return _rhinoPromise;
