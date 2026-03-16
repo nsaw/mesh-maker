@@ -154,9 +154,16 @@ function exportOBJ(mesh: MeshData): string {
   return s;
 }
 
-function exportRhino3DM(): null {
-  alert('Rhino .3dm export requires the rhino3dm.js library (~8MB WASM).\nExporting as OBJ instead - Rhino imports OBJ natively.\n\nFor native .3dm, load rhino3dm.js from:\nhttps://cdn.jsdelivr.net/npm/rhino3dm/rhino3dm.min.js');
-  return null;
+function notify3dmFallback(): void {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = '3DM unavailable \u2014 exported as OBJ';
+  toast.style.display = 'block';
+  toast.classList.add('visible');
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => { toast.style.display = 'none'; }, 300);
+  }, 1500);
 }
 
 function exportHeightmapPNG(): Promise<Blob | null> {
@@ -222,11 +229,10 @@ export async function doExport(): Promise<void> {
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
   } else if (fmt === '3dm') {
-    // rhino3dm.js not loaded — alert user (inside exportRhino3DM) and fall back to OBJ
-    exportRhino3DM();
     const txt = exportOBJ(mesh);
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
+    notify3dmFallback();
   } else {
     return;
   }
