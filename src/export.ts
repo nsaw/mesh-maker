@@ -330,6 +330,7 @@ export async function doExport(): Promise<void> {
       showToast('Loading Rhino3DM\u2026');
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
+      showToast('3DM exported!');
     } catch {
       const txt = exportOBJ(mesh);
       blob = new Blob([txt], { type: 'text/plain' });
