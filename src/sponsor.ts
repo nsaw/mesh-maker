@@ -45,22 +45,27 @@ export function setupSponsorModal(): void {
   const ARROW_DOWN = '\u2193';
   const ARROW_UP = '\u2191';
 
+  let paddingResetTimer: ReturnType<typeof setTimeout> | null = null;
+
   scrollBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (atBottom) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      const bar = document.querySelector('.export-bar')!;
+      const bar = document.querySelector('.export-bar');
+      if (!bar) return;
       const barRect = bar.getBoundingClientRect();
       const scrollTarget = window.scrollY + barRect.bottom - window.innerHeight + 20;
       if (scrollTarget <= window.scrollY) {
+        if (paddingResetTimer !== null) clearTimeout(paddingResetTimer);
         document.body.style.paddingBottom = barRect.height + 40 + 'px';
         setTimeout(() => {
           window.scrollTo({ top: document.body.scrollHeight - window.innerHeight, behavior: 'smooth' });
         }, 10);
-        setTimeout(() => {
+        paddingResetTimer = setTimeout(() => {
           document.body.style.paddingBottom = '';
+          paddingResetTimer = null;
         }, 600);
       } else {
         window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
