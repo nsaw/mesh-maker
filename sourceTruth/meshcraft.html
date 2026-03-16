@@ -1708,6 +1708,8 @@ async function doExport() {
     const txt = exportOBJ(mesh);
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
+  } else {
+    return;
   }
 
   const url = URL.createObjectURL(blob);
