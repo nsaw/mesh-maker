@@ -20,6 +20,7 @@ Thumbs.db
 # Build
 node_modules/
 dist/
+.vite/
 
 # Screenshots (local testing)
 screenshots/
@@ -27,4 +28,7 @@ screenshots/
 # Temp files
 *.tmp
 *.bak
-assets/meshcraft-logo-2.png
+assets/*.png
+assets/*.jpg
+assets/*.jpeg
+verification/*.png
