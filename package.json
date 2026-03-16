@@ -1,0 +1,17 @@
+{
+  "name": "meshcraft-3000",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "typescript": "~5.7.0",
+    "vite": "^6.0.0"
+  }
+}
