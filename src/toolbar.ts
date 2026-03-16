@@ -90,23 +90,31 @@ export function setupToolbar(): void {
       const url = config
         ? `${window.location.origin}${window.location.pathname}?c=${config}`
         : `${window.location.origin}${window.location.pathname}`;
-      navigator.clipboard.writeText(url).then(() => {
-        showToast('Link copied!');
-      }).catch(() => {
-        // Fallback for insecure contexts (HTTP) where navigator.clipboard is unavailable.
-      // execCommand('copy') is deprecated but still the only option without HTTPS.
-        const ta = document.createElement('textarea');
-        ta.value = url;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        showToast('Link copied!');
-      });
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(url).then(() => {
+          showToast('Link copied!');
+        }).catch(() => {
+          copyFallback(url);
+        });
+      } else {
+        copyFallback(url);
+      }
     });
   }
+}
+
+// Fallback for insecure contexts (HTTP) where navigator.clipboard is unavailable.
+// execCommand('copy') is deprecated but still the only option without HTTPS.
+function copyFallback(text: string): void {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  showToast('Link copied!');
 }
 
 function showToast(message: string): void {

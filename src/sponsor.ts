@@ -23,13 +23,19 @@ export function setupSponsorModal(): void {
     sImg.src = SPONSOR_IMGS[sponsorIdx];
   });
 
+  let sponsorTimeout: ReturnType<typeof setTimeout> | null = null;
+
   const sponsorBtn = document.getElementById('btnSponsor');
-  if (sponsorBtn) sponsorBtn.addEventListener('click', showSponsor);
+  if (sponsorBtn) sponsorBtn.addEventListener('click', () => {
+    if (sponsorTimeout) { clearTimeout(sponsorTimeout); sponsorTimeout = null; }
+    showSponsor();
+  });
 
   if (!sessionStorage.getItem('sponsorSeen')) {
-    setTimeout(() => {
+    sessionStorage.setItem('sponsorSeen', '1');
+    sponsorTimeout = setTimeout(() => {
+      sponsorTimeout = null;
       showSponsor();
-      sessionStorage.setItem('sponsorSeen', '1');
     }, 4000);
   }
 
