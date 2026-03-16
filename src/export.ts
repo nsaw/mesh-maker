@@ -158,16 +158,24 @@ function exportOBJ(mesh: MeshData): string {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _rhino: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _rhinoPromise: Promise<any> | null = null;
 
+// Version-pinned CDN URL — immutable content, OBJ fallback on any load failure.
 const RHINO3DM_URL = 'https://cdn.jsdelivr.net/npm/rhino3dm@8.4.0/rhino3dm.module.min.js';
 
 async function loadRhino3dm(): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
   if (_rhino) return _rhino;
-  // Dynamic import from CDN — @vite-ignore prevents Vite from trying to bundle it.
-  // @ts-ignore: TS2307 — runtime CDN URL, no type declarations available
-  const mod = await import(/* @vite-ignore */ RHINO3DM_URL);
-  _rhino = await mod.default();
-  return _rhino;
+  if (!_rhinoPromise) {
+    // Cache the in-flight promise to prevent concurrent WASM downloads on rapid clicks.
+    _rhinoPromise = (async () => {
+      // @ts-ignore: TS2307 — runtime CDN URL, no type declarations available
+      const mod = await import(/* @vite-ignore */ RHINO3DM_URL);
+      _rhino = await mod.default();
+      return _rhino;
+    })();
+  }
+  return _rhinoPromise;
 }
 
 async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
@@ -177,69 +185,71 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
   const zBase = -baseThickness;
 
   const m = new rhino.Mesh();
+  let file: ReturnType<typeof rhino.File3dm> | null = null;
 
-  // Top surface vertices: index = j * cols + i
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++)
-      m.vertices().add(top[j][i].x, top[j][i].y, top[j][i].z);
-
-  // Bottom vertices (watertight): index = botStart + j * cols + i
-  const botStart = rows * cols;
-  if (watertight)
+  try {
+    // Top surface vertices: index = j * cols + i
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++)
-        m.vertices().add(top[j][i].x, top[j][i].y, zBase);
+        m.vertices().add(top[j][i].x, top[j][i].y, top[j][i].z);
 
-  // Top surface quads
-  for (let j = 0; j < rows - 1; j++)
-    for (let i = 0; i < cols - 1; i++) {
-      const a = j * cols + i;
-      m.faces().addFace(a, a + 1, a + cols + 1, a + cols);
-    }
+    // Bottom vertices (watertight): index = botStart + j * cols + i
+    const botStart = rows * cols;
+    if (watertight)
+      for (let j = 0; j < rows; j++)
+        for (let i = 0; i < cols; i++)
+          m.vertices().add(top[j][i].x, top[j][i].y, zBase);
 
-  if (watertight) {
-    // Bottom surface quads (reversed winding)
+    // Top surface quads
     for (let j = 0; j < rows - 1; j++)
       for (let i = 0; i < cols - 1; i++) {
-        const a = botStart + j * cols + i;
-        m.faces().addFace(a, a + cols, a + cols + 1, a + 1);
+        const a = j * cols + i;
+        m.faces().addFace(a, a + 1, a + cols + 1, a + cols);
       }
 
-    // Front wall (j=0)
-    for (let i = 0; i < cols - 1; i++)
-      m.faces().addFace(i, botStart + i, botStart + i + 1, i + 1);
+    if (watertight) {
+      // Bottom surface quads (reversed winding)
+      for (let j = 0; j < rows - 1; j++)
+        for (let i = 0; i < cols - 1; i++) {
+          const a = botStart + j * cols + i;
+          m.faces().addFace(a, a + cols, a + cols + 1, a + 1);
+        }
 
-    // Back wall (j=rows-1)
-    for (let i = 0; i < cols - 1; i++) {
-      const t = (rows - 1) * cols + i, b = botStart + (rows - 1) * cols + i;
-      m.faces().addFace(t, t + 1, b + 1, b);
+      // Front wall (j=0)
+      for (let i = 0; i < cols - 1; i++)
+        m.faces().addFace(i, botStart + i, botStart + i + 1, i + 1);
+
+      // Back wall (j=rows-1)
+      for (let i = 0; i < cols - 1; i++) {
+        const t = (rows - 1) * cols + i, b = botStart + (rows - 1) * cols + i;
+        m.faces().addFace(t, t + 1, b + 1, b);
+      }
+
+      // Left wall (i=0)
+      for (let j = 0; j < rows - 1; j++) {
+        const t = j * cols, b = botStart + j * cols;
+        m.faces().addFace(t, t + cols, b + cols, b);
+      }
+
+      // Right wall (i=cols-1)
+      for (let j = 0; j < rows - 1; j++) {
+        const t = j * cols + (cols - 1), b = botStart + j * cols + (cols - 1);
+        m.faces().addFace(t, b, b + cols, t + cols);
+      }
     }
 
-    // Left wall (i=0)
-    for (let j = 0; j < rows - 1; j++) {
-      const t = j * cols, b = botStart + j * cols;
-      m.faces().addFace(t, t + cols, b + cols, b);
-    }
+    m.normals().computeNormals();
+    m.compact();
 
-    // Right wall (i=cols-1)
-    for (let j = 0; j < rows - 1; j++) {
-      const t = j * cols + (cols - 1), b = botStart + j * cols + (cols - 1);
-      m.faces().addFace(t, b, b + cols, t + cols);
-    }
+    file = new rhino.File3dm();
+    file.objects().add(m, null);
+
+    const bytes: Uint8Array = file.toByteArray();
+    return new Blob([bytes], { type: 'application/octet-stream' });
+  } finally {
+    file?.delete();
+    m.delete();
   }
-
-  m.normals().computeNormals();
-  m.compact();
-
-  const file = new rhino.File3dm();
-  file.objects().add(m, null);
-
-  const bytes: Uint8Array = file.toByteArray();
-
-  m.delete();
-  file.delete();
-
-  return new Blob([bytes], { type: 'application/octet-stream' });
 }
 
 // --- Heightmap PNG export ---
@@ -280,15 +290,20 @@ function exportHeightmapPNG(): Promise<Blob | null> {
 
 // --- Toast helper (self-contained to avoid circular deps with toolbar.ts) ---
 
+let _toastHideTimer: ReturnType<typeof setTimeout> | null = null;
+let _toastFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
+
 function showExportToast(message: string): void {
   const toast = document.getElementById('toast');
   if (!toast) return;
+  if (_toastHideTimer !== null) clearTimeout(_toastHideTimer);
+  if (_toastFinalizeTimer !== null) clearTimeout(_toastFinalizeTimer);
   toast.textContent = message;
   toast.style.display = 'block';
   toast.classList.add('visible');
-  setTimeout(() => {
+  _toastHideTimer = setTimeout(() => {
     toast.classList.remove('visible');
-    setTimeout(() => { toast.style.display = 'none'; }, 300);
+    _toastFinalizeTimer = setTimeout(() => { toast.style.display = 'none'; }, 300);
   }, 1500);
 }
 
