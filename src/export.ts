@@ -191,10 +191,11 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
   const { top, cols, rows, watertight, baseThickness } = mesh;
   const zBase = -baseThickness;
 
-  const m = new rhino.Mesh();
+  let m: ReturnType<typeof rhino.Mesh> | null = null;
   let file: ReturnType<typeof rhino.File3dm> | null = null;
 
   try {
+    m = new rhino.Mesh();
     // Top surface vertices: index = j * cols + i
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++)
@@ -255,7 +256,7 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
     return new Blob([bytes], { type: 'application/octet-stream' });
   } finally {
     file?.delete();
-    m.delete();
+    m?.delete();
   }
 }
 
@@ -339,7 +340,7 @@ async function _doExportInner(): Promise<void> {
     ext = 'obj';
   } else if (fmt === '3dm') {
     try {
-      if (!_rhino) showToast('Loading Rhino3DM\u2026');
+      if (!_rhino) showToast('Loading Rhino3DM\u2026', 15000);
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
       showToast('3DM exported!');

@@ -1,7 +1,7 @@
 let _hideTimer: ReturnType<typeof setTimeout> | null = null;
 let _finalizeTimer: ReturnType<typeof setTimeout> | null = null;
 
-export function showToast(message: string): void {
+export function showToast(message: string, duration = 1500): void {
   const toast = document.getElementById('toast');
   if (!toast) return;
   if (_hideTimer !== null) { clearTimeout(_hideTimer); _hideTimer = null; }
@@ -12,5 +12,5 @@ export function showToast(message: string): void {
   _hideTimer = setTimeout(() => {
     toast.classList.remove('visible');
     _finalizeTimer = setTimeout(() => { toast.style.display = 'none'; }, 300);
-  }, 1500);
+  }, duration);
 }
