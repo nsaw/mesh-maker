@@ -303,7 +303,7 @@ export async function doExport(): Promise<void> {
   if (_exportInFlight) return;
   _exportInFlight = true;
   try {
-  return await _doExportInner();
+    return await _doExportInner();
   } finally {
     _exportInFlight = false;
   }
@@ -314,7 +314,7 @@ async function _doExportInner(): Promise<void> {
 
   if (fmt === 'heightmap') {
     const blob = await exportHeightmapPNG();
-    if (!blob) { alert('Generate a mesh first'); return; }
+    if (!blob) { showToast('Generate a mesh first'); return; }
     triggerDownload(blob, `${STATE.filename}_heightmap.png`);
     return;
   }
