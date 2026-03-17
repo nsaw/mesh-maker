@@ -81,6 +81,8 @@ export function setupSponsorModal(): void {
     if (scrolledToBottom) {
       atBottom = true;
       scrollBtn.textContent = ARROW_UP;
+      if (paddingResetTimer !== null) { clearTimeout(paddingResetTimer); paddingResetTimer = null; }
+      document.body.style.paddingBottom = '';
     } else {
       atBottom = false;
       scrollBtn.textContent = ARROW_DOWN;
