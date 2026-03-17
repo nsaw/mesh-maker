@@ -106,6 +106,66 @@ src/
 
 No WebGL, no frameworks. Canvas 2D is intentional — simpler, more portable, and performant for typical CNC mesh resolutions (default 256×256; grid resolution adjustable 16–1024).
 
+## Grasshopper / Rhino 7
+
+MeshCraft 3000 is also available as a Grasshopper node set for Rhino 7. All 15 noise algorithms, shaping controls, smoothing, and CNC presets — running natively inside Grasshopper with real-time mesh output.
+
+<p align="center">
+  <img src="grasshopper/assets/preview.jpg" alt="MeshCraft Grasshopper Definition" width="800">
+</p>
+
+<p align="center">
+  <img src="grasshopper/assets/preview-2.jpg" alt="MeshCraft Grasshopper Nodes" width="800">
+</p>
+
+### Quick Start
+
+1. Open `grasshopper/meshmaker.gh` in Grasshopper (Rhino 7)
+2. Adjust sliders — the mesh updates live in the Rhino viewport
+3. Bake the mesh output when ready
+
+The definition is also saved as `grasshopper/meshmaker.3dm` for direct use in Rhino.
+
+### Node Architecture
+
+The definition contains 5 GHPython components wired in a left-to-right pipeline:
+
+| Component | Role | Key Inputs |
+|---|---|---|
+| **MeshCraft \| Noise** | Generates raw noise heightfield | noise type, seed, frequency, octaves, persistence, lacunarity, distortion, gabor angle/bandwidth, mesh dimensions, resolution |
+| **MeshCraft \| Shape** | Applies amplitude, contrast, peak/valley shaping | amplitude, noise exponent, peak/valley exponents, valley floor, offset, contrast, sharpness |
+| **MeshCraft \| Smooth** | Optional weighted Laplacian smoother | iterations (0–8), strength (0–1) |
+| **MeshCraft \| Presets** | Outputs all params for a named CNC preset | preset name (15 presets) |
+| **To Mesh** | Converts point grid to quad mesh surface | pts, cols, rows |
+
+### Noise Algorithms
+
+All 15 types are available from the noise type dropdown:
+
+Simplex, Perlin, Value, OpenSimplex2, Ridged, Billow, FBM, Turbulence, Hybrid Multifractal, Hetero Terrain, Domain Warp, Voronoi, Worley, Gabor, Wavelet
+
+### Using Presets
+
+The **MeshCraft | Presets** component is placed on the canvas but **unwired by default**. To use a preset:
+
+1. Select a preset from the dropdown (e.g., "Sculptural", "Deep Carve", "Voronoi Cells")
+2. Wire individual preset outputs to the matching inputs on the Noise, Shape, or Smooth components — this overrides the slider value for that parameter
+3. To return to manual control, disconnect the preset wire and the slider takes over again
+
+Available presets: Gentle Waves, Organic Terrain, Sharp Ridges, Voronoi Cells, Subtle Texture, Deep Carve, Sculptural, Hard Wave, Eroded Stone, Billowy Clouds, Turbulent Marble, Natural Ridge, Organic Swirl, Worley Cracks, Brushed Metal
+
+### Exporting from Rhino
+
+After baking the mesh:
+
+- **STL/OBJ**: `File > Export Selected` and choose format
+- **3DM**: Save the Rhino file directly
+- For CNC use, exported meshes match the ShopBot Desktop Max ATC work envelope (36" x 24" default, adjustable via `mesh_x` and `mesh_y` sliders)
+
+### Builder Script
+
+The `grasshopper/builder/` directory contains the Python scripts used to programmatically generate the `.gh` file via the Grasshopper SDK. These are development tools — you don't need them to use the definition.
+
 ## License
 
 MIT
