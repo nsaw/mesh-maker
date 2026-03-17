@@ -147,7 +147,7 @@ export function renderViewport(): void {
       for (let i = 0; i < cols - 1; i++) {
         const e1z = vertices[j][i+1] - vertices[j][i];
         const e2z = vertices[j+1][i] - vertices[j][i];
-        let nx = -e1z * dyW, ny = -e2z * dxW, nz = dxW * dyW;
+        const nx = -e1z * dyW, ny = -e2z * dxW, nz = dxW * dyW;
         const len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
         faceNx[j][i] = nx / len;
         faceNy[j][i] = ny / len;

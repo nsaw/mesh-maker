@@ -35,3 +35,6 @@ assets/*.jpg
 assets/*.jpeg
 assets/*.psd
 verification/*.png
+docs/plans/
+.claude/
+__pycache__/

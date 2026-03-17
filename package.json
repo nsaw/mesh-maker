@@ -6,12 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
     "preview": "vite preview",
     "prepare": "husky"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.3",
     "husky": "^9.1.7",
     "typescript": "~5.7.0",
+    "typescript-eslint": "^8.57.1",
     "vite": "^6.0.0"
   }
 }

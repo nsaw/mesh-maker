@@ -1,7 +1,15 @@
 #!/usr/bin/env sh
 
 # =============================================================================
-# Pre-commit hook: Secret & credential leak prevention
+# Pre-commit hook: Lint, typecheck, and secret scanning
+# =============================================================================
+
+# --- Lint & typecheck (fast-fail before secret scan) ---
+npm run lint || exit 1
+npm run typecheck || exit 1
+
+# =============================================================================
+# Secret & credential leak prevention
 # Scans staged files for API keys, tokens, passwords, database URLs, and
 # other sensitive patterns before allowing a commit.
 # =============================================================================

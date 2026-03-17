@@ -45,11 +45,11 @@ Generate 3D meshes from procedural noise or depth map images, tuned for CNC mach
 
 ### Features
 
-- **5 noise algorithms** — Simplex, Perlin, Ridged, FBM, Voronoi
+- **14+ noise algorithms** — Simplex, Perlin, OpenSimplex2, Value, FBM, Ridged, Billow, Turbulence, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet
 - **Depth map import** — Upload any image, blend with noise
-- **CNC presets** — 9 presets tuned for the ShopBot Desktop Max ATC (36" x 24", 6" Z)
+- **CNC presets** — 15 presets tuned for the ShopBot Desktop Max ATC (36" x 24", 6" Z)
 - **Watertight export** — Bottom face + side walls for CNC-ready meshes
-- **Multiple formats** — STL (binary/ASCII), OBJ, 3DM, heightmap PNG
+- **Multiple formats** — STL (binary/ASCII), OBJ, 3DM (mesh or point cloud), heightmap PNG
 - **Real-time 3D preview** — Orbit, pan, zoom with mouse or touch
 - **Shareable configs** — Copy Link encodes your mesh settings into a URL
 
@@ -76,8 +76,9 @@ npm run preview    # Preview production build locally
 
 1. Adjust noise parameters or upload a depth map
 2. Choose your export format (STL, OBJ, 3DM, or Heightmap)
-3. Enable **Watertight** for CNC milling (adds bottom face + side walls)
-4. Click **Export** to download
+3. For 3DM, optionally enable **Export as point cloud** to output vertices only (Rhino/Grasshopper)
+4. Enable **Watertight** for CNC milling (adds bottom face + side walls)
+5. Click **Export** to download
 
 Exported STL/OBJ files are ready for CAM software like VCarve, Aspire, or Fusion 360.
 
@@ -91,8 +92,8 @@ src/
 ├── state.ts             # Typed STATE singleton, URL serialize/deserialize
 ├── types.ts             # Shared interfaces (Vertex3D, Triangle, MeshData)
 ├── noise/
-│   ├── generators.ts    # 5 noise classes + factory
-│   └── presets.ts       # 9 CNC presets, 6 texture profiles
+│   ├── generators.ts    # 14+ noise classes + factory
+│   └── presets.ts       # 15 CNC presets, 6 texture profiles
 ├── mesh.ts              # Mesh generation + smoothing
 ├── render.ts            # Canvas 2D 3D rendering (painter's algo, Gouraud shading)
 ├── export.ts            # STL, OBJ, heightmap PNG export
@@ -103,7 +104,7 @@ src/
 └── sponsor.ts           # Sponsor modal
 ```
 
-No WebGL, no frameworks. Canvas 2D is intentional — simpler, more portable, and performant enough for CNC mesh resolutions (<256x256 grids).
+No WebGL, no frameworks. Canvas 2D is intentional — simpler, more portable, and performant for typical CNC mesh resolutions (default 256×256; grid resolution adjustable 16–1024).
 
 ## License
 

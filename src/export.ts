@@ -170,7 +170,6 @@ async function loadRhino3dm(): Promise<any> { // eslint-disable-line @typescript
     // Reset on failure so subsequent attempts can retry.
     _rhinoPromise = (async () => {
       try {
-        // @ts-ignore: TS2307 — runtime CDN URL, no type declarations available
         const mod = await import(/* @vite-ignore */ RHINO3DM_URL);
         _rhino = await mod.default();
         return _rhino;
