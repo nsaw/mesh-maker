@@ -34,7 +34,7 @@
 </p>
 
 <p align="center">
-  Also sponsored by <a href="https://bitsbits.com"><strong>bitsbits.com</strong></a>
+  Powered by <a href="https://bitsbits.com"><strong>bitsbits.com</strong></a>
 </p>
 
 ---
