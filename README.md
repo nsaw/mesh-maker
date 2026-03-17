@@ -23,8 +23,18 @@
 
 <p align="center">
   <a href="https://shopbottools.com/products/desktop-max-atc/">
-    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/04acb407-564f-4b6e-8c91-9506c2f52300/w=800" alt="ShopBot Desktop Max ATC" width="400">
+    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/b657c94b-f67c-4a12-9b3d-64930c5e5900/w=800" alt="ShopBot Desktop Max ATC" width="400">
   </a>
+</p>
+
+<p align="center">
+  <a href="https://bitsbits.com">
+    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/7d4ecee6-c56f-4e09-dd49-c24553552900/w=400" alt="bitsbits.com" width="200">
+  </a>
+</p>
+
+<p align="center">
+  Also sponsored by <a href="https://bitsbits.com"><strong>bitsbits.com</strong></a>
 </p>
 
 ---
