@@ -39,6 +39,9 @@ export function setupSponsorModal(): void {
     }, 4000);
   }
 
+  // Bitsbits sponsor banner — slide-in drawer (right edge, 60s delay)
+  setupBitsBitsBanner();
+
   // Scroll-to-export button — uses static arrow characters only (no user input)
   const scrollBtn = document.getElementById('scrollExportBtn')!;
   let atBottom = false;
@@ -88,4 +91,63 @@ export function setupSponsorModal(): void {
       scrollBtn.textContent = ARROW_DOWN;
     }
   });
+}
+
+function setupBitsBitsBanner(): void {
+  if (sessionStorage.getItem('bbBannerDismissed')) return;
+
+  const BANNER_IMG = 'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/7d4ecee6-c56f-4e09-dd49-c24553552900/w=400';
+  const BANNER_URL = 'https://bitsbits.com';
+  const DELAY_MS = 60_000;
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'bb-banner-backdrop';
+
+  const banner = document.createElement('a');
+  banner.className = 'bb-banner';
+  banner.href = BANNER_URL;
+  banner.target = '_blank';
+  banner.rel = 'noopener';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'bb-banner-close';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.textContent = '\u00d7';
+
+  const img = document.createElement('img');
+  img.src = BANNER_IMG;
+  img.alt = 'bitsbits.com';
+
+  const label = document.createElement('div');
+  label.className = 'bb-banner-label';
+  const labelSpan = document.createElement('span');
+  labelSpan.textContent = 'Sponsor';
+  label.appendChild(labelSpan);
+
+  banner.appendChild(closeBtn);
+  banner.appendChild(img);
+  banner.appendChild(label);
+  document.body.appendChild(backdrop);
+  document.body.appendChild(banner);
+
+  function show(): void {
+    backdrop.classList.add('visible');
+    banner.classList.add('visible');
+  }
+
+  function dismiss(): void {
+    banner.classList.remove('visible');
+    backdrop.classList.remove('visible');
+    sessionStorage.setItem('bbBannerDismissed', '1');
+  }
+
+  closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dismiss();
+  });
+
+  backdrop.addEventListener('click', dismiss);
+
+  setTimeout(show, DELAY_MS);
 }

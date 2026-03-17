@@ -643,6 +643,72 @@ body.mode-depthmap .noise-only { display: none; }
 }
 .sponsor-close:hover { background: rgba(255,78,106,0.5); }
 
+/* BITSBITS SPONSOR BANNER (slide-in drawer, right edge) */
+.bb-banner-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 998;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.bb-banner-backdrop.visible { opacity: 1; pointer-events: auto; }
+.bb-banner {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%) translateX(110%);
+  z-index: 999;
+  width: 200px;
+  background: var(--bg2);
+  border: 1px solid var(--bg4);
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  box-shadow: -4px 0 20px rgba(0,0,0,0.4);
+  overflow: hidden;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+.bb-banner.visible { transform: translateY(-50%) translateX(0); }
+.bb-banner img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.bb-banner-close {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  z-index: 1;
+}
+.bb-banner-close:hover { background: rgba(255,78,106,0.5); }
+.bb-banner-label {
+  padding: 8px 10px;
+  text-align: center;
+}
+.bb-banner-label span {
+  font-family: 'Teko', sans-serif;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text3);
+}
+@media (max-width: 900px) {
+  .bb-banner { width: 160px; }
+}
+
 /* SCROLL-TO-EXPORT BUTTON */
 .scroll-export-btn {
   display: none;
