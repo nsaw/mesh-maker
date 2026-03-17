@@ -309,7 +309,9 @@ input[type="range"]::-moz-range-thumb {
   background: var(--bg2);
   border-bottom: 1px solid var(--bg4);
   flex-shrink: 0;
-  height: 36px;
+  min-height: 36px;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .view-modes { display: flex; gap: 2px; background: var(--bg); border-radius: 4px; padding: 2px; }
 .view-btn {
@@ -685,6 +687,15 @@ body.mode-depthmap .noise-only { display: none; }
   .scroll-export-btn { display: flex; }
 }
 
+/* TOAST */
+.toast {
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.toast.visible {
+  opacity: 1;
+}
+
 /* RESPONSIVE */
 @media (max-width: 900px) {
   .header { padding: 6px 10px; height: 42px; }
@@ -752,6 +763,7 @@ body.mode-depthmap .noise-only { display: none; }
         <button class="btn btn-sm" id="btnRandomSeed">Random Seed</button>
         <button class="btn btn-sm" id="btnZoomExtents">Zoom Extents</button>
         <button class="btn btn-sm" id="btnResetCamera">Reset View</button>
+        <button class="btn btn-sm" id="btnCopyLink" title="Copy shareable link to clipboard">Copy Link</button>
       </div>
     </div>
     <div class="canvas-wrap" id="canvasWrap">
@@ -780,6 +792,30 @@ body.mode-depthmap .noise-only { display: none; }
     </div>
   </div>
 </div>
+
+<!-- SPONSOR MODAL -->
+<div class="sponsor-backdrop" id="sponsorBackdrop">
+  <div class="sponsor-modal">
+    <div class="sponsor-img-wrap">
+      <button class="sponsor-close" id="sponsorClose" aria-label="Close">&times;</button>
+      <img id="sponsorImg" src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800" alt="ShopBot Desktop Max ATC" />
+      <button class="sponsor-img-nav prev" id="sponsorPrev">&#8249;</button>
+      <button class="sponsor-img-nav next" id="sponsorNext">&#8250;</button>
+    </div>
+    <div class="sponsor-body">
+      <div class="sponsor-label">Sponsored by</div>
+      <div class="sponsor-name">ShopBot Tools</div>
+      <div class="sponsor-product">Desktop Max ATC</div>
+      <div class="sponsor-desc">MESHCRAFT 3000 was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
+      <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Learn More</a>
+    </div>
+  </div>
+</div>
+
+<!-- SCROLL TO EXPORT (mobile) -->
+<button class="scroll-export-btn" id="scrollExportBtn" aria-label="Scroll to export">&#8595;</button>
+
+<div class="toast" id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--accent2);color:#fff;padding:8px 20px;border-radius:var(--radius);font-size:12px;font-weight:600;z-index:1001;pointer-events:none;"></div>
 
 <script>
 // =====================================================================
@@ -969,7 +1005,71 @@ const STATE = {
   genTime: 0
 };
 
+const DEFAULTS = Object.assign({}, STATE);
+
 const _noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
+
+// ---- TOAST NOTIFICATIONS ----
+
+let _hideTimer = null;
+let _finalizeTimer = null;
+
+function showToast(message, duration = 1500) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  if (_hideTimer !== null) { clearTimeout(_hideTimer); _hideTimer = null; }
+  if (_finalizeTimer !== null) { clearTimeout(_finalizeTimer); _finalizeTimer = null; }
+  toast.textContent = message;
+  toast.style.display = 'block';
+  toast.classList.add('visible');
+  _hideTimer = setTimeout(() => {
+    toast.classList.remove('visible');
+    _finalizeTimer = setTimeout(() => { toast.style.display = 'none'; }, 300);
+  }, duration);
+}
+
+// ---- URL STATE SERIALIZATION ----
+
+const URL_SERIALIZABLE_KEYS = [
+  'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
+  'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
+  'contrast', 'sharpness', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
+  'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
+  'viewMode', 'activePreset', 'activeProfile',
+];
+
+function serializeConfig() {
+  const diff = {};
+  for (const key of URL_SERIALIZABLE_KEYS) {
+    if (STATE[key] !== DEFAULTS[key]) {
+      diff[key] = STATE[key];
+    }
+  }
+  if (Object.keys(diff).length === 0) return '';
+  return btoa(JSON.stringify(diff))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function deserializeConfig(searchParams) {
+  const encoded = searchParams.get('c');
+  if (!encoded) return {};
+  try {
+    const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    const json = atob(padded);
+    const parsed = JSON.parse(json);
+    const result = {};
+    for (const key of URL_SERIALIZABLE_KEYS) {
+      if (key in parsed) {
+        result[key] = parsed[key];
+      }
+    }
+    return result;
+  } catch (e) {
+    return {};
+  }
+}
 
 
 // ---- MESH GENERATION ----
@@ -1060,8 +1160,8 @@ function generateNoiseMesh() {
 
 function generateDepthMapMesh() {
   const t0 = performance.now();
-  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency, amplitude,
-          noiseExp, seed, meshX, meshY, resolution, noiseType } = STATE;
+  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency,
+          seed, meshX, meshY, resolution, noiseType } = STATE;
 
   if (!depthMap) { STATE.vertices = null; return; }
 
@@ -1623,9 +1723,93 @@ function exportOBJ(mesh) {
   return s;
 }
 
-function exportRhino3DM() {
-  alert('Rhino .3dm export requires the rhino3dm.js library (~8MB WASM).\nExporting as OBJ instead - Rhino imports OBJ natively.\n\nFor native .3dm, load rhino3dm.js from:\nhttps://cdn.jsdelivr.net/npm/rhino3dm/rhino3dm.min.js');
-  return null;
+// --- Rhino 3DM export via lazy-loaded rhino3dm.js WASM from CDN ---
+
+let _rhino = null;
+let _rhinoPromise = null;
+
+const RHINO3DM_URL = 'https://cdn.jsdelivr.net/npm/rhino3dm@8.4.0/rhino3dm.module.min.js';
+
+async function loadRhino3dm() {
+  if (_rhino) return _rhino;
+  if (!_rhinoPromise) {
+    _rhinoPromise = (async () => {
+      try {
+        const mod = await import(RHINO3DM_URL);
+        _rhino = await mod.default();
+        return _rhino;
+      } catch (e) {
+        _rhinoPromise = null;
+        throw e;
+      }
+    })();
+  }
+  return _rhinoPromise;
+}
+
+async function exportRhino3DM(mesh) {
+  const rhino = await loadRhino3dm();
+
+  const { top, cols, rows, watertight, baseThickness } = mesh;
+  const zBase = -baseThickness;
+
+  let m = null;
+  let file = null;
+  let meshAdded = false;
+
+  try {
+    m = new rhino.Mesh();
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++)
+        m.vertices().add(top[j][i].x, top[j][i].y, top[j][i].z);
+
+    const botStart = rows * cols;
+    if (watertight)
+      for (let j = 0; j < rows; j++)
+        for (let i = 0; i < cols; i++)
+          m.vertices().add(top[j][i].x, top[j][i].y, zBase);
+
+    for (let j = 0; j < rows - 1; j++)
+      for (let i = 0; i < cols - 1; i++) {
+        const a = j * cols + i;
+        m.faces().addFace(a, a + 1, a + cols + 1, a + cols);
+      }
+
+    if (watertight) {
+      for (let j = 0; j < rows - 1; j++)
+        for (let i = 0; i < cols - 1; i++) {
+          const a = botStart + j * cols + i;
+          m.faces().addFace(a, a + cols, a + cols + 1, a + 1);
+        }
+      for (let i = 0; i < cols - 1; i++)
+        m.faces().addFace(i, botStart + i, botStart + i + 1, i + 1);
+      for (let i = 0; i < cols - 1; i++) {
+        const t = (rows - 1) * cols + i, b = botStart + (rows - 1) * cols + i;
+        m.faces().addFace(t, t + 1, b + 1, b);
+      }
+      for (let j = 0; j < rows - 1; j++) {
+        const t = j * cols, b = botStart + j * cols;
+        m.faces().addFace(t, t + cols, b + cols, b);
+      }
+      for (let j = 0; j < rows - 1; j++) {
+        const t = j * cols + (cols - 1), b = botStart + j * cols + (cols - 1);
+        m.faces().addFace(t, b, b + cols, t + cols);
+      }
+    }
+
+    m.normals().computeNormals();
+    m.compact();
+
+    file = new rhino.File3dm();
+    file.objects().add(m, null);
+    meshAdded = true;
+
+    const bytes = file.toByteArray();
+    return new Blob([bytes], { type: 'application/octet-stream' });
+  } finally {
+    if (file) file.delete();
+    if (!meshAdded && m) m.delete();
+  }
 }
 
 function exportHeightmapPNG() {
@@ -1667,26 +1851,41 @@ function exportHeightmapPNG() {
   });
 }
 
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+let _exportInFlight = false;
+
 async function doExport() {
+  if (_exportInFlight) return;
+  _exportInFlight = true;
+  try {
+    return await _doExportInner();
+  } finally {
+    _exportInFlight = false;
+  }
+}
+
+async function _doExportInner() {
   const fmt = STATE.exportFormat;
 
-  // Heightmap PNG is a special path -- no mesh data needed, just vertices
   if (fmt === 'heightmap') {
     const blob = await exportHeightmapPNG();
-    if (!blob) { alert('Generate a mesh first'); return; }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${STATE.filename}_heightmap.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 100);
+    if (!blob) { showToast('Generate a mesh first'); return; }
+    triggerDownload(blob, `${STATE.filename}_heightmap.png`);
     return;
   }
 
   const mesh = getFullMeshData();
-  if (!mesh) return;
+  if (!mesh) { showToast('Generate a mesh first'); return; }
 
   let blob, ext;
 
@@ -1703,23 +1902,22 @@ async function doExport() {
     blob = new Blob([txt], { type: 'text/plain' });
     ext = 'obj';
   } else if (fmt === '3dm') {
-    exportRhino3DM();
-    // Fall back to OBJ — suffix filename so user knows it's a fallback
-    const txt = exportOBJ(mesh);
-    blob = new Blob([txt], { type: 'text/plain' });
-    ext = 'obj';
+    try {
+      if (!_rhino) showToast('Loading Rhino3DM\u2026', 15000);
+      blob = await exportRhino3DM(mesh);
+      ext = '3dm';
+    } catch (e) {
+      const txt = exportOBJ(mesh);
+      blob = new Blob([txt], { type: 'text/plain' });
+      ext = 'obj';
+      showToast(_rhino ? '3DM export failed \u2014 exported as OBJ' : '3DM unavailable \u2014 exported as OBJ');
+    }
   } else {
     return;
   }
 
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${STATE.filename}.${ext}`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 100);
+  triggerDownload(blob, `${STATE.filename}.${ext}`);
+  if (fmt === '3dm' && ext === '3dm') showToast('3DM exported!');
 }
 
 
@@ -1727,10 +1925,10 @@ async function doExport() {
 
 function buildSidebar() {
   const sb = document.getElementById('sidebar');
-  sb.innerHTML = '';
+  const parts = [];
 
   // -- PRESETS --
-  sb.innerHTML += buildSection('Presets', `
+  parts.push(buildSection('Presets', `
     <div class="btn-row" id="presetRow">
       ${Object.keys(CNC_PRESETS).map(k =>
         `<button class="preset-pill${STATE.activePreset === k ? ' active' : ''}" data-preset="${k}">${k.replace(/-/g,' ')}</button>`
@@ -1741,10 +1939,10 @@ function buildSidebar() {
         `<button class="preset-pill${STATE.activeProfile === k ? ' active' : ''}" data-profile="${k}" style="border-color:var(--bg4);font-size:9px;">${k}</button>`
       ).join('')}
     </div>
-  `);
+  `));
 
   // -- MESH DIMENSIONS --
-  sb.innerHTML += buildSection('Mesh Dimensions', `
+  parts.push(buildSection('Mesh Dimensions', `
     <div class="inline-row">
       ${slider('meshX', 'X (inches)', 1, 96, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
       <button class="aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}" id="btnAspectLock" title="${STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}">
@@ -1755,10 +1953,10 @@ function buildSidebar() {
     ${slider('resolution', 'Grid Resolution', 16, 256, 4)}
     ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
     <div style="margin-top:4px;font-size:10px;color:var(--text3);">ShopBot Desktop Max ATC -- 36"x24"x6"</div>
-  `);
+  `));
 
   // -- NOISE PARAMETERS --
-  sb.innerHTML += buildSection('Noise Parameters', `
+  parts.push(buildSection('Noise Parameters', `
     <div class="control-row">
       <div class="control-label">Noise Algorithm</div>
       <select class="select-input" id="selNoiseType">
@@ -1777,34 +1975,34 @@ function buildSidebar() {
       <input type="text" class="text-input" id="seedInput" placeholder="seed (blank=random)" value="${STATE.seed || ''}">
       <button class="btn btn-sm" id="btnRandSeed2">Dice</button>
     </div>
-  `, false, 'noise-only');
+  `, false, 'noise-only'));
 
   // -- PEAK / VALLEY SHAPING --
-  sb.innerHTML += buildSection('Peak / Valley Shaping', `
+  parts.push(buildSection('Peak / Valley Shaping', `
     <div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Asymmetric control: shape peaks and valleys independently.</div>
     ${slider('peakExp', 'Peak Sharpness (>1 = crisper ridges)', 0.2, 4, 0.05)}
     ${slider('valleyExp', 'Valley Softness (<1 = broader valleys)', 0.1, 3, 0.05)}
     ${slider('valleyFloor', 'Valley Floor (0=deep, 1=flat)', 0, 1, 0.01)}
-  `, false, 'noise-only');
+  `, false, 'noise-only'));
 
   // -- ADVANCED NOISE --
-  sb.innerHTML += buildSection('Advanced Noise', `
+  parts.push(buildSection('Advanced Noise', `
     ${slider('octaves', 'Octaves', 1, 8, 1)}
     ${slider('persistence', 'Persistence', 0.1, 1, 0.05)}
     ${slider('lacunarity', 'Lacunarity', 1, 4, 0.1)}
     ${slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05)}
     ${slider('contrast', 'Contrast', 0.1, 3, 0.05)}
     ${slider('sharpness', 'Sharpness', 0, 2, 0.05)}
-  `, true, 'noise-only');
+  `, true, 'noise-only'));
 
   // -- SMOOTHING --
-  sb.innerHTML += buildSection('Smoothing', `
+  parts.push(buildSection('Smoothing', `
     ${slider('smoothIter', 'Iterations', 0, 15, 1)}
     ${slider('smoothStr', 'Strength', 0, 1, 0.05)}
-  `);
+  `));
 
   // -- DEPTH MAP --
-  sb.innerHTML += buildSection('Depth Map', `
+  parts.push(buildSection('Depth Map', `
     <div class="upload-zone ${STATE.depthMap ? 'has-image' : ''}" id="uploadZone" tabindex="0" role="button" aria-label="Upload depth map image">
       <div class="upload-text">${(STATE.depthMapName || 'Click or drag to upload depth map').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
       <input type="file" id="depthMapInput" accept="image/*">
@@ -1813,17 +2011,18 @@ function buildSidebar() {
     ${slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05)}
     ${slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)}
     ${slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)}
-  `, false, 'depth-map-only');
+  `, false, 'depth-map-only'));
 
   // -- VIEW --
-  sb.innerHTML += buildSection('View Controls', `
+  parts.push(buildSection('View Controls', `
     ${slider('orbit', 'Orbit', 0, 360, 1)}
     ${slider('tilt', 'Tilt', -90, 90, 1)}
     ${slider('roll', 'Roll', -180, 180, 1)}
     ${slider('zoom', 'Zoom', 0.1, 10, 0.05)}
     <div style="margin-top:8px;font-size:10px;color:var(--text3);">Left drag = orbit/tilt &middot; Right/Shift drag = pan &middot; Scroll = zoom &middot; Double-click = fit</div>
-  `, true);
+  `, true));
 
+  sb.innerHTML = parts.join('');
   wireControls();
 }
 
@@ -2083,9 +2282,6 @@ function zoomExtents() {
   const halfW = meshX / 2, halfH = meshY / 2, halfZ = (zMax - zMin) / 2;
   const radius = Math.sqrt(halfW * halfW + halfH * halfH + halfZ * halfZ);
 
-  // Compute zoom so bounding sphere fits in viewport
-  const wrap = document.getElementById('canvasWrap');
-  const viewH = wrap.clientHeight;
   const fov = Math.PI / 3;
   const fitDist = radius / Math.tan(fov / 2);
   // camDist = max(meshX,meshY) * 1.2 / zoom, so zoom = max(meshX,meshY) * 1.2 / fitDist
@@ -2108,7 +2304,7 @@ function zoomExtents() {
 
 function updateStats() {
   const el = document.getElementById('statsOverlay');
-  if (!STATE.vertices) { el.innerHTML = ''; return; }
+  if (!STATE.vertices) { el.textContent = ''; return; }
   const { cols, rows, genTime, watertight } = STATE;
   const topTris = (cols-1) * (rows-1) * 2;
   const sideTris = watertight ? ((cols-1)*4 + (rows-1)*4) : 0;
@@ -2117,18 +2313,45 @@ function updateStats() {
   const verts = cols * rows * (watertight ? 2 : 1);
   const estSize = STATE.binary ? (84 + totalTris * 50) : (totalTris * 200);
 
-  el.innerHTML = `
-    <div class="stat-row"><span>Vertices</span><span class="stat-val">${verts.toLocaleString()}</span></div>
-    <div class="stat-row"><span>Triangles</span><span class="stat-val">${totalTris.toLocaleString()}</span></div>
-    <div class="stat-row"><span>Gen time</span><span class="stat-val">${genTime.toFixed(0)}ms</span></div>
-    <div class="stat-row"><span>Est. size</span><span class="stat-val">${formatBytes(estSize)}</span></div>
-    ${(cols * rows) > 50000 ? '<div class="stat-row"><span>Warning</span><span class="stat-warn">High res - may be slow</span></div>' : ''}
-  `;
+  el.textContent = '';
+
+  const statData = [
+    ['Vertices', verts.toLocaleString()],
+    ['Triangles', totalTris.toLocaleString()],
+    ['Gen time', `${genTime.toFixed(0)}ms`],
+    ['Est. size', formatBytes(estSize)],
+  ];
+
+  for (const [label, value] of statData) {
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = label;
+    const valSpan = document.createElement('span');
+    valSpan.className = 'stat-val';
+    valSpan.textContent = value;
+    row.appendChild(labelSpan);
+    row.appendChild(valSpan);
+    el.appendChild(row);
+  }
+
+  if ((cols * rows) > 50000) {
+    const warnRow = document.createElement('div');
+    warnRow.className = 'stat-row';
+    const warnLabel = document.createElement('span');
+    warnLabel.textContent = 'Warning';
+    const warnVal = document.createElement('span');
+    warnVal.className = 'stat-warn';
+    warnVal.textContent = 'High res - may be slow';
+    warnRow.appendChild(warnLabel);
+    warnRow.appendChild(warnVal);
+    el.appendChild(warnRow);
+  }
 }
 
 function updateDimsOverlay() {
   const el = document.getElementById('dimsOverlay');
-  if (!STATE.vertices) { el.innerHTML = ''; return; }
+  if (!STATE.vertices) { el.textContent = ''; return; }
   let zMin = Infinity, zMax = -Infinity;
   const { vertices, rows, cols } = STATE;
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
@@ -2136,12 +2359,29 @@ function updateDimsOverlay() {
     if (vertices[j][i] > zMax) zMax = vertices[j][i];
   }
   const totalZ = (zMax - zMin) + STATE.baseThickness;
-  el.innerHTML = `
-    <span>${STATE.meshX}" x ${STATE.meshY}"</span>
-    <span style="margin-left:12px;">Z: ${zMin.toFixed(2)}" to ${zMax.toFixed(2)}"</span>
-    <span style="margin-left:12px;">Total: ${totalZ.toFixed(2)}"</span>
-    ${totalZ > 6 ? '<span class="cnc-warn" style="margin-left:8px;">EXCEEDS 6" Z</span>' : ''}
-  `;
+
+  el.textContent = '';
+  const spanDims = document.createElement('span');
+  spanDims.textContent = `${STATE.meshX}" x ${STATE.meshY}"`;
+  el.appendChild(spanDims);
+
+  const spanZ = document.createElement('span');
+  spanZ.style.marginLeft = '12px';
+  spanZ.textContent = `Z: ${zMin.toFixed(2)}" to ${zMax.toFixed(2)}"`;
+  el.appendChild(spanZ);
+
+  const spanTotal = document.createElement('span');
+  spanTotal.style.marginLeft = '12px';
+  spanTotal.textContent = `Total: ${totalZ.toFixed(2)}"`;
+  el.appendChild(spanTotal);
+
+  if (totalZ > 6) {
+    const spanWarn = document.createElement('span');
+    spanWarn.className = 'cnc-warn';
+    spanWarn.style.marginLeft = '8px';
+    spanWarn.textContent = 'EXCEEDS 6" Z';
+    el.appendChild(spanWarn);
+  }
 }
 
 function formatBytes(b) {
@@ -2394,6 +2634,44 @@ function setupToolbar() {
   document.getElementById('filenameInput').addEventListener('change', e => { STATE.filename = e.target.value || 'meshcraft_export'; });
   document.getElementById('chkWatertight').addEventListener('change', e => { STATE.watertight = e.target.checked; updateStats(); });
   document.getElementById('chkBinary').addEventListener('change', e => { STATE.binary = e.target.checked; updateStats(); });
+
+  // Copy Link button — URL state sharing
+  const copyLinkBtn = document.getElementById('btnCopyLink');
+  if (copyLinkBtn) {
+    copyLinkBtn.addEventListener('click', () => {
+      const config = serializeConfig();
+      const url = config
+        ? `${window.location.origin}${window.location.pathname}?c=${config}`
+        : `${window.location.origin}${window.location.pathname}`;
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(url).then(() => {
+          showToast('Link copied!');
+        }).catch(() => {
+          copyFallback(url);
+        });
+      } else {
+        copyFallback(url);
+      }
+    });
+  }
+}
+
+function copyFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (e) {
+    // execCommand can throw SecurityError in sandboxed iframes
+  } finally {
+    document.body.removeChild(ta);
+  }
+  showToast(ok ? 'Link copied!' : 'Copy failed \u2014 use Ctrl+C');
 }
 
 
@@ -2401,6 +2679,101 @@ function setupToolbar() {
 
 function setupResize() {
   window.addEventListener('resize', () => { _canvasW = 0; _canvasH = 0; renderViewport(); });
+}
+
+
+// ---- SPONSOR MODAL + SCROLL-TO-EXPORT ----
+
+function setupSponsorModal() {
+  const SPONSOR_IMGS = [
+    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800',
+    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/04acb407-564f-4b6e-8c91-9506c2f52300/w=800'
+  ];
+  let sponsorIdx = 0;
+  const backdrop = document.getElementById('sponsorBackdrop');
+  const sImg = document.getElementById('sponsorImg');
+
+  function showSponsor() { backdrop.classList.add('visible'); }
+  function hideSponsor() { backdrop.classList.remove('visible'); }
+
+  document.getElementById('sponsorClose').addEventListener('click', hideSponsor);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) hideSponsor(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideSponsor(); });
+
+  document.getElementById('sponsorPrev').addEventListener('click', () => {
+    sponsorIdx = (sponsorIdx - 1 + SPONSOR_IMGS.length) % SPONSOR_IMGS.length;
+    sImg.src = SPONSOR_IMGS[sponsorIdx];
+  });
+  document.getElementById('sponsorNext').addEventListener('click', () => {
+    sponsorIdx = (sponsorIdx + 1) % SPONSOR_IMGS.length;
+    sImg.src = SPONSOR_IMGS[sponsorIdx];
+  });
+
+  let sponsorTimeout = null;
+
+  const sponsorBtn = document.getElementById('btnSponsor');
+  if (sponsorBtn) sponsorBtn.addEventListener('click', () => {
+    if (sponsorTimeout) { clearTimeout(sponsorTimeout); sponsorTimeout = null; }
+    showSponsor();
+  });
+
+  if (!sessionStorage.getItem('sponsorSeen')) {
+    sessionStorage.setItem('sponsorSeen', '1');
+    sponsorTimeout = setTimeout(() => {
+      sponsorTimeout = null;
+      showSponsor();
+    }, 4000);
+  }
+
+  // Scroll-to-export button — uses static arrow characters only (no user input)
+  const scrollBtn = document.getElementById('scrollExportBtn');
+  let atBottom = false;
+  const ARROW_DOWN = '\u2193';
+  const ARROW_UP = '\u2191';
+
+  let paddingResetTimer = null;
+  let scrollDelayTimer = null;
+
+  scrollBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (atBottom) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      const bar = document.querySelector('.export-bar');
+      if (!bar) return;
+      const barRect = bar.getBoundingClientRect();
+      const scrollTarget = window.scrollY + barRect.bottom - window.innerHeight + 20;
+      if (scrollTarget <= window.scrollY) {
+        if (paddingResetTimer !== null) clearTimeout(paddingResetTimer);
+        if (scrollDelayTimer !== null) clearTimeout(scrollDelayTimer);
+        document.body.style.paddingBottom = barRect.height + 40 + 'px';
+        scrollDelayTimer = setTimeout(() => {
+          scrollDelayTimer = null;
+          window.scrollTo({ top: document.body.scrollHeight - window.innerHeight, behavior: 'smooth' });
+        }, 10);
+        paddingResetTimer = setTimeout(() => {
+          document.body.style.paddingBottom = '';
+          paddingResetTimer = null;
+        }, 600);
+      } else {
+        window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+      }
+    }
+  });
+
+  window.addEventListener('scroll', () => {
+    const scrolledToBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 20);
+    if (scrolledToBottom) {
+      atBottom = true;
+      scrollBtn.textContent = ARROW_UP;
+      if (paddingResetTimer !== null) { clearTimeout(paddingResetTimer); paddingResetTimer = null; }
+      document.body.style.paddingBottom = '';
+    } else {
+      atBottom = false;
+      scrollBtn.textContent = ARROW_DOWN;
+    }
+  });
 }
 
 
@@ -2435,123 +2808,26 @@ function preloadDemoDepthMap() {
 }
 
 function init() {
+  // Apply URL state if present
+  const urlConfig = deserializeConfig(new URLSearchParams(window.location.search));
+  for (const [key, value] of Object.entries(urlConfig)) {
+    STATE[key] = value;
+  }
+
+  // Sync body class with potentially URL-overridden mode
+  document.body.className = 'mode-' + STATE.mode;
+
   buildSidebar();
   setupTabs();
   setupToolbar();
   setupInteraction();
   setupResize();
+  setupSponsorModal();
   generateMesh();
   preloadDemoDepthMap();
 }
 
 document.addEventListener('DOMContentLoaded', init);
-</script>
-
-<!-- SPONSOR MODAL -->
-<div class="sponsor-backdrop" id="sponsorBackdrop">
-  <div class="sponsor-modal">
-    <div class="sponsor-img-wrap">
-      <button class="sponsor-close" id="sponsorClose" aria-label="Close">&times;</button>
-      <img id="sponsorImg" src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800" alt="ShopBot Desktop Max ATC" />
-      <button class="sponsor-img-nav prev" id="sponsorPrev">&#8249;</button>
-      <button class="sponsor-img-nav next" id="sponsorNext">&#8250;</button>
-    </div>
-    <div class="sponsor-body">
-      <div class="sponsor-label">Sponsored by</div>
-      <div class="sponsor-name">ShopBot Tools</div>
-      <div class="sponsor-product">Desktop Max ATC</div>
-      <div class="sponsor-desc">MESHCRAFT 3000 was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
-      <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Learn More</a>
-    </div>
-  </div>
-</div>
-
-<!-- SCROLL TO EXPORT (mobile) -->
-<button class="scroll-export-btn" id="scrollExportBtn" aria-label="Scroll to export">&#8595;</button>
-
-<script>
-(function() {
-  // Sponsor modal
-  const SPONSOR_IMGS = [
-    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800',
-    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/04acb407-564f-4b6e-8c91-9506c2f52300/w=800'
-  ];
-  let sponsorIdx = 0;
-  const backdrop = document.getElementById('sponsorBackdrop');
-  const sImg = document.getElementById('sponsorImg');
-
-  function showSponsor() { backdrop.classList.add('visible'); }
-  function hideSponsor() { backdrop.classList.remove('visible'); }
-
-  document.getElementById('sponsorClose').addEventListener('click', hideSponsor);
-  backdrop.addEventListener('click', function(e) { if (e.target === backdrop) hideSponsor(); });
-  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') hideSponsor(); });
-
-  document.getElementById('sponsorPrev').addEventListener('click', function() {
-    sponsorIdx = (sponsorIdx - 1 + SPONSOR_IMGS.length) % SPONSOR_IMGS.length;
-    sImg.src = SPONSOR_IMGS[sponsorIdx];
-  });
-  document.getElementById('sponsorNext').addEventListener('click', function() {
-    sponsorIdx = (sponsorIdx + 1) % SPONSOR_IMGS.length;
-    sImg.src = SPONSOR_IMGS[sponsorIdx];
-  });
-
-  // Header button opens modal — clear pending auto-show timer on manual click
-  var sponsorTimeout = null;
-  var sponsorBtn = document.getElementById('btnSponsor');
-  if (sponsorBtn) sponsorBtn.addEventListener('click', function() {
-    if (sponsorTimeout) { clearTimeout(sponsorTimeout); sponsorTimeout = null; }
-    showSponsor();
-  });
-
-  // Show on first visit (once per session) — set flag immediately to prevent re-trigger on reload
-  if (!sessionStorage.getItem('sponsorSeen')) {
-    sessionStorage.setItem('sponsorSeen', '1');
-    sponsorTimeout = setTimeout(function() {
-      sponsorTimeout = null;
-      showSponsor();
-    }, 4000);
-  }
-
-  // Scroll-to-export button
-  var scrollBtn = document.getElementById('scrollExportBtn');
-  var atBottom = false;
-
-  scrollBtn.addEventListener('click', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (atBottom) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      var bar = document.querySelector('.export-bar');
-      var barRect = bar.getBoundingClientRect();
-      var scrollTarget = window.scrollY + barRect.bottom - window.innerHeight + 20;
-      if (scrollTarget <= window.scrollY) {
-        // Bar is in view but page can't scroll — force body taller temporarily
-        document.body.style.paddingBottom = barRect.height + 40 + 'px';
-        setTimeout(function() {
-          window.scrollTo({ top: document.body.scrollHeight - window.innerHeight, behavior: 'smooth' });
-        }, 10);
-        setTimeout(function() {
-          document.body.style.paddingBottom = '';
-        }, 600);
-      } else {
-        window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
-      }
-    }
-  });
-
-  window.addEventListener('scroll', function() {
-    var scrolledToBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 20);
-    if (scrolledToBottom) {
-      atBottom = true;
-      scrollBtn.innerHTML = '&#8593;';
-    } else {
-      atBottom = false;
-      scrollBtn.innerHTML = '&#8595;';
-    }
-  });
-})();
 </script>
 </body>
 </html>
