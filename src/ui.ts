@@ -46,7 +46,7 @@ export function buildSidebar(): void {
       </button>
       ${slider('meshY', 'Y (inches)', 1, 48, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
     </div>
-    ${slider('resolution', 'Grid Resolution', 16, 256, 4)}
+    ${slider('resolution', 'Grid Resolution', 16, 1024, 4)}
     ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
     <div style="margin-top:4px;font-size:10px;color:var(--text3);">ShopBot Desktop Max ATC -- 36"x24"x6"</div>
   `));

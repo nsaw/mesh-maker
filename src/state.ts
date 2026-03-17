@@ -87,7 +87,7 @@ const DEFAULTS: MeshState = {
   gaborBandwidth: 1.5,
   meshX: 36,
   meshY: 24,
-  resolution: 96,
+  resolution: 256,
   smoothIter: 0,
   smoothStr: 0.5,
   baseThickness: 0.25,
@@ -112,8 +112,8 @@ const DEFAULTS: MeshState = {
   activePreset: null,
   activeProfile: null,
   vertices: null,
-  cols: 96,
-  rows: 96,
+  cols: 256,
+  rows: 256,
   isDragging: false,
   lastMX: 0,
   lastMY: 0,
@@ -122,7 +122,7 @@ const DEFAULTS: MeshState = {
 
 export const STATE: MeshState = { ...DEFAULTS };
 
-export const noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
+export const noiseDims = { meshX: 36, meshY: 24, resolution: 256 };
 
 export let demoDepthMap: HTMLImageElement | null = null;
 export function setDemoDepthMap(img: HTMLImageElement | null): void {
