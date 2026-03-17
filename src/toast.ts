@@ -1,16 +1,29 @@
-let _hideTimer: ReturnType<typeof setTimeout> | null = null;
-let _finalizeTimer: ReturnType<typeof setTimeout> | null = null;
+let hideTimer: ReturnType<typeof setTimeout> | null = null;
+let finalizeTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Show a transient toast message in the fixed bottom toast element.
+ * @param message - Text to display.
+ * @param duration - How long to show (ms); default 1500. After this, toast fades out then hides after 300ms.
+ */
 export function showToast(message: string, duration = 1500): void {
   const toast = document.getElementById('toast');
   if (!toast) return;
-  if (_hideTimer !== null) { clearTimeout(_hideTimer); _hideTimer = null; }
-  if (_finalizeTimer !== null) { clearTimeout(_finalizeTimer); _finalizeTimer = null; }
+  if (hideTimer !== null) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  if (finalizeTimer !== null) {
+    clearTimeout(finalizeTimer);
+    finalizeTimer = null;
+  }
   toast.textContent = message;
   toast.style.display = 'block';
   toast.classList.add('visible');
-  _hideTimer = setTimeout(() => {
+  hideTimer = setTimeout(() => {
     toast.classList.remove('visible');
-    _finalizeTimer = setTimeout(() => { toast.style.display = 'none'; }, 300);
+    finalizeTimer = setTimeout(() => {
+      toast.style.display = 'none';
+    }, 300);
   }, duration);
 }

@@ -11,7 +11,7 @@
 <br>
 
 <p align="center">
-  <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800" alt="ShopBot Desktop Max ATC" width="600">
+  <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/f0def72c-dd4a-4b38-1b60-8ee1b4a08300/w=800" alt="ShopBot Desktop Max ATC" width="600">
 </p>
 
 <h3 align="center">Sponsored by <a href="https://shopbottools.com/products/desktop-max-atc/">ShopBot</a></h3>
@@ -29,7 +29,7 @@
 
 <p align="center">
   <a href="https://bitsbits.com">
-    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/7d4ecee6-c56f-4e09-dd49-c24553552900/w=400" alt="bitsbits.com" width="200">
+    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/5e96fa2a-3b23-42b9-71d8-81fe4c7ef600/w=400" alt="bitsbits.com" width="200">
   </a>
 </p>
 

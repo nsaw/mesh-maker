@@ -3,16 +3,32 @@ import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
 
 
+const PRESET_GROUPS: [string, string[]][] = [
+  ['Gentle', ['gentle-waves', 'subtle-texture', 'billowy-clouds']],
+  ['Organic', ['organic-terrain', 'sculptural', 'organic-swirl']],
+  ['Aggressive', ['deep-carve', 'hard-wave', 'turbulent-marble']],
+  ['Ridge & Stone', ['sharp-ridges', 'eroded-stone', 'natural-ridge']],
+  ['Cell & Directional', ['voronoi-cells', 'worley-cracks', 'brushed-metal']],
+];
+
+function formatPresetName(key: string): string {
+  return key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 export function buildSidebar(): void {
   const sb = document.getElementById('sidebar')!;
   const parts: string[] = [];
 
   // -- PRESETS --
   parts.push(buildSection('Presets', `
-    <div class="btn-row" id="presetRow">
-      ${Object.keys(CNC_PRESETS).map(k =>
-        `<button class="preset-pill${STATE.activePreset === k ? ' active' : ''}" data-preset="${k}">${k.replace(/-/g,' ')}</button>`
-      ).join('')}
+    <div class="control-row">
+      <div class="control-label">CNC Preset</div>
+      <select class="select-input" id="selPreset">
+        <option value=""${!STATE.activePreset ? ' selected' : ''}>Select Preset</option>
+        ${PRESET_GROUPS.map(([label, keys]) => `<optgroup label="${label}">
+          ${keys.map(k => `<option value="${k}"${STATE.activePreset === k ? ' selected' : ''}>${formatPresetName(k)}</option>`).join('')}
+        </optgroup>`).join('')}
+      </select>
     </div>
     <div class="btn-row" style="margin-top:6px;">
       ${Object.keys(PROFILES).filter(k=>k!=='custom').map(k =>
@@ -40,13 +56,37 @@ export function buildSidebar(): void {
     <div class="control-row">
       <div class="control-label">Noise Algorithm</div>
       <select class="select-input" id="selNoiseType">
-        <option value="simplex">Simplex</option>
-        <option value="perlin">Perlin</option>
-        <option value="ridged">Ridged</option>
-        <option value="fbm">FBM (Fractional Brownian)</option>
-        <option value="voronoi">Voronoi</option>
+        <optgroup label="Classic">
+          <option value="simplex">Simplex</option>
+          <option value="perlin">Perlin</option>
+          <option value="opensimplex2">OpenSimplex2</option>
+          <option value="value">Value</option>
+        </optgroup>
+        <optgroup label="Fractal">
+          <option value="fbm">FBM (Fractional Brownian)</option>
+          <option value="ridged">Ridged</option>
+          <option value="billow">Billow</option>
+          <option value="turbulence">Turbulence</option>
+        </optgroup>
+        <optgroup label="Multi-Fractal">
+          <option value="hybrid">Hybrid Multifractal</option>
+          <option value="hetero">Heterogeneous Terrain</option>
+          <option value="domainwarp">Domain Warp</option>
+        </optgroup>
+        <optgroup label="Cellular">
+          <option value="voronoi">Voronoi</option>
+          <option value="worley">Worley (Cell Edges)</option>
+        </optgroup>
+        <optgroup label="Advanced">
+          <option value="gabor">Gabor</option>
+          <option value="wavelet">Wavelet</option>
+        </optgroup>
       </select>
     </div>
+    ${STATE.noiseType === 'gabor' ? `
+      ${slider('gaborAngle', 'Gabor Angle (degrees)', 0, 180, 1)}
+      ${slider('gaborBandwidth', 'Gabor Bandwidth', 0.5, 4, 0.1)}
+    ` : ''}
     ${slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005)}
     ${slider('amplitude', 'Amplitude / Z-height (inches)', 0, 6, 0.05, '', ' <span class="cnc-badge">max Z: 6"</span>')}
     ${slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05)}
@@ -156,8 +196,8 @@ function wireControls(): void {
       // Clear active preset/profile on manual change
       if (STATE.activePreset) {
         STATE.activePreset = null;
-        const pill = document.querySelector('.preset-pill.active[data-preset]');
-        if (pill) pill.classList.remove('active');
+        const presetSel = document.getElementById('selPreset') as HTMLSelectElement | null;
+        if (presetSel) presetSel.value = '';
       }
       if (STATE.activeProfile) {
         STATE.activeProfile = null;
@@ -198,9 +238,8 @@ function wireControls(): void {
       STATE.noiseType = sel.value as typeof STATE.noiseType;
       if (STATE.activePreset) {
         STATE.activePreset = null;
-        const pill = document.querySelector('.preset-pill.active[data-preset]');
-        if (pill) pill.classList.remove('active');
       }
+      buildSidebar();
       generateMesh();
     });
   }
@@ -229,17 +268,20 @@ function wireControls(): void {
   }
 
   // Presets
-  document.querySelectorAll('[data-preset]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const p = CNC_PRESETS[(btn as HTMLElement).dataset.preset!];
+  const presetSel = document.getElementById('selPreset') as HTMLSelectElement | null;
+  if (presetSel) {
+    presetSel.addEventListener('change', () => {
+      const key = presetSel.value;
+      if (!key) return;
+      const p = CNC_PRESETS[key];
       if (!p) return;
       Object.keys(p).forEach(k => { (STATE as unknown as Record<string, unknown>)[k] = p[k]; });
-      STATE.activePreset = (btn as HTMLElement).dataset.preset!;
+      STATE.activePreset = key;
       STATE.activeProfile = null;
       buildSidebar();
       generateMesh();
     });
-  });
+  }
 
   // Texture profiles
   document.querySelectorAll('[data-profile]').forEach(btn => {

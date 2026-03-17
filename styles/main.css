@@ -255,6 +255,8 @@ input[type="range"]::-moz-range-thumb {
   width: 100%;
 }
 .select-input:focus { border-color: var(--accent); }
+.select-input optgroup { font-weight: 600; font-size: 11px; color: var(--text2); }
+.select-input option { font-weight: 400; padding-left: 4px; }
 
 /* FILE UPLOAD */
 .upload-zone {
@@ -749,10 +751,6 @@ body.mode-depthmap .noise-only { display: none; }
   .header-left { gap: 6px; }
   .brand { display: none; }
   .version { display: none; }
-  #presetRow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
-  #presetRow + .btn-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-  #presetRow .preset-pill,
-  #presetRow + .btn-row .preset-pill { padding: 3px 4px; font-size: 8px; text-align: center; letter-spacing: 0.2px; border-radius: 4px; }
   .mode-tab { padding: 3px 8px; font-size: 10px; letter-spacing: 0.4px; }
   .header-right > span, .header-right > img { display: none; }
   .tip-btn { font-size: 10px; padding: 3px 8px; }

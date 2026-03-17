@@ -6,6 +6,11 @@ export interface FBMGenerator extends NoiseGenerator {
   fbm(x: number, y: number, octaves: number, persistence: number, lacunarity: number): number;
 }
 
+export interface NoiseConfig {
+  gaborAngle?: number;
+  gaborBandwidth?: number;
+}
+
 export interface Vertex3D {
   x: number;
   y: number;

@@ -1,6 +1,6 @@
 import { STATE } from './state';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
-import type { FBMGenerator } from './types';
+import type { FBMGenerator, NoiseConfig } from './types';
 import { renderViewport } from './render';
 import { updateStats } from './stats';
 
@@ -12,8 +12,9 @@ export function generateNoiseMesh(): void {
   const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
 
-  const gen = createNoiseGen(noiseType, seed);
-  const warpGen = noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed);
+  const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
+  const gen = createNoiseGen(noiseType, seed, noiseConfig);
+  const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
 
   const verts: number[][] = [];
   for (let j = 0; j < rows; j++) {
@@ -24,13 +25,13 @@ export function generateNoiseMesh(): void {
 
       // Domain warp: x is warped first, then the warped x feeds into y's displacement.
       // This cascading is intentional — it produces richer, asymmetric distortion patterns.
-      if (distortion > 0) {
+      if (warpGen && distortion > 0) {
         x += warpGen.noise(x * 0.1, y * 0.1) * distortion * 5;
         y += warpGen.noise((x + 100) * 0.1, (y + 100) * 0.1) * distortion * 5;
       }
 
       let n: number;
-      if (noiseType === 'fbm') {
+      if ('fbm' in gen) {
         n = (gen as FBMGenerator).fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
       } else if (octaves > 1) {
         n = 0; let amp = 1, freq = 1, max = 0;
@@ -72,14 +73,15 @@ export function generateNoiseMesh(): void {
 export function generateDepthMapMesh(): void {
   const t0 = performance.now();
   const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency,
-          seed, meshX, meshY, resolution, noiseType } = STATE;
+          seed, octaves, persistence, lacunarity, meshX, meshY, resolution, noiseType } = STATE;
 
   if (!depthMap) { STATE.vertices = null; return; }
 
   const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
 
-  const gen = createNoiseGen(noiseType, seed);
+  const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
+  const gen = createNoiseGen(noiseType, seed, noiseConfig);
 
   const tmpCanvas = document.createElement('canvas');
   tmpCanvas.width = depthMap.width;
@@ -101,7 +103,19 @@ export function generateDepthMapMesh(): void {
       const r = imgData.data[idx];
       const h = (r / 255) * dmHeightScale;
 
-      const n = gen.noise(x * frequency, y * frequency);
+      let n: number;
+      if ('fbm' in gen) {
+        n = (gen as FBMGenerator).fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
+      } else if (octaves > 1) {
+        n = 0; let amp = 1, freq = 1, max = 0;
+        for (let o = 0; o < octaves; o++) {
+          n += gen.noise(x * frequency * freq, y * frequency * freq) * amp;
+          max += amp; amp *= persistence; freq *= lacunarity;
+        }
+        n /= max;
+      } else {
+        n = gen.noise(x * frequency, y * frequency);
+      }
       const noiseH = ((n + 1) / 2) * dmHeightScale;
 
       const effectiveBlend = STATE.mode === 'depthmap' ? 0 : (STATE.mode === 'noise' ? 1 : blend);

@@ -82,6 +82,7 @@ export function setupToolbar(): void {
   document.getElementById('filenameInput')!.addEventListener('change', e => { STATE.filename = (e.target as HTMLInputElement).value || 'meshcraft_export'; });
   document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chkBinary')!.addEventListener('change', e => { STATE.binary = (e.target as HTMLInputElement).checked; updateStats(); });
+  document.getElementById('chk3dmPointCloud')!.addEventListener('change', e => { STATE.export3dmAsPointCloud = (e.target as HTMLInputElement).checked; });
 
   // Copy Link button — URL state sharing
   const copyLinkBtn = document.getElementById('btnCopyLink');

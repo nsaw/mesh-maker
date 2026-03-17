@@ -3,7 +3,9 @@ export interface MeshState {
   viewMode: 'solid' | 'wireframe' | 'both' | 'points';
   exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap';
   // Noise params
-  noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi';
+  noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi'
+    | 'value' | 'opensimplex2' | 'worley' | 'billow' | 'turbulence'
+    | 'hybrid' | 'hetero' | 'domainwarp' | 'gabor' | 'wavelet';
   frequency: number;
   amplitude: number;
   noiseExp: number;
@@ -18,6 +20,8 @@ export interface MeshState {
   distortion: number;
   contrast: number;
   sharpness: number;
+  gaborAngle: number;
+  gaborBandwidth: number;
   // Mesh params
   meshX: number;
   meshY: number;
@@ -44,6 +48,8 @@ export interface MeshState {
   // Export
   watertight: boolean;
   binary: boolean;
+  /** When true, 3DM export outputs a PointCloud (vertices only) instead of a polygon mesh. */
+  export3dmAsPointCloud: boolean;
   filename: string;
   // Presets
   activePreset: string | null;
@@ -77,6 +83,8 @@ const DEFAULTS: MeshState = {
   distortion: 0,
   contrast: 1.0,
   sharpness: 0,
+  gaborAngle: 45,
+  gaborBandwidth: 1.5,
   meshX: 36,
   meshY: 24,
   resolution: 96,
@@ -99,6 +107,7 @@ const DEFAULTS: MeshState = {
   panY: 0,
   watertight: true,
   binary: true,
+  export3dmAsPointCloud: false,
   filename: 'meshcraft_export',
   activePreset: null,
   activeProfile: null,
@@ -124,7 +133,7 @@ export function setDemoDepthMap(img: HTMLImageElement | null): void {
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'contrast', 'sharpness', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
+  'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
 ];
