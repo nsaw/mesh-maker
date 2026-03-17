@@ -1,7 +1,7 @@
 export function setupSponsorModal(): void {
   const SPONSOR_IMGS: readonly string[] = [
     'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800',
-    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/04acb407-564f-4b6e-8c91-9506c2f52300/w=800',
+    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/b657c94b-f67c-4a12-9b3d-64930c5e5900/w=800',
   ];
   let sponsorIdx = 0;
   const backdrop = document.getElementById('sponsorBackdrop')!;
