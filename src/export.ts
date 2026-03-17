@@ -297,7 +297,19 @@ function exportHeightmapPNG(): Promise<Blob | null> {
 
 // --- Main export dispatcher ---
 
+let _exportInFlight = false;
+
 export async function doExport(): Promise<void> {
+  if (_exportInFlight) return;
+  _exportInFlight = true;
+  try {
+  return await _doExportInner();
+  } finally {
+    _exportInFlight = false;
+  }
+}
+
+async function _doExportInner(): Promise<void> {
   const fmt = STATE.exportFormat;
 
   if (fmt === 'heightmap') {

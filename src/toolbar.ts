@@ -113,8 +113,12 @@ function copyFallback(text: string): void {
   ta.style.opacity = '0';
   document.body.appendChild(ta);
   ta.select();
-  const ok = document.execCommand('copy');
-  document.body.removeChild(ta);
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } finally {
+    document.body.removeChild(ta);
+  }
   showToast(ok ? 'Link copied!' : 'Copy failed — use Ctrl+C');
 }
 
