@@ -112,14 +112,12 @@ function exportOBJ(mesh: MeshData): string {
     s += `v ${v.x.toFixed(6)} ${v.y.toFixed(6)} ${v.z.toFixed(6)}\n`;
   }
 
-  let vidx = rows * cols + 1;
-  const botStart = vidx;
+  const botStart = rows * cols + 1;
 
   if (watertight) {
     for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
       s += `v ${top[j][i].x.toFixed(6)} ${top[j][i].y.toFixed(6)} ${zBase.toFixed(6)}\n`;
     }
-    vidx += rows * cols;
   }
 
   s += '\n# Top surface\n';
