@@ -1,4 +1,4 @@
-import { STATE, deserializeConfig, setDemoDepthMap, demoDepthMap } from './state';
+import { STATE, deserializeConfig, setDemoDepthMap } from './state';
 import { buildSidebar, fitMeshToAspect } from './ui';
 import { setupTabs, setupToolbar, setupResize } from './toolbar';
 import { setupInteraction } from './interaction';

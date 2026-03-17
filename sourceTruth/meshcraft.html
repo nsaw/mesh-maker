@@ -1,0 +1,2833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MESHCRAFT 3000 // Sawyer Design</title>
+<link rel="icon" type="image/png" href="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/1dd2357c-f009-4b89-7e30-1d1539a9f100/w=150">
+<meta name="description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
+<meta property="og:title" content="MeshCraft 3000">
+<meta property="og:description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
+<meta property="og:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
+<meta property="og:url" content="https://meshcraft.sawyerdesign.io">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MeshCraft 3000">
+<meta name="twitter:description" content="Browser-based 3D mesh generator for CNC machining.">
+<meta name="twitter:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
+<link href="https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600&family=Ubuntu:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #141418;
+  --bg2: #1c1c22;
+  --bg3: #24242c;
+  --bg4: #2e2e38;
+  --text: #e0e0e6;
+  --text2: #999;
+  --text3: #666;
+  --accent: #4eaaff;
+  --accent2: #2d7dd2;
+  --accent-glow: rgba(78,170,255,0.15);
+  --warn: #ffaa4e;
+  --green: #4eff9e;
+  --red: #ff4e6a;
+  --radius: 8px;
+  --mono: 'JetBrains Mono', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Ubuntu', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* HEADER */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--bg4);
+  flex-shrink: 0;
+  height: 48px;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.brand {
+  font-family: 'Ubuntu', sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 16px;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+.brand span { color: var(--accent); }
+.version {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  background: var(--bg4);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.logo { width: 32px; height: auto; opacity: 0.7; }
+
+/* MODE TABS */
+.mode-tabs {
+  display: flex;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.mode-tab {
+  padding: 4px 14px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+  font-family: 'Ubuntu', sans-serif;
+}
+.mode-tab:hover { color: var(--text2); }
+.mode-tab.active { background: var(--accent); color: #fff; }
+
+/* MAIN LAYOUT */
+.main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* SIDEBAR */
+.sidebar {
+  width: 320px;
+  min-width: 320px;
+  background: var(--bg2);
+  border-right: 1px solid var(--bg4);
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex-shrink: 0;
+}
+.sidebar::-webkit-scrollbar { width: 6px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 3px; }
+
+/* SECTIONS */
+.section {
+  border-bottom: 1px solid var(--bg4);
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+.section-header:hover { background: var(--bg3); }
+.section-title {
+  font-family: 'Teko', sans-serif;
+  text-transform: uppercase;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 1.2px;
+  color: var(--text2);
+}
+.section-arrow {
+  font-size: 10px;
+  color: var(--text3);
+  transition: transform 0.2s;
+}
+.section.collapsed .section-arrow { transform: rotate(-90deg); }
+.section.collapsed .section-body { display: none; }
+.section-body { padding: 4px 14px 14px; }
+
+/* CONTROLS */
+.control-row {
+  margin-top: 10px;
+}
+.control-label {
+  font-size: 11px;
+  color: var(--text2);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.control-label .val {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  min-width: 50px;
+  text-align: right;
+}
+input[type="range"] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--bg4);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--bg2);
+  box-shadow: 0 0 4px rgba(78,170,255,0.3);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--bg2);
+}
+
+/* INPUTS */
+.text-input, .num-input {
+  background: var(--bg);
+  border: 1px solid var(--bg4);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.text-input:focus, .num-input:focus { border-color: var(--accent); }
+.num-input { width: 60px; text-align: right; }
+
+/* BUTTONS */
+.btn {
+  padding: 6px 14px;
+  font-family: 'Ubuntu', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border: 1px solid var(--bg4);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.12s;
+  background: var(--bg3);
+  color: var(--text);
+}
+.btn:hover { background: var(--bg4); border-color: var(--text3); }
+.btn-accent {
+  background: var(--accent2);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-accent:hover { background: var(--accent); }
+.btn-sm { padding: 4px 10px; font-size: 10px; }
+.btn-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+/* PRESET PILLS */
+.preset-pill {
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: 1px solid var(--bg4);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.12s;
+  background: var(--bg);
+  color: var(--text2);
+  font-family: 'Ubuntu', sans-serif;
+}
+.preset-pill:hover { border-color: var(--accent); color: var(--accent); }
+.preset-pill.active { background: var(--accent2); border-color: var(--accent); color: #fff; }
+
+/* SELECT */
+.select-input {
+  background: var(--bg);
+  border: 1px solid var(--bg4);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-family: 'Ubuntu', sans-serif;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  width: 100%;
+}
+.select-input:focus { border-color: var(--accent); }
+
+/* FILE UPLOAD */
+.upload-zone {
+  border: 2px dashed var(--bg4);
+  border-radius: var(--radius);
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text3);
+  font-size: 12px;
+}
+.upload-zone:hover { border-color: var(--accent); color: var(--accent); }
+.upload-zone.has-image { border-color: var(--green); border-style: solid; }
+.upload-zone.has-image .upload-text { color: var(--green); }
+.upload-zone input { display: none; }
+
+/* VIEWPORT */
+.viewport {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+}
+.viewport-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--bg4);
+  flex-shrink: 0;
+  min-height: 36px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.view-modes { display: flex; gap: 2px; background: var(--bg); border-radius: 4px; padding: 2px; }
+.view-btn {
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.12s;
+  font-family: 'Ubuntu', sans-serif;
+}
+.view-btn:hover { color: var(--text2); }
+.view-btn.active { background: var(--bg3); color: var(--text); }
+
+.canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+}
+.canvas-wrap.dragging { cursor: grabbing; }
+.canvas-wrap.panning { cursor: move; }
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* STATS OVERLAY */
+.stats-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(20,20,24,0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--bg4);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+  pointer-events: none;
+}
+.stats-overlay .stat-row { display: flex; justify-content: space-between; gap: 16px; }
+.stats-overlay .stat-val { color: var(--accent); }
+.stats-overlay .stat-warn { color: var(--warn); }
+
+/* EXPORT BAR */
+.export-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg2);
+  border-top: 1px solid var(--bg4);
+  flex-shrink: 0;
+}
+.export-bar .filename-input {
+  flex: 1;
+  max-width: 200px;
+}
+.export-format {
+  display: flex;
+  gap: 2px;
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 2px;
+}
+.format-btn {
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.12s;
+  font-family: var(--mono);
+}
+.format-btn:hover { color: var(--text2); }
+.format-btn.active { background: var(--accent2); color: #fff; }
+
+/* CHECKBOX */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.check-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.check-row label {
+  font-size: 11px;
+  color: var(--text2);
+  cursor: pointer;
+}
+
+/* SEED ROW */
+.seed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.seed-row .text-input { flex: 1; }
+
+/* CNC INFO */
+.cnc-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(78,255,158,0.1);
+  color: var(--green);
+  border: 1px solid rgba(78,255,158,0.2);
+}
+.cnc-warn {
+  background: rgba(255,170,78,0.1);
+  color: var(--warn);
+  border-color: rgba(255,170,78,0.2);
+}
+
+/* INLINE ROW */
+.inline-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.inline-row .control-row { flex: 1; }
+
+/* ASPECT LOCK */
+.aspect-lock-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--bg4);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text3);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  line-height: 1;
+}
+.aspect-lock-btn:hover { border-color: var(--accent); color: var(--accent); }
+.aspect-lock-btn.locked { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+
+/* DIMS OVERLAY */
+.dims-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(20,20,24,0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--bg4);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  pointer-events: none;
+}
+
+/* GENERATING OVERLAY */
+.generating-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(20,20,24,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.generating-overlay.visible { opacity: 1; }
+.generating-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--bg4);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* TIP BUTTON */
+.tip-btn {
+  display: inline-block;
+  padding: 4px 12px;
+  font-family: 'Ubuntu', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  color: #000;
+  background: var(--warn);
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tip-btn:hover { background: #ffbb33; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(255,170,78,0.3); }
+
+/* DEPTH MAP ONLY */
+.depth-map-only { display: none; }
+body.mode-depthmap .depth-map-only { display: block; }
+body.mode-depthmap .noise-only { display: none; }
+
+/* SPONSOR MODAL */
+.sponsor-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+.sponsor-backdrop.visible { opacity: 1; pointer-events: auto; }
+.sponsor-modal {
+  background: var(--bg2);
+  border: 1px solid var(--bg4);
+  border-radius: 12px;
+  max-width: 480px;
+  width: 90vw;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  transform: translateY(20px) scale(0.97);
+  transition: transform 0.25s;
+}
+.sponsor-backdrop.visible .sponsor-modal { transform: translateY(0) scale(1); }
+.sponsor-img-wrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #0d0d10;
+}
+.sponsor-img-wrap img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.sponsor-img-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.sponsor-img-nav:hover { background: rgba(78,170,255,0.4); }
+.sponsor-img-nav.prev { left: 8px; }
+.sponsor-img-nav.next { right: 8px; }
+.sponsor-body {
+  padding: 20px 24px;
+  text-align: center;
+}
+.sponsor-label {
+  font-family: 'Teko', sans-serif;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+.sponsor-name {
+  font-family: 'Ubuntu', sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 22px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.sponsor-product {
+  font-size: 13px;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+.sponsor-desc {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.sponsor-cta {
+  display: inline-block;
+  padding: 8px 24px;
+  font-family: 'Ubuntu', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  color: #fff;
+  background: var(--accent2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  letter-spacing: 0.5px;
+  transition: all 0.15s;
+}
+.sponsor-cta:hover { background: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(78,170,255,0.3); }
+.sponsor-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  z-index: 1;
+}
+.sponsor-close:hover { background: rgba(255,78,106,0.5); }
+
+/* SCROLL-TO-EXPORT BUTTON */
+.scroll-export-btn {
+  display: none;
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent2);
+  border: 1px solid var(--accent);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 999;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  transition: all 0.15s;
+}
+.scroll-export-btn:hover { background: var(--accent); transform: translateY(-2px); }
+@media (max-width: 900px) {
+  .scroll-export-btn { display: flex; }
+}
+
+/* TOAST */
+.toast {
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.toast.visible {
+  opacity: 1;
+}
+
+/* RESPONSIVE */
+@media (max-width: 900px) {
+  .header { padding: 6px 10px; height: 42px; }
+  .header-left { gap: 6px; }
+  .brand { display: none; }
+  .version { display: none; }
+  #presetRow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  #presetRow + .btn-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  #presetRow .preset-pill,
+  #presetRow + .btn-row .preset-pill { padding: 3px 4px; font-size: 8px; text-align: center; letter-spacing: 0.2px; border-radius: 4px; }
+  .mode-tab { padding: 3px 8px; font-size: 10px; letter-spacing: 0.4px; }
+  .header-right > span, .header-right > img { display: none; }
+  .tip-btn { font-size: 10px; padding: 3px 8px; }
+  #btnSponsor { font-size: 9px !important; padding: 2px 6px !important; }
+  .header { flex-wrap: nowrap; gap: 4px; }
+  .header-left { min-width: 0; flex-shrink: 1; }
+  .header-right { gap: 4px; }
+  .main { flex-direction: column; min-height: 0; }
+  .sidebar { width: 100%; min-width: unset; max-height: 35vh; border-right: none; border-bottom: 1px solid var(--bg4); }
+  body { height: auto; overflow-y: auto; }
+  .viewport { min-height: 60vh; }
+  .viewport-toolbar { flex-wrap: wrap; height: auto; gap: 4px; padding: 4px 8px; }
+  .export-bar { flex-wrap: wrap; gap: 6px; padding: 8px 10px; padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)); }
+  .export-bar .filename-input { max-width: none; flex-basis: 100%; }
+}
+</style>
+</head>
+<body class="mode-noise">
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <div class="brand">MESH<span>CRAFT</span> 3000</div>
+    <div class="version">v5.0</div>
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="noise">Noise</button>
+      <button class="mode-tab" data-mode="depthmap">Depth Map</button>
+      <button class="mode-tab" data-mode="blend">Blend</button>
+    </div>
+  </div>
+  <div class="header-right">
+    <a href="https://www.paypal.com/ncp/payment/X76TNFLB3Z6RL" target="_blank" rel="noopener" class="tip-btn" title="Buy me a coffee!">Buy me a coffee</a>
+    <button class="btn btn-sm" id="btnSponsor" style="font-size:10px;color:var(--green);border-color:rgba(78,255,158,0.3);background:rgba(78,255,158,0.08);" title="Our sponsor">ShopBot &#9825;</button>
+    <span style="font-family:'Teko',sans-serif;text-transform:uppercase;font-size:12px;color:var(--text3);letter-spacing:1px;">Sawyer Design</span>
+    <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/59f91699-ef0d-4c39-1cab-822e0c835300/w=200" alt="SD" class="logo" crossorigin="anonymous" onerror="this.style.display='none'"/>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+  <!-- SIDEBAR -->
+  <div class="sidebar" id="sidebar"></div>
+
+  <!-- VIEWPORT -->
+  <div class="viewport">
+    <div class="viewport-toolbar">
+      <div class="view-modes">
+        <button class="view-btn" data-view="solid">Solid</button>
+        <button class="view-btn active" data-view="wireframe">Wire</button>
+        <button class="view-btn" data-view="both">Both</button>
+        <button class="view-btn" data-view="points">Points</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn btn-sm" id="btnRegenerate">Regenerate</button>
+        <button class="btn btn-sm" id="btnRandomSeed">Random Seed</button>
+        <button class="btn btn-sm" id="btnZoomExtents">Zoom Extents</button>
+        <button class="btn btn-sm" id="btnResetCamera">Reset View</button>
+        <button class="btn btn-sm" id="btnCopyLink" title="Copy shareable link to clipboard">Copy Link</button>
+      </div>
+    </div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="viewport"></canvas>
+      <div class="dims-overlay" id="dimsOverlay"></div>
+      <div class="stats-overlay" id="statsOverlay"></div>
+      <div class="generating-overlay" id="genOverlay"><div class="generating-spinner"></div></div>
+    </div>
+    <div class="export-bar">
+      <input type="text" class="text-input filename-input" id="filenameInput" value="meshcraft_export" placeholder="filename">
+      <div class="export-format">
+        <button class="format-btn active" data-fmt="stl">STL</button>
+        <button class="format-btn" data-fmt="obj">OBJ</button>
+        <button class="format-btn" data-fmt="3dm">3DM</button>
+        <button class="format-btn" data-fmt="heightmap" title="Grayscale PNG for Vectric VCarve/Aspire">Heightmap</button>
+      </div>
+      <div class="check-row" style="margin:0;">
+        <input type="checkbox" id="chkWatertight" checked>
+        <label for="chkWatertight">Watertight (CNC)</label>
+      </div>
+      <div class="check-row" style="margin:0;">
+        <input type="checkbox" id="chkBinary" checked>
+        <label for="chkBinary">Binary</label>
+      </div>
+      <button class="btn btn-accent" id="btnExport">Export</button>
+    </div>
+  </div>
+</div>
+
+<!-- SPONSOR MODAL -->
+<div class="sponsor-backdrop" id="sponsorBackdrop">
+  <div class="sponsor-modal">
+    <div class="sponsor-img-wrap">
+      <button class="sponsor-close" id="sponsorClose" aria-label="Close">&times;</button>
+      <img id="sponsorImg" src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800" alt="ShopBot Desktop Max ATC" />
+      <button class="sponsor-img-nav prev" id="sponsorPrev">&#8249;</button>
+      <button class="sponsor-img-nav next" id="sponsorNext">&#8250;</button>
+    </div>
+    <div class="sponsor-body">
+      <div class="sponsor-label">Sponsored by</div>
+      <div class="sponsor-name">ShopBot Tools</div>
+      <div class="sponsor-product">Desktop Max ATC</div>
+      <div class="sponsor-desc">MESHCRAFT 3000 was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
+      <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Learn More</a>
+    </div>
+  </div>
+</div>
+
+<!-- SCROLL TO EXPORT (mobile) -->
+<button class="scroll-export-btn" id="scrollExportBtn" aria-label="Scroll to export">&#8595;</button>
+
+<div class="toast" id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--accent2);color:#fff;padding:8px 20px;border-radius:var(--radius);font-size:12px;font-weight:600;z-index:1001;pointer-events:none;"></div>
+
+<script>
+// =====================================================================
+// MESHCRAFT 3000 - Unified 3D Mesh Generator for CNC
+// Sawyer Design // ShopBot Desktop Max ATC
+// =====================================================================
+
+// ---- NOISE ALGORITHMS ----
+
+class SimplexNoiseGen {
+  constructor(seed = 0) {
+    this.grad3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+    this.p = [];
+    for (let i = 0; i < 256; i++) this.p[i] = Math.floor(this._sr(seed + i) * 256);
+    this.perm = [];
+    for (let i = 0; i < 512; i++) this.perm[i] = this.p[i & 255];
+  }
+  _sr(s) { const x = Math.sin(s) * 10000; return x - Math.floor(x); }
+  _dot(g, x, y) { return g[0] * x + g[1] * y; }
+  noise(xin, yin) {
+    const F2 = 0.5 * (Math.sqrt(3) - 1), G2 = (3 - Math.sqrt(3)) / 6;
+    const s = (xin + yin) * F2, i = Math.floor(xin + s), j = Math.floor(yin + s);
+    const t = (i + j) * G2, x0 = xin - (i - t), y0 = yin - (j - t);
+    const i1 = x0 > y0 ? 1 : 0, j1 = x0 > y0 ? 0 : 1;
+    const x1 = x0 - i1 + G2, y1 = y0 - j1 + G2, x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
+    const ii = i & 255, jj = j & 255;
+    const gi0 = this.perm[ii + this.perm[jj]] % 12;
+    const gi1 = this.perm[ii + i1 + this.perm[jj + j1]] % 12;
+    const gi2 = this.perm[ii + 1 + this.perm[jj + 1]] % 12;
+    let t0 = 0.5 - x0*x0 - y0*y0, n0 = 0;
+    if (t0 >= 0) { t0 *= t0; n0 = t0 * t0 * this._dot(this.grad3[gi0], x0, y0); }
+    let t1 = 0.5 - x1*x1 - y1*y1, n1 = 0;
+    if (t1 >= 0) { t1 *= t1; n1 = t1 * t1 * this._dot(this.grad3[gi1], x1, y1); }
+    let t2 = 0.5 - x2*x2 - y2*y2, n2 = 0;
+    if (t2 >= 0) { t2 *= t2; n2 = t2 * t2 * this._dot(this.grad3[gi2], x2, y2); }
+    return 70 * (n0 + n1 + n2);
+  }
+}
+
+class PerlinNoiseGen {
+  constructor(seed = 0) {
+    const perm = [];
+    for (let i = 0; i < 256; i++) perm[i] = i;
+    for (let i = 255; i > 0; i--) {
+      const x = Math.sin(seed + i) * 10000;
+      const j = Math.min(Math.floor((x - Math.floor(x)) * (i + 1)), i);
+      [perm[i], perm[j]] = [perm[j], perm[i]];
+    }
+    this.p = new Array(512);
+    for (let i = 0; i < 512; i++) this.p[i] = perm[i % 256];
+  }
+  _fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+  _lerp(t, a, b) { return a + t * (b - a); }
+  _grad(hash, x, y) {
+    const h = hash & 15, u = h < 8 ? x : y, v = h < 4 ? y : (h === 12 || h === 14 ? x : 0);
+    return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+  }
+  noise(x, y) {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+    x -= Math.floor(x); y -= Math.floor(y);
+    const u = this._fade(x), v = this._fade(y);
+    const A = this.p[X] + Y, AA = this.p[A], AB = this.p[A + 1], B = this.p[X + 1] + Y, BA = this.p[B], BB = this.p[B + 1];
+    return this._lerp(v, this._lerp(u, this._grad(this.p[AA], x, y), this._grad(this.p[BA], x - 1, y)),
+      this._lerp(u, this._grad(this.p[AB], x, y - 1), this._grad(this.p[BB], x - 1, y - 1)));
+  }
+}
+
+class RidgedNoiseGen {
+  constructor(seed) { this.base = new SimplexNoiseGen(seed); }
+  noise(x, y) { return 1 - Math.abs(this.base.noise(x, y)); }
+}
+
+class FBMNoiseGen {
+  constructor(seed) { this.base = new SimplexNoiseGen(seed); }
+  noise(x, y) { return this.base.noise(x, y); }
+  fbm(x, y, octaves, persistence, lacunarity) {
+    let val = 0, amp = 1, freq = 1, max = 0;
+    for (let i = 0; i < octaves; i++) {
+      val += this.noise(x * freq, y * freq) * amp;
+      max += amp; amp *= persistence; freq *= lacunarity;
+    }
+    return val / max;
+  }
+}
+
+class VoronoiNoiseGen {
+  constructor(seed) { this.seed = seed; }
+  _sr(s) { const x = Math.sin(s) * 10000; return x - Math.floor(x); }
+  _hash(x, y) { return Math.floor(this._sr(x * 374761393 + y * 668265263 + this.seed) * 1000); }
+  noise(x, y) {
+    const cx = Math.floor(x), cy = Math.floor(y);
+    let min = Infinity;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      const nx = cx + i, ny = cy + j, h = this._hash(nx, ny);
+      const px = nx + this._sr(h), py = ny + this._sr(h + 1);
+      const d = Math.hypot(x - px, y - py);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+}
+
+// Texture profiles
+const PROFILES = {
+  custom: null,
+  smooth: { octaves: 2, persistence: 0.3, lacunarity: 2.0, distortion: 0.1, contrast: 0.8, sharpness: 0.1 },
+  rough: { octaves: 6, persistence: 0.7, lacunarity: 2.5, distortion: 0.3, contrast: 1.5, sharpness: 0.8 },
+  organic: { octaves: 4, persistence: 0.6, lacunarity: 1.8, distortion: 0.5, contrast: 1.2, sharpness: 0.3 },
+  geometric: { octaves: 3, persistence: 0.4, lacunarity: 3.0, distortion: 0.1, contrast: 2.0, sharpness: 1.5 },
+  crystalline: { octaves: 5, persistence: 0.5, lacunarity: 2.2, distortion: 0.2, contrast: 1.8, sharpness: 1.2 },
+  waves: { octaves: 3, persistence: 0.6, lacunarity: 1.5, distortion: 0.8, contrast: 1.0, sharpness: 0.4 }
+};
+
+// CNC Presets (ShopBot Desktop Max ATC defaults)
+const CNC_PRESETS = {
+  'gentle-waves': { noiseType:'simplex', frequency:0.06, amplitude:0.5, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:2, persistence:0.3, lacunarity:2, distortion:0, contrast:1, sharpness:0, meshX:36, meshY:24, smoothIter:3, smoothStr:0.5 },
+  'organic-terrain': { noiseType:'fbm', frequency:0.1, amplitude:0.8, noiseExp:0.7, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:4, persistence:0.55, lacunarity:2, distortion:0.3, contrast:1.2, sharpness:0.2, meshX:36, meshY:24, smoothIter:1, smoothStr:0.4 },
+  'sharp-ridges': { noiseType:'ridged', frequency:0.08, amplitude:1.0, noiseExp:1.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:-0.2, octaves:3, persistence:0.5, lacunarity:2.2, distortion:0, contrast:1.5, sharpness:0.8, meshX:36, meshY:24, smoothIter:0, smoothStr:0 },
+  'voronoi-cells': { noiseType:'voronoi', frequency:0.15, amplitude:0.6, noiseExp:0.8, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, contrast:1, sharpness:0, meshX:36, meshY:24, smoothIter:2, smoothStr:0.6 },
+  'subtle-texture': { noiseType:'perlin', frequency:0.12, amplitude:0.25, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.4, lacunarity:2.5, distortion:0.1, contrast:0.8, sharpness:0, meshX:36, meshY:24, smoothIter:2, smoothStr:0.7 },
+  'deep-carve': { noiseType:'fbm', frequency:0.05, amplitude:2.0, noiseExp:1.2, peakExp:1, valleyExp:1, valleyFloor:0, offset:-0.3, octaves:5, persistence:0.6, lacunarity:1.8, distortion:0.4, contrast:1.8, sharpness:0.5, meshX:24, meshY:18, smoothIter:0, smoothStr:0 },
+  'sculptural': { noiseType:'fbm', frequency:0.04, amplitude:1.5, noiseExp:0.7, peakExp:1.8, valleyExp:0.35, valleyFloor:0.6, offset:0, octaves:3, persistence:0.55, lacunarity:1.8, distortion:0.4, contrast:1.3, sharpness:0.15, meshX:36, meshY:24, smoothIter:2, smoothStr:0.45 },
+  'hard-wave': { noiseType:'simplex', frequency:0.05, amplitude:1.2, noiseExp:0.6, peakExp:2.0, valleyExp:0.3, valleyFloor:0.75, offset:0.1, octaves:2, persistence:0.4, lacunarity:2, distortion:0.25, contrast:1.4, sharpness:0.1, meshX:36, meshY:24, smoothIter:3, smoothStr:0.5 },
+  'eroded-stone': { noiseType:'ridged', frequency:0.06, amplitude:1.0, noiseExp:0.8, peakExp:1.5, valleyExp:0.4, valleyFloor:0.5, offset:-0.1, octaves:4, persistence:0.5, lacunarity:2.2, distortion:0.35, contrast:1.6, sharpness:0.3, meshX:36, meshY:24, smoothIter:1, smoothStr:0.3 }
+};
+
+
+// ---- STATE ----
+
+const STATE = {
+  mode: 'noise', // noise | depthmap | blend
+  viewMode: 'wireframe',
+  exportFormat: 'stl',
+  // Noise params
+  noiseType: 'simplex',
+  frequency: 0.1,
+  amplitude: 0.65,
+  noiseExp: 0.5,
+  peakExp: 1.0,      // exponent for positive (peak) values: >1 = sharper peaks
+  valleyExp: 1.0,    // exponent for negative (valley) values: <1 = broader valleys
+  valleyFloor: 0,    // clamp valley depth: 0=no clamp, 1=fully flat valleys
+  offset: 0,
+  seed: 0,
+  octaves: 2,
+  persistence: 0.5,
+  lacunarity: 2.0,
+  distortion: 0,
+  contrast: 1.0,
+  sharpness: 0,
+  // Mesh params
+  meshX: 36,   // ShopBot X max
+  meshY: 24,   // ShopBot Y max
+  resolution: 96,
+  smoothIter: 0,
+  smoothStr: 0.5,
+  baseThickness: 0.25, // bottom slab inches
+  // Depth map
+  depthMap: null,
+  depthMapName: '',
+  blend: 0.2, // 0=depthmap, 1=noise
+  dmHeightScale: 1.0,
+  dmOffset: -0.08,
+  dmSmoothing: 7,
+  // View
+  orbit: 55,
+  tilt: -25,
+  roll: 0,
+  zoom: 1.0,
+  panX: 0,
+  panY: 0,
+  // Export
+  watertight: true,
+  binary: true,
+  filename: 'meshcraft_export',
+  // Depth map
+  depthMapAR: null,
+  aspectLocked: false,
+  // Presets
+  activePreset: null,
+  activeProfile: null,
+  // Internal
+  vertices: null,
+  cols: 96,
+  rows: 96,
+  isDragging: false,
+  lastMX: 0, lastMY: 0,
+  genTime: 0
+};
+
+const DEFAULTS = Object.assign({}, STATE);
+
+const _noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
+
+// ---- TOAST NOTIFICATIONS ----
+
+let _hideTimer = null;
+let _finalizeTimer = null;
+
+function showToast(message, duration = 1500) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  if (_hideTimer !== null) { clearTimeout(_hideTimer); _hideTimer = null; }
+  if (_finalizeTimer !== null) { clearTimeout(_finalizeTimer); _finalizeTimer = null; }
+  toast.textContent = message;
+  toast.style.display = 'block';
+  toast.classList.add('visible');
+  _hideTimer = setTimeout(() => {
+    toast.classList.remove('visible');
+    _finalizeTimer = setTimeout(() => { toast.style.display = 'none'; }, 300);
+  }, duration);
+}
+
+// ---- URL STATE SERIALIZATION ----
+
+const URL_SERIALIZABLE_KEYS = [
+  'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
+  'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
+  'contrast', 'sharpness', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
+  'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
+  'viewMode', 'activePreset', 'activeProfile',
+];
+
+function serializeConfig() {
+  const diff = {};
+  for (const key of URL_SERIALIZABLE_KEYS) {
+    if (STATE[key] !== DEFAULTS[key]) {
+      diff[key] = STATE[key];
+    }
+  }
+  if (Object.keys(diff).length === 0) return '';
+  return btoa(JSON.stringify(diff))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function deserializeConfig(searchParams) {
+  const encoded = searchParams.get('c');
+  if (!encoded) return {};
+  try {
+    const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    const json = atob(padded);
+    const parsed = JSON.parse(json);
+    const result = {};
+    for (const key of URL_SERIALIZABLE_KEYS) {
+      if (key in parsed) {
+        result[key] = parsed[key];
+      }
+    }
+    return result;
+  } catch (e) {
+    return {};
+  }
+}
+
+
+// ---- MESH GENERATION ----
+
+function createNoiseGen(type, seed) {
+  switch (type) {
+    case 'perlin': return new PerlinNoiseGen(seed);
+    case 'ridged': return new RidgedNoiseGen(seed);
+    case 'fbm': return new FBMNoiseGen(seed);
+    case 'voronoi': return new VoronoiNoiseGen(seed);
+    default: return new SimplexNoiseGen(seed);
+  }
+}
+
+function generateNoiseMesh() {
+  const t0 = performance.now();
+  const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
+          distortion, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType } = STATE;
+
+  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
+  STATE.cols = cols; STATE.rows = rows;
+
+  const gen = createNoiseGen(noiseType, seed);
+  // Domain warp generator (always simplex)
+  const warpGen = noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed);
+
+  const verts = [];
+  for (let j = 0; j < rows; j++) {
+    verts[j] = [];
+    for (let i = 0; i < cols; i++) {
+      const u = i / (cols - 1), v = j / (rows - 1);
+      let x = u * meshX, y = v * meshY;
+
+      // Domain warping
+      if (distortion > 0) {
+        x += warpGen.noise(x * 0.1, y * 0.1) * distortion * 5;
+        y += warpGen.noise((x + 100) * 0.1, (y + 100) * 0.1) * distortion * 5;
+      }
+
+      // Base noise
+      let n;
+      if (noiseType === 'fbm') {
+        n = gen.fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
+      } else if (octaves > 1) {
+        n = 0; let amp = 1, freq = 1, max = 0;
+        for (let o = 0; o < octaves; o++) {
+          n += gen.noise(x * frequency * freq, y * frequency * freq) * amp;
+          max += amp; amp *= persistence; freq *= lacunarity;
+        }
+        n /= max;
+      } else {
+        n = gen.noise(x * frequency, y * frequency);
+      }
+
+      // Contrast
+      n *= contrast;
+      // Sharpness
+      if (sharpness > 0) {
+        const s = n >= 0 ? 1 : -1;
+        n = s * Math.pow(Math.abs(n), 1 + sharpness);
+      }
+      // Global noise exponent (symmetric hard limiter)
+      const sgn = n >= 0 ? 1 : -1;
+      n = sgn * Math.pow(Math.abs(n), noiseExp);
+
+      // Asymmetric peak/valley shaping
+      // peakExp > 1 = sharper/crisper peaks, < 1 = rounder peaks
+      // valleyExp < 1 = broader/flatter valleys, > 1 = deeper/narrower valleys
+      if (n >= 0) {
+        n = Math.pow(n, peakExp);
+      } else {
+        n = -Math.pow(-n, valleyExp);
+      }
+
+      // Valley floor clamp (lerp valleys toward 0)
+      // At valleyFloor=1, all negative values become 0 (completely flat valleys)
+      if (valleyFloor > 0 && n < 0) {
+        n = n * (1 - valleyFloor);
+      }
+
+      verts[j][i] = n * amplitude + offset;
+    }
+  }
+
+  STATE.vertices = smoothIter > 0 ? weightedSmooth(verts, rows, cols, smoothIter, smoothStr) : verts;
+  STATE.genTime = performance.now() - t0;
+}
+
+function generateDepthMapMesh() {
+  const t0 = performance.now();
+  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency,
+          seed, meshX, meshY, resolution, noiseType } = STATE;
+
+  if (!depthMap) { STATE.vertices = null; return; }
+
+  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
+  STATE.cols = cols; STATE.rows = rows;
+
+  const gen = createNoiseGen(noiseType, seed);
+
+  // Get depth map pixel data
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = depthMap.width;
+  tmpCanvas.height = depthMap.height;
+  const tmpCtx = tmpCanvas.getContext('2d');
+  tmpCtx.drawImage(depthMap, 0, 0);
+  const imgData = tmpCtx.getImageData(0, 0, depthMap.width, depthMap.height);
+
+  const verts = [];
+  for (let j = 0; j < rows; j++) {
+    verts[j] = [];
+    for (let i = 0; i < cols; i++) {
+      const u = i / (cols - 1), v = j / (rows - 1);
+      const x = u * meshX, y = v * meshY;
+
+      // Sample depth map
+      const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
+      const iy = Math.min(Math.floor(v * depthMap.height), depthMap.height - 1);
+      const idx = (iy * depthMap.width + ix) * 4;
+      const r = imgData.data[idx];
+      const h = (r / 255) * dmHeightScale;
+
+      // Noise (use world coords for consistency with noise mode)
+      const n = gen.noise(x * frequency, y * frequency);
+      const noiseH = ((n + 1) / 2) * dmHeightScale;
+
+      // Blend modes
+      const effectiveBlend = STATE.mode === 'depthmap' ? 0 : (STATE.mode === 'noise' ? 1 : blend);
+      const z = effectiveBlend * noiseH + (1 - effectiveBlend) * h + dmOffset;
+
+      verts[j][i] = z;
+    }
+  }
+
+  STATE.vertices = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
+  STATE.genTime = performance.now() - t0;
+}
+
+function generateMesh() {
+  const overlay = document.getElementById('genOverlay');
+  overlay.classList.add('visible');
+
+  // Double-rAF ensures the browser paints the spinner before synchronous work begins
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (STATE.mode === 'noise') {
+        generateNoiseMesh();
+      } else if (STATE.mode === 'depthmap') {
+        generateDepthMapMesh();
+      } else {
+        // Blend mode - need depth map
+        if (STATE.depthMap) generateDepthMapMesh();
+        else generateNoiseMesh();
+      }
+      renderViewport();
+      updateStats();
+      overlay.classList.remove('visible');
+    });
+  });
+}
+
+function weightedSmooth(verts, rows, cols, iterations, strength) {
+  let sm = verts;
+  for (let iter = 0; iter < iterations; iter++) {
+    const nv = [];
+    for (let j = 0; j < rows; j++) {
+      nv[j] = [];
+      for (let i = 0; i < cols; i++) {
+        let ws = 0, tw = 0;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          const nj = j + dj, ni = i + di;
+          if (nj >= 0 && nj < rows && ni >= 0 && ni < cols) {
+            const w = (dj === 0 && di === 0) ? 4 : (dj === 0 || di === 0) ? 2 : 1;
+            ws += sm[nj][ni] * w; tw += w;
+          }
+        }
+        nv[j][i] = sm[j][i] * (1 - strength) + (ws / tw) * strength;
+      }
+    }
+    sm = nv;
+  }
+  return sm;
+}
+
+
+// ---- 3D RENDERING ----
+
+let _canvasW = 0, _canvasH = 0;
+function resizeCanvas() {
+  const canvas = document.getElementById('viewport');
+  const wrap = document.getElementById('canvasWrap');
+  const dpr = window.devicePixelRatio || 1;
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  if (_canvasW !== w || _canvasH !== h) {
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    _canvasW = w; _canvasH = h;
+  }
+}
+
+function renderViewport() {
+  const canvas = document.getElementById('viewport');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('canvasWrap');
+  const dpr = window.devicePixelRatio || 1;
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+
+  // Only resize if dimensions changed
+  resizeCanvas();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  ctx.fillStyle = '#141418';
+  ctx.fillRect(0, 0, W, H);
+
+  if (!STATE.vertices) {
+    updateDimsOverlay();
+    return;
+  }
+
+  const { vertices, cols, rows, meshX, meshY, orbit, tilt, roll, zoom, viewMode, panX, panY } = STATE;
+  const rotRad = orbit * Math.PI / 180;
+  const tiltRad = tilt * Math.PI / 180;
+  const rollRad = roll * Math.PI / 180;
+  const cx = W / 2 + (panX || 0), cy = H / 2 + (panY || 0);
+  const fov = Math.PI / 3;
+  const projScale = (H / 2) / Math.tan(fov / 2);
+  const camDist = Math.max(meshX, meshY) * 1.2 / zoom;
+
+  // Compute Z center so rotation pivots around actual mesh center
+  let zMin = Infinity, zMax = -Infinity;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    if (vertices[j][i] < zMin) zMin = vertices[j][i];
+    if (vertices[j][i] > zMax) zMax = vertices[j][i];
+  }
+  const zBase = STATE.watertight ? -STATE.baseThickness : 0;
+  const zMid = (Math.min(zMin, zBase) + zMax) / 2;
+
+  function project(x, y, z) {
+    // Center mesh at origin (including Z so rotation pivot = mesh center)
+    const mx = x - meshX / 2, my = y - meshY / 2, mz = z - zMid;
+    // Rotate Y (orbit)
+    const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+    const rx = mx * cosR - mz * sinR, rz = mx * sinR + mz * cosR;
+    // Tilt X
+    const cosT = Math.cos(tiltRad), sinT = Math.sin(tiltRad);
+    const ty = my * cosT - rz * sinT, tz = my * sinT + rz * cosT;
+    // Roll Z (optional)
+    const cosS = Math.cos(rollRad), sinS = Math.sin(rollRad);
+    const sx = rx * cosS - ty * sinS, sy = rx * sinS + ty * cosS;
+    // Camera offset
+    const cz = tz + camDist;
+    if (cz < 0.1) return { x: cx, y: cy, z: 0.1 };
+    return { x: cx + (sx * projScale) / cz, y: cy + (sy * projScale) / cz, z: cz };
+  }
+
+  // Project all vertices
+  const proj = [];
+  for (let j = 0; j < rows; j++) {
+    proj[j] = [];
+    for (let i = 0; i < cols; i++) {
+      const u = i / (cols - 1), v = j / (rows - 1);
+      proj[j][i] = project(u * meshX, v * meshY, vertices[j][i]);
+    }
+  }
+
+  // Reuse zMin/zMax from above for coloring
+  const zRange = zMax - zMin || 1;
+
+  if (viewMode === 'solid' || viewMode === 'both') {
+    const zBase = -STATE.baseThickness;
+
+    // Light direction for diffuse shading (upper-left, slightly in front)
+    const lightDir = { x: -0.4, y: -0.5, z: 0.75 };
+    const lLen = Math.sqrt(lightDir.x*lightDir.x + lightDir.y*lightDir.y + lightDir.z*lightDir.z);
+    lightDir.x /= lLen; lightDir.y /= lLen; lightDir.z /= lLen;
+    const dxW = meshX / (cols - 1);
+    const dyW = meshY / (rows - 1);
+
+    // -- PASS 1: Draw watertight enclosure (bottom + sides) via depth sort --
+    if (STATE.watertight && STATE.baseThickness > 0) {
+      const encFaces = [];
+      const step = Math.max(1, Math.floor(cols / 48));
+
+      // Bottom face
+      for (let j = 0; j < rows - 1; j += step) {
+        const jn = Math.min(j + step, rows - 1);
+        for (let i = 0; i < cols - 1; i += step) {
+          const in2 = Math.min(i + step, cols - 1);
+          const b1 = project((i/(cols-1))*meshX, (j/(rows-1))*meshY, zBase);
+          const b2 = project((in2/(cols-1))*meshX, (j/(rows-1))*meshY, zBase);
+          const b3 = project((i/(cols-1))*meshX, (jn/(rows-1))*meshY, zBase);
+          const b4 = project((in2/(cols-1))*meshX, (jn/(rows-1))*meshY, zBase);
+          encFaces.push({ pts: [b1, b3, b4, b2], avgZ: (b1.z+b2.z+b3.z+b4.z)/4, color: '#1a2030' });
+        }
+      }
+      // Side walls
+      const sideColor = '#253045';
+      for (let i = 0; i < cols - 1; i += step) {
+        const in2 = Math.min(i + step, cols - 1);
+        let t1, t2, b1, b2;
+        // Front
+        t1 = proj[0][i]; t2 = proj[0][in2];
+        b1 = project((i/(cols-1))*meshX, 0, zBase); b2 = project((in2/(cols-1))*meshX, 0, zBase);
+        encFaces.push({ pts: [t1, t2, b2, b1], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
+        // Back
+        t1 = proj[rows-1][i]; t2 = proj[rows-1][in2];
+        b1 = project((i/(cols-1))*meshX, meshY, zBase); b2 = project((in2/(cols-1))*meshX, meshY, zBase);
+        encFaces.push({ pts: [t1, b1, b2, t2], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
+      }
+      for (let j = 0; j < rows - 1; j += step) {
+        const jn = Math.min(j + step, rows - 1);
+        let t1, t2, b1, b2;
+        // Left
+        t1 = proj[j][0]; t2 = proj[jn][0];
+        b1 = project(0, (j/(rows-1))*meshY, zBase); b2 = project(0, (jn/(rows-1))*meshY, zBase);
+        encFaces.push({ pts: [t1, b1, b2, t2], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
+        // Right
+        t1 = proj[j][cols-1]; t2 = proj[jn][cols-1];
+        b1 = project(meshX, (j/(rows-1))*meshY, zBase); b2 = project(meshX, (jn/(rows-1))*meshY, zBase);
+        encFaces.push({ pts: [t1, t2, b2, b1], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
+      }
+      encFaces.sort((a, b) => b.avgZ - a.avgZ);
+      for (const f of encFaces) {
+        ctx.fillStyle = f.color;
+        ctx.strokeStyle = f.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(f.pts[0].x, f.pts[0].y);
+        for (let k = 1; k < f.pts.length; k++) ctx.lineTo(f.pts[k].x, f.pts[k].y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // Subtle edge highlight
+        ctx.strokeStyle = 'rgba(78,170,255,0.12)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+    }
+
+    // -- PASS 2: Top surface with per-vertex normal smoothing (Gouraud-style) --
+
+    // Step 1: Compute per-face normals
+    const faceNx = [], faceNy = [], faceNz = [];
+    for (let j = 0; j < rows - 1; j++) {
+      faceNx[j] = []; faceNy[j] = []; faceNz[j] = [];
+      for (let i = 0; i < cols - 1; i++) {
+        const e1z = vertices[j][i+1] - vertices[j][i];
+        const e2z = vertices[j+1][i] - vertices[j][i];
+        // Cross product of edges in world space
+        let nx = -e1z * dyW, ny = -e2z * dxW, nz = dxW * dyW;
+        const len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+        faceNx[j][i] = nx / len;
+        faceNy[j][i] = ny / len;
+        faceNz[j][i] = nz / len;
+      }
+    }
+
+    // Step 2: Compute per-vertex normals by averaging adjacent face normals
+    const vtxShade = [];
+    for (let j = 0; j < rows; j++) {
+      vtxShade[j] = [];
+      for (let i = 0; i < cols; i++) {
+        let nx = 0, ny = 0, nz = 0, count = 0;
+        // Average normals of up to 4 adjacent faces
+        if (j > 0 && i > 0)         { nx += faceNx[j-1][i-1]; ny += faceNy[j-1][i-1]; nz += faceNz[j-1][i-1]; count++; }
+        if (j > 0 && i < cols - 1)  { nx += faceNx[j-1][i];   ny += faceNy[j-1][i];   nz += faceNz[j-1][i];   count++; }
+        if (j < rows - 1 && i > 0)  { nx += faceNx[j][i-1];   ny += faceNy[j][i-1];   nz += faceNz[j][i-1];   count++; }
+        if (j < rows - 1 && i < cols - 1) { nx += faceNx[j][i]; ny += faceNy[j][i]; nz += faceNz[j][i]; count++; }
+        if (count > 0) { nx /= count; ny /= count; nz /= count; }
+        const len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+        nx /= len; ny /= len; nz /= len;
+        // Diffuse + ambient
+        const diffuse = Math.max(0, nx*lightDir.x + ny*lightDir.y + nz*lightDir.z);
+        vtxShade[j][i] = 0.12 + 0.88 * diffuse; // ambient floor 0.12
+      }
+    }
+
+    // Step 3: Compute per-vertex colors (height-based tint * smooth shading)
+    const vtxColor = [];
+    for (let j = 0; j < rows; j++) {
+      vtxColor[j] = [];
+      for (let i = 0; i < cols; i++) {
+        const t = Math.max(0, Math.min(1, (vertices[j][i] - zMin) / zRange));
+        const s = vtxShade[j][i];
+        vtxColor[j][i] = [
+          Math.floor((40 + t * 180) * s),
+          Math.floor((50 + t * 190) * s),
+          Math.floor((70 + t * 185) * s)
+        ];
+      }
+    }
+
+    // Step 4: Draw faces in scanline order (back-to-front), using averaged vertex colors
+    const rowOrder = [];
+    for (let j = 0; j < rows - 1; j++) {
+      const midI = Math.floor(cols / 2);
+      rowOrder.push({ j, z: (proj[j][midI].z + proj[j+1][midI].z) / 2 });
+    }
+    rowOrder.sort((a, b) => b.z - a.z);
+    const colOrderLR = proj[0][0].z > proj[0][cols-1].z;
+
+    for (const { j } of rowOrder) {
+      const iStart = colOrderLR ? 0 : cols - 2;
+      const iEnd = colOrderLR ? cols - 1 : -1;
+      const iStep = colOrderLR ? 1 : -1;
+
+      for (let i = iStart; i !== iEnd; i += iStep) {
+        const p1 = proj[j][i], p2 = proj[j][i+1], p3 = proj[j+1][i], p4 = proj[j+1][i+1];
+        const c1 = vtxColor[j][i], c2 = vtxColor[j][i+1], c3 = vtxColor[j+1][i], c4 = vtxColor[j+1][i+1];
+
+        // Bilinear blend of 4 vertex colors for this quad
+        const r = (c1[0] + c2[0] + c3[0] + c4[0]) >> 2;
+        const g = (c1[1] + c2[1] + c3[1] + c4[1]) >> 2;
+        const bl = (c1[2] + c2[2] + c3[2] + c4[2]) >> 2;
+        const fillColor = `rgb(${r},${g},${bl})`;
+
+        ctx.fillStyle = fillColor;
+        ctx.strokeStyle = fillColor;
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p4.x, p4.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+  }
+
+  if (viewMode === 'wireframe' || viewMode === 'both') {
+    ctx.lineWidth = 0.5;
+    for (let j = 0; j < rows - 1; j++) {
+      for (let i = 0; i < cols - 1; i++) {
+        const p1 = proj[j][i], p2 = proj[j][i+1], p3 = proj[j+1][i];
+        const t = Math.max(0, Math.min(1, (vertices[j][i] - zMin) / zRange));
+        const g = Math.floor(40 + t * 120);
+        ctx.strokeStyle = `rgb(${g},${g+15},${g+30})`;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.stroke();
+      }
+    }
+    // Right and bottom edges
+    for (let j = 0; j < rows - 1; j++) {
+      const i = cols - 1;
+      ctx.beginPath();
+      ctx.moveTo(proj[j][i].x, proj[j][i].y);
+      ctx.lineTo(proj[j+1][i].x, proj[j+1][i].y);
+      ctx.stroke();
+    }
+    for (let i = 0; i < cols - 1; i++) {
+      const j = rows - 1;
+      ctx.beginPath();
+      ctx.moveTo(proj[j][i].x, proj[j][i].y);
+      ctx.lineTo(proj[j][i+1].x, proj[j][i+1].y);
+      ctx.stroke();
+    }
+  }
+
+  if (viewMode === 'points') {
+    const skip = Math.max(1, Math.floor(cols / 80));
+    for (let j = 0; j < rows; j += skip) {
+      for (let i = 0; i < cols; i += skip) {
+        const p = proj[j][i];
+        const t = Math.max(0, Math.min(1, (vertices[j][i] - zMin) / zRange));
+        ctx.fillStyle = `rgba(78,170,255,${0.3 + t * 0.7})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  updateDimsOverlay();
+}
+
+
+// ---- EXPORT FUNCTIONS ----
+
+function getFullMeshData() {
+  // Returns vertices as {x,y,z} arrays for export, including bottom/sides if watertight
+  const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
+  // Enforce minimum base thickness when watertight to avoid degenerate zero-height side triangles
+  const baseThickness = watertight ? Math.max(STATE.baseThickness, 0.01) : STATE.baseThickness;
+  if (!vertices) return null;
+
+  const top = [];
+  for (let j = 0; j < rows; j++) {
+    top[j] = [];
+    for (let i = 0; i < cols; i++) {
+      top[j][i] = { x: (i/(cols-1))*meshX, y: (j/(rows-1))*meshY, z: vertices[j][i] };
+    }
+  }
+  return { top, cols, rows, meshX, meshY, baseThickness, watertight };
+}
+
+function triNormal(a, b, c) {
+  const ux = b.x-a.x, uy = b.y-a.y, uz = b.z-a.z;
+  const vx = c.x-a.x, vy = c.y-a.y, vz = c.z-a.z;
+  const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+  const len = Math.hypot(nx, ny, nz);
+  return len > 0 ? { x: nx/len, y: ny/len, z: nz/len } : { x: 0, y: 0, z: 1 };
+}
+
+function collectTriangles(mesh) {
+  const tris = [];
+  const { top, cols, rows, baseThickness, watertight } = mesh;
+  const zBase = -baseThickness;
+
+  // Top surface
+  for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
+    tris.push([top[j][i], top[j][i+1], top[j+1][i]]);
+    tris.push([top[j][i+1], top[j+1][i+1], top[j+1][i]]);
+  }
+
+  if (watertight) {
+    // Bottom face (flat, reversed winding)
+    for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
+      const b00 = {x:top[j][i].x, y:top[j][i].y, z:zBase};
+      const b10 = {x:top[j][i+1].x, y:top[j][i+1].y, z:zBase};
+      const b01 = {x:top[j+1][i].x, y:top[j+1][i].y, z:zBase};
+      const b11 = {x:top[j+1][i+1].x, y:top[j+1][i+1].y, z:zBase};
+      tris.push([b00, b01, b10]);
+      tris.push([b10, b01, b11]);
+    }
+    // Side walls - front edge (j=0)
+    for (let i = 0; i < cols-1; i++) {
+      const tl = top[0][i], tr = top[0][i+1];
+      const bl = {x:tl.x,y:tl.y,z:zBase}, br = {x:tr.x,y:tr.y,z:zBase};
+      tris.push([tl, bl, tr]); tris.push([tr, bl, br]);
+    }
+    // Side walls - back edge (j=rows-1)
+    for (let i = 0; i < cols-1; i++) {
+      const tl = top[rows-1][i], tr = top[rows-1][i+1];
+      const bl = {x:tl.x,y:tl.y,z:zBase}, br = {x:tr.x,y:tr.y,z:zBase};
+      tris.push([tl, tr, bl]); tris.push([tr, br, bl]);
+    }
+    // Side walls - left edge (i=0)
+    for (let j = 0; j < rows-1; j++) {
+      const tt = top[j][0], tb = top[j+1][0];
+      const bt = {x:tt.x,y:tt.y,z:zBase}, bb = {x:tb.x,y:tb.y,z:zBase};
+      tris.push([tt, tb, bt]); tris.push([tb, bb, bt]);
+    }
+    // Side walls - right edge (i=cols-1)
+    for (let j = 0; j < rows-1; j++) {
+      const tt = top[j][cols-1], tb = top[j+1][cols-1];
+      const bt = {x:tt.x,y:tt.y,z:zBase}, bb = {x:tb.x,y:tb.y,z:zBase};
+      tris.push([tt, bt, tb]); tris.push([tb, bt, bb]);
+    }
+  }
+  return tris;
+}
+
+function exportSTL_ASCII(mesh) {
+  const tris = collectTriangles(mesh);
+  let s = 'solid meshcraft\n';
+  for (const [a, b, c] of tris) {
+    const n = triNormal(a, b, c);
+    s += `facet normal ${n.x} ${n.y} ${n.z}\n outer loop\n  vertex ${a.x} ${a.y} ${a.z}\n  vertex ${b.x} ${b.y} ${b.z}\n  vertex ${c.x} ${c.y} ${c.z}\n endloop\nendfacet\n`;
+  }
+  return s + 'endsolid meshcraft';
+}
+
+function exportSTL_Binary(mesh) {
+  const tris = collectTriangles(mesh);
+  const buf = new ArrayBuffer(84 + tris.length * 50);
+  const view = new DataView(buf);
+  // 80 byte header
+  const header = 'MESHCRAFT 3000 // Sawyer Design';
+  for (let i = 0; i < 80; i++) view.setUint8(i, i < header.length ? header.charCodeAt(i) : 0);
+  view.setUint32(80, tris.length, true);
+  let off = 84;
+  for (const [a, b, c] of tris) {
+    const n = triNormal(a, b, c);
+    view.setFloat32(off, n.x, true); off += 4;
+    view.setFloat32(off, n.y, true); off += 4;
+    view.setFloat32(off, n.z, true); off += 4;
+    for (const v of [a, b, c]) {
+      view.setFloat32(off, v.x, true); off += 4;
+      view.setFloat32(off, v.y, true); off += 4;
+      view.setFloat32(off, v.z, true); off += 4;
+    }
+    view.setUint16(off, 0, true); off += 2; // attribute byte count
+  }
+  return new Blob([buf], { type: 'application/octet-stream' });
+}
+
+function exportOBJ(mesh) {
+  const { top, cols, rows, watertight, baseThickness } = mesh;
+  const zBase = -baseThickness;
+  let s = '# MESHCRAFT 3000 - Sawyer Design\n# OBJ Export\n\n';
+
+  // Top surface vertices
+  const topStart = 1;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const v = top[j][i];
+    s += `v ${v.x.toFixed(6)} ${v.y.toFixed(6)} ${v.z.toFixed(6)}\n`;
+  }
+
+  let vidx = rows * cols + 1;
+  const botStart = vidx;
+
+  if (watertight) {
+    // Bottom vertices
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      s += `v ${top[j][i].x.toFixed(6)} ${top[j][i].y.toFixed(6)} ${zBase.toFixed(6)}\n`;
+    }
+    vidx += rows * cols;
+  }
+
+  s += '\n# Top surface\n';
+  for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
+    const a = topStart + j*cols+i, b = a+1, c = a+cols, d = c+1;
+    s += `f ${a} ${b} ${c}\nf ${b} ${d} ${c}\n`;
+  }
+
+  if (watertight) {
+    s += '\n# Bottom surface\n';
+    for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
+      const a = botStart + j*cols+i, b = a+1, c = a+cols, d = c+1;
+      s += `f ${a} ${c} ${b}\nf ${b} ${c} ${d}\n`;
+    }
+    s += '\n# Side walls\n';
+    // Front (j=0)
+    for (let i = 0; i < cols-1; i++) {
+      const tl = topStart+i, tr = tl+1, bl = botStart+i, br = bl+1;
+      s += `f ${tl} ${bl} ${tr}\nf ${tr} ${bl} ${br}\n`;
+    }
+    // Back (j=rows-1)
+    for (let i = 0; i < cols-1; i++) {
+      const tl = topStart+(rows-1)*cols+i, tr = tl+1, bl = botStart+(rows-1)*cols+i, br = bl+1;
+      s += `f ${tl} ${tr} ${bl}\nf ${tr} ${br} ${bl}\n`;
+    }
+    // Left (i=0)
+    for (let j = 0; j < rows-1; j++) {
+      const tt = topStart+j*cols, tb = tt+cols, bt = botStart+j*cols, bb = bt+cols;
+      s += `f ${tt} ${tb} ${bt}\nf ${tb} ${bb} ${bt}\n`;
+    }
+    // Right (i=cols-1)
+    for (let j = 0; j < rows-1; j++) {
+      const tt = topStart+j*cols+(cols-1), tb = tt+cols, bt = botStart+j*cols+(cols-1), bb = bt+cols;
+      s += `f ${tt} ${bt} ${tb}\nf ${tb} ${bt} ${bb}\n`;
+    }
+  }
+  return s;
+}
+
+// --- Rhino 3DM export via lazy-loaded rhino3dm.js WASM from CDN ---
+
+let _rhino = null;
+let _rhinoPromise = null;
+
+const RHINO3DM_URL = 'https://cdn.jsdelivr.net/npm/rhino3dm@8.4.0/rhino3dm.module.min.js';
+
+async function loadRhino3dm() {
+  if (_rhino) return _rhino;
+  if (!_rhinoPromise) {
+    _rhinoPromise = (async () => {
+      try {
+        const mod = await import(RHINO3DM_URL);
+        _rhino = await mod.default();
+        return _rhino;
+      } catch (e) {
+        _rhinoPromise = null;
+        throw e;
+      }
+    })();
+  }
+  return _rhinoPromise;
+}
+
+async function exportRhino3DM(mesh) {
+  const rhino = await loadRhino3dm();
+
+  const { top, cols, rows, watertight, baseThickness } = mesh;
+  const zBase = -baseThickness;
+
+  let m = null;
+  let file = null;
+  let meshAdded = false;
+
+  try {
+    m = new rhino.Mesh();
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++)
+        m.vertices().add(top[j][i].x, top[j][i].y, top[j][i].z);
+
+    const botStart = rows * cols;
+    if (watertight)
+      for (let j = 0; j < rows; j++)
+        for (let i = 0; i < cols; i++)
+          m.vertices().add(top[j][i].x, top[j][i].y, zBase);
+
+    for (let j = 0; j < rows - 1; j++)
+      for (let i = 0; i < cols - 1; i++) {
+        const a = j * cols + i;
+        m.faces().addFace(a, a + 1, a + cols + 1, a + cols);
+      }
+
+    if (watertight) {
+      for (let j = 0; j < rows - 1; j++)
+        for (let i = 0; i < cols - 1; i++) {
+          const a = botStart + j * cols + i;
+          m.faces().addFace(a, a + cols, a + cols + 1, a + 1);
+        }
+      for (let i = 0; i < cols - 1; i++)
+        m.faces().addFace(i, botStart + i, botStart + i + 1, i + 1);
+      for (let i = 0; i < cols - 1; i++) {
+        const t = (rows - 1) * cols + i, b = botStart + (rows - 1) * cols + i;
+        m.faces().addFace(t, t + 1, b + 1, b);
+      }
+      for (let j = 0; j < rows - 1; j++) {
+        const t = j * cols, b = botStart + j * cols;
+        m.faces().addFace(t, t + cols, b + cols, b);
+      }
+      for (let j = 0; j < rows - 1; j++) {
+        const t = j * cols + (cols - 1), b = botStart + j * cols + (cols - 1);
+        m.faces().addFace(t, b, b + cols, t + cols);
+      }
+    }
+
+    m.normals().computeNormals();
+    m.compact();
+
+    file = new rhino.File3dm();
+    file.objects().add(m, null);
+    meshAdded = true;
+
+    const bytes = file.toByteArray();
+    return new Blob([bytes], { type: 'application/octet-stream' });
+  } finally {
+    if (file) file.delete();
+    if (!meshAdded && m) m.delete();
+  }
+}
+
+function exportHeightmapPNG() {
+  // Generates an 8-bit grayscale heightmap PNG for Vectric (VCarve/Aspire)
+  // Vectric: File > Import > Import Component/3D Model > select the PNG
+  // Set dimensions to match meshX x meshY
+  const { vertices, cols, rows } = STATE;
+  if (!vertices) return null;
+
+  // Find z range
+  let zMin = Infinity, zMax = -Infinity;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    if (vertices[j][i] < zMin) zMin = vertices[j][i];
+    if (vertices[j][i] > zMax) zMax = vertices[j][i];
+  }
+  const zRange = zMax - zMin || 1;
+
+  // Create canvas at mesh resolution
+  const c = document.createElement('canvas');
+  c.width = cols; c.height = rows;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(cols, rows);
+
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const t = (vertices[j][i] - zMin) / zRange; // 0-1 normalized
+      const v = Math.round(Math.max(0, Math.min(1, t)) * 255);
+      const idx = (j * cols + i) * 4;
+      img.data[idx] = v;     // R
+      img.data[idx+1] = v;   // G
+      img.data[idx+2] = v;   // B
+      img.data[idx+3] = 255; // A
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  return new Promise(resolve => {
+    c.toBlob(blob => resolve(blob), 'image/png');
+  });
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+let _exportInFlight = false;
+
+async function doExport() {
+  if (_exportInFlight) return;
+  _exportInFlight = true;
+  try {
+    return await _doExportInner();
+  } finally {
+    _exportInFlight = false;
+  }
+}
+
+async function _doExportInner() {
+  const fmt = STATE.exportFormat;
+
+  if (fmt === 'heightmap') {
+    const blob = await exportHeightmapPNG();
+    if (!blob) { showToast('Generate a mesh first'); return; }
+    triggerDownload(blob, `${STATE.filename}_heightmap.png`);
+    return;
+  }
+
+  const mesh = getFullMeshData();
+  if (!mesh) { showToast('Generate a mesh first'); return; }
+
+  let blob, ext;
+
+  if (fmt === 'stl') {
+    if (STATE.binary) {
+      blob = exportSTL_Binary(mesh);
+    } else {
+      const txt = exportSTL_ASCII(mesh);
+      blob = new Blob([txt], { type: 'text/plain' });
+    }
+    ext = 'stl';
+  } else if (fmt === 'obj') {
+    const txt = exportOBJ(mesh);
+    blob = new Blob([txt], { type: 'text/plain' });
+    ext = 'obj';
+  } else if (fmt === '3dm') {
+    try {
+      if (!_rhino) showToast('Loading Rhino3DM\u2026', 15000);
+      blob = await exportRhino3DM(mesh);
+      ext = '3dm';
+    } catch (e) {
+      const txt = exportOBJ(mesh);
+      blob = new Blob([txt], { type: 'text/plain' });
+      ext = 'obj';
+      showToast(_rhino ? '3DM export failed \u2014 exported as OBJ' : '3DM unavailable \u2014 exported as OBJ');
+    }
+  } else {
+    return;
+  }
+
+  triggerDownload(blob, `${STATE.filename}.${ext}`);
+  if (fmt === '3dm' && ext === '3dm') showToast('3DM exported!');
+}
+
+
+// ---- UI BUILDING ----
+
+function buildSidebar() {
+  const sb = document.getElementById('sidebar');
+  const parts = [];
+
+  // -- PRESETS --
+  parts.push(buildSection('Presets', `
+    <div class="btn-row" id="presetRow">
+      ${Object.keys(CNC_PRESETS).map(k =>
+        `<button class="preset-pill${STATE.activePreset === k ? ' active' : ''}" data-preset="${k}">${k.replace(/-/g,' ')}</button>`
+      ).join('')}
+    </div>
+    <div class="btn-row" style="margin-top:6px;">
+      ${Object.keys(PROFILES).filter(k=>k!=='custom').map(k =>
+        `<button class="preset-pill${STATE.activeProfile === k ? ' active' : ''}" data-profile="${k}" style="border-color:var(--bg4);font-size:9px;">${k}</button>`
+      ).join('')}
+    </div>
+  `));
+
+  // -- MESH DIMENSIONS --
+  parts.push(buildSection('Mesh Dimensions', `
+    <div class="inline-row">
+      ${slider('meshX', 'X (inches)', 1, 96, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
+      <button class="aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}" id="btnAspectLock" title="${STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}">
+        ${STATE.aspectLocked ? '&#x1f512;' : '&#x1f513;'}
+      </button>
+      ${slider('meshY', 'Y (inches)', 1, 48, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
+    </div>
+    ${slider('resolution', 'Grid Resolution', 16, 256, 4)}
+    ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
+    <div style="margin-top:4px;font-size:10px;color:var(--text3);">ShopBot Desktop Max ATC -- 36"x24"x6"</div>
+  `));
+
+  // -- NOISE PARAMETERS --
+  parts.push(buildSection('Noise Parameters', `
+    <div class="control-row">
+      <div class="control-label">Noise Algorithm</div>
+      <select class="select-input" id="selNoiseType">
+        <option value="simplex">Simplex</option>
+        <option value="perlin">Perlin</option>
+        <option value="ridged">Ridged</option>
+        <option value="fbm">FBM (Fractional Brownian)</option>
+        <option value="voronoi">Voronoi</option>
+      </select>
+    </div>
+    ${slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005)}
+    ${slider('amplitude', 'Amplitude / Z-height (inches)', 0, 6, 0.05, '', ' <span class="cnc-badge">max Z: 6"</span>')}
+    ${slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05)}
+    ${slider('offset', 'Vertical Offset', -2, 2, 0.05)}
+    <div class="seed-row">
+      <input type="text" class="text-input" id="seedInput" placeholder="seed (blank=random)" value="${STATE.seed || ''}">
+      <button class="btn btn-sm" id="btnRandSeed2">Dice</button>
+    </div>
+  `, false, 'noise-only'));
+
+  // -- PEAK / VALLEY SHAPING --
+  parts.push(buildSection('Peak / Valley Shaping', `
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Asymmetric control: shape peaks and valleys independently.</div>
+    ${slider('peakExp', 'Peak Sharpness (>1 = crisper ridges)', 0.2, 4, 0.05)}
+    ${slider('valleyExp', 'Valley Softness (<1 = broader valleys)', 0.1, 3, 0.05)}
+    ${slider('valleyFloor', 'Valley Floor (0=deep, 1=flat)', 0, 1, 0.01)}
+  `, false, 'noise-only'));
+
+  // -- ADVANCED NOISE --
+  parts.push(buildSection('Advanced Noise', `
+    ${slider('octaves', 'Octaves', 1, 8, 1)}
+    ${slider('persistence', 'Persistence', 0.1, 1, 0.05)}
+    ${slider('lacunarity', 'Lacunarity', 1, 4, 0.1)}
+    ${slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05)}
+    ${slider('contrast', 'Contrast', 0.1, 3, 0.05)}
+    ${slider('sharpness', 'Sharpness', 0, 2, 0.05)}
+  `, true, 'noise-only'));
+
+  // -- SMOOTHING --
+  parts.push(buildSection('Smoothing', `
+    ${slider('smoothIter', 'Iterations', 0, 15, 1)}
+    ${slider('smoothStr', 'Strength', 0, 1, 0.05)}
+  `));
+
+  // -- DEPTH MAP --
+  parts.push(buildSection('Depth Map', `
+    <div class="upload-zone ${STATE.depthMap ? 'has-image' : ''}" id="uploadZone" tabindex="0" role="button" aria-label="Upload depth map image">
+      <div class="upload-text">${(STATE.depthMapName || 'Click or drag to upload depth map').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+      <input type="file" id="depthMapInput" accept="image/*">
+    </div>
+    ${slider('blend', 'Blend (0=image, 1=noise)', 0, 1, 0.01)}
+    ${slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05)}
+    ${slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)}
+    ${slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)}
+  `, false, 'depth-map-only'));
+
+  // -- VIEW --
+  parts.push(buildSection('View Controls', `
+    ${slider('orbit', 'Orbit', 0, 360, 1)}
+    ${slider('tilt', 'Tilt', -90, 90, 1)}
+    ${slider('roll', 'Roll', -180, 180, 1)}
+    ${slider('zoom', 'Zoom', 0.1, 10, 0.05)}
+    <div style="margin-top:8px;font-size:10px;color:var(--text3);">Left drag = orbit/tilt &middot; Right/Shift drag = pan &middot; Scroll = zoom &middot; Double-click = fit</div>
+  `, true));
+
+  sb.innerHTML = parts.join('');
+  wireControls();
+}
+
+function buildSection(title, body, collapsed = false, extraClass = '') {
+  return `<div class="section ${collapsed ? 'collapsed' : ''} ${extraClass}">
+    <div class="section-header">
+      <div class="section-title">${title}</div>
+      <div class="section-arrow">&#9660;</div>
+    </div>
+    <div class="section-body">${body}</div>
+  </div>`;
+}
+
+function slider(key, label, min, max, step, suffix = '', extra = '') {
+  const val = STATE[key];
+  return `<div class="control-row">
+    <div class="control-label"><span>${label}${extra}</span><span class="val" id="val_${key}">${typeof val === 'number' ? (Number.isInteger(step) ? val : val.toFixed(2)) : val}</span></div>
+    <input type="range" id="sl_${key}" min="${min}" max="${max}" step="${step}" value="${val}" data-key="${key}">
+  </div>`;
+}
+
+function wireControls() {
+  // Sliders
+  document.querySelectorAll('input[type="range"][data-key]').forEach(sl => {
+    const key = sl.dataset.key;
+    sl.addEventListener('input', () => {
+      const v = parseFloat(sl.value);
+      STATE[key] = v;
+      const valEl = document.getElementById('val_' + key);
+      if (valEl) valEl.textContent = Number.isInteger(parseFloat(sl.step)) ? v : v.toFixed(2);
+
+      // Aspect ratio lock — sync the other dimension
+      if (STATE.aspectLocked && STATE.depthMapAR) {
+        if (key === 'meshX') {
+          STATE.meshY = Math.max(1, Math.min(48, Math.round(v / STATE.depthMapAR)));
+          const ySlider = document.querySelector('input[data-key="meshY"]');
+          const yVal = document.getElementById('val_meshY');
+          if (ySlider) ySlider.value = STATE.meshY;
+          if (yVal) yVal.textContent = STATE.meshY;
+        } else if (key === 'meshY') {
+          STATE.meshX = Math.max(1, Math.min(96, Math.round(v * STATE.depthMapAR)));
+          const xSlider = document.querySelector('input[data-key="meshX"]');
+          const xVal = document.getElementById('val_meshX');
+          if (xSlider) xSlider.value = STATE.meshX;
+          if (xVal) xVal.textContent = STATE.meshX;
+        }
+      }
+
+      // Clear active preset/profile on manual change
+      if (STATE.activePreset) {
+        STATE.activePreset = null;
+        const pill = document.querySelector('.preset-pill.active[data-preset]');
+        if (pill) pill.classList.remove('active');
+      }
+      if (STATE.activeProfile) {
+        STATE.activeProfile = null;
+        const pill = document.querySelector('.preset-pill.active[data-profile]');
+        if (pill) pill.classList.remove('active');
+      }
+
+      debouncedGenerate(key);
+    });
+  });
+
+  // Section collapse — exclusive accordion on mobile, independent toggle on desktop
+  const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+  const sections = document.querySelectorAll('.section');
+  document.querySelectorAll('.section-header').forEach(h => {
+    h.addEventListener('click', () => {
+      const section = h.parentElement;
+      if (isMobile()) {
+        const wasCollapsed = section.classList.contains('collapsed');
+        sections.forEach(s => s.classList.add('collapsed'));
+        if (wasCollapsed) section.classList.remove('collapsed');
+      } else {
+        section.classList.toggle('collapsed');
+      }
+    });
+  });
+  // On mobile init, collapse all visible sections except the first
+  if (isMobile()) {
+    const visible = [...sections].filter(s => s.offsetParent !== null);
+    visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
+  }
+
+  // Noise type select
+  const sel = document.getElementById('selNoiseType');
+  if (sel) {
+    sel.value = STATE.noiseType;
+    sel.addEventListener('change', () => {
+      STATE.noiseType = sel.value;
+      if (STATE.activePreset) {
+        STATE.activePreset = null;
+        const pill = document.querySelector('.preset-pill.active[data-preset]');
+        if (pill) pill.classList.remove('active');
+      }
+      generateMesh();
+    });
+  }
+
+  // Seed input
+  const seedEl = document.getElementById('seedInput');
+  if (seedEl) {
+    seedEl.addEventListener('change', () => {
+      STATE.seed = seedEl.value ? parseInt(seedEl.value) || hashString(seedEl.value) : 0;
+      generateMesh();
+    });
+  }
+
+  // Random seed button (sidebar-only — toolbar's #btnRandomSeed is bound once in setupToolbar)
+  document.getElementById('btnRandSeed2')?.addEventListener('click', randomSeed);
+
+  // Aspect lock toggle
+  const lockBtn = document.getElementById('btnAspectLock');
+  if (lockBtn) {
+    lockBtn.addEventListener('click', () => {
+      STATE.aspectLocked = !STATE.aspectLocked;
+      lockBtn.classList.toggle('locked', STATE.aspectLocked);
+      lockBtn.textContent = STATE.aspectLocked ? '\u{1F512}' : '\u{1F513}';
+      lockBtn.title = STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio';
+    });
+  }
+
+  // Presets
+  document.querySelectorAll('[data-preset]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = CNC_PRESETS[btn.dataset.preset];
+      if (!p) return;
+      Object.keys(p).forEach(k => { STATE[k] = p[k]; });
+      STATE.activePreset = btn.dataset.preset;
+      STATE.activeProfile = null;
+      buildSidebar();
+      generateMesh();
+    });
+  });
+
+  // Texture profiles
+  document.querySelectorAll('[data-profile]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = PROFILES[btn.dataset.profile];
+      if (!p) return;
+      Object.keys(p).forEach(k => { STATE[k] = p[k]; });
+      STATE.activeProfile = btn.dataset.profile;
+      STATE.activePreset = null;
+      buildSidebar();
+      generateMesh();
+    });
+  });
+
+  // Depth map upload
+  const uploadZone = document.getElementById('uploadZone');
+  const dmInput = document.getElementById('depthMapInput');
+  if (uploadZone && dmInput) {
+    uploadZone.addEventListener('click', () => dmInput.click());
+    uploadZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dmInput.click(); } });
+    uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.style.borderColor = 'var(--accent)'; });
+    uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor = ''; });
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadZone.style.borderColor = '';
+      if (e.dataTransfer.files[0]) loadDepthMap(e.dataTransfer.files[0]);
+    });
+    dmInput.addEventListener('change', () => { if (dmInput.files[0]) loadDepthMap(dmInput.files[0]); });
+  }
+
+  // Mode-dependent section visibility
+  updateSectionVisibility();
+}
+
+function updateSectionVisibility() {
+  const mode = STATE.mode;
+  document.querySelectorAll('.noise-only').forEach(el => {
+    el.style.display = (mode === 'noise' || mode === 'blend') ? '' : 'none';
+  });
+  document.querySelectorAll('.depth-map-only').forEach(el => {
+    el.style.display = (mode === 'depthmap' || mode === 'blend') ? '' : 'none';
+  });
+}
+
+function fitMeshToAspect(imgW, imgH) {
+  const ar = imgW / imgH;
+  if (ar >= 36 / 24) {
+    STATE.meshX = 36;
+    STATE.meshY = Math.max(1, Math.round(36 / ar));
+  } else {
+    STATE.meshY = 24;
+    STATE.meshX = Math.max(1, Math.round(24 * ar));
+  }
+  STATE.resolution = 256;
+  STATE.depthMapAR = ar;
+  STATE.aspectLocked = true;
+}
+
+function loadDepthMap(file) {
+  const img = new Image();
+  const objUrl = URL.createObjectURL(file);
+  img.onload = () => {
+    URL.revokeObjectURL(objUrl);
+    STATE.depthMap = img;
+    STATE.depthMapName = file.name;
+    fitMeshToAspect(img.width, img.height);
+    const zone = document.getElementById('uploadZone');
+    if (zone) {
+      zone.classList.add('has-image');
+      zone.querySelector('.upload-text').textContent = file.name;
+    }
+    buildSidebar();
+    generateMesh();
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(objUrl);
+  };
+  img.src = objUrl;
+}
+
+function randomSeed() {
+  STATE.seed = Math.floor(Math.random() * 99999);
+  const el = document.getElementById('seedInput');
+  if (el) el.value = STATE.seed;
+  generateMesh();
+}
+
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; }
+  return Math.abs(h);
+}
+
+// View-only keys that just need a re-render, not a full mesh regen
+const VIEW_ONLY_KEYS = new Set(['orbit','tilt','roll','zoom']);
+let _genTimer = null;
+let _needsMeshRegen = false;
+
+function debouncedGenerate(key) {
+  if (!VIEW_ONLY_KEYS.has(key)) _needsMeshRegen = true;
+  if (_genTimer) clearTimeout(_genTimer);
+  _genTimer = setTimeout(() => {
+    if (_needsMeshRegen) {
+      _needsMeshRegen = false;
+      generateMesh();
+    } else {
+      renderViewport();
+    }
+  }, 60);
+}
+
+function zoomExtents() {
+  if (!STATE.vertices) return;
+  // Compute bounding sphere radius of the mesh
+  const { meshX, meshY, vertices, rows, cols } = STATE;
+  let zMin = Infinity, zMax = -Infinity;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const z = vertices[j][i];
+    if (z < zMin) zMin = z;
+    if (z > zMax) zMax = z;
+  }
+  const halfW = meshX / 2, halfH = meshY / 2, halfZ = (zMax - zMin) / 2;
+  const radius = Math.sqrt(halfW * halfW + halfH * halfH + halfZ * halfZ);
+
+  const fov = Math.PI / 3;
+  const fitDist = radius / Math.tan(fov / 2);
+  // camDist = max(meshX,meshY) * 1.2 / zoom, so zoom = max(meshX,meshY) * 1.2 / fitDist
+  const targetZoom = Math.max(meshX, meshY) * 1.2 / fitDist;
+
+  STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85)); // 85% fill
+  STATE.panX = 0; STATE.panY = 0;
+  STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
+
+  // Sync all sliders
+  ['orbit','tilt','roll','zoom'].forEach(k => {
+    const sl = document.getElementById('sl_' + k);
+    const val = document.getElementById('val_' + k);
+    if (sl) sl.value = STATE[k];
+    if (val) val.textContent = typeof STATE[k] === 'number' ?
+      (Number.isInteger(STATE[k]) ? STATE[k] : STATE[k].toFixed(2)) : STATE[k];
+  });
+  renderViewport();
+}
+
+function updateStats() {
+  const el = document.getElementById('statsOverlay');
+  if (!STATE.vertices) { el.textContent = ''; return; }
+  const { cols, rows, genTime, watertight } = STATE;
+  const topTris = (cols-1) * (rows-1) * 2;
+  const sideTris = watertight ? ((cols-1)*4 + (rows-1)*4) : 0;
+  const bottomTris = watertight ? topTris : 0;
+  const totalTris = topTris + bottomTris + sideTris;
+  const verts = cols * rows * (watertight ? 2 : 1);
+  const estSize = STATE.binary ? (84 + totalTris * 50) : (totalTris * 200);
+
+  el.textContent = '';
+
+  const statData = [
+    ['Vertices', verts.toLocaleString()],
+    ['Triangles', totalTris.toLocaleString()],
+    ['Gen time', `${genTime.toFixed(0)}ms`],
+    ['Est. size', formatBytes(estSize)],
+  ];
+
+  for (const [label, value] of statData) {
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = label;
+    const valSpan = document.createElement('span');
+    valSpan.className = 'stat-val';
+    valSpan.textContent = value;
+    row.appendChild(labelSpan);
+    row.appendChild(valSpan);
+    el.appendChild(row);
+  }
+
+  if ((cols * rows) > 50000) {
+    const warnRow = document.createElement('div');
+    warnRow.className = 'stat-row';
+    const warnLabel = document.createElement('span');
+    warnLabel.textContent = 'Warning';
+    const warnVal = document.createElement('span');
+    warnVal.className = 'stat-warn';
+    warnVal.textContent = 'High res - may be slow';
+    warnRow.appendChild(warnLabel);
+    warnRow.appendChild(warnVal);
+    el.appendChild(warnRow);
+  }
+}
+
+function updateDimsOverlay() {
+  const el = document.getElementById('dimsOverlay');
+  if (!STATE.vertices) { el.textContent = ''; return; }
+  let zMin = Infinity, zMax = -Infinity;
+  const { vertices, rows, cols } = STATE;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    if (vertices[j][i] < zMin) zMin = vertices[j][i];
+    if (vertices[j][i] > zMax) zMax = vertices[j][i];
+  }
+  const totalZ = (zMax - zMin) + STATE.baseThickness;
+
+  el.textContent = '';
+  const spanDims = document.createElement('span');
+  spanDims.textContent = `${STATE.meshX}" x ${STATE.meshY}"`;
+  el.appendChild(spanDims);
+
+  const spanZ = document.createElement('span');
+  spanZ.style.marginLeft = '12px';
+  spanZ.textContent = `Z: ${zMin.toFixed(2)}" to ${zMax.toFixed(2)}"`;
+  el.appendChild(spanZ);
+
+  const spanTotal = document.createElement('span');
+  spanTotal.style.marginLeft = '12px';
+  spanTotal.textContent = `Total: ${totalZ.toFixed(2)}"`;
+  el.appendChild(spanTotal);
+
+  if (totalZ > 6) {
+    const spanWarn = document.createElement('span');
+    spanWarn.className = 'cnc-warn';
+    spanWarn.style.marginLeft = '8px';
+    spanWarn.textContent = 'EXCEEDS 6" Z';
+    el.appendChild(spanWarn);
+  }
+}
+
+function formatBytes(b) {
+  if (b < 1024) return b + 'B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + 'KB';
+  return (b/1024/1024).toFixed(1) + 'MB';
+}
+
+
+// ---- MOUSE / TOUCH INTERACTION ----
+// Left drag = orbit/tilt, Right drag or Shift+Left = pan, Scroll = zoom
+// Touch: 1 finger = orbit, 2 finger = pan+pinch zoom
+
+function setupInteraction() {
+  const wrap = document.getElementById('canvasWrap');
+  let dragMode = null; // 'orbit' | 'pan'
+  let lastX = 0, lastY = 0;
+  let renderQueued = false;
+
+  function queueRender() {
+    if (!renderQueued) {
+      renderQueued = true;
+      requestAnimationFrame(() => { renderQueued = false; renderViewport(); });
+    }
+  }
+
+  function syncSlider(key) {
+    const sl = document.getElementById('sl_' + key);
+    const val = document.getElementById('val_' + key);
+    if (sl) sl.value = STATE[key];
+    if (val) val.textContent = typeof STATE[key] === 'number' ?
+      (Number.isInteger(STATE[key]) ? STATE[key] : STATE[key].toFixed(2)) : STATE[key];
+  }
+
+  // --- Mouse ---
+  let dragStartX = 0, dragStartY = 0;
+  let dragStartOrbit = 0, dragStartTilt = 0;
+  let dragStartPanX = 0, dragStartPanY = 0;
+
+  wrap.addEventListener('mousedown', e => {
+    e.preventDefault();
+    lastX = e.clientX; lastY = e.clientY;
+    dragStartX = e.clientX; dragStartY = e.clientY;
+    // Right click or shift+left or middle = pan
+    if (e.button === 2 || e.shiftKey || e.button === 1) {
+      dragMode = 'pan';
+      dragStartPanX = STATE.panX || 0;
+      dragStartPanY = STATE.panY || 0;
+      wrap.classList.add('panning');
+    } else if (e.button === 0) {
+      dragMode = 'orbit';
+      dragStartOrbit = STATE.orbit;
+      dragStartTilt = STATE.tilt;
+      wrap.classList.add('dragging');
+    }
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!dragMode) return;
+    const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+
+    if (dragMode === 'orbit') {
+      // Compute from drag start to avoid accumulation drift
+      STATE.orbit = ((dragStartOrbit + dx * 0.4) % 360 + 360) % 360;
+      STATE.tilt = Math.max(-90, Math.min(90, dragStartTilt + dy * 0.3));
+      syncSlider('orbit'); syncSlider('tilt');
+    } else if (dragMode === 'pan') {
+      STATE.panX = dragStartPanX + dx;
+      STATE.panY = dragStartPanY + dy;
+    }
+    queueRender();
+  });
+
+  window.addEventListener('mouseup', () => {
+    dragMode = null;
+    wrap.classList.remove('dragging', 'panning');
+  });
+
+  // Prevent context menu on right-click in viewport
+  wrap.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Scroll: zoom (vertical), pan (shift+scroll OR horizontal scroll wheel)
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+
+    // Horizontal scroll (tilt-wheel / side-scroll) = horizontal pan, no modifier needed
+    const hasHorizScroll = !e.shiftKey && Math.abs(e.deltaX) > 1 && Math.abs(e.deltaY) < 1;
+
+    if (e.shiftKey || hasHorizScroll) {
+      let dx = e.deltaX, dy = e.deltaY;
+      if (e.shiftKey && Math.abs(dx) > 1 && Math.abs(dy) < 1) {
+        // macOS swaps deltaY->deltaX when shift is held. Restore vertical intent.
+        dy = dx;
+        dx = 0;
+      }
+      // Screen-space pan, consistent with mouse-drag pan behavior.
+      // No orbit compensation — panX/panY are screen-space offsets in renderViewport.
+      const panSpeed = 1.2;
+      STATE.panX = (STATE.panX || 0) - dx * panSpeed;
+      STATE.panY = (STATE.panY || 0) - dy * panSpeed;
+      queueRender();
+    } else {
+      const delta = e.deltaY > 0 ? 0.92 : 1.08; // multiplicative zoom
+      STATE.zoom = Math.max(0.1, Math.min(10, STATE.zoom * delta));
+      syncSlider('zoom');
+      queueRender();
+    }
+  }, { passive: false });
+
+  // --- Touch ---
+  let touches = [], lastPinchDist = 0;
+  let touchStartOrbit = 0, touchStartTilt = 0;
+
+  wrap.addEventListener('touchstart', e => {
+    e.preventDefault();
+    touches = [...e.touches];
+    if (touches.length === 2) {
+      lastPinchDist = Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
+    }
+    dragStartX = touches[0].clientX; dragStartY = touches[0].clientY;
+    touchStartOrbit = STATE.orbit;
+    touchStartTilt = STATE.tilt;
+  }, { passive: false });
+
+  wrap.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const cur = [...e.touches];
+
+    if (cur.length === 1) {
+      // Single finger = orbit (from start, not incremental)
+      const dx = cur[0].clientX - dragStartX, dy = cur[0].clientY - dragStartY;
+      STATE.orbit = ((touchStartOrbit + dx * 0.4) % 360 + 360) % 360;
+      STATE.tilt = Math.max(-90, Math.min(90, touchStartTilt + dy * 0.3));
+      syncSlider('orbit'); syncSlider('tilt');
+    } else if (cur.length === 2) {
+      // Two finger = pan + pinch zoom (incremental is fine here)
+      const midX = (cur[0].clientX + cur[1].clientX) / 2;
+      const midY = (cur[0].clientY + cur[1].clientY) / 2;
+      if (touches.length >= 2) {
+        const prevMidX = (touches[0].clientX + touches[1].clientX) / 2;
+        const prevMidY = (touches[0].clientY + touches[1].clientY) / 2;
+        STATE.panX = (STATE.panX || 0) + (midX - prevMidX);
+        STATE.panY = (STATE.panY || 0) + (midY - prevMidY);
+      }
+
+      const dist = Math.hypot(cur[1].clientX - cur[0].clientX, cur[1].clientY - cur[0].clientY);
+      if (lastPinchDist > 0) {
+        const scale = dist / lastPinchDist;
+        STATE.zoom = Math.max(0.1, Math.min(10, STATE.zoom * scale));
+        syncSlider('zoom');
+      }
+      lastPinchDist = dist;
+    }
+
+    touches = [...cur];
+    queueRender();
+  }, { passive: false });
+
+  wrap.addEventListener('touchend', e => {
+    touches = [...e.touches];
+    lastPinchDist = 0;
+    // Reset start points for next touch
+    if (touches.length === 1) {
+      dragStartX = touches[0].clientX; dragStartY = touches[0].clientY;
+      touchStartOrbit = STATE.orbit; touchStartTilt = STATE.tilt;
+    }
+  });
+
+  // --- Double-click = zoom extents ---
+  wrap.addEventListener('dblclick', zoomExtents);
+}
+
+
+// ---- MODE / VIEW / FORMAT TABS ----
+
+function setupTabs() {
+  // Mode tabs
+  document.querySelectorAll('.mode-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const prevMode = STATE.mode;
+      document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.mode = btn.dataset.mode;
+      document.body.className = 'mode-' + STATE.mode;
+      updateSectionVisibility();
+
+      // Save noise dimensions before depth map overwrites them
+      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'blend')) {
+        _noiseDims.meshX = STATE.meshX;
+        _noiseDims.meshY = STATE.meshY;
+        _noiseDims.resolution = STATE.resolution;
+      }
+
+      // Restore noise dimensions when switching back
+      if (STATE.mode === 'noise' && prevMode !== 'noise') {
+        STATE.meshX = _noiseDims.meshX;
+        STATE.meshY = _noiseDims.meshY;
+        STATE.resolution = _noiseDims.resolution;
+        STATE.aspectLocked = false;
+        buildSidebar();
+      }
+
+      // Auto-apply demo depth map if switching to depthmap/blend with no user image
+      if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap && demoDepthMap) {
+        STATE.depthMap = demoDepthMap;
+        STATE.depthMapName = 'Mona Lisa (demo)';
+        fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
+        const zone = document.getElementById('uploadZone');
+        if (zone) {
+          zone.classList.add('has-image');
+          zone.querySelector('.upload-text').textContent = STATE.depthMapName;
+        }
+        buildSidebar();
+      }
+      generateMesh();
+    });
+  });
+  // View mode buttons
+  document.querySelectorAll('.view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.viewMode = btn.dataset.view;
+      renderViewport();
+    });
+  });
+  // Export format
+  document.querySelectorAll('.format-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.exportFormat = btn.dataset.fmt;
+    });
+  });
+}
+
+
+// ---- TOOLBAR BUTTONS ----
+
+function setupToolbar() {
+  document.getElementById('btnRegenerate').addEventListener('click', generateMesh);
+  document.getElementById('btnRandomSeed').addEventListener('click', randomSeed);
+  document.getElementById('btnZoomExtents').addEventListener('click', zoomExtents);
+  document.getElementById('btnResetCamera').addEventListener('click', () => {
+    STATE.orbit = 55; STATE.tilt = -25; STATE.roll = 0; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0;
+    buildSidebar();
+    renderViewport();
+  });
+  document.getElementById('btnExport').addEventListener('click', doExport);
+  document.getElementById('filenameInput').addEventListener('change', e => { STATE.filename = e.target.value || 'meshcraft_export'; });
+  document.getElementById('chkWatertight').addEventListener('change', e => { STATE.watertight = e.target.checked; updateStats(); });
+  document.getElementById('chkBinary').addEventListener('change', e => { STATE.binary = e.target.checked; updateStats(); });
+
+  // Copy Link button — URL state sharing
+  const copyLinkBtn = document.getElementById('btnCopyLink');
+  if (copyLinkBtn) {
+    copyLinkBtn.addEventListener('click', () => {
+      const config = serializeConfig();
+      const url = config
+        ? `${window.location.origin}${window.location.pathname}?c=${config}`
+        : `${window.location.origin}${window.location.pathname}`;
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(url).then(() => {
+          showToast('Link copied!');
+        }).catch(() => {
+          copyFallback(url);
+        });
+      } else {
+        copyFallback(url);
+      }
+    });
+  }
+}
+
+function copyFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (e) {
+    // execCommand can throw SecurityError in sandboxed iframes
+  } finally {
+    document.body.removeChild(ta);
+  }
+  showToast(ok ? 'Link copied!' : 'Copy failed \u2014 use Ctrl+C');
+}
+
+
+// ---- RESIZE ----
+
+function setupResize() {
+  window.addEventListener('resize', () => { _canvasW = 0; _canvasH = 0; renderViewport(); });
+}
+
+
+// ---- SPONSOR MODAL + SCROLL-TO-EXPORT ----
+
+function setupSponsorModal() {
+  const SPONSOR_IMGS = [
+    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800',
+    'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/04acb407-564f-4b6e-8c91-9506c2f52300/w=800'
+  ];
+  let sponsorIdx = 0;
+  const backdrop = document.getElementById('sponsorBackdrop');
+  const sImg = document.getElementById('sponsorImg');
+
+  function showSponsor() { backdrop.classList.add('visible'); }
+  function hideSponsor() { backdrop.classList.remove('visible'); }
+
+  document.getElementById('sponsorClose').addEventListener('click', hideSponsor);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) hideSponsor(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideSponsor(); });
+
+  document.getElementById('sponsorPrev').addEventListener('click', () => {
+    sponsorIdx = (sponsorIdx - 1 + SPONSOR_IMGS.length) % SPONSOR_IMGS.length;
+    sImg.src = SPONSOR_IMGS[sponsorIdx];
+  });
+  document.getElementById('sponsorNext').addEventListener('click', () => {
+    sponsorIdx = (sponsorIdx + 1) % SPONSOR_IMGS.length;
+    sImg.src = SPONSOR_IMGS[sponsorIdx];
+  });
+
+  let sponsorTimeout = null;
+
+  const sponsorBtn = document.getElementById('btnSponsor');
+  if (sponsorBtn) sponsorBtn.addEventListener('click', () => {
+    if (sponsorTimeout) { clearTimeout(sponsorTimeout); sponsorTimeout = null; }
+    showSponsor();
+  });
+
+  if (!sessionStorage.getItem('sponsorSeen')) {
+    sessionStorage.setItem('sponsorSeen', '1');
+    sponsorTimeout = setTimeout(() => {
+      sponsorTimeout = null;
+      showSponsor();
+    }, 4000);
+  }
+
+  // Scroll-to-export button — uses static arrow characters only (no user input)
+  const scrollBtn = document.getElementById('scrollExportBtn');
+  let atBottom = false;
+  const ARROW_DOWN = '\u2193';
+  const ARROW_UP = '\u2191';
+
+  let paddingResetTimer = null;
+  let scrollDelayTimer = null;
+
+  scrollBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (atBottom) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      const bar = document.querySelector('.export-bar');
+      if (!bar) return;
+      const barRect = bar.getBoundingClientRect();
+      const scrollTarget = window.scrollY + barRect.bottom - window.innerHeight + 20;
+      if (scrollTarget <= window.scrollY) {
+        if (paddingResetTimer !== null) clearTimeout(paddingResetTimer);
+        if (scrollDelayTimer !== null) clearTimeout(scrollDelayTimer);
+        document.body.style.paddingBottom = barRect.height + 40 + 'px';
+        scrollDelayTimer = setTimeout(() => {
+          scrollDelayTimer = null;
+          window.scrollTo({ top: document.body.scrollHeight - window.innerHeight, behavior: 'smooth' });
+        }, 10);
+        paddingResetTimer = setTimeout(() => {
+          document.body.style.paddingBottom = '';
+          paddingResetTimer = null;
+        }, 600);
+      } else {
+        window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+      }
+    }
+  });
+
+  window.addEventListener('scroll', () => {
+    const scrolledToBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 20);
+    if (scrolledToBottom) {
+      atBottom = true;
+      scrollBtn.textContent = ARROW_UP;
+      if (paddingResetTimer !== null) { clearTimeout(paddingResetTimer); paddingResetTimer = null; }
+      document.body.style.paddingBottom = '';
+    } else {
+      atBottom = false;
+      scrollBtn.textContent = ARROW_DOWN;
+    }
+  });
+}
+
+
+// ---- INIT ----
+
+// Preload demo depth map (Mona Lisa)
+let demoDepthMap = null;
+function preloadDemoDepthMap() {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    demoDepthMap = img;
+    // If user is already on depthmap/blend mode with no image, auto-apply
+    if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap) {
+      STATE.depthMap = demoDepthMap;
+      STATE.depthMapName = 'Mona Lisa (demo)';
+      fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
+      const zone = document.getElementById('uploadZone');
+      if (zone) {
+        zone.classList.add('has-image');
+        zone.querySelector('.upload-text').textContent = STATE.depthMapName;
+      }
+      buildSidebar();
+      generateMesh();
+    }
+  };
+  img.onerror = () => {
+    // Demo image unavailable (CORS or network) — user can still upload their own
+    demoDepthMap = null;
+  };
+  img.src = 'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/bf407583-583b-4034-d0cc-ab8ae75a4b00/w=800';
+}
+
+function init() {
+  // Apply URL state if present
+  const urlConfig = deserializeConfig(new URLSearchParams(window.location.search));
+  for (const [key, value] of Object.entries(urlConfig)) {
+    STATE[key] = value;
+  }
+
+  // Sync body class with potentially URL-overridden mode
+  document.body.className = 'mode-' + STATE.mode;
+
+  buildSidebar();
+  setupTabs();
+  setupToolbar();
+  setupInteraction();
+  setupResize();
+  setupSponsorModal();
+  generateMesh();
+  preloadDemoDepthMap();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

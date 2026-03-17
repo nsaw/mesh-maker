@@ -1,9 +1,10 @@
-import { STATE, _noiseDims, demoDepthMap, serializeConfig } from './state';
+import { STATE, noiseDims, demoDepthMap, serializeConfig } from './state';
 import { generateMesh } from './mesh';
 import { renderViewport, resetCanvasSize } from './render';
 import { doExport } from './export';
 import { buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
+import { showToast } from './toast';
 
 export function setupTabs(): void {
   // Mode tabs
@@ -18,16 +19,16 @@ export function setupTabs(): void {
 
       // Save noise dimensions before depth map overwrites them
       if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'blend')) {
-        _noiseDims.meshX = STATE.meshX;
-        _noiseDims.meshY = STATE.meshY;
-        _noiseDims.resolution = STATE.resolution;
+        noiseDims.meshX = STATE.meshX;
+        noiseDims.meshY = STATE.meshY;
+        noiseDims.resolution = STATE.resolution;
       }
 
       // Restore noise dimensions when switching back
       if (STATE.mode === 'noise' && prevMode !== 'noise') {
-        STATE.meshX = _noiseDims.meshX;
-        STATE.meshY = _noiseDims.meshY;
-        STATE.resolution = _noiseDims.resolution;
+        STATE.meshX = noiseDims.meshX;
+        STATE.meshY = noiseDims.meshY;
+        STATE.resolution = noiseDims.resolution;
         STATE.aspectLocked = false;
         buildSidebar();
       }
@@ -90,35 +91,39 @@ export function setupToolbar(): void {
       const url = config
         ? `${window.location.origin}${window.location.pathname}?c=${config}`
         : `${window.location.origin}${window.location.pathname}`;
-      navigator.clipboard.writeText(url).then(() => {
-        showToast('Link copied!');
-      }).catch(() => {
-        // Fallback for insecure contexts
-        const ta = document.createElement('textarea');
-        ta.value = url;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        showToast('Link copied!');
-      });
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(url).then(() => {
+          showToast('Link copied!');
+        }).catch(() => {
+          copyFallback(url);
+        });
+      } else {
+        copyFallback(url);
+      }
     });
   }
 }
 
-function showToast(message: string): void {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  toast.textContent = message;
-  toast.style.display = 'block';
-  toast.classList.add('visible');
-  setTimeout(() => {
-    toast.classList.remove('visible');
-    setTimeout(() => { toast.style.display = 'none'; }, 300);
-  }, 1500);
+// Fallback for insecure contexts (HTTP) where navigator.clipboard is unavailable.
+// execCommand('copy') is deprecated but still the only option without HTTPS.
+function copyFallback(text: string): void {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    // execCommand can throw SecurityError in sandboxed iframes
+  } finally {
+    document.body.removeChild(ta);
+  }
+  showToast(ok ? 'Link copied!' : 'Copy failed — use Ctrl+C');
 }
+
 
 export function setupResize(): void {
   window.addEventListener('resize', () => { resetCanvasSize(); renderViewport(); });

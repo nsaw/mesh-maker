@@ -1,14 +1,14 @@
-import { STATE, demoDepthMap } from './state';
+import { STATE } from './state';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
-import { renderViewport } from './render';
+
 
 export function buildSidebar(): void {
   const sb = document.getElementById('sidebar')!;
-  sb.innerHTML = '';
+  const parts: string[] = [];
 
   // -- PRESETS --
-  sb.innerHTML += buildSection('Presets', `
+  parts.push(buildSection('Presets', `
     <div class="btn-row" id="presetRow">
       ${Object.keys(CNC_PRESETS).map(k =>
         `<button class="preset-pill${STATE.activePreset === k ? ' active' : ''}" data-preset="${k}">${k.replace(/-/g,' ')}</button>`
@@ -19,10 +19,10 @@ export function buildSidebar(): void {
         `<button class="preset-pill${STATE.activeProfile === k ? ' active' : ''}" data-profile="${k}" style="border-color:var(--bg4);font-size:9px;">${k}</button>`
       ).join('')}
     </div>
-  `);
+  `));
 
   // -- MESH DIMENSIONS --
-  sb.innerHTML += buildSection('Mesh Dimensions', `
+  parts.push(buildSection('Mesh Dimensions', `
     <div class="inline-row">
       ${slider('meshX', 'X (inches)', 1, 96, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
       <button class="aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}" id="btnAspectLock" title="${STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}">
@@ -33,10 +33,10 @@ export function buildSidebar(): void {
     ${slider('resolution', 'Grid Resolution', 16, 256, 4)}
     ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
     <div style="margin-top:4px;font-size:10px;color:var(--text3);">ShopBot Desktop Max ATC -- 36"x24"x6"</div>
-  `);
+  `));
 
   // -- NOISE PARAMETERS --
-  sb.innerHTML += buildSection('Noise Parameters', `
+  parts.push(buildSection('Noise Parameters', `
     <div class="control-row">
       <div class="control-label">Noise Algorithm</div>
       <select class="select-input" id="selNoiseType">
@@ -55,35 +55,35 @@ export function buildSidebar(): void {
       <input type="text" class="text-input" id="seedInput" placeholder="seed (blank=random)" value="${STATE.seed || ''}">
       <button class="btn btn-sm" id="btnRandSeed2">Dice</button>
     </div>
-  `, false, 'noise-only');
+  `, false, 'noise-only'));
 
   // -- PEAK / VALLEY SHAPING --
-  sb.innerHTML += buildSection('Peak / Valley Shaping', `
+  parts.push(buildSection('Peak / Valley Shaping', `
     <div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Asymmetric control: shape peaks and valleys independently.</div>
     ${slider('peakExp', 'Peak Sharpness (>1 = crisper ridges)', 0.2, 4, 0.05)}
     ${slider('valleyExp', 'Valley Softness (<1 = broader valleys)', 0.1, 3, 0.05)}
     ${slider('valleyFloor', 'Valley Floor (0=deep, 1=flat)', 0, 1, 0.01)}
-  `, false, 'noise-only');
+  `, false, 'noise-only'));
 
   // -- ADVANCED NOISE --
-  sb.innerHTML += buildSection('Advanced Noise', `
+  parts.push(buildSection('Advanced Noise', `
     ${slider('octaves', 'Octaves', 1, 8, 1)}
     ${slider('persistence', 'Persistence', 0.1, 1, 0.05)}
     ${slider('lacunarity', 'Lacunarity', 1, 4, 0.1)}
     ${slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05)}
     ${slider('contrast', 'Contrast', 0.1, 3, 0.05)}
     ${slider('sharpness', 'Sharpness', 0, 2, 0.05)}
-  `, true, 'noise-only');
+  `, true, 'noise-only'));
 
   // -- SMOOTHING --
-  sb.innerHTML += buildSection('Smoothing', `
+  parts.push(buildSection('Smoothing', `
     ${slider('smoothIter', 'Iterations', 0, 15, 1)}
     ${slider('smoothStr', 'Strength', 0, 1, 0.05)}
-  `);
+  `));
 
   // -- DEPTH MAP --
   // Note: depthMapName is user-controlled (file upload name) — escaped to prevent XSS
-  sb.innerHTML += buildSection('Depth Map', `
+  parts.push(buildSection('Depth Map', `
     <div class="upload-zone ${STATE.depthMap ? 'has-image' : ''}" id="uploadZone" tabindex="0" role="button" aria-label="Upload depth map image">
       <div class="upload-text">${(STATE.depthMapName || 'Click or drag to upload depth map').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
       <input type="file" id="depthMapInput" accept="image/*">
@@ -92,16 +92,18 @@ export function buildSidebar(): void {
     ${slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05)}
     ${slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)}
     ${slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)}
-  `, false, 'depth-map-only');
+  `, false, 'depth-map-only'));
 
   // -- VIEW --
-  sb.innerHTML += buildSection('View Controls', `
+  parts.push(buildSection('View Controls', `
     ${slider('orbit', 'Orbit', 0, 360, 1)}
     ${slider('tilt', 'Tilt', -90, 90, 1)}
     ${slider('roll', 'Roll', -180, 180, 1)}
     ${slider('zoom', 'Zoom', 0.1, 10, 0.05)}
     <div style="margin-top:8px;font-size:10px;color:var(--text3);">Left drag = orbit/tilt &middot; Right/Shift drag = pan &middot; Scroll = zoom &middot; Double-click = fit</div>
-  `, true);
+  `, true));
+
+  sb.innerHTML = parts.join('');
 
   wireControls();
 }
@@ -169,8 +171,9 @@ function wireControls(): void {
 
   // Section collapse
   const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
-  const sections = document.querySelectorAll('.section');
-  document.querySelectorAll('.section-header').forEach(h => {
+  const sidebar = document.getElementById('sidebar')!;
+  const sections = sidebar.querySelectorAll('.section');
+  sidebar.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => {
       const section = h.parentElement!;
       if (isMobile()) {
@@ -211,9 +214,8 @@ function wireControls(): void {
     });
   }
 
-  // Random seed buttons
+  // Random seed button (sidebar-only — toolbar's #btnRandomSeed is bound once in setupToolbar)
   document.getElementById('btnRandSeed2')?.addEventListener('click', randomSeed);
-  document.getElementById('btnRandomSeed')?.addEventListener('click', randomSeed);
 
   // Aspect lock toggle
   const lockBtn = document.getElementById('btnAspectLock');

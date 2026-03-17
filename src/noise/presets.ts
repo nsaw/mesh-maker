@@ -8,7 +8,9 @@ export const PROFILES: Record<string, Record<string, number> | null> = {
   waves: { octaves: 3, persistence: 0.6, lacunarity: 1.5, distortion: 0.8, contrast: 1.0, sharpness: 0.4 },
 };
 
-export const CNC_PRESETS: Record<string, Record<string, string | number>> = {
+type PresetConfig = Record<string, string | number>;
+
+export const CNC_PRESETS: Record<string, PresetConfig> = {
   'gentle-waves': { noiseType:'simplex', frequency:0.06, amplitude:0.5, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:2, persistence:0.3, lacunarity:2, distortion:0, contrast:1, sharpness:0, meshX:36, meshY:24, smoothIter:3, smoothStr:0.5 },
   'organic-terrain': { noiseType:'fbm', frequency:0.1, amplitude:0.8, noiseExp:0.7, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:4, persistence:0.55, lacunarity:2, distortion:0.3, contrast:1.2, sharpness:0.2, meshX:36, meshY:24, smoothIter:1, smoothStr:0.4 },
   'sharp-ridges': { noiseType:'ridged', frequency:0.08, amplitude:1.0, noiseExp:1.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:-0.2, octaves:3, persistence:0.5, lacunarity:2.2, distortion:0, contrast:1.5, sharpness:0.8, meshX:36, meshY:24, smoothIter:0, smoothStr:0 },

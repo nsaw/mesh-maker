@@ -113,7 +113,7 @@ const DEFAULTS: MeshState = {
 
 export const STATE: MeshState = { ...DEFAULTS };
 
-export let _noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
+export const noiseDims = { meshX: 36, meshY: 24, resolution: 96 };
 
 export let demoDepthMap: HTMLImageElement | null = null;
 export function setDemoDepthMap(img: HTMLImageElement | null): void {

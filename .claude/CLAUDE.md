@@ -13,7 +13,7 @@ MeshCraft 3000 is a browser-based 3D mesh generator for CNC machining (ShopBot D
 
 Vite + TypeScript ES modules, 13 source files:
 
-```
+```text
 meshcraft/
 ├── index.html                 # HTML shell
 ├── styles/main.css            # All CSS (~490 lines)

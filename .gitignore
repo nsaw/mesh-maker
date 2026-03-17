@@ -28,9 +28,10 @@ screenshots/
 # Temp files
 *.tmp
 *.bak
+
+# Design tool exports and local verification screenshots
 assets/*.png
 assets/*.jpg
 assets/*.jpeg
 assets/*.psd
 verification/*.png
-assets/meshcraft-logo.psd

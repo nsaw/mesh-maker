@@ -1,5 +1,5 @@
 export function setupSponsorModal(): void {
-  const SPONSOR_IMGS = [
+  const SPONSOR_IMGS: readonly string[] = [
     'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800',
     'https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/04acb407-564f-4b6e-8c91-9506c2f52300/w=800',
   ];
@@ -23,12 +23,20 @@ export function setupSponsorModal(): void {
     sImg.src = SPONSOR_IMGS[sponsorIdx];
   });
 
+  let sponsorTimeout: ReturnType<typeof setTimeout> | null = null;
+
   const sponsorBtn = document.getElementById('btnSponsor');
-  if (sponsorBtn) sponsorBtn.addEventListener('click', showSponsor);
+  if (sponsorBtn) sponsorBtn.addEventListener('click', () => {
+    if (sponsorTimeout) { clearTimeout(sponsorTimeout); sponsorTimeout = null; }
+    showSponsor();
+  });
 
   if (!sessionStorage.getItem('sponsorSeen')) {
-    setTimeout(showSponsor, 1500);
     sessionStorage.setItem('sponsorSeen', '1');
+    sponsorTimeout = setTimeout(() => {
+      sponsorTimeout = null;
+      showSponsor();
+    }, 4000);
   }
 
   // Scroll-to-export button — uses static arrow characters only (no user input)
@@ -37,22 +45,30 @@ export function setupSponsorModal(): void {
   const ARROW_DOWN = '\u2193';
   const ARROW_UP = '\u2191';
 
+  let paddingResetTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollDelayTimer: ReturnType<typeof setTimeout> | null = null;
+
   scrollBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (atBottom) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      const bar = document.querySelector('.export-bar')!;
+      const bar = document.querySelector('.export-bar');
+      if (!bar) return;
       const barRect = bar.getBoundingClientRect();
       const scrollTarget = window.scrollY + barRect.bottom - window.innerHeight + 20;
       if (scrollTarget <= window.scrollY) {
+        if (paddingResetTimer !== null) clearTimeout(paddingResetTimer);
+        if (scrollDelayTimer !== null) clearTimeout(scrollDelayTimer);
         document.body.style.paddingBottom = barRect.height + 40 + 'px';
-        setTimeout(() => {
+        scrollDelayTimer = setTimeout(() => {
+          scrollDelayTimer = null;
           window.scrollTo({ top: document.body.scrollHeight - window.innerHeight, behavior: 'smooth' });
         }, 10);
-        setTimeout(() => {
+        paddingResetTimer = setTimeout(() => {
           document.body.style.paddingBottom = '';
+          paddingResetTimer = null;
         }, 600);
       } else {
         window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
@@ -65,6 +81,8 @@ export function setupSponsorModal(): void {
     if (scrolledToBottom) {
       atBottom = true;
       scrollBtn.textContent = ARROW_UP;
+      if (paddingResetTimer !== null) { clearTimeout(paddingResetTimer); paddingResetTimer = null; }
+      document.body.style.paddingBottom = '';
     } else {
       atBottom = false;
       scrollBtn.textContent = ARROW_DOWN;

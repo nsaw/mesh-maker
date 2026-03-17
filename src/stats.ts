@@ -13,7 +13,6 @@ export function zoomExtents(): void {
   const halfW = meshX / 2, halfH = meshY / 2, halfZ = (zMax - zMin) / 2;
   const radius = Math.sqrt(halfW * halfW + halfH * halfH + halfZ * halfZ);
 
-  const wrap = document.getElementById('canvasWrap')!;
   const fov = Math.PI / 3;
   const fitDist = radius / Math.tan(fov / 2);
   const targetZoom = Math.max(meshX, meshY) * 1.2 / fitDist;
