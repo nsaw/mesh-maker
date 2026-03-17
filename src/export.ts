@@ -193,6 +193,7 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
 
   let m: ReturnType<typeof rhino.Mesh> | null = null;
   let file: ReturnType<typeof rhino.File3dm> | null = null;
+  let meshAdded = false;
 
   try {
     m = new rhino.Mesh();
@@ -251,12 +252,13 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
 
     file = new rhino.File3dm();
     file.objects().add(m, null);
+    meshAdded = true;
 
     const bytes: Uint8Array = file.toByteArray();
     return new Blob([bytes], { type: 'application/octet-stream' });
   } finally {
     file?.delete();
-    m?.delete();
+    if (!meshAdded) m?.delete();
   }
 }
 

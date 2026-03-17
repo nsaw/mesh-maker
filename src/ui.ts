@@ -171,8 +171,9 @@ function wireControls(): void {
 
   // Section collapse
   const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
-  const sections = document.querySelectorAll('.section');
-  document.querySelectorAll('.section-header').forEach(h => {
+  const sidebar = document.getElementById('sidebar')!;
+  const sections = sidebar.querySelectorAll('.section');
+  sidebar.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => {
       const section = h.parentElement!;
       if (isMobile()) {
