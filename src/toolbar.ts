@@ -116,6 +116,8 @@ function copyFallback(text: string): void {
   let ok = false;
   try {
     ok = document.execCommand('copy');
+  } catch {
+    // execCommand can throw SecurityError in sandboxed iframes
   } finally {
     document.body.removeChild(ta);
   }

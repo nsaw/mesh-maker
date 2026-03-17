@@ -339,7 +339,7 @@ async function _doExportInner(): Promise<void> {
     ext = 'obj';
   } else if (fmt === '3dm') {
     try {
-      showToast('Loading Rhino3DM\u2026');
+      if (!_rhino) showToast('Loading Rhino3DM\u2026');
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
       showToast('3DM exported!');
