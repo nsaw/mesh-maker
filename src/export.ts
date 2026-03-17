@@ -314,8 +314,9 @@ async function _doExportInner(): Promise<void> {
   const fmt = STATE.exportFormat;
 
   if (fmt === 'heightmap') {
+    if (!STATE.vertices) { showToast('Generate a mesh first'); return; }
     const blob = await exportHeightmapPNG();
-    if (!blob) { showToast('Generate a mesh first'); return; }
+    if (!blob) { showToast('Heightmap export failed'); return; }
     triggerDownload(blob, `${STATE.filename}_heightmap.png`);
     return;
   }
