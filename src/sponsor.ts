@@ -46,6 +46,7 @@ export function setupSponsorModal(): void {
   const ARROW_UP = '\u2191';
 
   let paddingResetTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollDelayTimer: ReturnType<typeof setTimeout> | null = null;
 
   scrollBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -59,8 +60,10 @@ export function setupSponsorModal(): void {
       const scrollTarget = window.scrollY + barRect.bottom - window.innerHeight + 20;
       if (scrollTarget <= window.scrollY) {
         if (paddingResetTimer !== null) clearTimeout(paddingResetTimer);
+        if (scrollDelayTimer !== null) clearTimeout(scrollDelayTimer);
         document.body.style.paddingBottom = barRect.height + 40 + 'px';
-        setTimeout(() => {
+        scrollDelayTimer = setTimeout(() => {
+          scrollDelayTimer = null;
           window.scrollTo({ top: document.body.scrollHeight - window.innerHeight, behavior: 'smooth' });
         }, 10);
         paddingResetTimer = setTimeout(() => {
