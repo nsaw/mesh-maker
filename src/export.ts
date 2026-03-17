@@ -321,7 +321,7 @@ async function _doExportInner(): Promise<void> {
   }
 
   const mesh = getFullMeshData();
-  if (!mesh) return;
+  if (!mesh) { showToast('Generate a mesh first'); return; }
 
   let blob: Blob | undefined;
   let ext: string;
@@ -343,7 +343,6 @@ async function _doExportInner(): Promise<void> {
       if (!_rhino) showToast('Loading Rhino3DM\u2026', 15000);
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
-      showToast('3DM exported!');
     } catch {
       const txt = exportOBJ(mesh);
       blob = new Blob([txt], { type: 'text/plain' });
@@ -355,6 +354,7 @@ async function _doExportInner(): Promise<void> {
   }
 
   triggerDownload(blob, `${STATE.filename}.${ext}`);
+  if (fmt === '3dm' && ext === '3dm') showToast('3DM exported!');
 }
 
 function triggerDownload(blob: Blob, filename: string): void {
