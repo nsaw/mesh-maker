@@ -80,7 +80,7 @@ export function renderViewport(): void {
   const zRange = zMax - zMin || 1;
 
   if (viewMode === 'solid' || viewMode === 'both') {
-    const zBaseLocal = -STATE.baseThickness;
+    const zBaseLocal = 0;
 
     const lightDir = { x: -0.4, y: -0.5, z: 0.75 };
     const lLen = Math.sqrt(lightDir.x*lightDir.x + lightDir.y*lightDir.y + lightDir.z*lightDir.z);
@@ -269,6 +269,37 @@ export function renderViewport(): void {
       }
     }
   }
+
+  // Axis gizmo — bottom-left corner, rotates with the view
+  const gizmoX = 50, gizmoY = 56, gizmoLen = 28;
+  const cosR2 = Math.cos(rotRad), sinR2 = Math.sin(rotRad);
+  const cosT2 = Math.cos(tiltRad), sinT2 = Math.sin(tiltRad);
+  const cosS2 = Math.cos(rollRad), sinS2 = Math.sin(rollRad);
+  const axes = [
+    { dx: 1, dy: 0, dz: 0, color: '#e74c3c', label: 'X' },
+    { dx: 0, dy: 1, dz: 0, color: '#2ecc71', label: 'Y' },
+    { dx: 0, dy: 0, dz: 1, color: '#5ba8f7', label: 'Z' },
+  ];
+  for (const a of axes) {
+    const rx2 = a.dx * cosR2 - a.dz * sinR2;
+    const rz2 = a.dx * sinR2 + a.dz * cosR2;
+    const ty2 = a.dy * cosT2 - rz2 * sinT2;
+    const sx2 = rx2 * cosS2 - ty2 * sinS2;
+    const sy2 = rx2 * sinS2 + ty2 * cosS2;
+    ctx.beginPath();
+    ctx.moveTo(gizmoX, gizmoY);
+    ctx.lineTo(gizmoX + sx2 * gizmoLen, gizmoY + sy2 * gizmoLen);
+    ctx.strokeStyle = a.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = a.color;
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(a.label, gizmoX + sx2 * (gizmoLen + 10), gizmoY + sy2 * (gizmoLen + 10));
+  }
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
 
   updateDimsOverlay();
 }
