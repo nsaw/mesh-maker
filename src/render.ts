@@ -3,6 +3,39 @@ import { STATE } from './state';
 let _canvasW = 0;
 let _canvasH = 0;
 
+function drawAxisGizmo(ctx: CanvasRenderingContext2D, rotRad: number, tiltRad: number, rollRad: number): void {
+  // Axis gizmo -- top-left corner, rotates with the view
+  const gizmoX = 50, gizmoY = 56, gizmoLen = 28;
+  const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+  const cosT = Math.cos(tiltRad), sinT = Math.sin(tiltRad);
+  const cosS = Math.cos(rollRad), sinS = Math.sin(rollRad);
+  const axes = [
+    { dx: 1, dy: 0, dz: 0, color: '#e74c3c', label: 'X' },
+    { dx: 0, dy: 1, dz: 0, color: '#2ecc71', label: 'Y' },
+    { dx: 0, dy: 0, dz: 1, color: '#5ba8f7', label: 'Z' },
+  ];
+  for (const a of axes) {
+    const rx = a.dx * cosR - a.dz * sinR;
+    const rz = a.dx * sinR + a.dz * cosR;
+    const ty = a.dy * cosT - rz * sinT;
+    const sx = rx * cosS - ty * sinS;
+    const sy = rx * sinS + ty * cosS;
+    ctx.beginPath();
+    ctx.moveTo(gizmoX, gizmoY);
+    ctx.lineTo(gizmoX + sx * gizmoLen, gizmoY + sy * gizmoLen);
+    ctx.strokeStyle = a.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = a.color;
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(a.label, gizmoX + sx * (gizmoLen + 10), gizmoY + sy * (gizmoLen + 10));
+  }
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
 export function resizeCanvas(): void {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const wrap = document.getElementById('canvasWrap')!;
@@ -34,6 +67,10 @@ export function renderViewport(): void {
   ctx.fillRect(0, 0, W, H);
 
   if (!STATE.vertices) {
+    const rotRad = STATE.orbit * Math.PI / 180;
+    const tiltRad = STATE.tilt * Math.PI / 180;
+    const rollRad = STATE.roll * Math.PI / 180;
+    drawAxisGizmo(ctx, rotRad, tiltRad, rollRad);
     updateDimsOverlay();
     return;
   }
@@ -80,8 +117,6 @@ export function renderViewport(): void {
   const zRange = zMax - zMin || 1;
 
   if (viewMode === 'solid' || viewMode === 'both') {
-    const zBaseLocal = 0;
-
     const lightDir = { x: -0.4, y: -0.5, z: 0.75 };
     const lLen = Math.sqrt(lightDir.x*lightDir.x + lightDir.y*lightDir.y + lightDir.z*lightDir.z);
     lightDir.x /= lLen; lightDir.y /= lLen; lightDir.z /= lLen;
@@ -96,10 +131,10 @@ export function renderViewport(): void {
         const jn = Math.min(j + step, rows - 1);
         for (let i = 0; i < cols - 1; i += step) {
           const in2 = Math.min(i + step, cols - 1);
-          const b1 = project((i/(cols-1))*meshX, (j/(rows-1))*meshY, zBaseLocal);
-          const b2 = project((in2/(cols-1))*meshX, (j/(rows-1))*meshY, zBaseLocal);
-          const b3 = project((i/(cols-1))*meshX, (jn/(rows-1))*meshY, zBaseLocal);
-          const b4 = project((in2/(cols-1))*meshX, (jn/(rows-1))*meshY, zBaseLocal);
+          const b1 = project((i/(cols-1))*meshX, (j/(rows-1))*meshY, zBase);
+          const b2 = project((in2/(cols-1))*meshX, (j/(rows-1))*meshY, zBase);
+          const b3 = project((i/(cols-1))*meshX, (jn/(rows-1))*meshY, zBase);
+          const b4 = project((in2/(cols-1))*meshX, (jn/(rows-1))*meshY, zBase);
           encFaces.push({ pts: [b1, b3, b4, b2], avgZ: (b1.z+b2.z+b3.z+b4.z)/4, color: '#1a2030' });
         }
       }
@@ -108,20 +143,20 @@ export function renderViewport(): void {
         const in2 = Math.min(i + step, cols - 1);
         let t1, t2, b1, b2;
         t1 = proj[0][i]; t2 = proj[0][in2];
-        b1 = project((i/(cols-1))*meshX, 0, zBaseLocal); b2 = project((in2/(cols-1))*meshX, 0, zBaseLocal);
+        b1 = project((i/(cols-1))*meshX, 0, zBase); b2 = project((in2/(cols-1))*meshX, 0, zBase);
         encFaces.push({ pts: [t1, t2, b2, b1], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
         t1 = proj[rows-1][i]; t2 = proj[rows-1][in2];
-        b1 = project((i/(cols-1))*meshX, meshY, zBaseLocal); b2 = project((in2/(cols-1))*meshX, meshY, zBaseLocal);
+        b1 = project((i/(cols-1))*meshX, meshY, zBase); b2 = project((in2/(cols-1))*meshX, meshY, zBase);
         encFaces.push({ pts: [t1, b1, b2, t2], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
       }
       for (let j = 0; j < rows - 1; j += step) {
         const jn = Math.min(j + step, rows - 1);
         let t1, t2, b1, b2;
         t1 = proj[j][0]; t2 = proj[jn][0];
-        b1 = project(0, (j/(rows-1))*meshY, zBaseLocal); b2 = project(0, (jn/(rows-1))*meshY, zBaseLocal);
+        b1 = project(0, (j/(rows-1))*meshY, zBase); b2 = project(0, (jn/(rows-1))*meshY, zBase);
         encFaces.push({ pts: [t1, b1, b2, t2], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
         t1 = proj[j][cols-1]; t2 = proj[jn][cols-1];
-        b1 = project(meshX, (j/(rows-1))*meshY, zBaseLocal); b2 = project(meshX, (jn/(rows-1))*meshY, zBaseLocal);
+        b1 = project(meshX, (j/(rows-1))*meshY, zBase); b2 = project(meshX, (jn/(rows-1))*meshY, zBase);
         encFaces.push({ pts: [t1, t2, b2, b1], avgZ: (t1.z+t2.z+b1.z+b2.z)/4, color: sideColor });
       }
       encFaces.sort((a, b) => b.avgZ - a.avgZ);
@@ -270,37 +305,7 @@ export function renderViewport(): void {
     }
   }
 
-  // Axis gizmo — bottom-left corner, rotates with the view
-  const gizmoX = 50, gizmoY = 56, gizmoLen = 28;
-  const cosR2 = Math.cos(rotRad), sinR2 = Math.sin(rotRad);
-  const cosT2 = Math.cos(tiltRad), sinT2 = Math.sin(tiltRad);
-  const cosS2 = Math.cos(rollRad), sinS2 = Math.sin(rollRad);
-  const axes = [
-    { dx: 1, dy: 0, dz: 0, color: '#e74c3c', label: 'X' },
-    { dx: 0, dy: 1, dz: 0, color: '#2ecc71', label: 'Y' },
-    { dx: 0, dy: 0, dz: 1, color: '#5ba8f7', label: 'Z' },
-  ];
-  for (const a of axes) {
-    const rx2 = a.dx * cosR2 - a.dz * sinR2;
-    const rz2 = a.dx * sinR2 + a.dz * cosR2;
-    const ty2 = a.dy * cosT2 - rz2 * sinT2;
-    const sx2 = rx2 * cosS2 - ty2 * sinS2;
-    const sy2 = rx2 * sinS2 + ty2 * cosS2;
-    ctx.beginPath();
-    ctx.moveTo(gizmoX, gizmoY);
-    ctx.lineTo(gizmoX + sx2 * gizmoLen, gizmoY + sy2 * gizmoLen);
-    ctx.strokeStyle = a.color;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = a.color;
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(a.label, gizmoX + sx2 * (gizmoLen + 10), gizmoY + sy2 * (gizmoLen + 10));
-  }
-  ctx.textAlign = 'start';
-  ctx.textBaseline = 'alphabetic';
-
+  drawAxisGizmo(ctx, rotRad, tiltRad, rollRad);
   updateDimsOverlay();
 }
 

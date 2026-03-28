@@ -38,3 +38,4 @@ verification/*.png
 docs/plans/
 .claude/
 __pycache__/
+.playwright-mcp/
