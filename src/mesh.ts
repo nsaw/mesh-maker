@@ -7,7 +7,7 @@ import { updateStats } from './stats';
 export function generateNoiseMesh(): void {
   const t0 = performance.now();
   const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType } = STATE;
+          distortion, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
 
   const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
@@ -62,20 +62,28 @@ export function generateNoiseMesh(): void {
         n = n * (1 - valleyFloor);
       }
 
-      verts[j][i] = n * amplitude;
+      verts[j][i] = n;
     }
   }
 
   const finalVerts = smoothIter > 0 ? weightedSmooth(verts, rows, cols, smoothIter, smoothStr) : verts;
 
-  // CNC normalization: shift surface so peaks sit at z=0 (stock top), then apply offset
-  let zMax = -Infinity;
+  // CNC z-model: z=0 is machine bed, stock from 0 to baseThickness.
+  // amplitude = total cut depth (peak to valley), clamped to stock thickness.
+  // Peaks sit at z=baseThickness (stock top), valleys at z=baseThickness-cutDepth.
+  const cutDepth = Math.min(amplitude, baseThickness);
+  let nMin = Infinity, nMax = -Infinity;
   for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++)
-      if (finalVerts[j][i] > zMax) zMax = finalVerts[j][i];
+    for (let i = 0; i < cols; i++) {
+      if (finalVerts[j][i] < nMin) nMin = finalVerts[j][i];
+      if (finalVerts[j][i] > nMax) nMax = finalVerts[j][i];
+    }
+  const range = nMax - nMin || 1;
   for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++)
-      finalVerts[j][i] = finalVerts[j][i] - zMax + offset;
+    for (let i = 0; i < cols; i++) {
+      const t = (finalVerts[j][i] - nMin) / range;
+      finalVerts[j][i] = (baseThickness - cutDepth) + t * cutDepth + offset;
+    }
 
   STATE.vertices = finalVerts;
   STATE.genTime = performance.now() - t0;
@@ -84,7 +92,7 @@ export function generateNoiseMesh(): void {
 export function generateDepthMapMesh(): void {
   const t0 = performance.now();
   const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency,
-          seed, octaves, persistence, lacunarity, meshX, meshY, resolution, noiseType } = STATE;
+          seed, octaves, persistence, lacunarity, meshX, meshY, resolution, noiseType, baseThickness } = STATE;
 
   if (!depthMap) { STATE.vertices = null; return; }
 
@@ -136,14 +144,20 @@ export function generateDepthMapMesh(): void {
 
   const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
 
-  // CNC normalization: shift surface so peaks sit at z=0 (stock top), then apply offset
-  let zMax = -Infinity;
+  // CNC z-model: same as noise path -- peaks at stock top, valleys at stock top - cut depth
+  const cutDepth = Math.min(dmHeightScale, baseThickness);
+  let nMin = Infinity, nMax = -Infinity;
   for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++)
-      if (finalVerts[j][i] > zMax) zMax = finalVerts[j][i];
+    for (let i = 0; i < cols; i++) {
+      if (finalVerts[j][i] < nMin) nMin = finalVerts[j][i];
+      if (finalVerts[j][i] > nMax) nMax = finalVerts[j][i];
+    }
+  const nRange = nMax - nMin || 1;
   for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++)
-      finalVerts[j][i] = finalVerts[j][i] - zMax + dmOffset;
+    for (let i = 0; i < cols; i++) {
+      const t = (finalVerts[j][i] - nMin) / nRange;
+      finalVerts[j][i] = (baseThickness - cutDepth) + t * cutDepth + dmOffset;
+    }
 
   STATE.vertices = finalVerts;
   STATE.genTime = performance.now() - t0;

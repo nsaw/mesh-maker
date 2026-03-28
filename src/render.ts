@@ -52,7 +52,7 @@ export function renderViewport(): void {
     if (vertices[j][i] < zMin) zMin = vertices[j][i];
     if (vertices[j][i] > zMax) zMax = vertices[j][i];
   }
-  const zBase = STATE.watertight ? -STATE.baseThickness : 0;
+  const zBase = 0;
   const zMid = (Math.min(zMin, zBase) + zMax) / 2;
 
   function project(x: number, y: number, z: number) {
@@ -283,7 +283,7 @@ export function updateDimsOverlay(): void {
     if (vertices[j][i] > zMax) zMax = vertices[j][i];
   }
   const totalZ = STATE.watertight
-    ? Math.max(zMax, 0) + STATE.baseThickness
+    ? Math.max(zMax, 0)
     : zMax - zMin;
 
   // Build overlay via DOM methods — all values are numeric STATE properties (safe)

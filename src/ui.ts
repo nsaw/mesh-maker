@@ -88,7 +88,7 @@ export function buildSidebar(): void {
       ${slider('gaborBandwidth', 'Gabor Bandwidth', 0.5, 4, 0.1)}
     ` : ''}
     ${slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005)}
-    ${slider('amplitude', 'Amplitude / Z-height (inches)', 0, 6, 0.05, '', ' <span class="cnc-badge">max Z: 6"</span>')}
+    ${slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05, '', ' <span class="cnc-badge">max Z: 6"</span>')}
     ${slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05)}
     ${slider('offset', 'Vertical Offset', -2, 2, 0.05)}
     <div class="seed-row">

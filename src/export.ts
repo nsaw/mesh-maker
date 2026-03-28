@@ -27,8 +27,8 @@ function triNormal(a: Vertex3D, b: Vertex3D, c: Vertex3D): Vertex3D {
 
 function collectTriangles(mesh: MeshData): Triangle[] {
   const tris: Triangle[] = [];
-  const { top, cols, rows, baseThickness, watertight } = mesh;
-  const zBase = -baseThickness;
+  const { top, cols, rows, watertight } = mesh;
+  const zBase = 0;
 
   for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
     tris.push([top[j][i], top[j][i+1], top[j+1][i]]);
@@ -102,8 +102,8 @@ function exportSTL_Binary(mesh: MeshData): Blob {
 }
 
 function exportOBJ(mesh: MeshData): string {
-  const { top, cols, rows, watertight, baseThickness } = mesh;
-  const zBase = -baseThickness;
+  const { top, cols, rows, watertight } = mesh;
+  const zBase = 0;
   let s = '# MESHCRAFT 3000 - Sawyer Design\n# OBJ Export\n\n';
 
   const topStart = 1;
@@ -191,8 +191,8 @@ async function loadRhino3dm(): Promise<any> { // eslint-disable-line @typescript
 async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
   const rhino = await loadRhino3dm();
 
-  const { top, cols, rows, watertight, baseThickness } = mesh;
-  const zBase = -baseThickness;
+  const { top, cols, rows, watertight } = mesh;
+  const zBase = 0;
 
   const asPointCloud = STATE.export3dmAsPointCloud;
 
