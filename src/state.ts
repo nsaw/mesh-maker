@@ -99,7 +99,7 @@ const DEFAULTS: MeshState = {
   dmSmoothing: 7,
   depthMapAR: null,
   aspectLocked: false,
-  orbit: 55,
+  orbit: 235,
   tilt: -25,
   roll: 0,
   zoom: 1.0,
