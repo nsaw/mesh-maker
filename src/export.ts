@@ -5,7 +5,7 @@ import { showToast } from './toast';
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
   const baseThickness = watertight ? Math.max(STATE.baseThickness, 0.01) : STATE.baseThickness;
-  if (!vertices) return null;
+  if (!vertices || cols < 2 || rows < 2) return null;
 
   const top: Vertex3D[][] = [];
   for (let j = 0; j < rows; j++) {
@@ -169,13 +169,19 @@ async function loadRhino3dm(): Promise<any> { // eslint-disable-line @typescript
     // Cache the in-flight promise to prevent concurrent WASM downloads on rapid clicks.
     // Reset on failure so subsequent attempts can retry.
     _rhinoPromise = (async () => {
+      let mod;
       try {
-        const mod = await import(/* @vite-ignore */ RHINO3DM_URL);
+        mod = await import(/* @vite-ignore */ RHINO3DM_URL);
+      } catch (e) {
+        _rhinoPromise = null;
+        throw new Error(`CDN import failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e } as ErrorOptions);
+      }
+      try {
         _rhino = await mod.default();
         return _rhino;
       } catch (e) {
         _rhinoPromise = null;
-        throw e;
+        throw new Error(`WASM init failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e } as ErrorOptions);
       }
     })();
   }
@@ -210,7 +216,7 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
 
       cloud = new rhino.PointCloud();
       cloud.addRangePoints(points);
-      file.objects().addPointCloud(cloud);
+      file.objects().addPointCloud(cloud, null);
       geometryAdded = true;
     } else {
       m = new rhino.Mesh();
@@ -259,14 +265,25 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
       geometryAdded = true;
     }
 
-    const writeOptions = new rhino.File3dmWriteOptions();
-    writeOptions.version = 7;
-    const bytes: Uint8Array = file.toByteArrayOptions(writeOptions);
+    let bytes: Uint8Array;
+    try {
+      const writeOptions = new rhino.File3dmWriteOptions();
+      writeOptions.version = 7;
+      bytes = file.toByteArrayOptions(writeOptions);
+    } catch (primaryErr: unknown) {
+      // Fallback: serialize without version pinning (compatible with rhino3dm 8.4+)
+      try {
+        bytes = file.toByteArray();
+      } catch (fallbackErr: unknown) {
+        const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+        throw new Error(`3DM write failed: ${msg}`, { cause: fallbackErr } as ErrorOptions);
+      }
+    }
     return new Blob([bytes], { type: 'application/octet-stream' });
   } finally {
     file?.delete();
     if (!geometryAdded) m?.delete();
-    cloud?.delete();
+    if (!geometryAdded) cloud?.delete();
   }
 }
 
@@ -301,8 +318,9 @@ function exportHeightmapPNG(): Promise<Blob | null> {
   }
   ctx.putImageData(img, 0, 0);
 
-  return new Promise(resolve => {
-    c.toBlob(blob => resolve(blob), 'image/png');
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('PNG encoding timed out')), 5000);
+    c.toBlob(blob => { clearTimeout(timer); resolve(blob); }, 'image/png');
   });
 }
 
@@ -311,7 +329,7 @@ function exportHeightmapPNG(): Promise<Blob | null> {
 let _exportInFlight = false;
 
 export async function doExport(): Promise<void> {
-  if (_exportInFlight) return;
+  if (_exportInFlight) { showToast('Export in progress...'); return; }
   _exportInFlight = true;
   try {
     return await _doExportInner();
@@ -332,7 +350,10 @@ async function _doExportInner(): Promise<void> {
   }
 
   const mesh = getFullMeshData();
-  if (!mesh) { showToast('Generate a mesh first'); return; }
+  if (!mesh) {
+    showToast(STATE.vertices ? 'Mesh too small to export (need at least 2\u00d72 grid)' : 'Generate a mesh first');
+    return;
+  }
 
   let blob: Blob | undefined;
   let ext: string;
@@ -354,13 +375,15 @@ async function _doExportInner(): Promise<void> {
       if (!_rhino) showToast('Loading Rhino3DM\u2026', 15000);
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
-    } catch {
+    } catch (e: unknown) {
       const txt = exportOBJ(mesh);
       blob = new Blob([txt], { type: 'text/plain' });
       ext = 'obj';
-      showToast(_rhino ? '3DM export failed \u2014 exported as OBJ' : '3DM unavailable \u2014 exported as OBJ');
+      const errMsg = e instanceof Error ? e.message : String(e);
+      showToast(`3DM failed (OBJ fallback): ${errMsg}`, 8000);
     }
   } else {
+    showToast('Unknown export format');
     return;
   }
 
@@ -376,5 +399,5 @@ function triggerDownload(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 100);
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

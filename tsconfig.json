@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"]
+    "lib": ["ES2020", "ES2022.Error", "DOM", "DOM.Iterable"]
   },
   "include": ["src"]
 }

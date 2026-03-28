@@ -62,11 +62,22 @@ export function generateNoiseMesh(): void {
         n = n * (1 - valleyFloor);
       }
 
-      verts[j][i] = n * amplitude + offset;
+      verts[j][i] = n * amplitude;
     }
   }
 
-  STATE.vertices = smoothIter > 0 ? weightedSmooth(verts, rows, cols, smoothIter, smoothStr) : verts;
+  const finalVerts = smoothIter > 0 ? weightedSmooth(verts, rows, cols, smoothIter, smoothStr) : verts;
+
+  // CNC normalization: shift surface so peaks sit at z=0 (stock top), then apply offset
+  let zMax = -Infinity;
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++)
+      if (finalVerts[j][i] > zMax) zMax = finalVerts[j][i];
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++)
+      finalVerts[j][i] = finalVerts[j][i] - zMax + offset;
+
+  STATE.vertices = finalVerts;
   STATE.genTime = performance.now() - t0;
 }
 
@@ -119,13 +130,22 @@ export function generateDepthMapMesh(): void {
       const noiseH = ((n + 1) / 2) * dmHeightScale;
 
       const effectiveBlend = STATE.mode === 'depthmap' ? 0 : (STATE.mode === 'noise' ? 1 : blend);
-      const z = effectiveBlend * noiseH + (1 - effectiveBlend) * h + dmOffset;
-
-      verts[j][i] = z;
+      verts[j][i] = effectiveBlend * noiseH + (1 - effectiveBlend) * h;
     }
   }
 
-  STATE.vertices = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
+  const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
+
+  // CNC normalization: shift surface so peaks sit at z=0 (stock top), then apply offset
+  let zMax = -Infinity;
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++)
+      if (finalVerts[j][i] > zMax) zMax = finalVerts[j][i];
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++)
+      finalVerts[j][i] = finalVerts[j][i] - zMax + dmOffset;
+
+  STATE.vertices = finalVerts;
   STATE.genTime = performance.now() - t0;
 }
 

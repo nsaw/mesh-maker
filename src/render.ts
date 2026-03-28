@@ -282,7 +282,9 @@ export function updateDimsOverlay(): void {
     if (vertices[j][i] < zMin) zMin = vertices[j][i];
     if (vertices[j][i] > zMax) zMax = vertices[j][i];
   }
-  const totalZ = (zMax - zMin) + STATE.baseThickness;
+  const totalZ = STATE.watertight
+    ? Math.max(zMax, 0) + STATE.baseThickness
+    : zMax - zMin;
 
   // Build overlay via DOM methods — all values are numeric STATE properties (safe)
   el.textContent = '';
