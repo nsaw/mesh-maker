@@ -26,6 +26,18 @@ function toolZOffset(tool: ToolDef, d: number): number {
       return R - Math.sqrt(R * R - d * d);
     }
 
+    case ToolType.VBit: {
+      const toolR = tool.diameter / 2;
+      if (d > toolR) return Infinity;
+      const alpha = tool.halfAngle;
+      const sinA = Math.sin(alpha);
+      const dTransition = R * sinA;
+      if (d <= dTransition) {
+        return R - Math.sqrt(R * R - d * d);
+      }
+      return R * (1 - Math.cos(alpha)) + (d - dTransition) * Math.tan(alpha);
+    }
+
     case ToolType.EndMill:
     case ToolType.Radiused:
     default: {
@@ -86,11 +98,6 @@ function buildKernel1D(tool: ToolDef, cellSize: number): { offsets: Float64Array
  */
 export function compensateForTool(heightmap: Heightmap, tool: ToolDef): Heightmap {
   const { z, rows, cols, cellSize } = heightmap;
-
-  // For flat end mills with no tip radius, no compensation needed
-  if (tool.type === ToolType.EndMill && tool.tipRadius === 0) {
-    return { ...heightmap, z: new Float64Array(z) };
-  }
 
   const { offsets, halfWidth } = buildKernel1D(tool, cellSize);
 

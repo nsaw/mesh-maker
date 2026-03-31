@@ -79,6 +79,7 @@ export function meshToHeightmap(
   for (let i = 0; i < z.length; i++) {
     if (z[i] === -Infinity) gaps.push(i);
   }
+  const sourceZ = z.slice();
 
   for (const idx of gaps) {
     const row = Math.floor(idx / cols);
@@ -92,7 +93,7 @@ export function meshToHeightmap(
           const nr = row + dr;
           const nc = col + dc;
           if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
-            const nz = z[nr * cols + nc];
+            const nz = sourceZ[nr * cols + nc];
             if (nz > bestZ && nz !== -Infinity) bestZ = nz;
           }
         }

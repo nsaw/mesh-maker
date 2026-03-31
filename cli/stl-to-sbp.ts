@@ -7,7 +7,12 @@ import { getDefaultConfig, getEmbeddedTools, findToolByName } from '../src/sbp/t
 import { readToolDatabase } from './vtdb-reader';
 import type { ToolDef, MaterialProfile, SbpConfig } from '../src/sbp/types';
 
-function usage(): never {
+const MATERIAL_PROFILES: MaterialProfile[] = ['general', 'mdf', 'hardwood'];
+
+function usage(message?: string): never {
+  if (message) {
+    process.stderr.write(`${message}\n\n`);
+  }
   process.stderr.write(`
 Usage: stl-to-sbp <input.stl> [options]
 
@@ -32,6 +37,18 @@ Options:
   --dry-run                    Print stats without writing file
 `);
   process.exit(1);
+}
+
+function selectDefaultTool(
+  tools: ToolDef[],
+  fallback: ToolDef,
+  patterns: string[],
+): ToolDef {
+  for (const pattern of [fallback.name, ...patterns]) {
+    const match = findToolByName(tools, pattern);
+    if (match) return match;
+  }
+  return fallback;
 }
 
 function parseArgs(args: string[]): {
@@ -112,6 +129,32 @@ function parseArgs(args: string[]): {
     }
   }
 
+  const requireFiniteValue = (name: string, value: number | null): void => {
+    if (value === null) return;
+    if (!Number.isFinite(value)) {
+      usage(`Invalid value for ${name}`);
+    }
+  };
+
+  requireFiniteValue('roughingAtc', roughingAtc);
+  requireFiniteValue('finishingAtc', finishingAtc);
+  requireFiniteValue('resolution', resolution);
+  requireFiniteValue('materialThickness', materialThickness);
+  requireFiniteValue('offsetX', offsetX);
+  requireFiniteValue('offsetY', offsetY);
+  requireFiniteValue('safeZ', safeZ);
+  requireFiniteValue('homeZ', homeZ);
+  requireFiniteValue('stockAllowance', stockAllowance);
+  requireFiniteValue('finishAngle', finishAngle);
+
+  if (!MATERIAL_PROFILES.includes(materialProfile)) {
+    usage(`Invalid material profile "${materialProfile}". Expected one of: ${MATERIAL_PROFILES.join(', ')}`);
+  }
+
+  if (roughingOnly && finishingOnly) {
+    usage('Cannot combine --roughing-only and --finishing-only');
+  }
+
   return {
     input, output, vtdbPath, roughingPattern, finishingPattern,
     roughingAtc, finishingAtc, resolution, materialThickness,
@@ -136,9 +179,11 @@ function main(): void {
 
   // Load tools: vtdb or embedded
   let tools: ToolDef[];
+  let loadedToolDatabase = false;
   if (opts.vtdbPath) {
     process.stderr.write(`Reading vtdb: ${opts.vtdbPath}\n`);
     tools = readToolDatabase(resolve(opts.vtdbPath));
+    loadedToolDatabase = true;
     process.stderr.write(`  ${tools.length} tools loaded\n`);
   } else {
     // Try default vtdb in sourceTruth
@@ -146,6 +191,7 @@ function main(): void {
     const defaultVtdb = resolve(scriptDir, '../sourceTruth/stl-to-sbp/tool-libraries/tooldb-general.vtdb');
     try {
       tools = readToolDatabase(defaultVtdb);
+      loadedToolDatabase = true;
       process.stderr.write(`Using default vtdb: ${defaultVtdb} (${tools.length} tools)\n`);
     } catch {
       process.stderr.write('No vtdb found, using embedded tool data\n');
@@ -155,6 +201,10 @@ function main(): void {
 
   // Resolve roughing tool
   const config: SbpConfig = getDefaultConfig(opts.materialProfile);
+  if (loadedToolDatabase) {
+    config.roughingTool = selectDefaultTool(tools, config.roughingTool, ['Chipbreaker']);
+    config.finishingTool = selectDefaultTool(tools, config.finishingTool, ['R1/16-S1/4']);
+  }
   config.offsetX = opts.offsetX;
   config.offsetY = opts.offsetY;
   config.safeZ = opts.safeZ;

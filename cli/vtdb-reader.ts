@@ -75,8 +75,11 @@ export function readToolDatabase(vtdbPath: string): ToolDef[] {
 
   return rows.map(row => {
     // Extract ATC slot from group name: "TOOL N - ..."
-    const slotMatch = row.group_name.match(/^TOOL\s+(\d+)/);
-    const atcSlot = slotMatch ? parseInt(slotMatch[1], 10) : 0;
+    const slotMatch = row.group_name.match(/^TOOL\s+(\d+)/i);
+    if (!slotMatch) {
+      throw new Error(`Could not extract ATC slot from tool group "${row.group_name}"`);
+    }
+    const atcSlot = parseInt(slotMatch[1], 10);
 
     // Convert feed rates from mm/s (rate_units=4) to IPS
     const isMetric = row.rate_units === 4;

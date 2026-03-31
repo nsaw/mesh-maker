@@ -1,4 +1,4 @@
-import type { Heightmap, SbpConfig, ToolpathSection } from './types';
+import type { Heightmap, SbpConfig, SbpStats, ToolpathSection } from './types';
 import { compensateForTool } from './compensate';
 import { generateRoughing } from './roughing';
 import { generateFinishing } from './finishing';
@@ -49,14 +49,7 @@ function normalizeZ(
 
 export interface GenerateResult {
   sbp: string;
-  stats: {
-    roughingMoves: number;
-    finishingMoves: number;
-    totalLines: number;
-    zShifted: number;
-    heightmapRows: number;
-    heightmapCols: number;
-  };
+  stats: SbpStats;
 }
 
 /**

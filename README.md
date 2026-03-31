@@ -146,7 +146,7 @@ npm run stl-to-sbp -- <input.stl> [options]
 
 Options:
 
-```
+```text
 -o, --output <file>          Output .sbp (default: <input>.sbp)
 --vtdb <file>                Vectric tool database (.vtdb)
 --roughing-tool <pattern>    Match tool by name substring
@@ -241,7 +241,7 @@ The compiled DLL (`MeshCraftNoise.dll`) must be installed for the Grasshopper no
 
 **Install location (Rhino 7 macOS):**
 
-```
+```text
 ~/Library/Application Support/McNeel/Rhinoceros/7.0/Plug-ins/Grasshopper (b45a29b1-4343-4035-989e-044e8580d9cf)/Libraries/
 ```
 

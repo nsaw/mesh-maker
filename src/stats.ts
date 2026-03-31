@@ -44,16 +44,14 @@ export function updateStats(): void {
   let statData: [string, string][];
 
   if (STATE.exportFormat === 'sbp') {
-    // SBP: show grid-relevant stats instead of triangle count
-    const gridCells = cols * rows;
-    // Rough estimate: ~30 bytes per SBP line, ~3 lines per grid cell for finishing
-    const estMoves = gridCells * 3;
-    const estSize = estMoves * 30;
+    if (!STATE.sbpStats) {
+      return;
+    }
     statData = [
-      ['Grid', `${cols} x ${rows}`],
-      ['Mesh', `${STATE.meshX}" x ${STATE.meshY}"`],
-      ['Gen time', `${genTime.toFixed(0)}ms`],
-      ['Est. SBP', formatBytes(estSize)],
+      ['Grid', `${STATE.sbpStats.heightmapCols} x ${STATE.sbpStats.heightmapRows}`],
+      ['Roughing', STATE.sbpStats.roughingMoves.toLocaleString()],
+      ['Finishing', STATE.sbpStats.finishingMoves.toLocaleString()],
+      ['SBP Lines', STATE.sbpStats.totalLines.toLocaleString()],
     ];
   } else {
     const topTris = (cols-1) * (rows-1) * 2;

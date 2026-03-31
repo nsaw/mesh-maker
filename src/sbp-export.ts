@@ -2,6 +2,7 @@ import { STATE } from './state';
 import { stateToHeightmap } from './sbp/heightmap';
 import { generateSBP } from './sbp/generate';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
+import { updateStats } from './stats';
 import { showToast } from './toast';
 import type { MaterialProfile, SbpConfig } from './sbp/types';
 import type { GenerateResult } from './sbp/generate';
@@ -55,7 +56,12 @@ function buildConfig(): SbpConfig {
   return base;
 }
 
-function triggerDownload(content: string, filename: string): void {
+function invalidateSbpStats(): void {
+  STATE.sbpStats = null;
+  updateStats();
+}
+
+function triggerDownload(content: BlobPart, filename: string): void {
   const blob = new Blob([content], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -69,7 +75,9 @@ function triggerDownload(content: string, filename: string): void {
 
 function handleResult(result: GenerateResult, filename: string): void {
   const { sbp, stats } = result;
+  STATE.sbpStats = stats;
   triggerDownload(sbp, filename);
+  updateStats();
 
   const parts: string[] = [];
   if (stats.roughingMoves > 0) parts.push(`roughing: ${stats.roughingMoves.toLocaleString()} moves`);
@@ -108,23 +116,32 @@ function exportFromSTL(): void {
 
   worker.onmessage = (e: MessageEvent) => {
     worker.terminate();
+    SBP_STATE.stlBuffer = e.data.stlBuffer;
     if (e.data.type === 'error') {
       showToast(`SBP generation failed: ${e.data.message}`, 8000);
       return;
     }
-    handleResult(e.data as GenerateResult, `${STATE.filename}.sbp`);
+    STATE.sbpStats = e.data.stats;
+    triggerDownload(e.data.sbpBytes, `${STATE.filename}.sbp`);
+    updateStats();
+    const parts: string[] = [];
+    if (e.data.stats.roughingMoves > 0) parts.push(`roughing: ${e.data.stats.roughingMoves.toLocaleString()} moves`);
+    if (e.data.stats.finishingMoves > 0) parts.push(`finishing: ${e.data.stats.finishingMoves.toLocaleString()} moves`);
+    parts.push(`${e.data.stats.totalLines.toLocaleString()} lines`);
+    showToast(`SBP exported! ${parts.join(', ')}`);
   };
 
   worker.onerror = (err) => {
     worker.terminate();
-    showToast(`Worker error: ${err.message}`, 8000);
+    showToast(`Worker error: ${err.message}. Re-upload the STL and try again.`, 8000);
   };
 
+  const stlBuffer = SBP_STATE.stlBuffer;
   worker.postMessage({
-    stlBuffer: SBP_STATE.stlBuffer,
+    stlBuffer,
     config: buildConfig(),
     resolution: SBP_STATE.resolution,
-  });
+  }, [stlBuffer]);
 }
 
 /** Main export entry point -- called from export.ts */
@@ -174,6 +191,53 @@ function buildRangeControl(
 
   row.append(controlLabel, input);
   return row;
+}
+
+function updateStlUploadUi(): void {
+  const zone = document.getElementById('sbpUploadZone');
+  if (!zone) return;
+  zone.classList.toggle('has-image', SBP_STATE.stlBuffer !== null);
+  const text = zone.querySelector('.upload-text');
+  if (text) {
+    text.textContent = SBP_STATE.stlBuffer
+      ? SBP_STATE.stlName
+      : 'Upload STL (optional -- uses current mesh if empty)';
+  }
+  const input = document.getElementById('sbpStlInput') as HTMLInputElement | null;
+  if (input && SBP_STATE.stlBuffer === null) {
+    input.value = '';
+  }
+}
+
+function clearLoadedStl(): void {
+  SBP_STATE.stlBuffer = null;
+  SBP_STATE.stlName = '';
+  invalidateSbpStats();
+  updateStlUploadUi();
+  document.getElementById('sbpClearStl')?.remove();
+}
+
+function createClearStlButton(): HTMLButtonElement {
+  const clearButton = createElement('button', 'btn btn-sm', 'Clear STL');
+  clearButton.id = 'sbpClearStl';
+  clearButton.style.marginTop = '6px';
+  clearButton.style.color = 'var(--red)';
+  clearButton.style.borderColor = 'var(--red)';
+  clearButton.addEventListener('click', clearLoadedStl);
+  return clearButton;
+}
+
+function syncClearStlButton(): void {
+  const existing = document.getElementById('sbpClearStl');
+  if (SBP_STATE.stlBuffer) {
+    if (existing) return;
+    const uploadZone = document.getElementById('sbpUploadZone');
+    if (uploadZone) {
+      uploadZone.insertAdjacentElement('afterend', createClearStlButton());
+    }
+    return;
+  }
+  existing?.remove();
 }
 
 /** Returns the SBP config sidebar section */
@@ -252,12 +316,7 @@ export function buildSBPSection(): HTMLElement {
   );
 
   if (SBP_STATE.stlBuffer) {
-    const clearButton = createElement('button', 'btn btn-sm', 'Clear STL');
-    clearButton.id = 'sbpClearStl';
-    clearButton.style.marginTop = '6px';
-    clearButton.style.color = 'var(--red)';
-    clearButton.style.borderColor = 'var(--red)';
-    body.append(clearButton);
+    body.append(createClearStlButton());
   }
 
   const toolsNote = createElement('div', undefined, `Tools: ${tools.length} embedded (${SBP_STATE.materialProfile})`);
@@ -273,15 +332,22 @@ export function buildSBPSection(): HTMLElement {
 /** Wire event listeners for SBP controls. Called after sidebar rebuild. */
 export function wireSBPControls(): void {
   const roughingEl = document.getElementById('sbpRoughing') as HTMLInputElement | null;
-  if (roughingEl) roughingEl.addEventListener('change', () => { SBP_STATE.roughingEnabled = roughingEl.checked; });
+  if (roughingEl) roughingEl.addEventListener('change', () => {
+    SBP_STATE.roughingEnabled = roughingEl.checked;
+    invalidateSbpStats();
+  });
 
   const finishingEl = document.getElementById('sbpFinishing') as HTMLInputElement | null;
-  if (finishingEl) finishingEl.addEventListener('change', () => { SBP_STATE.finishingEnabled = finishingEl.checked; });
+  if (finishingEl) finishingEl.addEventListener('change', () => {
+    SBP_STATE.finishingEnabled = finishingEl.checked;
+    invalidateSbpStats();
+  });
 
   const profileEl = document.getElementById('sbpProfile') as HTMLSelectElement | null;
   if (profileEl) {
     profileEl.addEventListener('change', () => {
       SBP_STATE.materialProfile = profileEl.value as MaterialProfile;
+      invalidateSbpStats();
     });
   }
 
@@ -292,6 +358,7 @@ export function wireSBPControls(): void {
       SBP_STATE.materialThickness = parseFloat(thicknessEl.value);
       const valEl = document.getElementById('val_sbpThickness');
       if (valEl) valEl.textContent = SBP_STATE.materialThickness.toFixed(2);
+      invalidateSbpStats();
     });
   }
 
@@ -302,6 +369,7 @@ export function wireSBPControls(): void {
       SBP_STATE.leaveStock = parseFloat(stockEl.value);
       const valEl = document.getElementById('val_sbpLeaveStock');
       if (valEl) valEl.textContent = SBP_STATE.leaveStock.toFixed(3);
+      invalidateSbpStats();
     });
   }
 
@@ -312,6 +380,7 @@ export function wireSBPControls(): void {
       SBP_STATE.offsetX = parseFloat(offsetXEl.value);
       const valEl = document.getElementById('val_sbpOffsetX');
       if (valEl) valEl.textContent = SBP_STATE.offsetX.toFixed(1);
+      invalidateSbpStats();
     });
   }
 
@@ -321,6 +390,7 @@ export function wireSBPControls(): void {
       SBP_STATE.offsetY = parseFloat(offsetYEl.value);
       const valEl = document.getElementById('val_sbpOffsetY');
       if (valEl) valEl.textContent = SBP_STATE.offsetY.toFixed(1);
+      invalidateSbpStats();
     });
   }
 
@@ -352,22 +422,6 @@ export function wireSBPControls(): void {
     });
   }
 
-  // Clear STL button
-  const clearBtn = document.getElementById('sbpClearStl');
-  if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
-      SBP_STATE.stlBuffer = null;
-      SBP_STATE.stlName = '';
-      // Re-render the upload zone
-      const zone = document.getElementById('sbpUploadZone');
-      if (zone) {
-        zone.classList.remove('has-image');
-        const text = zone.querySelector('.upload-text');
-        if (text) text.textContent = 'Upload STL (optional -- uses current mesh if empty)';
-      }
-      clearBtn.remove();
-    });
-  }
 }
 
 function loadSTL(file: File): void {
@@ -375,12 +429,9 @@ function loadSTL(file: File): void {
   reader.onload = () => {
     SBP_STATE.stlBuffer = reader.result as ArrayBuffer;
     SBP_STATE.stlName = file.name;
-    const zone = document.getElementById('sbpUploadZone');
-    if (zone) {
-      zone.classList.add('has-image');
-      const text = zone.querySelector('.upload-text');
-      if (text) text.textContent = file.name;
-    }
+    invalidateSbpStats();
+    updateStlUploadUi();
+    syncClearStlButton();
     showToast(`STL loaded: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`);
   };
   reader.onerror = () => {

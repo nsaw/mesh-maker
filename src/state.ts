@@ -1,3 +1,5 @@
+import type { SbpStats } from './sbp/types';
+
 export interface MeshState {
   mode: 'noise' | 'depthmap' | 'blend';
   viewMode: 'solid' | 'wireframe' | 'both' | 'points';
@@ -62,6 +64,7 @@ export interface MeshState {
   lastMX: number;
   lastMY: number;
   genTime: number;
+  sbpStats: SbpStats | null;
 }
 
 const DEFAULTS: MeshState = {
@@ -118,6 +121,7 @@ const DEFAULTS: MeshState = {
   lastMX: 0,
   lastMY: 0,
   genTime: 0,
+  sbpStats: null,
 };
 
 export const STATE: MeshState = { ...DEFAULTS };

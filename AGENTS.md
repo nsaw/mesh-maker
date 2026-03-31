@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MESHCRAFT is a browser-based 3D mesh generator for CNC machining (ShopBot Desktop Max ATC). Built with Vite + TypeScript, deployed as a static site.
+MESHCRAFT is a browser-based 3D mesh generator and ShopBot SBP toolpath compiler for CNC machining (ShopBot Desktop Max ATC). Built with Vite + TypeScript, with a shared SBP pipeline used by both the web app and the CLI.
 
 **Live site**: `meshcraft.sawyerdesign.io` (Cloudflare Pages)
 **Repo**: `github.com/nsaw/mesh-maker`
@@ -11,7 +11,7 @@ MESHCRAFT is a browser-based 3D mesh generator for CNC machining (ShopBot Deskto
 
 ## Architecture
 
-Vite + TypeScript ES modules, 13 source files:
+Vite + TypeScript ES modules with a browser UI, shared SBP pipeline, and a Node CLI:
 
 ```text
 meshcraft/
@@ -26,15 +26,33 @@ meshcraft/
 │   │   └── presets.ts         # CNC_PRESETS (9), PROFILES (6)
 │   ├── mesh.ts                # generateMesh, weightedSmooth, debouncedGenerate
 │   ├── render.ts              # Canvas 2D 3D rendering (painter's algo, Gouraud shading)
-│   ├── export.ts              # STL (binary/ASCII), OBJ, heightmap PNG export
-│   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets
+│   ├── export.ts              # STL (binary/ASCII), OBJ, heightmap PNG export dispatcher
+│   ├── sbp-export.ts          # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
+│   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets, SBP section
 │   ├── interaction.ts         # Mouse orbit/pan/zoom, touch pinch, scroll
-│   ├── toolbar.ts             # Mode tabs, toolbar buttons, Copy Link (URL sharing)
-│   ├── stats.ts               # zoomExtents, updateStats, formatBytes
-│   └── sponsor.ts             # Sponsor modal + scroll-to-export
+│   ├── toolbar.ts             # Mode tabs, toolbar buttons, Copy Link, format-aware controls
+│   ├── stats.ts               # zoomExtents, updateStats, format-aware overlay
+│   ├── toast.ts               # Toast notifications
+│   ├── sponsor.ts             # Sponsor modal + scroll-to-export
+│   └── sbp/                   # Shared STL-to-SBP pipeline (web + CLI, zero Node deps)
+│       ├── types.ts           # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
+│       ├── tools.ts           # Embedded ATC tool database + default tool config
+│       ├── stl-parser.ts      # Binary STL parser + bounds validation
+│       ├── heightmap.ts       # STL/STATE vertices -> regular Z grid
+│       ├── compensate.ts      # Tool compensation / erosion
+│       ├── roughing.ts        # Roughing toolpath generation
+│       ├── finishing.ts       # Finishing raster toolpath generation
+│       ├── writer.ts          # OpenSBP file builder
+│       ├── generate.ts        # SBP pipeline orchestrator
+│       └── worker.ts          # Web Worker entry for uploaded STL processing
+├── cli/
+│   ├── stl-to-sbp.ts          # CLI entry point (tsx/Node)
+│   └── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
 ├── public/
 │   ├── _redirects             # Cloudflare Pages: / -> /index.html
 │   └── monalisa-depthMap.jpeg # Demo depth map
+├── stl-to-sbp.sh              # Shell wrapper for CLI invocation
+├── tsconfig.cli.json          # CLI-only TypeScript config
 ├── vite.config.ts
 ├── tsconfig.json
 └── package.json
@@ -92,6 +110,9 @@ When modifying the codebase, verify:
 - [ ] Touch: single finger orbit, two finger pan+pinch zoom
 - [ ] Responsive layout at < 900px
 - [ ] URL state sharing: copy link → open in new tab → same config loads
+- [ ] `npm run stl-to-sbp -- <input.stl> --dry-run` completes with valid summary output
+- [ ] SBP STL upload path still works in the browser worker (`src/sbp/worker.ts`)
+- [ ] SBP export output changes when roughing/finishing settings or raster angle change
 
 ---
 
@@ -121,4 +142,4 @@ All external resources have graceful fallbacks. The tool is fully functional off
 
 - NEVER commit `.env` files
 - NEVER commit screenshots or temp files
-- Review diffs before committing — 13 source files means verify scope
+- Review diffs before committing — verify both the browser surface and the SBP/CLI surfaces

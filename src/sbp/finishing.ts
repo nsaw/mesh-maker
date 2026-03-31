@@ -35,37 +35,78 @@ function bilinearInterp(
     + z11 * fx * fy;
 }
 
+function pushUniquePoint(
+  points: Array<{ x: number; y: number }>,
+  meshX: number,
+  meshY: number,
+  x: number,
+  y: number,
+): void {
+  const EPS = 1e-9;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  if (x < -EPS || x > meshX + EPS || y < -EPS || y > meshY + EPS) return;
+  if (points.some((point) => Math.abs(point.x - x) <= EPS && Math.abs(point.y - y) <= EPS)) return;
+  points.push({ x, y });
+}
+
 /**
- * Compute 45-deg raster lines across the workpiece.
+ * Compute raster lines across the workpiece at an arbitrary angle.
  *
- * For angle=45, the scan parameter k = x + y.
- * k ranges from 0 to meshX + meshY.
- * Perpendicular stepover s_perp maps to k-step = s_perp * sqrt(2).
- *
- * Each line is clipped to the [0, meshX] x [0, meshY] rectangle.
+ * The raster direction is defined by finishRasterAngle in degrees, and the line
+ * offsets advance along the normalized perpendicular by the configured stepover.
  */
 function computeRasterLines(
   meshX: number,
   meshY: number,
   stepover: number,
+  finishRasterAngle: number = 45,
 ): Array<{ x0: number; y0: number; x1: number; y1: number }> {
-  const kStep = stepover * Math.SQRT2;
-  const kMax = meshX + meshY;
+  const theta = finishRasterAngle * Math.PI / 180;
+  const dirX = Math.cos(theta);
+  const dirY = Math.sin(theta);
+  const normalX = -dirY;
+  const normalY = dirX;
+  const corners = [
+    { x: 0, y: 0 },
+    { x: meshX, y: 0 },
+    { x: 0, y: meshY },
+    { x: meshX, y: meshY },
+  ];
+  let minOffset = Infinity;
+  let maxOffset = -Infinity;
+  for (const corner of corners) {
+    const offset = corner.x * normalX + corner.y * normalY;
+    if (offset < minOffset) minOffset = offset;
+    if (offset > maxOffset) maxOffset = offset;
+  }
   const lines: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+  const offsetStep = stepover;
+  const EPS = 1e-9;
 
-  for (let k = 0; k <= kMax + kStep * 0.5; k += kStep) {
-    // Line: x + y = k, parameterized as x = t, y = k - t
-    // Clip to [0, meshX] x [0, meshY]
-    const tMin = Math.max(0, k - meshY);
-    const tMax = Math.min(meshX, k);
+  for (let offset = minOffset; offset <= maxOffset + offsetStep * 0.5; offset += offsetStep) {
+    const intersections: Array<{ x: number; y: number }> = [];
 
-    if (tMin > tMax) continue;
+    if (Math.abs(normalY) > EPS) {
+      pushUniquePoint(intersections, meshX, meshY, 0, offset / normalY);
+      pushUniquePoint(intersections, meshX, meshY, meshX, (offset - normalX * meshX) / normalY);
+    }
+    if (Math.abs(normalX) > EPS) {
+      pushUniquePoint(intersections, meshX, meshY, offset / normalX, 0);
+      pushUniquePoint(intersections, meshX, meshY, (offset - normalY * meshY) / normalX, meshY);
+    }
 
+    if (intersections.length < 2) continue;
+
+    intersections.sort(
+      (a, b) => (a.x * dirX + a.y * dirY) - (b.x * dirX + b.y * dirY),
+    );
+    const start = intersections[0];
+    const end = intersections[intersections.length - 1];
     lines.push({
-      x0: tMin,
-      y0: k - tMin,
-      x1: tMax,
-      y1: k - tMax,
+      x0: start.x,
+      y0: start.y,
+      x1: end.x,
+      y1: end.y,
     });
   }
 
@@ -73,11 +114,11 @@ function computeRasterLines(
 }
 
 /**
- * Generate 45-deg continuous finishing toolpath.
+ * Generate continuous finishing toolpath.
  *
  * Structure matches Aspire reference:
  * - Entry: rapid to start position at safeZ, plunge to surface
- * - Core: continuous M3 moves along 45-deg bidirectional zigzag
+ * - Core: continuous M3 moves along bidirectional zigzag raster lines
  *   At line ends, traverse boundary at materialZ to next line (no mid-path retracts)
  * - Exit: retract to safeZ
  *
@@ -91,9 +132,9 @@ export function generateFinishing(
   const { z, rows, cols, cellSize, meshX, meshY } = compensated;
   const tool = config.finishingTool;
   const stepover = tool.cutting.stepover;
-  const { materialZ, safeZ, offsetX, offsetY } = config;
+  const { materialZ, safeZ, offsetX, offsetY, finishRasterAngle } = config;
 
-  const lines = computeRasterLines(meshX, meshY, stepover);
+  const lines = computeRasterLines(meshX, meshY, stepover, finishRasterAngle);
   const pointSpacing = 0.005; // uniform spacing along each line
   const moves: ToolpathMove[] = [];
 
@@ -168,4 +209,3 @@ export function generateFinishing(
     moves,
   };
 }
-

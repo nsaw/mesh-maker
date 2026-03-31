@@ -22,6 +22,10 @@ export function parseSTLBinary(buffer: ArrayBuffer): ParsedSTL {
   const count = view.getUint32(80, true);
   const expected = 80 + 4 + count * 50;
 
+  if (count === 0) {
+    throw new Error('STL contains zero triangles');
+  }
+
   if (buffer.byteLength < expected) {
     throw new Error(
       `STL size mismatch: expected at least ${expected} bytes for ${count} triangles, got ${buffer.byteLength}`

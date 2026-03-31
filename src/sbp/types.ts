@@ -67,6 +67,15 @@ export interface SbpConfig {
   materialProfile: MaterialProfile;
 }
 
+export interface SbpStats {
+  roughingMoves: number;
+  finishingMoves: number;
+  totalLines: number;
+  zShifted: number;
+  heightmapRows: number;
+  heightmapCols: number;
+}
+
 /** Single toolpath move */
 export interface ToolpathMove {
   type: 'rapid' | 'cut';
