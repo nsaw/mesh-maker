@@ -1,5 +1,5 @@
 import { STATE } from './state';
-import { renderViewport } from './render';
+import { setCameraFromState } from './render';
 
 export function zoomExtents(): void {
   if (!STATE.vertices) return;
@@ -19,9 +19,9 @@ export function zoomExtents(): void {
 
   STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85));
   STATE.panX = 0; STATE.panY = 0;
-  STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
+  STATE.orbit = 45; STATE.tilt = -30;
 
-  ['orbit','tilt','roll','zoom'].forEach(k => {
+  ['orbit','tilt','zoom'].forEach(k => {
     const sl = document.getElementById('sl_' + k) as HTMLInputElement | null;
     const val = document.getElementById('val_' + k);
     const v = STATE[k as keyof typeof STATE] as number;
@@ -30,7 +30,7 @@ export function zoomExtents(): void {
       (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
   });
 
-  renderViewport();
+  setCameraFromState();
 }
 
 export function updateStats(): void {
