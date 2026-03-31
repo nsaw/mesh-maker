@@ -19,6 +19,12 @@ interface SbpState {
   safeZ: number;
   homeZ: number;
   leaveStock: number;
+  finishRasterAngle: number;
+  feedRateOverride: number | null;
+  plungeRateOverride: number | null;
+  rpmOverride: number | null;
+  stepdownOverride: number | null;
+  stepoverOverride: number | null;
   stlBuffer: ArrayBuffer | null;
   stlName: string;
 }
@@ -34,6 +40,12 @@ const SBP_STATE: SbpState = {
   safeZ: 1.6,
   homeZ: 2.3,
   leaveStock: 0.02,
+  finishRasterAngle: 45,
+  feedRateOverride: null,
+  plungeRateOverride: null,
+  rpmOverride: null,
+  stepdownOverride: null,
+  stepoverOverride: null,
   stlBuffer: null,
   stlName: '',
 };
@@ -50,6 +62,26 @@ function buildConfig(): SbpConfig {
   base.safeZ = SBP_STATE.safeZ;
   base.homeZ = SBP_STATE.homeZ;
   base.leaveStock = SBP_STATE.leaveStock;
+  base.finishRasterAngle = SBP_STATE.finishRasterAngle;
+
+  if (SBP_STATE.feedRateOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, feedRate: SBP_STATE.feedRateOverride } };
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, feedRate: SBP_STATE.feedRateOverride } };
+  }
+  if (SBP_STATE.plungeRateOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, plungeRate: SBP_STATE.plungeRateOverride } };
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, plungeRate: SBP_STATE.plungeRateOverride } };
+  }
+  if (SBP_STATE.rpmOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, rpm: SBP_STATE.rpmOverride } };
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, rpm: SBP_STATE.rpmOverride } };
+  }
+  if (SBP_STATE.stepdownOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, stepdown: SBP_STATE.stepdownOverride } };
+  }
+  if (SBP_STATE.stepoverOverride !== null) {
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, stepover: SBP_STATE.stepoverOverride } };
+  }
 
   // Set materialX/Y from STATE mesh dims
   base.materialX = STATE.meshX;
@@ -324,6 +356,24 @@ export function buildSBPSection(): HTMLElement {
     buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', SBP_STATE.leaveStock.toFixed(3), 0, 0.1, 0.005, SBP_STATE.leaveStock),
     buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', SBP_STATE.offsetX.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetX),
     buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', SBP_STATE.offsetY.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetY),
+    buildRangeControl('sl_sbpSafeZ', 'val_sbpSafeZ', 'Safe Z (in)', SBP_STATE.safeZ.toFixed(1), 0.5, 4, 0.1, SBP_STATE.safeZ),
+    buildRangeControl('sl_sbpHomeZ', 'val_sbpHomeZ', 'Home Z (in)', SBP_STATE.homeZ.toFixed(1), 1.0, 6, 0.1, SBP_STATE.homeZ),
+    buildRangeControl('sl_sbpRasterAngle', 'val_sbpRasterAngle', 'Raster Angle (deg)', String(SBP_STATE.finishRasterAngle), 0, 90, 5, SBP_STATE.finishRasterAngle),
+    buildRangeControl('sl_sbpFeedRate', 'val_sbpFeedRate', 'Feed Rate (ips)',
+      (SBP_STATE.feedRateOverride ?? finishingTool.cutting.feedRate).toFixed(1),
+      0.1, 8, 0.1, SBP_STATE.feedRateOverride ?? finishingTool.cutting.feedRate),
+    buildRangeControl('sl_sbpPlungeRate', 'val_sbpPlungeRate', 'Plunge Rate (ips)',
+      (SBP_STATE.plungeRateOverride ?? finishingTool.cutting.plungeRate).toFixed(2),
+      0.05, 3, 0.05, SBP_STATE.plungeRateOverride ?? finishingTool.cutting.plungeRate),
+    buildRangeControl('sl_sbpRpm', 'val_sbpRpm', 'Spindle RPM',
+      String(SBP_STATE.rpmOverride ?? finishingTool.cutting.rpm),
+      5000, 24000, 500, SBP_STATE.rpmOverride ?? finishingTool.cutting.rpm),
+    buildRangeControl('sl_sbpStepdown', 'val_sbpStepdown', 'Stepdown (in)',
+      (SBP_STATE.stepdownOverride ?? roughingTool.cutting.stepdown).toFixed(3),
+      0.01, 1, 0.01, SBP_STATE.stepdownOverride ?? roughingTool.cutting.stepdown),
+    buildRangeControl('sl_sbpStepover', 'val_sbpStepover', 'Stepover (in)',
+      (SBP_STATE.stepoverOverride ?? finishingTool.cutting.stepover).toFixed(3),
+      0.005, 0.5, 0.005, SBP_STATE.stepoverOverride ?? finishingTool.cutting.stepover),
     uploadZone,
   );
 
@@ -359,7 +409,18 @@ export function wireSBPControls(): void {
   if (profileEl) {
     profileEl.addEventListener('change', () => {
       SBP_STATE.materialProfile = profileEl.value as MaterialProfile;
+      SBP_STATE.feedRateOverride = null;
+      SBP_STATE.plungeRateOverride = null;
+      SBP_STATE.rpmOverride = null;
+      SBP_STATE.stepdownOverride = null;
+      SBP_STATE.stepoverOverride = null;
       invalidateSbpStats();
+      const sbpSection = document.getElementById('sbpSection');
+      if (sbpSection) {
+        const newSection = buildSBPSection();
+        sbpSection.replaceWith(newSection);
+        wireSBPControls();
+      }
     });
   }
 
@@ -405,6 +466,70 @@ export function wireSBPControls(): void {
       invalidateSbpStats();
     });
   }
+
+  const safeZEl = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
+  if (safeZEl) safeZEl.addEventListener('input', () => {
+    SBP_STATE.safeZ = parseFloat(safeZEl.value);
+    const v = document.getElementById('val_sbpSafeZ');
+    if (v) v.textContent = SBP_STATE.safeZ.toFixed(1);
+    invalidateSbpStats();
+  });
+
+  const homeZEl = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
+  if (homeZEl) homeZEl.addEventListener('input', () => {
+    SBP_STATE.homeZ = parseFloat(homeZEl.value);
+    const v = document.getElementById('val_sbpHomeZ');
+    if (v) v.textContent = SBP_STATE.homeZ.toFixed(1);
+    invalidateSbpStats();
+  });
+
+  const rasterEl = document.getElementById('sl_sbpRasterAngle') as HTMLInputElement | null;
+  if (rasterEl) rasterEl.addEventListener('input', () => {
+    SBP_STATE.finishRasterAngle = parseFloat(rasterEl.value);
+    const v = document.getElementById('val_sbpRasterAngle');
+    if (v) v.textContent = String(SBP_STATE.finishRasterAngle);
+    invalidateSbpStats();
+  });
+
+  const feedEl = document.getElementById('sl_sbpFeedRate') as HTMLInputElement | null;
+  if (feedEl) feedEl.addEventListener('input', () => {
+    SBP_STATE.feedRateOverride = parseFloat(feedEl.value);
+    const v = document.getElementById('val_sbpFeedRate');
+    if (v) v.textContent = SBP_STATE.feedRateOverride.toFixed(1);
+    invalidateSbpStats();
+  });
+
+  const plungeEl = document.getElementById('sl_sbpPlungeRate') as HTMLInputElement | null;
+  if (plungeEl) plungeEl.addEventListener('input', () => {
+    SBP_STATE.plungeRateOverride = parseFloat(plungeEl.value);
+    const v = document.getElementById('val_sbpPlungeRate');
+    if (v) v.textContent = SBP_STATE.plungeRateOverride.toFixed(2);
+    invalidateSbpStats();
+  });
+
+  const rpmEl = document.getElementById('sl_sbpRpm') as HTMLInputElement | null;
+  if (rpmEl) rpmEl.addEventListener('input', () => {
+    SBP_STATE.rpmOverride = parseFloat(rpmEl.value);
+    const v = document.getElementById('val_sbpRpm');
+    if (v) v.textContent = String(SBP_STATE.rpmOverride);
+    invalidateSbpStats();
+  });
+
+  const stepdownEl = document.getElementById('sl_sbpStepdown') as HTMLInputElement | null;
+  if (stepdownEl) stepdownEl.addEventListener('input', () => {
+    SBP_STATE.stepdownOverride = parseFloat(stepdownEl.value);
+    const v = document.getElementById('val_sbpStepdown');
+    if (v) v.textContent = SBP_STATE.stepdownOverride.toFixed(3);
+    invalidateSbpStats();
+  });
+
+  const stepoverEl = document.getElementById('sl_sbpStepover') as HTMLInputElement | null;
+  if (stepoverEl) stepoverEl.addEventListener('input', () => {
+    SBP_STATE.stepoverOverride = parseFloat(stepoverEl.value);
+    const v = document.getElementById('val_sbpStepover');
+    if (v) v.textContent = SBP_STATE.stepoverOverride.toFixed(3);
+    invalidateSbpStats();
+  });
 
   // STL upload
   const uploadZone = document.getElementById('sbpUploadZone');
