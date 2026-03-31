@@ -22,8 +22,8 @@ meshcraft/
 │   ├── state.ts               # MeshState interface, STATE singleton, URL serialize/deserialize
 │   ├── types.ts               # Vertex3D, Triangle, MeshData, NoiseGenerator interfaces
 │   ├── noise/
-│   │   ├── generators.ts      # 5 noise classes + createNoiseGen() factory
-│   │   └── presets.ts         # CNC_PRESETS (9), PROFILES (6)
+│   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
+│   │   └── presets.ts         # CNC_PRESETS (15), PROFILES (6)
 │   ├── mesh.ts                # generateMesh, weightedSmooth, debouncedGenerate
 │   ├── render.ts              # Canvas 2D 3D rendering (painter's algo, Gouraud shading)
 │   ├── export.ts              # STL (binary/ASCII), OBJ, heightmap PNG export dispatcher
