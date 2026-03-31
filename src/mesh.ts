@@ -1,7 +1,7 @@
 import { STATE } from './state';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
 import type { FBMGenerator, NoiseConfig } from './types';
-import { renderViewport } from './render';
+import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
 
 export function generateNoiseMesh(): void {
@@ -209,7 +209,7 @@ export function weightedSmooth(verts: number[][], rows: number, cols: number, it
 }
 
 // Debounced generation — moved here to avoid circular dependency with stats.ts
-const VIEW_ONLY_KEYS = new Set(['orbit','tilt','roll','zoom']);
+const VIEW_ONLY_KEYS = new Set(['orbit','tilt','zoom']);
 let _genTimer: ReturnType<typeof setTimeout> | null = null;
 let _needsMeshRegen = false;
 
@@ -221,7 +221,7 @@ export function debouncedGenerate(key: string): void {
       _needsMeshRegen = false;
       generateMesh();
     } else {
-      renderViewport();
+      setCameraFromState();
     }
   }, 60);
 }
