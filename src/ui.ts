@@ -314,7 +314,6 @@ function buildViewControlsSection(): HTMLElement {
   return buildSection('View Controls', [
     slider('orbit', 'Orbit', 0, 360, 1),
     slider('tilt', 'Tilt', -90, 90, 1),
-    slider('roll', 'Roll', -180, 180, 1),
     slider('zoom', 'Zoom', 0.1, 10, 0.05),
     note,
   ], true);
