@@ -64,7 +64,7 @@ export interface GenerateResult {
  * Shared entry point for both CLI and web.
  *
  * 1. Normalize Z (shift negative values up)
- * 2. If roughing: compensate for roughing tool, add leave stock, generate roughing
+ * 2. If roughing: compensate for roughing tool, generate roughing with leave stock
  * 3. If finishing: compensate for finishing tool, generate finishing
  * 4. Write SBP string
  */
@@ -77,12 +77,7 @@ export function generateSBP(heightmap: Heightmap, config: SbpConfig): GenerateRe
 
   if (normConfig.roughingEnabled) {
     const roughCompensated = compensateForTool(normHm, normConfig.roughingTool);
-    // Add leave stock to compensated surface for roughing
-    const withStock: Heightmap = {
-      ...roughCompensated,
-      z: new Float64Array(roughCompensated.z.map(v => v + normConfig.leaveStock)),
-    };
-    const roughing = generateRoughing(withStock, normConfig);
+    const roughing = generateRoughing(roughCompensated, normConfig);
     roughingMoves = roughing.moves.length;
     sections.push(roughing);
   }

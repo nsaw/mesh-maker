@@ -10,7 +10,7 @@ export interface ParsedSTL {
 /**
  * Parse a binary STL file into a Float32Array + bounding box.
  * Single-pass DataView loop, no object allocation per triangle.
- * Validates: 80-byte header + 4-byte count + count*50 === byteLength.
+ * Validates: 80-byte header + 4-byte count + count*50 <= byteLength.
  */
 export function parseSTLBinary(buffer: ArrayBuffer): ParsedSTL {
   const view = new DataView(buffer);
@@ -22,9 +22,9 @@ export function parseSTLBinary(buffer: ArrayBuffer): ParsedSTL {
   const count = view.getUint32(80, true);
   const expected = 80 + 4 + count * 50;
 
-  if (buffer.byteLength !== expected) {
+  if (buffer.byteLength < expected) {
     throw new Error(
-      `STL size mismatch: expected ${expected} bytes for ${count} triangles, got ${buffer.byteLength}`
+      `STL size mismatch: expected at least ${expected} bytes for ${count} triangles, got ${buffer.byteLength}`
     );
   }
 

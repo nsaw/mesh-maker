@@ -136,67 +136,138 @@ export function doSBPExport(): void {
   }
 }
 
-/** Returns HTML for the SBP config sidebar section */
-export function buildSBPSection(): string {
+function createElement<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function buildRangeControl(
+  sliderId: string,
+  valueId: string,
+  label: string,
+  valueText: string,
+  min: number,
+  max: number,
+  step: number,
+  value: number,
+): HTMLDivElement {
+  const row = createElement('div', 'control-row');
+  const controlLabel = createElement('div', 'control-label');
+  const labelSpan = createElement('span', undefined, label);
+  const valueSpan = createElement('span', 'val', valueText);
+  valueSpan.id = valueId;
+  controlLabel.append(labelSpan, valueSpan);
+
+  const input = createElement('input') as HTMLInputElement;
+  input.type = 'range';
+  input.id = sliderId;
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+
+  row.append(controlLabel, input);
+  return row;
+}
+
+/** Returns the SBP config sidebar section */
+export function buildSBPSection(): HTMLElement {
   const tools = getEmbeddedTools(SBP_STATE.materialProfile);
   const roughingTool = getDefaultConfig(SBP_STATE.materialProfile).roughingTool;
   const finishingTool = getDefaultConfig(SBP_STATE.materialProfile).finishingTool;
+  const section = createElement('div', 'section sbp-only');
+  section.id = 'sbpSection';
 
-  return `<div class="section sbp-only" id="sbpSection">
-    <div class="section-header">
-      <div class="section-title">SBP Toolpath</div>
-      <div class="section-arrow">&#9660;</div>
-    </div>
-    <div class="section-body">
-      <div class="check-row" style="margin-top:0;">
-        <input type="checkbox" id="sbpRoughing"${SBP_STATE.roughingEnabled ? ' checked' : ''}>
-        <label for="sbpRoughing">Roughing (${roughingTool.name})</label>
-      </div>
-      <div class="check-row">
-        <input type="checkbox" id="sbpFinishing"${SBP_STATE.finishingEnabled ? ' checked' : ''}>
-        <label for="sbpFinishing">Finishing (${finishingTool.name})</label>
-      </div>
+  const header = createElement('div', 'section-header');
+  header.append(
+    createElement('div', 'section-title', 'SBP Toolpath'),
+    createElement('div', 'section-arrow', '\u25BE'),
+  );
 
-      <div class="control-row">
-        <div class="control-label">Material Profile</div>
-        <select class="select-input" id="sbpProfile">
-          <option value="general"${SBP_STATE.materialProfile === 'general' ? ' selected' : ''}>General</option>
-          <option value="mdf"${SBP_STATE.materialProfile === 'mdf' ? ' selected' : ''}>MDF</option>
-          <option value="hardwood"${SBP_STATE.materialProfile === 'hardwood' ? ' selected' : ''}>Hardwood</option>
-        </select>
-      </div>
+  const body = createElement('div', 'section-body');
 
-      <div class="control-row">
-        <div class="control-label"><span>Material Thickness (in)</span><span class="val" id="val_sbpThickness">${SBP_STATE.materialThickness.toFixed(2)}</span></div>
-        <input type="range" id="sl_sbpThickness" min="0.25" max="6" step="0.05" value="${SBP_STATE.materialThickness}">
-      </div>
+  const roughingRow = createElement('div', 'check-row');
+  roughingRow.style.marginTop = '0';
+  const roughingInput = createElement('input') as HTMLInputElement;
+  roughingInput.type = 'checkbox';
+  roughingInput.id = 'sbpRoughing';
+  roughingInput.checked = SBP_STATE.roughingEnabled;
+  const roughingLabel = createElement('label', undefined, `Roughing (${roughingTool.name})`);
+  roughingLabel.htmlFor = roughingInput.id;
+  roughingRow.append(roughingInput, roughingLabel);
 
-      <div class="control-row">
-        <div class="control-label"><span>Leave Stock (in)</span><span class="val" id="val_sbpLeaveStock">${SBP_STATE.leaveStock.toFixed(3)}</span></div>
-        <input type="range" id="sl_sbpLeaveStock" min="0" max="0.1" step="0.005" value="${SBP_STATE.leaveStock}">
-      </div>
+  const finishingRow = createElement('div', 'check-row');
+  const finishingInput = createElement('input') as HTMLInputElement;
+  finishingInput.type = 'checkbox';
+  finishingInput.id = 'sbpFinishing';
+  finishingInput.checked = SBP_STATE.finishingEnabled;
+  const finishingLabel = createElement('label', undefined, `Finishing (${finishingTool.name})`);
+  finishingLabel.htmlFor = finishingInput.id;
+  finishingRow.append(finishingInput, finishingLabel);
 
-      <div class="control-row">
-        <div class="control-label"><span>Offset X (in)</span><span class="val" id="val_sbpOffsetX">${SBP_STATE.offsetX.toFixed(1)}</span></div>
-        <input type="range" id="sl_sbpOffsetX" min="0" max="10" step="0.5" value="${SBP_STATE.offsetX}">
-      </div>
+  const profileRow = createElement('div', 'control-row');
+  const profileLabel = createElement('div', 'control-label', 'Material Profile');
+  const profileSelect = createElement('select', 'select-input') as HTMLSelectElement;
+  profileSelect.id = 'sbpProfile';
+  [['general', 'General'], ['mdf', 'MDF'], ['hardwood', 'Hardwood']].forEach(([value, text]) => {
+    const option = createElement('option') as HTMLOptionElement;
+    option.value = value;
+    option.selected = SBP_STATE.materialProfile === value;
+    option.textContent = text;
+    profileSelect.append(option);
+  });
+  profileRow.append(profileLabel, profileSelect);
 
-      <div class="control-row">
-        <div class="control-label"><span>Offset Y (in)</span><span class="val" id="val_sbpOffsetY">${SBP_STATE.offsetY.toFixed(1)}</span></div>
-        <input type="range" id="sl_sbpOffsetY" min="0" max="10" step="0.5" value="${SBP_STATE.offsetY}">
-      </div>
+  const uploadZone = createElement('div', `upload-zone${SBP_STATE.stlBuffer ? ' has-image' : ''}`);
+  uploadZone.id = 'sbpUploadZone';
+  uploadZone.tabIndex = 0;
+  uploadZone.setAttribute('role', 'button');
+  uploadZone.setAttribute('aria-label', 'Upload STL for SBP generation');
+  const uploadText = createElement(
+    'div',
+    'upload-text',
+    SBP_STATE.stlBuffer ? SBP_STATE.stlName : 'Upload STL (optional -- uses current mesh if empty)',
+  );
+  const uploadInput = createElement('input') as HTMLInputElement;
+  uploadInput.type = 'file';
+  uploadInput.id = 'sbpStlInput';
+  uploadInput.accept = '.stl';
+  uploadZone.append(uploadText, uploadInput);
 
-      <div class="upload-zone${SBP_STATE.stlBuffer ? ' has-image' : ''}" id="sbpUploadZone" tabindex="0" role="button" aria-label="Upload STL for SBP generation">
-        <div class="upload-text">${SBP_STATE.stlBuffer ? SBP_STATE.stlName.replace(/</g, '&lt;').replace(/>/g, '&gt;') : 'Upload STL (optional -- uses current mesh if empty)'}</div>
-        <input type="file" id="sbpStlInput" accept=".stl">
-      </div>
-      ${SBP_STATE.stlBuffer ? '<button class="btn btn-sm" id="sbpClearStl" style="margin-top:6px;color:var(--red);border-color:var(--red);">Clear STL</button>' : ''}
+  body.append(
+    roughingRow,
+    finishingRow,
+    profileRow,
+    buildRangeControl('sl_sbpThickness', 'val_sbpThickness', 'Material Thickness (in)', SBP_STATE.materialThickness.toFixed(2), 0.25, 6, 0.05, SBP_STATE.materialThickness),
+    buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', SBP_STATE.leaveStock.toFixed(3), 0, 0.1, 0.005, SBP_STATE.leaveStock),
+    buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', SBP_STATE.offsetX.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetX),
+    buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', SBP_STATE.offsetY.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetY),
+    uploadZone,
+  );
 
-      <div style="margin-top:10px;font-size:10px;color:var(--text3);">
-        Tools: ${tools.length} embedded (${SBP_STATE.materialProfile})
-      </div>
-    </div>
-  </div>`;
+  if (SBP_STATE.stlBuffer) {
+    const clearButton = createElement('button', 'btn btn-sm', 'Clear STL');
+    clearButton.id = 'sbpClearStl';
+    clearButton.style.marginTop = '6px';
+    clearButton.style.color = 'var(--red)';
+    clearButton.style.borderColor = 'var(--red)';
+    body.append(clearButton);
+  }
+
+  const toolsNote = createElement('div', undefined, `Tools: ${tools.length} embedded (${SBP_STATE.materialProfile})`);
+  toolsNote.style.marginTop = '10px';
+  toolsNote.style.fontSize = '10px';
+  toolsNote.style.color = 'var(--text3)';
+  body.append(toolsNote);
+
+  section.append(header, body);
+  return section;
 }
 
 /** Wire event listeners for SBP controls. Called after sidebar rebuild. */

@@ -88,6 +88,10 @@ function writeMoves(lines: string[], moves: ToolpathMove[], config: SbpConfig): 
       if (lastType === 'cut') {
         // Retract from cut to safe Z first
         lines.push(`J3,${f(move.x)},${f(move.y)},${f(config.safeZ)}`);
+        if (move.z === config.safeZ) {
+          lastType = move.type;
+          continue;
+        }
       }
       if (move.z !== config.safeZ) {
         lines.push(`JZ,${f(move.z)}`);

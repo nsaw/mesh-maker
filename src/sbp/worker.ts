@@ -21,6 +21,8 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     const { stlBuffer, config, resolution } = e.data;
     const { data, count, bounds } = parseSTLBinary(stlBuffer);
     const heightmap = meshToHeightmap(data, count, bounds, resolution);
+    config.materialX = heightmap.meshX;
+    config.materialY = heightmap.meshY;
     const result = generateSBP(heightmap, config);
     const output: WorkerOutput = { type: 'success', sbp: result.sbp, stats: result.stats };
     self.postMessage(output);
