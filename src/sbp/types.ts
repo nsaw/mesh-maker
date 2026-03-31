@@ -28,7 +28,8 @@ export interface ToolDef {
   cutting: CuttingParams; // active cutting params (resolved from material profile)
 }
 
-export type MaterialProfile = 'general' | 'mdf' | 'hardwood';
+export const MATERIAL_PROFILE_VALUES = ['general', 'mdf', 'hardwood'] as const;
+export type MaterialProfile = typeof MATERIAL_PROFILE_VALUES[number];
 
 /** Bounding box from STL parser */
 export interface BoundingBox {

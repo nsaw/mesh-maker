@@ -5,9 +5,8 @@ import { meshToHeightmap } from '../src/sbp/heightmap';
 import { generateSBP } from '../src/sbp/generate';
 import { getDefaultConfig, getEmbeddedTools, findToolByName } from '../src/sbp/tools';
 import { readToolDatabase } from './vtdb-reader';
+import { MATERIAL_PROFILE_VALUES } from '../src/sbp/types';
 import type { ToolDef, MaterialProfile, SbpConfig } from '../src/sbp/types';
-
-const MATERIAL_PROFILES: MaterialProfile[] = ['general', 'mdf', 'hardwood'];
 
 function usage(message?: string): never {
   if (message) {
@@ -147,8 +146,8 @@ function parseArgs(args: string[]): {
   requireFiniteValue('stockAllowance', stockAllowance);
   requireFiniteValue('finishAngle', finishAngle);
 
-  if (!MATERIAL_PROFILES.includes(materialProfile)) {
-    usage(`Invalid material profile "${materialProfile}". Expected one of: ${MATERIAL_PROFILES.join(', ')}`);
+  if (!MATERIAL_PROFILE_VALUES.includes(materialProfile)) {
+    usage(`Invalid material profile "${materialProfile}". Expected one of: ${MATERIAL_PROFILE_VALUES.join(', ')}`);
   }
 
   if (roughingOnly && finishingOnly) {

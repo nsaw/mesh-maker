@@ -49,14 +49,23 @@ function createElement<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+function slugifySectionTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
 function buildSection(title: string, bodyChildren: Node[], collapsed = false, extraClass = ''): HTMLElement {
   const section = createElement('div', `section${collapsed ? ' collapsed' : ''}${extraClass ? ` ${extraClass}` : ''}`);
-  const header = createElement('div', 'section-header');
+  const bodyId = `${slugifySectionTitle(title)}-section-body`;
+  const header = createElement('button', 'section-header') as HTMLButtonElement;
+  header.type = 'button';
+  header.setAttribute('aria-expanded', String(!collapsed));
+  header.setAttribute('aria-controls', bodyId);
   header.append(
     createElement('div', 'section-title', title),
     createElement('div', 'section-arrow', '\u25BE'),
   );
   const body = createElement('div', 'section-body');
+  body.id = bodyId;
   body.append(...bodyChildren);
   section.append(header, body);
   return section;
@@ -358,6 +367,12 @@ function wireControls(): void {
   const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
   const sidebar = document.getElementById('sidebar')!;
   const sections = sidebar.querySelectorAll('.section');
+  const syncExpandedState = (section: Element): void => {
+    const header = section.querySelector<HTMLElement>('.section-header');
+    if (header) {
+      header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
+    }
+  };
   sidebar.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => {
       const section = h.parentElement!;
@@ -365,8 +380,10 @@ function wireControls(): void {
         const wasCollapsed = section.classList.contains('collapsed');
         sections.forEach(s => s.classList.add('collapsed'));
         if (wasCollapsed) section.classList.remove('collapsed');
+        sections.forEach(syncExpandedState);
       } else {
         section.classList.toggle('collapsed');
+        syncExpandedState(section);
       }
     });
   });
@@ -374,6 +391,7 @@ function wireControls(): void {
     const visible = [...sections].filter(s => (s as HTMLElement).offsetParent !== null);
     visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
   }
+  sections.forEach(syncExpandedState);
 
   // Noise type select
   const sel = document.getElementById('selNoiseType') as HTMLSelectElement | null;

@@ -4,7 +4,7 @@ import { generateSBP } from './sbp/generate';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
 import { showToast } from './toast';
-import type { MaterialProfile, SbpConfig } from './sbp/types';
+import type { MaterialProfile, SbpConfig, SbpStats } from './sbp/types';
 import type { GenerateResult } from './sbp/generate';
 
 /** Persistent SBP config -- survives sidebar rebuilds */
@@ -37,6 +37,8 @@ const SBP_STATE: SbpState = {
   stlBuffer: null,
   stlName: '',
 };
+
+let sbpWorkerRunning = false;
 
 function buildConfig(): SbpConfig {
   const base = getDefaultConfig(SBP_STATE.materialProfile);
@@ -73,17 +75,20 @@ function triggerDownload(content: BlobPart, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+function buildSbpToastMessage(stats: SbpStats): string {
+  const parts: string[] = [];
+  if (stats.roughingMoves > 0) parts.push(`roughing: ${stats.roughingMoves.toLocaleString()} moves`);
+  if (stats.finishingMoves > 0) parts.push(`finishing: ${stats.finishingMoves.toLocaleString()} moves`);
+  parts.push(`${stats.totalLines.toLocaleString()} lines`);
+  return `SBP exported! ${parts.join(', ')}`;
+}
+
 function handleResult(result: GenerateResult, filename: string): void {
   const { sbp, stats } = result;
   STATE.sbpStats = stats;
   triggerDownload(sbp, filename);
   updateStats();
-
-  const parts: string[] = [];
-  if (stats.roughingMoves > 0) parts.push(`roughing: ${stats.roughingMoves.toLocaleString()} moves`);
-  if (stats.finishingMoves > 0) parts.push(`finishing: ${stats.finishingMoves.toLocaleString()} moves`);
-  parts.push(`${stats.totalLines.toLocaleString()} lines`);
-  showToast(`SBP exported! ${parts.join(', ')}`);
+  showToast(buildSbpToastMessage(stats));
 }
 
 /** Export using current MeshCraft mesh (STATE.vertices) */
@@ -102,11 +107,16 @@ function exportFromMesh(): void {
 
 /** Export using uploaded STL via Web Worker */
 function exportFromSTL(): void {
-  if (!SBP_STATE.stlBuffer) {
+  if (sbpWorkerRunning) {
+    showToast('SBP generation already in progress');
+    return;
+  }
+  if (!SBP_STATE.stlBuffer || SBP_STATE.stlBuffer.byteLength === 0) {
     showToast('No STL uploaded');
     return;
   }
 
+  sbpWorkerRunning = true;
   showToast('Generating SBP from STL...');
 
   const worker = new Worker(
@@ -116,6 +126,7 @@ function exportFromSTL(): void {
 
   worker.onmessage = (e: MessageEvent) => {
     worker.terminate();
+    sbpWorkerRunning = false;
     SBP_STATE.stlBuffer = e.data.stlBuffer;
     if (e.data.type === 'error') {
       showToast(`SBP generation failed: ${e.data.message}`, 8000);
@@ -124,15 +135,12 @@ function exportFromSTL(): void {
     STATE.sbpStats = e.data.stats;
     triggerDownload(e.data.sbpBytes, `${STATE.filename}.sbp`);
     updateStats();
-    const parts: string[] = [];
-    if (e.data.stats.roughingMoves > 0) parts.push(`roughing: ${e.data.stats.roughingMoves.toLocaleString()} moves`);
-    if (e.data.stats.finishingMoves > 0) parts.push(`finishing: ${e.data.stats.finishingMoves.toLocaleString()} moves`);
-    parts.push(`${e.data.stats.totalLines.toLocaleString()} lines`);
-    showToast(`SBP exported! ${parts.join(', ')}`);
+    showToast(buildSbpToastMessage(e.data.stats));
   };
 
   worker.onerror = (err) => {
     worker.terminate();
+    sbpWorkerRunning = false;
     showToast(`Worker error: ${err.message}. Re-upload the STL and try again.`, 8000);
   };
 
@@ -248,13 +256,17 @@ export function buildSBPSection(): HTMLElement {
   const section = createElement('div', 'section sbp-only');
   section.id = 'sbpSection';
 
-  const header = createElement('div', 'section-header');
+  const header = createElement('button', 'section-header') as HTMLButtonElement;
+  header.type = 'button';
+  header.setAttribute('aria-expanded', 'true');
+  header.setAttribute('aria-controls', 'sbp-section-body');
   header.append(
     createElement('div', 'section-title', 'SBP Toolpath'),
     createElement('div', 'section-arrow', '\u25BE'),
   );
 
   const body = createElement('div', 'section-body');
+  body.id = 'sbp-section-body';
 
   const roughingRow = createElement('div', 'check-row');
   roughingRow.style.marginTop = '0';

@@ -81,7 +81,9 @@ export function readToolDatabase(vtdbPath: string): ToolDef[] {
     }
     const atcSlot = parseInt(slotMatch[1], 10);
 
-    // Convert feed rates from mm/s (rate_units=4) to IPS
+    // Vectric's rate_units only covers feed/plunge speeds. The shipped ShopBot
+    // libraries store stepdown/stepover in inches even when rate_units=4, so
+    // those geometry values pass through unchanged here.
     const isMetric = row.rate_units === 4;
     const feedRate = isMetric ? row.feed_rate * MM_S_TO_IPS : row.feed_rate;
     const plungeRate = isMetric ? row.plunge_rate * MM_S_TO_IPS : row.plunge_rate;

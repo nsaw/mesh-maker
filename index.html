@@ -48,10 +48,10 @@
   <div class="viewport">
     <div class="viewport-toolbar">
       <div class="view-modes">
-        <button class="view-btn" data-view="solid" aria-label="Solid view">Solid</button>
-        <button class="view-btn active" data-view="wireframe" aria-label="Wireframe view">Wire</button>
-        <button class="view-btn" data-view="both" aria-label="Solid and wireframe view">Both</button>
-        <button class="view-btn" data-view="points" aria-label="Points view">Points</button>
+        <button type="button" class="view-btn" data-view="solid" aria-label="Solid view">Solid</button>
+        <button type="button" class="view-btn active" data-view="wireframe" aria-label="Wireframe view">Wire</button>
+        <button type="button" class="view-btn" data-view="both" aria-label="Solid and wireframe view">Both</button>
+        <button type="button" class="view-btn" data-view="points" aria-label="Points view">Points</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button class="btn btn-sm" id="btnRegenerate">Regenerate</button>
@@ -70,11 +70,11 @@
     <div class="export-bar">
       <input type="text" class="text-input filename-input" id="filenameInput" value="meshcraft_export" placeholder="filename">
       <div class="export-format">
-        <button class="format-btn active" data-fmt="stl" aria-label="Export as STL">STL</button>
-        <button class="format-btn" data-fmt="obj" aria-label="Export as OBJ">OBJ</button>
-        <button class="format-btn" data-fmt="3dm" aria-label="Export as Rhino 3DM">3DM</button>
-        <button class="format-btn" data-fmt="heightmap" aria-label="Export as heightmap PNG" title="Grayscale PNG for Vectric VCarve/Aspire">Heightmap</button>
-        <button class="format-btn" data-fmt="sbp" aria-label="Export as ShopBot SBP" title="ShopBot cut file (.sbp)" data-sbp-enabled="true">SBP</button>
+        <button type="button" class="format-btn active" data-fmt="stl" aria-label="Export as STL">STL</button>
+        <button type="button" class="format-btn" data-fmt="obj" aria-label="Export as OBJ">OBJ</button>
+        <button type="button" class="format-btn" data-fmt="3dm" aria-label="Export as Rhino 3DM">3DM</button>
+        <button type="button" class="format-btn" data-fmt="heightmap" aria-label="Export as heightmap PNG" title="Grayscale PNG for Vectric VCarve/Aspire">Heightmap</button>
+        <button type="button" class="format-btn" data-fmt="sbp" aria-label="Export as ShopBot SBP" title="ShopBot cut file (.sbp)" data-sbp-enabled="true">SBP</button>
       </div>
       <div class="check-row" style="margin:0;">
         <input type="checkbox" id="chkWatertight" checked>

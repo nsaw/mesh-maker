@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "deploy": "npm run build && zsh -lc '[[ -n \"$CLOUDFLARE_API_TOKEN\" ]] || { echo \"CLOUDFLARE_API_TOKEN is required\" >&2; exit 1; }; [[ -n \"$CLOUDFLARE_ACCOUNT_ID\" ]] || { echo \"CLOUDFLARE_ACCOUNT_ID is required\" >&2; exit 1; }; npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=main'",
+    "deploy": "npm run build && node -e \"for (const k of ['CLOUDFLARE_API_TOKEN','CLOUDFLARE_ACCOUNT_ID']) { if (!process.env[k]) { console.error(k + ' is required'); process.exit(1); } }\" && npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=main",
     "typecheck": "tsc --noEmit",
     "typecheck:cli": "tsc -p tsconfig.cli.json --noEmit",
     "lint": "eslint src/ cli/",

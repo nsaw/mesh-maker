@@ -2,6 +2,11 @@ import type { ToolpathSection, SbpConfig, ToolpathMove } from './types';
 
 const FMT = 6; // decimal places for coordinates
 
+export interface WriteSbpResult {
+  sbp: string;
+  lineCount: number;
+}
+
 function f(n: number): string {
   return n.toFixed(FMT);
 }
@@ -10,7 +15,7 @@ function f(n: number): string {
  * Build an OpenSBP file string from toolpath sections and config.
  * Format verified line-by-line against Aspire reference output.
  */
-export function writeSBP(sections: ToolpathSection[], config: SbpConfig): string {
+export function writeSBP(sections: ToolpathSection[], config: SbpConfig): WriteSbpResult {
   const lines: string[] = [];
 
   // Header comments
@@ -77,7 +82,10 @@ export function writeSBP(sections: ToolpathSection[], config: SbpConfig): string
   lines.push("CN, 91                            'Run file explaining unit error");
   lines.push('END');
 
-  return lines.join('\n') + '\n';
+  return {
+    sbp: lines.join('\n') + '\n',
+    lineCount: lines.length,
+  };
 }
 
 function writeMoves(lines: string[], moves: ToolpathMove[], config: SbpConfig): void {
@@ -92,9 +100,6 @@ function writeMoves(lines: string[], moves: ToolpathMove[], config: SbpConfig): 
           lastType = move.type;
           continue;
         }
-      }
-      if (move.z !== config.safeZ) {
-        lines.push(`JZ,${f(move.z)}`);
       }
       lines.push(`J3,${f(move.x)},${f(move.y)},${f(move.z)}`);
     } else {

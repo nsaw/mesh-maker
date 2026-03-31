@@ -73,7 +73,7 @@ meshcraft/
 **Platform**: Cloudflare Pages (static site hosting)
 **Pages URL**: `meshcraft.pages.dev`
 **Custom domain**: `meshcraft.sawyerdesign.io`
-**Account ID**: `ff4a53e6bc626ee548c280edfbb6aa16`
+**Account ID**: supply `CLOUDFLARE_ACCOUNT_ID` via local environment or CI secrets
 
 **CI/CD**: GitHub Actions on push to `main` — runs `npm ci && npm run build`, deploys `dist/`.
 
@@ -82,7 +82,7 @@ meshcraft/
 ```bash
 npm run build
 source ~/.env.zsh && CLOUDFLARE_API_TOKEN=$CLOUDFLARE_WORKERS_API \
-CLOUDFLARE_ACCOUNT_ID=ff4a53e6bc626ee548c280edfbb6aa16 \
+CLOUDFLARE_ACCOUNT_ID=<CLOUDFLARE_ACCOUNT_ID> \
 wrangler pages deploy dist --project-name=meshcraft --branch=main
 ```
 
@@ -102,7 +102,7 @@ npm run preview    # Preview production build
 When modifying the codebase, verify:
 - [ ] All 5 noise algorithms generate (Simplex, Perlin, Ridged, FBM, Voronoi)
 - [ ] All 4 view modes render (Solid, Wire, Both, Points)
-- [ ] All 9 CNC presets apply correctly
+- [ ] All 15 CNC presets apply correctly
 - [ ] Depth map upload works (click + drag-and-drop)
 - [ ] Export produces valid STL/OBJ/heightmap files
 - [ ] Watertight toggle adds bottom + sides
@@ -120,7 +120,7 @@ When modifying the codebase, verify:
 
 - **No `console.log`** — this is a production tool, not a debug environment
 - **No TODO/FIXME in production paths** — fix it or don't ship it
-- **Escape user input in innerHTML** — `STATE.depthMapName` is user-controlled (file upload name). Always escape `<` and `>` when interpolating into HTML.
+- **No `innerHTML` for user-influenced content** — values like `STATE.depthMapName` must be rendered via DOM node creation, `appendChild`, and `textContent`, not string interpolation into `innerHTML`
 - **Revoke object URLs** — every `URL.createObjectURL()` must have a matching `URL.revokeObjectURL()` in both success and error paths
 - **No degenerate triangles in exports** — enforce minimum base thickness (0.01") when watertight is enabled
 

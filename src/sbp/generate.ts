@@ -82,14 +82,14 @@ export function generateSBP(heightmap: Heightmap, config: SbpConfig): GenerateRe
     sections.push(finishing);
   }
 
-  const sbp = writeSBP(sections, normConfig);
+  const { sbp, lineCount } = writeSBP(sections, normConfig);
 
   return {
     sbp,
     stats: {
       roughingMoves,
       finishingMoves,
-      totalLines: sbp.split('\n').length,
+      totalLines: lineCount,
       zShifted: shifted,
       heightmapRows: normHm.rows,
       heightmapCols: normHm.cols,

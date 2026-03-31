@@ -21,9 +21,12 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
   try {
     const { data, count, bounds } = parseSTLBinary(stlBuffer);
     const heightmap = meshToHeightmap(data, count, bounds, resolution);
-    config.materialX = heightmap.meshX;
-    config.materialY = heightmap.meshY;
-    const result = generateSBP(heightmap, config);
+    const effectiveConfig: SbpConfig = {
+      ...config,
+      materialX: heightmap.meshX,
+      materialY: heightmap.meshY,
+    };
+    const result = generateSBP(heightmap, effectiveConfig);
     const sbpBytes = new TextEncoder().encode(result.sbp);
     const output: WorkerOutput = {
       type: 'success',

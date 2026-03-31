@@ -123,7 +123,7 @@ function computeRasterLines(
  * - Exit: retract to safeZ
  *
  * Points sampled at uniform 0.005" spacing along each raster line.
- * Collinear point reduction applied to compress output.
+ * No collinear reduction -- uniform point density for consistent surface finish.
  */
 export function generateFinishing(
   compensated: Heightmap,
@@ -186,7 +186,11 @@ export function generateFinishing(
       const prev = moves[moves.length - 1];
       const next = linePoints[0];
 
-      // Boundary traverse at material thickness (no retract)
+      // Boundary traverse at materialZ assumes normalizeZ() already lifted the
+      // stock top above the surface extrema used by these line endpoints.
+      if (materialZ + 1e-9 < prev.z || materialZ + 1e-9 < next.z) {
+        throw new Error('Finishing traverse requires materialZ to be above the surface');
+      }
       moves.push({ type: 'cut', x: prev.x, y: prev.y, z: materialZ });
       moves.push({ type: 'cut', x: next.x, y: next.y, z: materialZ });
     }
