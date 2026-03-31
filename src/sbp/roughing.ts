@@ -3,7 +3,7 @@ import type { Heightmap, SbpConfig, ToolpathSection, ToolpathMove } from './type
 /**
  * Generate Z-level raster roughing toolpath.
  *
- * Strategy: step down from materialZ to roughing floor (0.250") in increments of tool stepdown.
+ * Strategy: step down from materialZ to roughing floor (0.050") in increments of tool stepdown.
  * At each Z level, serpentine raster: sweep X, step Y by stepover, reverse each row.
  * Cut Z = max(currentZLevel, surfaceZ + leaveStock) -- never cuts below the surface.
  * Retract between disconnected segments (gaps in the cut).
@@ -19,7 +19,7 @@ export function generateRoughing(
   const { materialZ, safeZ, offsetX, offsetY, leaveStock } = config;
 
   const moves: ToolpathMove[] = [];
-  const floor = 0.250; // roughing floor -- finishing handles below this
+  const floor = 0.050; // roughing floor -- finishing handles below this
 
   // Compute Z levels from top down
   const levels: number[] = [];
