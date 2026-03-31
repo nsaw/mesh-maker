@@ -1,6 +1,6 @@
 import { STATE, noiseDims, demoDepthMap, serializeConfig } from './state';
 import { generateMesh } from './mesh';
-import { renderViewport, resetCanvasSize } from './render';
+import { renderViewport, setCameraFromState, resizeCanvas } from './render';
 import { doExport } from './export';
 import { buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
@@ -93,9 +93,9 @@ export function setupToolbar(): void {
   document.getElementById('btnRandomSeed')!.addEventListener('click', randomSeed);
   document.getElementById('btnZoomExtents')!.addEventListener('click', zoomExtents);
   document.getElementById('btnResetCamera')!.addEventListener('click', () => {
-    STATE.orbit = 55; STATE.tilt = -25; STATE.roll = 0; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0;
+    STATE.orbit = 55; STATE.tilt = -25; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0;
     buildSidebar();
-    renderViewport();
+    setCameraFromState();
   });
   document.getElementById('btnExport')!.addEventListener('click', doExport);
   document.getElementById('filenameInput')!.addEventListener('change', e => {
@@ -105,7 +105,7 @@ export function setupToolbar(): void {
     STATE.filename = raw.slice(0, 128) || 'meshcraft_export';
     (e.target as HTMLInputElement).value = STATE.filename;
   });
-  document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; updateStats(); });
+  document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; renderViewport(); updateStats(); });
   document.getElementById('chkBinary')!.addEventListener('change', e => { STATE.binary = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chk3dmPointCloud')!.addEventListener('change', e => { STATE.export3dmAsPointCloud = (e.target as HTMLInputElement).checked; });
 
@@ -152,5 +152,5 @@ function copyFallback(text: string): void {
 
 
 export function setupResize(): void {
-  window.addEventListener('resize', () => { resetCanvasSize(); renderViewport(); });
+  window.addEventListener('resize', () => { resizeCanvas(); });
 }
