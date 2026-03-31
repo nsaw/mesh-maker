@@ -5,10 +5,13 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'cli/**/*.ts'],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ['cli/*.ts'],
+          defaultProject: 'tsconfig.cli.json',
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },

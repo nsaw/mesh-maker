@@ -82,7 +82,7 @@ function exportSTL_Binary(mesh: MeshData): Blob {
   const tris = collectTriangles(mesh);
   const buf = new ArrayBuffer(84 + tris.length * 50);
   const view = new DataView(buf);
-  const header = 'MESHCRAFT 3000 // Sawyer Design';
+  const header = 'MESHCRAFT // Sawyer Design';
   for (let i = 0; i < 80; i++) view.setUint8(i, i < header.length ? header.charCodeAt(i) : 0);
   view.setUint32(80, tris.length, true);
   let off = 84;
@@ -104,7 +104,7 @@ function exportSTL_Binary(mesh: MeshData): Blob {
 function exportOBJ(mesh: MeshData): string {
   const { top, cols, rows, watertight } = mesh;
   const zBase = 0;
-  let s = '# MESHCRAFT 3000 - Sawyer Design\n# OBJ Export\n\n';
+  let s = '# MESHCRAFT - Sawyer Design\n# OBJ Export\n\n';
 
   const topStart = 1;
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
@@ -340,6 +340,12 @@ export async function doExport(): Promise<void> {
 
 async function _doExportInner(): Promise<void> {
   const fmt = STATE.exportFormat;
+
+  if (fmt === 'sbp') {
+    const { doSBPExport } = await import('./sbp-export');
+    doSBPExport();
+    return;
+  }
 
   if (fmt === 'heightmap') {
     if (!STATE.vertices) { showToast('Generate a mesh first'); return; }

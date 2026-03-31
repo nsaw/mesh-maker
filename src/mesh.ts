@@ -177,6 +177,7 @@ export function generateMesh(): void {
         if (STATE.depthMap) generateDepthMapMesh();
         else generateNoiseMesh();
       }
+      STATE.sbpStats = null;
       renderViewport();
       updateStats();
       overlay.classList.remove('visible');

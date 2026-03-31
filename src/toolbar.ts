@@ -65,7 +65,26 @@ export function setupTabs(): void {
       document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       STATE.exportFormat = (btn as HTMLElement).dataset.fmt as typeof STATE.exportFormat;
+      updateExportControls();
+      updateStats();
     });
+  });
+}
+
+/** Show/hide export-bar controls and sidebar SBP section based on current format */
+export function updateExportControls(): void {
+  const isSBP = STATE.exportFormat === 'sbp';
+
+  // Toggle mesh-export controls (irrelevant for SBP)
+  const meshControls = ['chkWatertight', 'chkBinary', 'chk3dmPointCloud'];
+  for (const id of meshControls) {
+    const el = document.getElementById(id)?.closest('.check-row') as HTMLElement | null;
+    if (el) el.style.display = isSBP ? 'none' : '';
+  }
+
+  // Toggle SBP sidebar section (override CSS .sbp-only { display: none })
+  document.querySelectorAll<HTMLElement>('.sbp-only').forEach(el => {
+    el.style.display = isSBP ? 'block' : 'none';
   });
 }
 
@@ -79,7 +98,13 @@ export function setupToolbar(): void {
     renderViewport();
   });
   document.getElementById('btnExport')!.addEventListener('click', doExport);
-  document.getElementById('filenameInput')!.addEventListener('change', e => { STATE.filename = (e.target as HTMLInputElement).value || 'meshcraft_export'; });
+  document.getElementById('filenameInput')!.addEventListener('change', e => {
+    // Strip filesystem-unsafe characters (including control chars U+0000-U+001F)
+    // eslint-disable-next-line no-control-regex
+    const raw = (e.target as HTMLInputElement).value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').trim();
+    STATE.filename = raw.slice(0, 128) || 'meshcraft_export';
+    (e.target as HTMLInputElement).value = STATE.filename;
+  });
   document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chkBinary')!.addEventListener('change', e => { STATE.binary = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chk3dmPointCloud')!.addEventListener('change', e => { STATE.export3dmAsPointCloud = (e.target as HTMLInputElement).checked; });

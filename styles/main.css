@@ -114,9 +114,15 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
+  width: 100%;
+  border: 0;
+  background: transparent;
   cursor: pointer;
   user-select: none;
   transition: background 0.1s;
+  text-align: left;
+  color: inherit;
+  font: inherit;
 }
 .section-header:hover { background: var(--bg3); }
 .section-title {
@@ -520,6 +526,9 @@ canvas {
 .depth-map-only { display: none; }
 body.mode-depthmap .depth-map-only { display: block; }
 body.mode-depthmap .noise-only { display: none; }
+
+/* SBP TOOLPATH SECTION */
+.sbp-only { display: none; }
 
 /* SPONSOR MODAL */
 .sponsor-backdrop {

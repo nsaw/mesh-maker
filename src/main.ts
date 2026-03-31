@@ -1,6 +1,6 @@
 import { STATE, deserializeConfig, setDemoDepthMap } from './state';
 import { buildSidebar, fitMeshToAspect } from './ui';
-import { setupTabs, setupToolbar, setupResize } from './toolbar';
+import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
 import { setupInteraction } from './interaction';
 import { setupSponsorModal } from './sponsor';
 import { generateMesh } from './mesh';
@@ -42,6 +42,7 @@ function init(): void {
   buildSidebar();
   setupTabs();
   setupToolbar();
+  updateExportControls();
   setupInteraction();
   setupResize();
   setupSponsorModal();

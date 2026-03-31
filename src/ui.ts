@@ -1,6 +1,8 @@
 import { STATE } from './state';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
+import { buildSBPSection, wireSBPControls } from './sbp-export';
+import { updateExportControls } from './toolbar';
 
 
 const PRESET_GROUPS: [string, string[]][] = [
@@ -17,153 +19,305 @@ function formatPresetName(key: string): string {
 
 export function buildSidebar(): void {
   const sb = document.getElementById('sidebar')!;
-  const parts: string[] = [];
-
-  // -- PRESETS --
-  parts.push(buildSection('Presets', `
-    <div class="control-row">
-      <div class="control-label">CNC Preset</div>
-      <select class="select-input" id="selPreset">
-        <option value=""${!STATE.activePreset ? ' selected' : ''}>Select Preset</option>
-        ${PRESET_GROUPS.map(([label, keys]) => `<optgroup label="${label}">
-          ${keys.map(k => `<option value="${k}"${STATE.activePreset === k ? ' selected' : ''}>${formatPresetName(k)}</option>`).join('')}
-        </optgroup>`).join('')}
-      </select>
-    </div>
-    <div class="btn-row" style="margin-top:6px;">
-      ${Object.keys(PROFILES).filter(k=>k!=='custom').map(k =>
-        `<button class="preset-pill${STATE.activeProfile === k ? ' active' : ''}" data-profile="${k}" style="border-color:var(--bg4);font-size:9px;">${k}</button>`
-      ).join('')}
-    </div>
-  `));
-
-  // -- MESH DIMENSIONS --
-  parts.push(buildSection('Mesh Dimensions', `
-    <div class="inline-row">
-      ${slider('meshX', 'X (inches)', 1, 96, 1, '', ' <span class="cnc-badge">ShopBot: 36" max</span>')}
-      <button class="aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}" id="btnAspectLock" title="${STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}">
-        ${STATE.aspectLocked ? '&#x1f512;' : '&#x1f513;'}
-      </button>
-      ${slider('meshY', 'Y (inches)', 1, 48, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
-    </div>
-    ${slider('resolution', 'Grid Resolution', 16, 1024, 4)}
-    ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
-    <div style="margin-top:4px;font-size:10px;color:var(--text3);">ShopBot Desktop Max ATC -- 36"x24"x6"</div>
-  `));
-
-  // -- NOISE PARAMETERS --
-  parts.push(buildSection('Noise Parameters', `
-    <div class="control-row">
-      <div class="control-label">Noise Algorithm</div>
-      <select class="select-input" id="selNoiseType">
-        <optgroup label="Classic">
-          <option value="simplex">Simplex</option>
-          <option value="perlin">Perlin</option>
-          <option value="opensimplex2">OpenSimplex2</option>
-          <option value="value">Value</option>
-        </optgroup>
-        <optgroup label="Fractal">
-          <option value="fbm">FBM (Fractional Brownian)</option>
-          <option value="ridged">Ridged</option>
-          <option value="billow">Billow</option>
-          <option value="turbulence">Turbulence</option>
-        </optgroup>
-        <optgroup label="Multi-Fractal">
-          <option value="hybrid">Hybrid Multifractal</option>
-          <option value="hetero">Heterogeneous Terrain</option>
-          <option value="domainwarp">Domain Warp</option>
-        </optgroup>
-        <optgroup label="Cellular">
-          <option value="voronoi">Voronoi</option>
-          <option value="worley">Worley (Cell Edges)</option>
-        </optgroup>
-        <optgroup label="Advanced">
-          <option value="gabor">Gabor</option>
-          <option value="wavelet">Wavelet</option>
-        </optgroup>
-      </select>
-    </div>
-    ${STATE.noiseType === 'gabor' ? `
-      ${slider('gaborAngle', 'Gabor Angle (degrees)', 0, 180, 1)}
-      ${slider('gaborBandwidth', 'Gabor Bandwidth', 0.5, 4, 0.1)}
-    ` : ''}
-    ${slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005)}
-    ${slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05, '', ' <span class="cnc-badge">max Z: 6"</span>')}
-    ${slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05)}
-    ${slider('offset', 'Vertical Offset', -2, 2, 0.05)}
-    <div class="seed-row">
-      <input type="text" class="text-input" id="seedInput" placeholder="seed (blank=random)" value="${STATE.seed || ''}">
-      <button class="btn btn-sm" id="btnRandSeed2">Dice</button>
-    </div>
-  `, false, 'noise-only'));
-
-  // -- PEAK / VALLEY SHAPING --
-  parts.push(buildSection('Peak / Valley Shaping', `
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Asymmetric control: shape peaks and valleys independently.</div>
-    ${slider('peakExp', 'Peak Sharpness (>1 = crisper ridges)', 0.2, 4, 0.05)}
-    ${slider('valleyExp', 'Valley Softness (<1 = broader valleys)', 0.1, 3, 0.05)}
-    ${slider('valleyFloor', 'Valley Floor (0=deep, 1=flat)', 0, 1, 0.01)}
-  `, false, 'noise-only'));
-
-  // -- ADVANCED NOISE --
-  parts.push(buildSection('Advanced Noise', `
-    ${slider('octaves', 'Octaves', 1, 8, 1)}
-    ${slider('persistence', 'Persistence', 0.1, 1, 0.05)}
-    ${slider('lacunarity', 'Lacunarity', 1, 4, 0.1)}
-    ${slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05)}
-    ${slider('contrast', 'Contrast', 0.1, 3, 0.05)}
-    ${slider('sharpness', 'Sharpness', 0, 2, 0.05)}
-  `, true, 'noise-only'));
-
-  // -- SMOOTHING --
-  parts.push(buildSection('Smoothing', `
-    ${slider('smoothIter', 'Iterations', 0, 15, 1)}
-    ${slider('smoothStr', 'Strength', 0, 1, 0.05)}
-  `));
-
-  // -- DEPTH MAP --
-  // Note: depthMapName is user-controlled (file upload name) — escaped to prevent XSS
-  parts.push(buildSection('Depth Map', `
-    <div class="upload-zone ${STATE.depthMap ? 'has-image' : ''}" id="uploadZone" tabindex="0" role="button" aria-label="Upload depth map image">
-      <div class="upload-text">${(STATE.depthMapName || 'Click or drag to upload depth map').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-      <input type="file" id="depthMapInput" accept="image/*">
-    </div>
-    ${slider('blend', 'Blend (0=image, 1=noise)', 0, 1, 0.01)}
-    ${slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05)}
-    ${slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)}
-    ${slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)}
-  `, false, 'depth-map-only'));
-
-  // -- VIEW --
-  parts.push(buildSection('View Controls', `
-    ${slider('orbit', 'Orbit', 0, 360, 1)}
-    ${slider('tilt', 'Tilt', -90, 90, 1)}
-    ${slider('roll', 'Roll', -180, 180, 1)}
-    ${slider('zoom', 'Zoom', 0.1, 10, 0.05)}
-    <div style="margin-top:8px;font-size:10px;color:var(--text3);">Left drag = orbit/tilt &middot; Right/Shift drag = pan &middot; Scroll = zoom &middot; Double-click = fit</div>
-  `, true));
-
-  sb.innerHTML = parts.join('');
+  const fragment = document.createDocumentFragment();
+  fragment.append(
+    buildPresetSection(),
+    buildMeshDimensionsSection(),
+    buildNoiseParametersSection(),
+    buildPeakValleySection(),
+    buildAdvancedNoiseSection(),
+    buildSmoothingSection(),
+    buildDepthMapSection(),
+    buildViewControlsSection(),
+    buildSBPSection(),
+  );
+  sb.replaceChildren(fragment);
 
   wireControls();
+  wireSBPControls();
+  updateExportControls();
 }
 
-function buildSection(title: string, body: string, collapsed = false, extraClass = ''): string {
-  return `<div class="section ${collapsed ? 'collapsed' : ''} ${extraClass}">
-    <div class="section-header">
-      <div class="section-title">${title}</div>
-      <div class="section-arrow">&#9660;</div>
-    </div>
-    <div class="section-body">${body}</div>
-  </div>`;
+function createElement<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
 }
 
-function slider(key: string, label: string, min: number, max: number, step: number, _suffix = '', extra = ''): string {
+function slugifySectionTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function buildSection(title: string, bodyChildren: Node[], collapsed = false, extraClass = ''): HTMLElement {
+  const section = createElement('div', `section${collapsed ? ' collapsed' : ''}${extraClass ? ` ${extraClass}` : ''}`);
+  const bodyId = `${slugifySectionTitle(title)}-section-body`;
+  const header = createElement('button', 'section-header') as HTMLButtonElement;
+  header.type = 'button';
+  header.setAttribute('aria-expanded', String(!collapsed));
+  header.setAttribute('aria-controls', bodyId);
+  header.append(
+    createElement('div', 'section-title', title),
+    createElement('div', 'section-arrow', '\u25BE'),
+  );
+  const body = createElement('div', 'section-body');
+  body.id = bodyId;
+  body.append(...bodyChildren);
+  section.append(header, body);
+  return section;
+}
+
+function buildSliderLabel(label: string, valueId: string, valueText: string, badgeText = ''): HTMLDivElement {
+  const controlLabel = createElement('div', 'control-label');
+  const labelSpan = createElement('span');
+  labelSpan.append(label);
+  if (badgeText) {
+    labelSpan.append(' ');
+    labelSpan.append(createElement('span', 'cnc-badge', badgeText));
+  }
+  const valueSpan = createElement('span', 'val', valueText);
+  valueSpan.id = valueId;
+  controlLabel.append(labelSpan, valueSpan);
+  return controlLabel;
+}
+
+function slider(key: string, label: string, min: number, max: number, step: number, badgeText = ''): HTMLDivElement {
   const val = STATE[key as keyof typeof STATE] as number;
-  return `<div class="control-row">
-    <div class="control-label"><span>${label}${extra}</span><span class="val" id="val_${key}">${typeof val === 'number' ? (Number.isInteger(step) ? val : val.toFixed(2)) : val}</span></div>
-    <input type="range" id="sl_${key}" min="${min}" max="${max}" step="${step}" value="${val}" data-key="${key}">
-  </div>`;
+  const row = createElement('div', 'control-row');
+  const valueText = typeof val === 'number'
+    ? (Number.isInteger(step) ? String(val) : val.toFixed(2))
+    : String(val);
+  const input = createElement('input') as HTMLInputElement;
+  input.type = 'range';
+  input.id = `sl_${key}`;
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(val);
+  input.dataset.key = key;
+  row.append(buildSliderLabel(label, `val_${key}`, valueText, badgeText), input);
+  return row;
+}
+
+function buildPresetSection(): HTMLElement {
+  const controlRow = createElement('div', 'control-row');
+  const label = createElement('div', 'control-label', 'CNC Preset');
+  const select = createElement('select', 'select-input') as HTMLSelectElement;
+  select.id = 'selPreset';
+
+  const defaultOption = createElement('option') as HTMLOptionElement;
+  defaultOption.value = '';
+  defaultOption.selected = !STATE.activePreset;
+  defaultOption.textContent = 'Select Preset';
+  select.append(defaultOption);
+
+  PRESET_GROUPS.forEach(([groupLabel, keys]) => {
+    const optgroup = createElement('optgroup') as HTMLOptGroupElement;
+    optgroup.label = groupLabel;
+    keys.forEach((key) => {
+      const option = createElement('option') as HTMLOptionElement;
+      option.value = key;
+      option.selected = STATE.activePreset === key;
+      option.textContent = formatPresetName(key);
+      optgroup.append(option);
+    });
+    select.append(optgroup);
+  });
+  controlRow.append(label, select);
+
+  const buttonRow = createElement('div', 'btn-row');
+  buttonRow.style.marginTop = '6px';
+  Object.keys(PROFILES)
+    .filter((key) => key !== 'custom')
+    .forEach((key) => {
+      const button = createElement('button', `preset-pill${STATE.activeProfile === key ? ' active' : ''}`, key);
+      button.dataset.profile = key;
+      button.style.borderColor = 'var(--bg4)';
+      button.style.fontSize = '9px';
+      buttonRow.append(button);
+    });
+
+  return buildSection('Presets', [controlRow, buttonRow]);
+}
+
+function buildMeshDimensionsSection(): HTMLElement {
+  const inlineRow = createElement('div', 'inline-row');
+  inlineRow.append(
+    slider('meshX', 'X (inches)', 1, 96, 1, 'ShopBot: 36" max'),
+  );
+
+  const lockButton = createElement('button', `aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}`);
+  lockButton.id = 'btnAspectLock';
+  lockButton.title = STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio';
+  lockButton.textContent = STATE.aspectLocked ? '\u{1F512}' : '\u{1F513}';
+  inlineRow.append(lockButton);
+
+  inlineRow.append(
+    slider('meshY', 'Y (inches)', 1, 48, 1, 'ShopBot: 24" max'),
+  );
+
+  const note = createElement('div');
+  note.style.marginTop = '4px';
+  note.style.fontSize = '10px';
+  note.style.color = 'var(--text3)';
+  note.textContent = 'ShopBot Desktop Max ATC -- 36"x24"x6"';
+
+  return buildSection('Mesh Dimensions', [
+    inlineRow,
+    slider('resolution', 'Grid Resolution', 16, 1024, 4),
+    slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05),
+    note,
+  ]);
+}
+
+function buildNoiseParametersSection(): HTMLElement {
+  const noiseRow = createElement('div', 'control-row');
+  const noiseLabel = createElement('div', 'control-label', 'Noise Algorithm');
+  const noiseSelect = createElement('select', 'select-input') as HTMLSelectElement;
+  noiseSelect.id = 'selNoiseType';
+
+  const noiseOptions: Array<{ label: string; options: Array<[string, string]> }> = [
+    {
+      label: 'Classic',
+      options: [['simplex', 'Simplex'], ['perlin', 'Perlin'], ['opensimplex2', 'OpenSimplex2'], ['value', 'Value']],
+    },
+    {
+      label: 'Fractal',
+      options: [['fbm', 'FBM (Fractional Brownian)'], ['ridged', 'Ridged'], ['billow', 'Billow'], ['turbulence', 'Turbulence']],
+    },
+    {
+      label: 'Multi-Fractal',
+      options: [['hybrid', 'Hybrid Multifractal'], ['hetero', 'Heterogeneous Terrain'], ['domainwarp', 'Domain Warp']],
+    },
+    {
+      label: 'Cellular',
+      options: [['voronoi', 'Voronoi'], ['worley', 'Worley (Cell Edges)']],
+    },
+    {
+      label: 'Advanced',
+      options: [['gabor', 'Gabor'], ['wavelet', 'Wavelet']],
+    },
+  ];
+
+  noiseOptions.forEach(({ label, options }) => {
+    const optgroup = createElement('optgroup') as HTMLOptGroupElement;
+    optgroup.label = label;
+    options.forEach(([value, text]) => {
+      const option = createElement('option') as HTMLOptionElement;
+      option.value = value;
+      option.selected = STATE.noiseType === value;
+      option.textContent = text;
+      optgroup.append(option);
+    });
+    noiseSelect.append(optgroup);
+  });
+  noiseRow.append(noiseLabel, noiseSelect);
+
+  const seedRow = createElement('div', 'seed-row');
+  const seedInput = createElement('input', 'text-input') as HTMLInputElement;
+  seedInput.type = 'text';
+  seedInput.id = 'seedInput';
+  seedInput.placeholder = 'seed (blank=random)';
+  seedInput.value = STATE.seed ? String(STATE.seed) : '';
+  const seedButton = createElement('button', 'btn btn-sm', 'Dice');
+  seedButton.id = 'btnRandSeed2';
+  seedRow.append(seedInput, seedButton);
+
+  const children: Node[] = [
+    noiseRow,
+  ];
+
+  if (STATE.noiseType === 'gabor') {
+    children.push(
+      slider('gaborAngle', 'Gabor Angle (degrees)', 0, 180, 1),
+      slider('gaborBandwidth', 'Gabor Bandwidth', 0.5, 4, 0.1),
+    );
+  }
+
+  children.push(
+    slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005),
+    slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05, 'max Z: 6"'),
+    slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05),
+    slider('offset', 'Vertical Offset', -2, 2, 0.05),
+    seedRow,
+  );
+
+  return buildSection('Noise Parameters', children, false, 'noise-only');
+}
+
+function buildPeakValleySection(): HTMLElement {
+  const description = createElement('div');
+  description.style.fontSize = '10px';
+  description.style.color = 'var(--text3)';
+  description.style.marginBottom = '8px';
+  description.textContent = 'Asymmetric control: shape peaks and valleys independently.';
+  return buildSection('Peak / Valley Shaping', [
+    description,
+    slider('peakExp', 'Peak Sharpness (>1 = crisper ridges)', 0.2, 4, 0.05),
+    slider('valleyExp', 'Valley Softness (<1 = broader valleys)', 0.1, 3, 0.05),
+    slider('valleyFloor', 'Valley Floor (0=deep, 1=flat)', 0, 1, 0.01),
+  ], false, 'noise-only');
+}
+
+function buildAdvancedNoiseSection(): HTMLElement {
+  return buildSection('Advanced Noise', [
+    slider('octaves', 'Octaves', 1, 8, 1),
+    slider('persistence', 'Persistence', 0.1, 1, 0.05),
+    slider('lacunarity', 'Lacunarity', 1, 4, 0.1),
+    slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05),
+    slider('contrast', 'Contrast', 0.1, 3, 0.05),
+    slider('sharpness', 'Sharpness', 0, 2, 0.05),
+  ], true, 'noise-only');
+}
+
+function buildSmoothingSection(): HTMLElement {
+  return buildSection('Smoothing', [
+    slider('smoothIter', 'Iterations', 0, 15, 1),
+    slider('smoothStr', 'Strength', 0, 1, 0.05),
+  ]);
+}
+
+function buildDepthMapSection(): HTMLElement {
+  const uploadZone = createElement('div', `upload-zone${STATE.depthMap ? ' has-image' : ''}`);
+  uploadZone.id = 'uploadZone';
+  uploadZone.tabIndex = 0;
+  uploadZone.setAttribute('role', 'button');
+  uploadZone.setAttribute('aria-label', 'Upload depth map image');
+
+  const uploadText = createElement('div', 'upload-text', STATE.depthMapName || 'Click or drag to upload depth map');
+  const input = createElement('input') as HTMLInputElement;
+  input.type = 'file';
+  input.id = 'depthMapInput';
+  input.accept = 'image/*';
+  uploadZone.append(uploadText, input);
+
+  return buildSection('Depth Map', [
+    uploadZone,
+    slider('blend', 'Blend (0=image, 1=noise)', 0, 1, 0.01),
+    slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05),
+    slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01),
+    slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1),
+  ], false, 'depth-map-only');
+}
+
+function buildViewControlsSection(): HTMLElement {
+  const note = createElement('div');
+  note.style.marginTop = '8px';
+  note.style.fontSize = '10px';
+  note.style.color = 'var(--text3)';
+  note.textContent = 'Left drag = orbit/tilt · Right/Shift drag = pan · Scroll = zoom · Double-click = fit';
+
+  return buildSection('View Controls', [
+    slider('orbit', 'Orbit', 0, 360, 1),
+    slider('tilt', 'Tilt', -90, 90, 1),
+    slider('roll', 'Roll', -180, 180, 1),
+    slider('zoom', 'Zoom', 0.1, 10, 0.05),
+    note,
+  ], true);
 }
 
 function wireControls(): void {
@@ -213,6 +367,12 @@ function wireControls(): void {
   const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
   const sidebar = document.getElementById('sidebar')!;
   const sections = sidebar.querySelectorAll('.section');
+  const syncExpandedState = (section: Element): void => {
+    const header = section.querySelector<HTMLElement>('.section-header');
+    if (header) {
+      header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
+    }
+  };
   sidebar.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => {
       const section = h.parentElement!;
@@ -220,8 +380,10 @@ function wireControls(): void {
         const wasCollapsed = section.classList.contains('collapsed');
         sections.forEach(s => s.classList.add('collapsed'));
         if (wasCollapsed) section.classList.remove('collapsed');
+        sections.forEach(syncExpandedState);
       } else {
         section.classList.toggle('collapsed');
+        syncExpandedState(section);
       }
     });
   });
@@ -229,6 +391,7 @@ function wireControls(): void {
     const visible = [...sections].filter(s => (s as HTMLElement).offsetParent !== null);
     visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
   }
+  sections.forEach(syncExpandedState);
 
   // Noise type select
   const sel = document.getElementById('selNoiseType') as HTMLSelectElement | null;

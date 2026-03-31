@@ -1,7 +1,9 @@
+import type { SbpStats } from './sbp/types';
+
 export interface MeshState {
   mode: 'noise' | 'depthmap' | 'blend';
   viewMode: 'solid' | 'wireframe' | 'both' | 'points';
-  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap';
+  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp';
   // Noise params
   noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi'
     | 'value' | 'opensimplex2' | 'worley' | 'billow' | 'turbulence'
@@ -62,6 +64,7 @@ export interface MeshState {
   lastMX: number;
   lastMY: number;
   genTime: number;
+  sbpStats: SbpStats | null;
 }
 
 const DEFAULTS: MeshState = {
@@ -118,6 +121,7 @@ const DEFAULTS: MeshState = {
   lastMX: 0,
   lastMY: 0,
   genTime: 0,
+  sbpStats: null,
 };
 
 export const STATE: MeshState = { ...DEFAULTS };

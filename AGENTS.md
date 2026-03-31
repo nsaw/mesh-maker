@@ -1,0 +1,145 @@
+# AGENTS.md — MESHCRAFT
+
+## Project Overview
+
+MESHCRAFT is a browser-based 3D mesh generator and ShopBot SBP toolpath compiler for CNC machining (ShopBot Desktop Max ATC). Built with Vite + TypeScript, with a shared SBP pipeline used by both the web app and the CLI.
+
+**Live site**: `meshcraft.sawyerdesign.io` (Cloudflare Pages)
+**Repo**: `github.com/nsaw/mesh-maker`
+
+---
+
+## Architecture
+
+Vite + TypeScript ES modules with a browser UI, shared SBP pipeline, and a Node CLI:
+
+```text
+meshcraft/
+├── index.html                 # HTML shell
+├── styles/main.css            # All CSS (~490 lines)
+├── src/
+│   ├── main.ts                # Entry point: init, URL state, demo preload
+│   ├── state.ts               # MeshState interface, STATE singleton, URL serialize/deserialize
+│   ├── types.ts               # Vertex3D, Triangle, MeshData, NoiseGenerator interfaces
+│   ├── noise/
+│   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
+│   │   └── presets.ts         # CNC_PRESETS (15), PROFILES (6)
+│   ├── mesh.ts                # generateMesh, weightedSmooth, debouncedGenerate
+│   ├── render.ts              # Canvas 2D 3D rendering (painter's algo, Gouraud shading)
+│   ├── export.ts              # STL (binary/ASCII), OBJ, heightmap PNG export dispatcher
+│   ├── sbp-export.ts          # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
+│   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets, SBP section
+│   ├── interaction.ts         # Mouse orbit/pan/zoom, touch pinch, scroll
+│   ├── toolbar.ts             # Mode tabs, toolbar buttons, Copy Link, format-aware controls
+│   ├── stats.ts               # zoomExtents, updateStats, format-aware overlay
+│   ├── toast.ts               # Toast notifications
+│   ├── sponsor.ts             # Sponsor modal + scroll-to-export
+│   └── sbp/                   # Shared STL-to-SBP pipeline (web + CLI, zero Node deps)
+│       ├── types.ts           # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
+│       ├── tools.ts           # Embedded ATC tool database + default tool config
+│       ├── stl-parser.ts      # Binary STL parser + bounds validation
+│       ├── heightmap.ts       # STL/STATE vertices -> regular Z grid
+│       ├── compensate.ts      # Tool compensation / erosion
+│       ├── roughing.ts        # Roughing toolpath generation
+│       ├── finishing.ts       # Finishing raster toolpath generation
+│       ├── writer.ts          # OpenSBP file builder
+│       ├── generate.ts        # SBP pipeline orchestrator
+│       └── worker.ts          # Web Worker entry for uploaded STL processing
+├── cli/
+│   ├── stl-to-sbp.ts          # CLI entry point (tsx/Node)
+│   └── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
+├── public/
+│   ├── _redirects             # Cloudflare Pages: / -> /index.html
+│   └── monalisa-depthMap.jpeg # Demo depth map
+├── stl-to-sbp.sh              # Shell wrapper for CLI invocation
+├── tsconfig.cli.json          # CLI-only TypeScript config
+├── vite.config.ts
+├── tsconfig.json
+└── package.json
+```
+
+### Key Design Decisions
+
+- **Canvas 2D, not WebGL**: Intentional. Simpler, more portable, no shader compilation. Performance is adequate for CNC mesh resolution (<256x256 grids).
+- **Typed STATE singleton**: `MeshState` interface with 40+ typed keys. Direct mutation — no reactive/observer pattern. The call graph is explicit (slider → debounce → generate → render).
+- **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar.
+- **Watertight export**: Bottom face + side walls for CNC-ready meshes. Enforces minimum 0.01" base thickness to prevent degenerate triangles.
+- **ShopBot defaults**: 36"x24" max dimensions, 6" Z limit — hardcoded for the ShopBot Desktop Max ATC.
+
+---
+
+## Deployment
+
+**Platform**: Cloudflare Pages (static site hosting)
+**Pages URL**: `meshcraft.pages.dev`
+**Custom domain**: `meshcraft.sawyerdesign.io`
+**Account ID**: supply `CLOUDFLARE_ACCOUNT_ID` via local environment or CI secrets
+
+**CI/CD**: GitHub Actions on push to `main` — runs `npm ci && npm run build`, deploys `dist/`.
+
+**Manual deploy**:
+
+```bash
+npm run build
+source ~/.env.zsh && CLOUDFLARE_API_TOKEN=$CLOUDFLARE_WORKERS_API \
+CLOUDFLARE_ACCOUNT_ID=<CLOUDFLARE_ACCOUNT_ID> \
+wrangler pages deploy dist --project-name=meshcraft --branch=main
+```
+
+---
+
+## Development
+
+```bash
+npm install        # First time
+npm run dev        # Vite dev server with HMR (http://localhost:5173)
+npm run build      # tsc + vite build → dist/
+npm run preview    # Preview production build
+```
+
+### Testing Checklist
+
+When modifying the codebase, verify:
+- [ ] All 5 noise algorithms generate (Simplex, Perlin, Ridged, FBM, Voronoi)
+- [ ] All 4 view modes render (Solid, Wire, Both, Points)
+- [ ] All 15 CNC presets apply correctly
+- [ ] Depth map upload works (click + drag-and-drop)
+- [ ] Export produces valid STL/OBJ/heightmap files
+- [ ] Watertight toggle adds bottom + sides
+- [ ] Mouse orbit, pan (shift/right-click), zoom (scroll) work
+- [ ] Touch: single finger orbit, two finger pan+pinch zoom
+- [ ] Responsive layout at < 900px
+- [ ] URL state sharing: copy link → open in new tab → same config loads
+- [ ] `npm run stl-to-sbp -- <input.stl> --dry-run` completes with valid summary output
+- [ ] SBP STL upload path still works in the browser worker (`src/sbp/worker.ts`)
+- [ ] SBP export output changes when roughing/finishing settings or raster angle change
+
+---
+
+## Code Quality Rules
+
+- **No `console.log`** — this is a production tool, not a debug environment
+- **No TODO/FIXME in production paths** — fix it or don't ship it
+- **No `innerHTML` for user-influenced content** — values like `STATE.depthMapName` must be rendered via DOM node creation, `appendChild`, and `textContent`, not string interpolation into `innerHTML`
+- **Revoke object URLs** — every `URL.createObjectURL()` must have a matching `URL.revokeObjectURL()` in both success and error paths
+- **No degenerate triangles in exports** — enforce minimum base thickness (0.01") when watertight is enabled
+
+---
+
+## External Resources
+
+| Resource | URL | Fallback |
+|----------|-----|----------|
+| Google Fonts | `fonts.googleapis.com` | System fonts (Ubuntu → sans-serif) |
+| Logo image | `imagedelivery.net/...` | Hidden via `onerror` attribute |
+| Demo depth map | `imagedelivery.net/.../w=800` (Mona Lisa) | Null (user uploads their own) |
+
+All external resources have graceful fallbacks. The tool is fully functional offline except for font loading.
+
+---
+
+## Git Safety
+
+- NEVER commit `.env` files
+- NEVER commit screenshots or temp files
+- Review diffs before committing — verify both the browser surface and the SBP/CLI surfaces

@@ -37,22 +37,36 @@ export function updateStats(): void {
   const el = document.getElementById('statsOverlay')!;
   if (!STATE.vertices) { el.textContent = ''; return; }
   const { cols, rows, genTime, watertight } = STATE;
-  const topTris = (cols-1) * (rows-1) * 2;
-  const sideTris = watertight ? ((cols-1)*4 + (rows-1)*4) : 0;
-  const bottomTris = watertight ? topTris : 0;
-  const totalTris = topTris + bottomTris + sideTris;
-  const verts = cols * rows * (watertight ? 2 : 1);
-  const estSize = STATE.binary ? (84 + totalTris * 50) : (totalTris * 200);
 
-  // Build stats overlay via DOM methods — all values are numeric STATE properties (safe)
+  // Build stats overlay via DOM methods -- all values are numeric STATE properties (safe)
   el.textContent = '';
 
-  const statData: [string, string][] = [
-    ['Vertices', verts.toLocaleString()],
-    ['Triangles', totalTris.toLocaleString()],
-    ['Gen time', `${genTime.toFixed(0)}ms`],
-    ['Est. size', formatBytes(estSize)],
-  ];
+  let statData: [string, string][];
+
+  if (STATE.exportFormat === 'sbp') {
+    if (!STATE.sbpStats) {
+      return;
+    }
+    statData = [
+      ['Grid', `${STATE.sbpStats.heightmapCols} x ${STATE.sbpStats.heightmapRows}`],
+      ['Roughing', STATE.sbpStats.roughingMoves.toLocaleString()],
+      ['Finishing', STATE.sbpStats.finishingMoves.toLocaleString()],
+      ['SBP Lines', STATE.sbpStats.totalLines.toLocaleString()],
+    ];
+  } else {
+    const topTris = (cols-1) * (rows-1) * 2;
+    const sideTris = watertight ? ((cols-1)*4 + (rows-1)*4) : 0;
+    const bottomTris = watertight ? topTris : 0;
+    const totalTris = topTris + bottomTris + sideTris;
+    const verts = cols * rows * (watertight ? 2 : 1);
+    const estSize = STATE.binary ? (84 + totalTris * 50) : (totalTris * 200);
+    statData = [
+      ['Vertices', verts.toLocaleString()],
+      ['Triangles', totalTris.toLocaleString()],
+      ['Gen time', `${genTime.toFixed(0)}ms`],
+      ['Est. size', formatBytes(estSize)],
+    ];
+  }
 
   for (const [label, value] of statData) {
     const row = document.createElement('div');
