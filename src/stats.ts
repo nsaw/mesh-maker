@@ -37,22 +37,38 @@ export function updateStats(): void {
   const el = document.getElementById('statsOverlay')!;
   if (!STATE.vertices) { el.textContent = ''; return; }
   const { cols, rows, genTime, watertight } = STATE;
-  const topTris = (cols-1) * (rows-1) * 2;
-  const sideTris = watertight ? ((cols-1)*4 + (rows-1)*4) : 0;
-  const bottomTris = watertight ? topTris : 0;
-  const totalTris = topTris + bottomTris + sideTris;
-  const verts = cols * rows * (watertight ? 2 : 1);
-  const estSize = STATE.binary ? (84 + totalTris * 50) : (totalTris * 200);
 
-  // Build stats overlay via DOM methods — all values are numeric STATE properties (safe)
+  // Build stats overlay via DOM methods -- all values are numeric STATE properties (safe)
   el.textContent = '';
 
-  const statData: [string, string][] = [
-    ['Vertices', verts.toLocaleString()],
-    ['Triangles', totalTris.toLocaleString()],
-    ['Gen time', `${genTime.toFixed(0)}ms`],
-    ['Est. size', formatBytes(estSize)],
-  ];
+  let statData: [string, string][];
+
+  if (STATE.exportFormat === 'sbp') {
+    // SBP: show grid-relevant stats instead of triangle count
+    const gridCells = cols * rows;
+    // Rough estimate: ~30 bytes per SBP line, ~3 lines per grid cell for finishing
+    const estMoves = gridCells * 3;
+    const estSize = estMoves * 30;
+    statData = [
+      ['Grid', `${cols} x ${rows}`],
+      ['Mesh', `${STATE.meshX}" x ${STATE.meshY}"`],
+      ['Gen time', `${genTime.toFixed(0)}ms`],
+      ['Est. SBP', formatBytes(estSize)],
+    ];
+  } else {
+    const topTris = (cols-1) * (rows-1) * 2;
+    const sideTris = watertight ? ((cols-1)*4 + (rows-1)*4) : 0;
+    const bottomTris = watertight ? topTris : 0;
+    const totalTris = topTris + bottomTris + sideTris;
+    const verts = cols * rows * (watertight ? 2 : 1);
+    const estSize = STATE.binary ? (84 + totalTris * 50) : (totalTris * 200);
+    statData = [
+      ['Vertices', verts.toLocaleString()],
+      ['Triangles', totalTris.toLocaleString()],
+      ['Gen time', `${genTime.toFixed(0)}ms`],
+      ['Est. size', formatBytes(estSize)],
+    ];
+  }
 
   for (const [label, value] of statData) {
     const row = document.createElement('div');

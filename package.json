@@ -7,8 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
+    "typecheck:cli": "tsc -p tsconfig.cli.json --noEmit",
+    "lint": "eslint src/ cli/",
+    "lint:fix": "eslint src/ cli/ --fix",
+    "stl-to-sbp": "tsx cli/stl-to-sbp.ts",
     "preview": "vite preview",
     "prepare": "husky"
   },
@@ -18,6 +20,10 @@
     "husky": "^9.1.7",
     "typescript": "~5.7.0",
     "typescript-eslint": "^8.57.1",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.8.0",
+    "tsx": "^4.19.0"
   }
 }

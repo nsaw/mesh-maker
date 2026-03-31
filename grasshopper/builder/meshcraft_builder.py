@@ -1,4 +1,4 @@
-# GHPython builder — MeshCraft 3000 Grasshopper Node
+# GHPython builder — MESHCRAFT Grasshopper Node
 # Runtime: IronPython 2.7 (Rhino 7)
 #
 # HOW TO USE:

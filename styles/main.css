@@ -521,6 +521,9 @@ canvas {
 body.mode-depthmap .depth-map-only { display: block; }
 body.mode-depthmap .noise-only { display: none; }
 
+/* SBP TOOLPATH SECTION */
+.sbp-only { display: none; }
+
 /* SPONSOR MODAL */
 .sponsor-backdrop {
   position: fixed;

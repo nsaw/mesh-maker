@@ -39,3 +39,19 @@ docs/plans/
 .claude/
 __pycache__/
 .playwright-mcp/
+.codex/critiques/abundant-gathering-muffin-critique.md
+.agents/
+mesh-maker.code-workspace
+
+# Source truth large binaries (STL, Aspire project files, reference SBP)
+sourceTruth/stl-to-sbp/example/*.stl
+sourceTruth/stl-to-sbp/example/*.crv3d
+sourceTruth/stl-to-sbp/example/*.sbp
+sourceTruth/**/*.DS_Store
+
+# SQLite WAL/SHM temp files
+*.vtdb-shm
+*.vtdb-wal
+
+# stl-to-sbp working directory (old location, root only)
+/stl-to-sbp/

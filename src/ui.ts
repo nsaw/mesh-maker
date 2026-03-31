@@ -1,6 +1,8 @@
 import { STATE } from './state';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
+import { buildSBPSection, wireSBPControls } from './sbp-export';
+import { updateExportControls } from './toolbar';
 
 
 const PRESET_GROUPS: [string, string[]][] = [
@@ -143,9 +145,16 @@ export function buildSidebar(): void {
     <div style="margin-top:8px;font-size:10px;color:var(--text3);">Left drag = orbit/tilt &middot; Right/Shift drag = pan &middot; Scroll = zoom &middot; Double-click = fit</div>
   `, true));
 
+  // SBP toolpath config (hidden unless SBP format selected)
+  parts.push(buildSBPSection());
+
+  // NOTE: innerHTML is the pre-existing rendering pattern for this sidebar.
+  // All user-controlled strings (depthMapName, stlName) are escaped at source.
   sb.innerHTML = parts.join('');
 
   wireControls();
+  wireSBPControls();
+  updateExportControls();
 }
 
 function buildSection(title: string, body: string, collapsed = false, extraClass = ''): string {

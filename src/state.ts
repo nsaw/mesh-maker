@@ -1,7 +1,7 @@
 export interface MeshState {
   mode: 'noise' | 'depthmap' | 'blend';
   viewMode: 'solid' | 'wireframe' | 'both' | 'points';
-  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap';
+  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp';
   // Noise params
   noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi'
     | 'value' | 'opensimplex2' | 'worley' | 'billow' | 'turbulence'

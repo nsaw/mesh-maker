@@ -3,16 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MESHCRAFT 3000 // Sawyer Design</title>
+<title>MESHCRAFT // Sawyer Design</title>
 <link rel="icon" type="image/png" href="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/1dd2357c-f009-4b89-7e30-1d1539a9f100/w=150">
 <meta name="description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
-<meta property="og:title" content="MeshCraft 3000">
+<meta property="og:title" content="MESHCRAFT">
 <meta property="og:description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
 <meta property="og:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
 <meta property="og:url" content="https://meshcraft.sawyerdesign.io">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="MeshCraft 3000">
+<meta name="twitter:title" content="MESHCRAFT">
 <meta name="twitter:description" content="Browser-based 3D mesh generator for CNC machining.">
 <meta name="twitter:image" content="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/a3602ddf-a7fe-4a5c-c8c0-5aa21ba85f00/w=800">
 <link href="https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600&family=Ubuntu:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -24,7 +24,7 @@
 <div class="header">
   <div class="header-left">
     <div class="brand">MESH<span>CRAFT</span> 3000</div>
-    <div class="version">v5.0</div>
+    <div class="version">v6.0</div>
     <div class="mode-tabs">
       <button class="mode-tab active" data-mode="noise">Noise</button>
       <button class="mode-tab" data-mode="depthmap">Depth Map</button>
@@ -48,10 +48,10 @@
   <div class="viewport">
     <div class="viewport-toolbar">
       <div class="view-modes">
-        <button class="view-btn" data-view="solid">Solid</button>
-        <button class="view-btn active" data-view="wireframe">Wire</button>
-        <button class="view-btn" data-view="both">Both</button>
-        <button class="view-btn" data-view="points">Points</button>
+        <button class="view-btn" data-view="solid" aria-label="Solid view">Solid</button>
+        <button class="view-btn active" data-view="wireframe" aria-label="Wireframe view">Wire</button>
+        <button class="view-btn" data-view="both" aria-label="Solid and wireframe view">Both</button>
+        <button class="view-btn" data-view="points" aria-label="Points view">Points</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button class="btn btn-sm" id="btnRegenerate">Regenerate</button>
@@ -70,10 +70,11 @@
     <div class="export-bar">
       <input type="text" class="text-input filename-input" id="filenameInput" value="meshcraft_export" placeholder="filename">
       <div class="export-format">
-        <button class="format-btn active" data-fmt="stl">STL</button>
-        <button class="format-btn" data-fmt="obj">OBJ</button>
-        <button class="format-btn" data-fmt="3dm">3DM</button>
-        <button class="format-btn" data-fmt="heightmap" title="Grayscale PNG for Vectric VCarve/Aspire">Heightmap</button>
+        <button class="format-btn active" data-fmt="stl" aria-label="Export as STL">STL</button>
+        <button class="format-btn" data-fmt="obj" aria-label="Export as OBJ">OBJ</button>
+        <button class="format-btn" data-fmt="3dm" aria-label="Export as Rhino 3DM">3DM</button>
+        <button class="format-btn" data-fmt="heightmap" aria-label="Export as heightmap PNG" title="Grayscale PNG for Vectric VCarve/Aspire">Heightmap</button>
+        <button class="format-btn" data-fmt="sbp" aria-label="Export as ShopBot SBP" title="ShopBot cut file (.sbp)" data-sbp-enabled="true">SBP</button>
       </div>
       <div class="check-row" style="margin:0;">
         <input type="checkbox" id="chkWatertight" checked>
@@ -105,7 +106,7 @@
       <div class="sponsor-label">Sponsored by</div>
       <div class="sponsor-name">ShopBot Tools</div>
       <div class="sponsor-product">Desktop Max ATC</div>
-      <div class="sponsor-desc">MESHCRAFT 3000 was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
+      <div class="sponsor-desc">MESHCRAFT was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
       <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Learn More</a>
     </div>
   </div>
