@@ -17,14 +17,17 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.0.3",
-    "husky": "^9.1.7",
-    "typescript": "~5.7.0",
-    "typescript-eslint": "^8.57.1",
-    "vite": "^6.0.0",
     "@types/better-sqlite3": "^7.6.8",
     "@types/node": "^22.0.0",
     "better-sqlite3": "^12.8.0",
-    "tsx": "^4.19.0"
+    "eslint": "^10.0.3",
+    "husky": "^9.1.7",
+    "tsx": "^4.19.0",
+    "typescript": "~5.7.0",
+    "typescript-eslint": "^8.57.1",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "three": "^0.183.2"
   }
 }
