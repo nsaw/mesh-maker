@@ -43,7 +43,6 @@ export interface MeshState {
   // View
   orbit: number;
   tilt: number;
-  roll: number;
   zoom: number;
   panX: number;
   panY: number;
@@ -60,9 +59,6 @@ export interface MeshState {
   vertices: number[][] | null;
   cols: number;
   rows: number;
-  isDragging: boolean;
-  lastMX: number;
-  lastMY: number;
   genTime: number;
   sbpStats: SbpStats | null;
 }
@@ -90,7 +86,7 @@ const DEFAULTS: MeshState = {
   gaborBandwidth: 1.5,
   meshX: 36,
   meshY: 24,
-  resolution: 256,
+  resolution: 400,
   smoothIter: 0,
   smoothStr: 0.5,
   baseThickness: 0.75,
@@ -104,7 +100,6 @@ const DEFAULTS: MeshState = {
   aspectLocked: false,
   orbit: 235,
   tilt: -25,
-  roll: 0,
   zoom: 1.0,
   panX: 0,
   panY: 0,
@@ -115,18 +110,15 @@ const DEFAULTS: MeshState = {
   activePreset: null,
   activeProfile: null,
   vertices: null,
-  cols: 256,
-  rows: 256,
-  isDragging: false,
-  lastMX: 0,
-  lastMY: 0,
+  cols: 400,
+  rows: 267,
   genTime: 0,
   sbpStats: null,
 };
 
 export const STATE: MeshState = { ...DEFAULTS };
 
-export const noiseDims = { meshX: 36, meshY: 24, resolution: 256 };
+export const noiseDims = { meshX: 36, meshY: 24, resolution: 400 };
 
 export let demoDepthMap: HTMLImageElement | null = null;
 export function setDemoDepthMap(img: HTMLImageElement | null): void {

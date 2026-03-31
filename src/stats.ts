@@ -81,14 +81,14 @@ export function updateStats(): void {
     el.appendChild(row);
   }
 
-  if (STATE.resolution > 256) {
+  if (STATE.resolution > 600) {
     const warnRow = document.createElement('div');
     warnRow.className = 'stat-row';
     const warnLabel = document.createElement('span');
     warnLabel.textContent = 'Note';
     const warnVal = document.createElement('span');
     warnVal.className = 'stat-warn';
-    warnVal.textContent = 'May be slow. Crank up resolution before exporting for a smooth carve; use ≤256 while modeling for easier tweaking.';
+    warnVal.textContent = 'High resolution. Use \u2264600 while modeling for easier tweaking; crank up before exporting for smooth carves.';
     warnRow.appendChild(warnLabel);
     warnRow.appendChild(warnVal);
     el.appendChild(warnRow);
