@@ -376,7 +376,7 @@ function buildEnclosure(
   disposeGroup(_encGroup);
   _encGroup = new THREE.Group();
   const zBase = 0;
-  const sideMat = new THREE.MeshPhongMaterial({ color: 0x143c64, side: THREE.DoubleSide });
+  const sideMat = new THREE.MeshPhongMaterial({ color: 0xe8e8e8, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
 
   // Bottom face
   const botGeo = new THREE.PlaneGeometry(meshX, meshY);
@@ -391,7 +391,7 @@ function buildEnclosure(
     botGeo.setIndex(arr);
   }
   botGeo.computeVertexNormals();
-  _encGroup.add(new THREE.Mesh(botGeo, new THREE.MeshPhongMaterial({ color: 0x102e50 })));
+  _encGroup.add(new THREE.Mesh(botGeo, new THREE.MeshPhongMaterial({ color: 0xe0e0e0, transparent: true, opacity: 0.7 })));
 
   // Side walls (4 edge strips connecting top surface to z=0)
   function buildWall(edge: { x: number; y: number; z: number }[]): THREE.BufferGeometry {
