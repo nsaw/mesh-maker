@@ -136,14 +136,22 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'viewMode', 'activePreset', 'activeProfile',
 ];
 
+// Payload version: bump when DEFAULTS change to preserve old share links.
+// Legacy (v0) defaults for keys that changed since the original release:
+const CURRENT_PAYLOAD_VERSION = 1;
+const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
+  resolution: 256,
+};
+
 export function serializeConfig(): string {
-  const diff: Record<string, unknown> = {};
+  const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
     if (STATE[key] !== DEFAULTS[key]) {
       diff[key] = STATE[key];
     }
   }
-  if (Object.keys(diff).length === 0) return '';
+  // Only _v present means no diffs -- return empty (default config)
+  if (Object.keys(diff).length === 1) return '';
   return btoa(JSON.stringify(diff))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
@@ -158,6 +166,18 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     const json = atob(padded);
     const parsed = JSON.parse(json);
     const result: Partial<MeshState> = {};
+
+    // Apply legacy defaults for unversioned (v0) payloads so old share links
+    // keep their original behavior even when DEFAULTS change.
+    const payloadVersion: number = parsed._v ?? 0;
+    if (payloadVersion < 1) {
+      for (const [k, v] of Object.entries(LEGACY_V0_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
         (result as Record<string, unknown>)[key] = parsed[key];

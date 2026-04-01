@@ -21,7 +21,7 @@ export function zoomExtents(): void {
   STATE.panX = 0; STATE.panY = 0;
   STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
 
-  ['orbit','tilt','zoom'].forEach(k => {
+  ['orbit','tilt','roll','zoom'].forEach(k => {
     const sl = document.getElementById('sl_' + k) as HTMLInputElement | null;
     const val = document.getElementById('val_' + k);
     const v = STATE[k as keyof typeof STATE] as number;

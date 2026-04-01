@@ -357,7 +357,7 @@ export function buildSBPSection(): HTMLElement {
     buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', SBP_STATE.leaveStock.toFixed(3), 0, 0.1, 0.005, SBP_STATE.leaveStock),
     buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', SBP_STATE.offsetX.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetX),
     buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', SBP_STATE.offsetY.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetY),
-    buildRangeControl('sl_sbpSafeZ', 'val_sbpSafeZ', 'Safe Z (in)', SBP_STATE.safeZ.toFixed(1), 0.5, 4, 0.1, SBP_STATE.safeZ),
+    buildRangeControl('sl_sbpSafeZ', 'val_sbpSafeZ', 'Safe Z (in)', SBP_STATE.safeZ.toFixed(1), 0.5, 6, 0.1, SBP_STATE.safeZ),
     buildRangeControl('sl_sbpHomeZ', 'val_sbpHomeZ', 'Home Z (in)', SBP_STATE.homeZ.toFixed(1), 1.0, 6, 0.1, SBP_STATE.homeZ),
     buildRangeControl('sl_sbpRasterAngle', 'val_sbpRasterAngle', 'Raster Angle (deg)', String(SBP_STATE.finishRasterAngle), 0, 90, 5, SBP_STATE.finishRasterAngle),
     buildRangeControl('sl_sbpFeedRate', 'val_sbpFeedRate', 'Feed Rate (ips)',
@@ -470,16 +470,22 @@ export function wireSBPControls(): void {
   }
 
   const safeZEl = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
+  const homeZEl = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
   if (safeZEl) safeZEl.addEventListener('input', () => {
-    SBP_STATE.safeZ = parseFloat(safeZEl.value);
+    let val = parseFloat(safeZEl.value);
+    if (val >= SBP_STATE.homeZ) val = SBP_STATE.homeZ - 0.1;
+    SBP_STATE.safeZ = Math.max(0.5, val);
+    safeZEl.value = String(SBP_STATE.safeZ);
     const v = document.getElementById('val_sbpSafeZ');
     if (v) v.textContent = SBP_STATE.safeZ.toFixed(1);
     invalidateSbpStats();
   });
 
-  const homeZEl = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
   if (homeZEl) homeZEl.addEventListener('input', () => {
-    SBP_STATE.homeZ = parseFloat(homeZEl.value);
+    let val = parseFloat(homeZEl.value);
+    if (val <= SBP_STATE.safeZ) val = SBP_STATE.safeZ + 0.1;
+    SBP_STATE.homeZ = Math.min(6, val);
+    homeZEl.value = String(SBP_STATE.homeZ);
     const v = document.getElementById('val_sbpHomeZ');
     if (v) v.textContent = SBP_STATE.homeZ.toFixed(1);
     invalidateSbpStats();
@@ -493,45 +499,49 @@ export function wireSBPControls(): void {
     invalidateSbpStats();
   });
 
-  const feedEl = document.getElementById('sl_sbpFeedRate') as HTMLInputElement | null;
-  if (feedEl) feedEl.addEventListener('input', () => {
-    SBP_STATE.feedRateOverride = parseFloat(feedEl.value);
-    const v = document.getElementById('val_sbpFeedRate');
-    if (v) v.textContent = SBP_STATE.feedRateOverride.toFixed(1);
-    invalidateSbpStats();
-  });
+  // Override sliders: drag to set, double-click to reset to profile default
+  const finishingTool = getDefaultConfig(SBP_STATE.materialProfile).finishingTool;
+  const roughingTool = getDefaultConfig(SBP_STATE.materialProfile).roughingTool;
 
-  const plungeEl = document.getElementById('sl_sbpPlungeRate') as HTMLInputElement | null;
-  if (plungeEl) plungeEl.addEventListener('input', () => {
-    SBP_STATE.plungeRateOverride = parseFloat(plungeEl.value);
-    const v = document.getElementById('val_sbpPlungeRate');
-    if (v) v.textContent = SBP_STATE.plungeRateOverride.toFixed(2);
-    invalidateSbpStats();
-  });
+  function wireOverrideSlider(
+    sliderId: string, valueId: string,
+    getDefault: () => number, format: (n: number) => string,
+    setOverride: (v: number | null) => void,
+  ): void {
+    const el = document.getElementById(sliderId) as HTMLInputElement | null;
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const val = parseFloat(el.value);
+      setOverride(val);
+      const v = document.getElementById(valueId);
+      if (v) v.textContent = format(val);
+      invalidateSbpStats();
+    });
+    el.addEventListener('dblclick', () => {
+      setOverride(null);
+      const def = getDefault();
+      el.value = String(def);
+      const v = document.getElementById(valueId);
+      if (v) v.textContent = format(def);
+      invalidateSbpStats();
+    });
+  }
 
-  const rpmEl = document.getElementById('sl_sbpRpm') as HTMLInputElement | null;
-  if (rpmEl) rpmEl.addEventListener('input', () => {
-    SBP_STATE.rpmOverride = parseFloat(rpmEl.value);
-    const v = document.getElementById('val_sbpRpm');
-    if (v) v.textContent = String(SBP_STATE.rpmOverride);
-    invalidateSbpStats();
-  });
-
-  const stepdownEl = document.getElementById('sl_sbpStepdown') as HTMLInputElement | null;
-  if (stepdownEl) stepdownEl.addEventListener('input', () => {
-    SBP_STATE.stepdownOverride = parseFloat(stepdownEl.value);
-    const v = document.getElementById('val_sbpStepdown');
-    if (v) v.textContent = SBP_STATE.stepdownOverride.toFixed(3);
-    invalidateSbpStats();
-  });
-
-  const stepoverEl = document.getElementById('sl_sbpStepover') as HTMLInputElement | null;
-  if (stepoverEl) stepoverEl.addEventListener('input', () => {
-    SBP_STATE.stepoverOverride = parseFloat(stepoverEl.value);
-    const v = document.getElementById('val_sbpStepover');
-    if (v) v.textContent = SBP_STATE.stepoverOverride.toFixed(3);
-    invalidateSbpStats();
-  });
+  wireOverrideSlider('sl_sbpFeedRate', 'val_sbpFeedRate',
+    () => finishingTool.cutting.feedRate, n => n.toFixed(1),
+    v => { SBP_STATE.feedRateOverride = v; });
+  wireOverrideSlider('sl_sbpPlungeRate', 'val_sbpPlungeRate',
+    () => finishingTool.cutting.plungeRate, n => n.toFixed(2),
+    v => { SBP_STATE.plungeRateOverride = v; });
+  wireOverrideSlider('sl_sbpRpm', 'val_sbpRpm',
+    () => finishingTool.cutting.rpm, n => String(n),
+    v => { SBP_STATE.rpmOverride = v; });
+  wireOverrideSlider('sl_sbpStepdown', 'val_sbpStepdown',
+    () => roughingTool.cutting.stepdown, n => n.toFixed(3),
+    v => { SBP_STATE.stepdownOverride = v; });
+  wireOverrideSlider('sl_sbpStepover', 'val_sbpStepover',
+    () => finishingTool.cutting.stepover, n => n.toFixed(3),
+    v => { SBP_STATE.stepoverOverride = v; });
 
   // STL upload
   const uploadZone = document.getElementById('sbpUploadZone');

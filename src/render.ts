@@ -447,7 +447,7 @@ function updateVisibility(): void {
   if (_surfaceMesh) _surfaceMesh.visible = showSolid;
   if (_wireLines) _wireLines.visible = mode === 'wireframe' || mode === 'both';
   if (_pointsObj) _pointsObj.visible = mode === 'points';
-  if (_encGroup) _encGroup.visible = showSolid && STATE.watertight && STATE.baseThickness > 0;
+  if (_encGroup) _encGroup.visible = STATE.watertight && STATE.baseThickness > 0;
 }
 
 // --- Public API ---
@@ -486,14 +486,10 @@ export function resizeCanvas(): void {
     _camera.updateProjectionMatrix();
     _prevW = w;
     _prevH = h;
-    _needsRender = true;
+    setCameraFromState();
   }
 }
 
-export function resetCanvasSize(): void {
-  _prevW = 0;
-  _prevH = 0;
-}
 
 export function updateDimsOverlay(): void {
   const el = document.getElementById('dimsOverlay')!;

@@ -96,7 +96,7 @@ src/
 │   ├── generators.ts    # 14+ noise classes + factory
 │   └── presets.ts       # 15 CNC presets, 6 texture profiles
 ├── mesh.ts              # Mesh generation + smoothing
-├── render.ts            # Three.js WebGL rendering (Phong shading, OrbitControls)
+├── render.ts            # Three.js WebGL rendering (Phong shading, custom camera)
 ├── export.ts            # STL, OBJ, heightmap PNG, SBP export dispatcher
 ├── sbp-export.ts        # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 ├── ui.ts                # Sidebar, sliders, depth map upload, SBP config panel
