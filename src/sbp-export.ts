@@ -1,4 +1,5 @@
 import { STATE } from './state';
+import { attachValueEdit } from './slider-utils';
 import { stateToHeightmap } from './sbp/heightmap';
 import { generateSBP } from './sbp/generate';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
@@ -53,18 +54,24 @@ let sbpWorkerRunning = false;
 
 /** Sync SBP safe/home Z to current material thickness. Called when baseThickness changes. */
 export function syncSbpSafeZ(): void {
-  const safeZ = parseFloat((STATE.baseThickness + 0.1).toFixed(1));
+  const safeZ = Math.min(6, parseFloat((STATE.baseThickness + 0.1).toFixed(1)));
   SBP_STATE.safeZ = safeZ;
-  if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = parseFloat((safeZ + 0.5).toFixed(1));
+  if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, parseFloat((safeZ + 0.5).toFixed(1)));
 
   const safeSlider = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
   const safeVal = document.getElementById('val_sbpSafeZ');
-  if (safeSlider) safeSlider.value = String(SBP_STATE.safeZ);
+  if (safeSlider) {
+    safeSlider.value = String(SBP_STATE.safeZ);
+    safeSlider.dataset.default = String(SBP_STATE.safeZ);
+  }
   if (safeVal) safeVal.textContent = SBP_STATE.safeZ.toFixed(1);
 
   const homeSlider = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
   const homeVal = document.getElementById('val_sbpHomeZ');
-  if (homeSlider) homeSlider.value = String(SBP_STATE.homeZ);
+  if (homeSlider) {
+    homeSlider.value = String(SBP_STATE.homeZ);
+    homeSlider.dataset.default = String(SBP_STATE.homeZ);
+  }
   if (homeVal) homeVal.textContent = SBP_STATE.homeZ.toFixed(1);
 }
 
@@ -437,6 +444,14 @@ export function wireSBPControls(): void {
         sbpSection.replaceWith(newSection);
         wireSBPControls();
         updateExportControls();
+        // Re-wire accordion on the replaced section
+        const newHeader = newSection.querySelector<HTMLElement>('.section-header');
+        if (newHeader) {
+          newHeader.addEventListener('click', () => {
+            newSection.classList.toggle('collapsed');
+            newHeader.setAttribute('aria-expanded', String(!newSection.classList.contains('collapsed')));
+          });
+        }
       }
     });
   }
@@ -553,49 +568,10 @@ export function wireSBPControls(): void {
     sbpSection.querySelectorAll<HTMLElement>('.control-label .val').forEach(valSpan => {
       const valueId = valSpan.id;
       if (!valueId) return;
-      // Find sibling slider input
       const row = valSpan.closest('.control-row');
       const sl = row?.querySelector<HTMLInputElement>('input[type="range"]');
       if (!sl) return;
-      valSpan.style.cursor = 'pointer';
-      valSpan.title = 'Click to type a value';
-      valSpan.addEventListener('click', () => {
-        if (valSpan.querySelector('input')) return;
-        const current = valSpan.textContent ?? '';
-        const inp = createElement('input') as HTMLInputElement;
-        inp.type = 'text';
-        inp.value = current;
-        inp.className = 'val-edit';
-        inp.style.width = '50px';
-        inp.style.fontSize = '11px';
-        inp.style.fontFamily = 'var(--mono)';
-        inp.style.color = 'var(--accent)';
-        inp.style.background = 'var(--bg3)';
-        inp.style.border = '1px solid var(--accent)';
-        inp.style.borderRadius = '2px';
-        inp.style.textAlign = 'right';
-        inp.style.padding = '0 2px';
-        valSpan.textContent = '';
-        valSpan.appendChild(inp);
-        inp.focus();
-        inp.select();
-
-        const commit = (): void => {
-          const n = parseFloat(inp.value);
-          if (!isNaN(n)) {
-            const clamped = Math.max(parseFloat(sl.min), Math.min(parseFloat(sl.max), n));
-            sl.value = String(clamped);
-            sl.dispatchEvent(new Event('input', { bubbles: true }));
-          } else {
-            valSpan.textContent = current;
-          }
-        };
-        inp.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commit(); }
-          if (e.key === 'Escape') { e.preventDefault(); valSpan.textContent = current; }
-        });
-        inp.addEventListener('blur', commit);
-      });
+      attachValueEdit(valSpan, sl);
     });
 
     // Double-click non-override sliders to reset default

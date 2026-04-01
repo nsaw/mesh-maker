@@ -43,13 +43,17 @@ export function generateNoiseMesh(): void {
           curlDy = -dndx;
         }
 
-        // X: blend convergent noise value with curl component
-        const convDx = warpGen.noise(sx, sy);
-        x += (convDx * (1 - warpCurl) + curlDx * warpCurl) * amp;
-
-        // Y: convergent uses warped x (cascading), curl uses original gradient
-        const convDy = warpGen.noise((x + 100) * wf, (y + 100) * wf);
-        y += (convDy * (1 - warpCurl) + curlDy * warpCurl) * amp;
+        // Blend convergent + curl. Skip convergent samples when full curl.
+        const convW = 1 - warpCurl;
+        if (convW > 0) {
+          const convDx = warpGen.noise(sx, sy);
+          x += (convDx * convW + curlDx * warpCurl) * amp;
+          const convDy = warpGen.noise((x + 100) * wf, (y + 100) * wf);
+          y += (convDy * convW + curlDy * warpCurl) * amp;
+        } else {
+          x += curlDx * amp;
+          y += curlDy * amp;
+        }
       }
 
       let n: number;
@@ -93,7 +97,9 @@ export function generateNoiseMesh(): void {
   // CNC z-model: z=0 is machine bed, stock from 0 to baseThickness.
   // amplitude = total cut depth (peak to valley), clamped to stock thickness.
   // Peaks sit at z=baseThickness (stock top), valleys at z=baseThickness-cutDepth.
-  const cutDepth = Math.min(amplitude, baseThickness);
+  // Floor to 0.01" to prevent degenerate geometry from URL-sourced values.
+  const bt = Math.max(0.01, baseThickness);
+  const cutDepth = Math.min(amplitude, bt);
   let nMin = Infinity, nMax = -Infinity;
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++) {
@@ -105,8 +111,8 @@ export function generateNoiseMesh(): void {
     for (let i = 0; i < cols; i++) {
       const t = (finalVerts[j][i] - nMin) / range;
       // Clamp to material boundaries: hard crop at stock top and machine bed
-      const raw = (baseThickness - cutDepth) + t * cutDepth + offset;
-      finalVerts[j][i] = Math.max(0, Math.min(baseThickness, raw));
+      const raw = (bt - cutDepth) + t * cutDepth + offset;
+      finalVerts[j][i] = Math.max(0, Math.min(bt, raw));
     }
 
   STATE.vertices = finalVerts;
@@ -169,7 +175,8 @@ export function generateDepthMapMesh(): void {
   const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
 
   // CNC z-model: same as noise path -- peaks at stock top, valleys at stock top - cut depth
-  const cutDepth = Math.min(dmHeightScale, baseThickness);
+  const bt = Math.max(0.01, baseThickness);
+  const cutDepth = Math.min(dmHeightScale, bt);
   let nMin = Infinity, nMax = -Infinity;
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++) {
@@ -181,8 +188,8 @@ export function generateDepthMapMesh(): void {
     for (let i = 0; i < cols; i++) {
       const t = (finalVerts[j][i] - nMin) / nRange;
       // Clamp to material boundaries: hard crop at stock top and machine bed
-      const raw = (baseThickness - cutDepth) + t * cutDepth + dmOffset;
-      finalVerts[j][i] = Math.max(0, Math.min(baseThickness, raw));
+      const raw = (bt - cutDepth) + t * cutDepth + dmOffset;
+      finalVerts[j][i] = Math.max(0, Math.min(bt, raw));
     }
 
   STATE.vertices = finalVerts;

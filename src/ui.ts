@@ -1,4 +1,5 @@
 import { STATE, DEFAULTS } from './state';
+import { attachValueEdit } from './slider-utils';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ } from './sbp-export';
@@ -34,9 +35,11 @@ export function buildSidebar(): void {
   sb.replaceChildren(fragment);
 
   wireControls();
-  // Sync amplitude slider max and SBP safe Z to initial material thickness
+  // Sync cut-depth slider maxes and SBP safe Z to initial material thickness
   const ampInit = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
   if (ampInit) ampInit.max = String(STATE.baseThickness);
+  const dmInit = document.querySelector<HTMLInputElement>('input[data-key="dmHeightScale"]');
+  if (dmInit) dmInit.max = String(STATE.baseThickness);
   syncSbpSafeZ();
   wireSBPControls();
   updateExportControls();
@@ -354,16 +357,27 @@ function wireControls(): void {
         }
       }
 
-      // Cut depth cannot exceed material thickness
-      if (key === 'baseThickness' || key === 'amplitude') {
+      // Cut depths cannot exceed material thickness
+      if (key === 'baseThickness' || key === 'amplitude' || key === 'dmHeightScale') {
+        const bt = STATE.baseThickness;
         const ampSlider = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
         if (ampSlider) {
-          ampSlider.max = String(STATE.baseThickness);
-          if (STATE.amplitude > STATE.baseThickness) {
-            STATE.amplitude = STATE.baseThickness;
-            ampSlider.value = String(STATE.amplitude);
+          ampSlider.max = String(bt);
+          if (STATE.amplitude > bt) {
+            STATE.amplitude = bt;
+            ampSlider.value = String(bt);
             const ampVal = document.getElementById('val_amplitude');
-            if (ampVal) ampVal.textContent = STATE.amplitude.toFixed(2);
+            if (ampVal) ampVal.textContent = bt.toFixed(2);
+          }
+        }
+        const dmSlider = document.querySelector<HTMLInputElement>('input[data-key="dmHeightScale"]');
+        if (dmSlider) {
+          dmSlider.max = String(bt);
+          if (STATE.dmHeightScale > bt) {
+            STATE.dmHeightScale = bt;
+            dmSlider.value = String(bt);
+            const dmVal = document.getElementById('val_dmHeightScale');
+            if (dmVal) dmVal.textContent = bt.toFixed(2);
           }
         }
       }
@@ -404,77 +418,50 @@ function wireControls(): void {
     const key = id.slice(4);
     const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
     if (!sl) return;
-    valSpan.style.cursor = 'pointer';
-    valSpan.title = 'Click to type a value';
-    valSpan.addEventListener('click', () => {
-      if (valSpan.querySelector('input')) return; // already editing
-      const current = valSpan.textContent ?? '';
-      const inp = createElement('input') as HTMLInputElement;
-      inp.type = 'text';
-      inp.value = current;
-      inp.className = 'val-edit';
-      inp.style.width = '50px';
-      inp.style.fontSize = '11px';
-      inp.style.fontFamily = 'var(--mono)';
-      inp.style.color = 'var(--accent)';
-      inp.style.background = 'var(--bg3)';
-      inp.style.border = '1px solid var(--accent)';
-      inp.style.borderRadius = '2px';
-      inp.style.textAlign = 'right';
-      inp.style.padding = '0 2px';
-      valSpan.textContent = '';
-      valSpan.appendChild(inp);
-      inp.focus();
-      inp.select();
-
-      const commit = (): void => {
-        const n = parseFloat(inp.value);
-        if (!isNaN(n)) {
-          const clamped = Math.max(parseFloat(sl.min), Math.min(parseFloat(sl.max), n));
-          sl.value = String(clamped);
-          sl.dispatchEvent(new Event('input', { bubbles: true }));
-        } else {
-          // Revert display
-          valSpan.textContent = current;
-        }
-      };
-      inp.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); commit(); }
-        if (e.key === 'Escape') { e.preventDefault(); valSpan.textContent = current; }
-      });
-      inp.addEventListener('blur', commit);
-    });
+    attachValueEdit(valSpan, sl);
   });
 
   // Section collapse
-  const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+  wireSectionCollapse();
+}
+
+const isMobile = (): boolean => window.matchMedia('(max-width: 900px)').matches;
+
+/** Wire accordion collapse/expand on a single section. Exported for SBP profile rebuild. */
+export function wireSectionAccordion(section: Element): void {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const header = section.querySelector<HTMLElement>('.section-header');
+  if (!header) return;
+  const syncExpanded = (): void => {
+    header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
+  };
+  header.addEventListener('click', () => {
+    if (isMobile()) {
+      const sections = sidebar.querySelectorAll('.section');
+      const wasCollapsed = section.classList.contains('collapsed');
+      sections.forEach(s => s.classList.add('collapsed'));
+      if (wasCollapsed) section.classList.remove('collapsed');
+      sections.forEach(s => {
+        const h = s.querySelector<HTMLElement>('.section-header');
+        if (h) h.setAttribute('aria-expanded', String(!s.classList.contains('collapsed')));
+      });
+    } else {
+      section.classList.toggle('collapsed');
+      syncExpanded();
+    }
+  });
+  syncExpanded();
+}
+
+function wireSectionCollapse(): void {
   const sidebar = document.getElementById('sidebar')!;
   const sections = sidebar.querySelectorAll('.section');
-  const syncExpandedState = (section: Element): void => {
-    const header = section.querySelector<HTMLElement>('.section-header');
-    if (header) {
-      header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
-    }
-  };
-  sidebar.querySelectorAll('.section-header').forEach(h => {
-    h.addEventListener('click', () => {
-      const section = h.parentElement!;
-      if (isMobile()) {
-        const wasCollapsed = section.classList.contains('collapsed');
-        sections.forEach(s => s.classList.add('collapsed'));
-        if (wasCollapsed) section.classList.remove('collapsed');
-        sections.forEach(syncExpandedState);
-      } else {
-        section.classList.toggle('collapsed');
-        syncExpandedState(section);
-      }
-    });
-  });
+  sections.forEach(s => wireSectionAccordion(s));
   if (isMobile()) {
     const visible = [...sections].filter(s => (s as HTMLElement).offsetParent !== null);
     visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
   }
-  sections.forEach(syncExpandedState);
 
   // Noise type select
   const sel = document.getElementById('selNoiseType') as HTMLSelectElement | null;

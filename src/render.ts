@@ -20,6 +20,9 @@ let _lastMeshX = 0;
 let _lastMeshY = 0;
 let _lastRows = 0;
 let _lastCols = 0;
+let _cachedZMin = 0;
+let _cachedZMax = 0;
+let _cachedZMid = 0;
 
 const BG_COLOR = 0x141418;
 const GIZMO_BG = 0x1e1e24;
@@ -180,19 +183,7 @@ function doRender(): void {
 function getMeshCenter(): THREE.Vector3 {
   const meshX = STATE.meshX || 36;
   const meshY = STATE.meshY || 24;
-  let zMid = 0;
-  if (STATE.vertices) {
-    let zMin = Infinity, zMax = -Infinity;
-    const { vertices, rows, cols } = STATE;
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++) {
-        const z = vertices[j][i];
-        if (z < zMin) zMin = z;
-        if (z > zMax) zMax = z;
-      }
-    zMid = (zMin + zMax) / 2;
-  }
-  return new THREE.Vector3(meshX / 2, meshY / 2, zMid);
+  return new THREE.Vector3(meshX / 2, meshY / 2, _cachedZMid);
 }
 
 export function setCameraFromState(): void {
@@ -289,10 +280,8 @@ function buildSurface(
   disposeGroup(_wireLines); _wireLines = null;
   disposeGroup(_pointsObj); _pointsObj = null;
 
-  // Positions + UVs (for texture color ramp) + vertex colors (for wireframe)
   const positions = new Float32Array(rows * cols * 3);
   const uvs = new Float32Array(rows * cols * 2);
-  const colors = new Float32Array(rows * cols * 3);
 
   let zMin = Infinity, zMax = -Infinity;
   for (let j = 0; j < rows; j++)
@@ -302,6 +291,9 @@ function buildSurface(
       if (z > zMax) zMax = z;
     }
   const zRange = zMax - zMin || 1;
+  _cachedZMin = zMin;
+  _cachedZMax = zMax;
+  _cachedZMid = (zMin + zMax) / 2;
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -315,11 +307,6 @@ function buildSurface(
       uvs[idx * 2] = t;
       uvs[idx * 2 + 1] = 0.5;
 
-      // Vertex colors for wireframe only
-      const g = (40 + t * 120) / 255;
-      colors[idx * 3] = g;
-      colors[idx * 3 + 1] = g + 15 / 255;
-      colors[idx * 3 + 2] = g + 30 / 255;
     }
   }
 
@@ -335,7 +322,6 @@ function buildSurface(
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.setIndex(indices);
   geo.computeVertexNormals();
 
@@ -507,12 +493,8 @@ export function resizeCanvas(): void {
 export function updateDimsOverlay(): void {
   const el = document.getElementById('dimsOverlay')!;
   if (!STATE.vertices) { el.textContent = ''; return; }
-  let zMin = Infinity, zMax = -Infinity;
-  const { vertices, rows, cols } = STATE;
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-    if (vertices[j][i] < zMin) zMin = vertices[j][i];
-    if (vertices[j][i] > zMax) zMax = vertices[j][i];
-  }
+  const zMin = _cachedZMin;
+  const zMax = _cachedZMax;
   const totalZ = STATE.watertight ? Math.max(zMax, 0) : zMax - zMin;
 
   el.textContent = '';
