@@ -104,7 +104,9 @@ export function generateNoiseMesh(): void {
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++) {
       const t = (finalVerts[j][i] - nMin) / range;
-      finalVerts[j][i] = (baseThickness - cutDepth) + t * cutDepth + offset;
+      // Clamp to material boundaries: hard crop at stock top and machine bed
+      const raw = (baseThickness - cutDepth) + t * cutDepth + offset;
+      finalVerts[j][i] = Math.max(0, Math.min(baseThickness, raw));
     }
 
   STATE.vertices = finalVerts;
@@ -178,7 +180,9 @@ export function generateDepthMapMesh(): void {
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++) {
       const t = (finalVerts[j][i] - nMin) / nRange;
-      finalVerts[j][i] = (baseThickness - cutDepth) + t * cutDepth + dmOffset;
+      // Clamp to material boundaries: hard crop at stock top and machine bed
+      const raw = (baseThickness - cutDepth) + t * cutDepth + dmOffset;
+      finalVerts[j][i] = Math.max(0, Math.min(baseThickness, raw));
     }
 
   STATE.vertices = finalVerts;

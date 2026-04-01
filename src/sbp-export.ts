@@ -36,8 +36,8 @@ const SBP_STATE: SbpState = {
   resolution: 200,
   offsetX: 2.0,
   offsetY: 2.0,
-  safeZ: 1.6,
-  homeZ: 2.3,
+  safeZ: 0.9,   // baseThickness(0.75) + 0.1, rounded
+  homeZ: 1.4,   // safeZ + 0.5
   leaveStock: 0.02,
   finishRasterAngle: 45,
   feedRateOverride: null,
@@ -50,6 +50,23 @@ const SBP_STATE: SbpState = {
 };
 
 let sbpWorkerRunning = false;
+
+/** Sync SBP safe/home Z to current material thickness. Called when baseThickness changes. */
+export function syncSbpSafeZ(): void {
+  const safeZ = parseFloat((STATE.baseThickness + 0.1).toFixed(1));
+  SBP_STATE.safeZ = safeZ;
+  if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = parseFloat((safeZ + 0.5).toFixed(1));
+
+  const safeSlider = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
+  const safeVal = document.getElementById('val_sbpSafeZ');
+  if (safeSlider) safeSlider.value = String(SBP_STATE.safeZ);
+  if (safeVal) safeVal.textContent = SBP_STATE.safeZ.toFixed(1);
+
+  const homeSlider = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
+  const homeVal = document.getElementById('val_sbpHomeZ');
+  if (homeSlider) homeSlider.value = String(SBP_STATE.homeZ);
+  if (homeVal) homeVal.textContent = SBP_STATE.homeZ.toFixed(1);
+}
 
 function buildConfig(): SbpConfig {
   const base = getDefaultConfig(SBP_STATE.materialProfile);
@@ -227,6 +244,7 @@ function buildRangeControl(
   input.max = String(max);
   input.step = String(step);
   input.value = String(value);
+  input.dataset.default = String(value);
 
   row.append(controlLabel, input);
   return row;
@@ -528,6 +546,70 @@ export function wireSBPControls(): void {
   wireOverrideSlider('sl_sbpStepover', 'val_sbpStepover',
     () => finishingTool.cutting.stepover, n => n.toFixed(3),
     v => { SBP_STATE.stepoverOverride = v; });
+
+  // Click value label to type exact number (SBP sliders)
+  const sbpSection = document.getElementById('sbpSection');
+  if (sbpSection) {
+    sbpSection.querySelectorAll<HTMLElement>('.control-label .val').forEach(valSpan => {
+      const valueId = valSpan.id;
+      if (!valueId) return;
+      // Find sibling slider input
+      const row = valSpan.closest('.control-row');
+      const sl = row?.querySelector<HTMLInputElement>('input[type="range"]');
+      if (!sl) return;
+      valSpan.style.cursor = 'pointer';
+      valSpan.title = 'Click to type a value';
+      valSpan.addEventListener('click', () => {
+        if (valSpan.querySelector('input')) return;
+        const current = valSpan.textContent ?? '';
+        const inp = createElement('input') as HTMLInputElement;
+        inp.type = 'text';
+        inp.value = current;
+        inp.className = 'val-edit';
+        inp.style.width = '50px';
+        inp.style.fontSize = '11px';
+        inp.style.fontFamily = 'var(--mono)';
+        inp.style.color = 'var(--accent)';
+        inp.style.background = 'var(--bg3)';
+        inp.style.border = '1px solid var(--accent)';
+        inp.style.borderRadius = '2px';
+        inp.style.textAlign = 'right';
+        inp.style.padding = '0 2px';
+        valSpan.textContent = '';
+        valSpan.appendChild(inp);
+        inp.focus();
+        inp.select();
+
+        const commit = (): void => {
+          const n = parseFloat(inp.value);
+          if (!isNaN(n)) {
+            const clamped = Math.max(parseFloat(sl.min), Math.min(parseFloat(sl.max), n));
+            sl.value = String(clamped);
+            sl.dispatchEvent(new Event('input', { bubbles: true }));
+          } else {
+            valSpan.textContent = current;
+          }
+        };
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { e.preventDefault(); valSpan.textContent = current; }
+        });
+        inp.addEventListener('blur', commit);
+      });
+    });
+
+    // Double-click non-override sliders to reset default
+    sbpSection.querySelectorAll<HTMLInputElement>('input[type="range"][data-default]').forEach(sl => {
+      // Skip override sliders -- they already have dblclick via wireOverrideSlider
+      if (sl.id.match(/Feed|Plunge|Rpm|Stepdown|Stepover/)) return;
+      sl.addEventListener('dblclick', () => {
+        const def = sl.dataset.default;
+        if (def === undefined) return;
+        sl.value = def;
+        sl.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    });
+  }
 
   // STL upload
   const uploadZone = document.getElementById('sbpUploadZone');

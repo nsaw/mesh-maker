@@ -1,7 +1,7 @@
-import { STATE } from './state';
+import { STATE, DEFAULTS } from './state';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
-import { buildSBPSection, wireSBPControls } from './sbp-export';
+import { buildSBPSection, wireSBPControls, syncSbpSafeZ } from './sbp-export';
 import { updateExportControls } from './toolbar';
 
 
@@ -34,9 +34,10 @@ export function buildSidebar(): void {
   sb.replaceChildren(fragment);
 
   wireControls();
-  // Sync amplitude slider max to initial material thickness
+  // Sync amplitude slider max and SBP safe Z to initial material thickness
   const ampInit = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
   if (ampInit) ampInit.max = String(STATE.baseThickness);
+  syncSbpSafeZ();
   wireSBPControls();
   updateExportControls();
 }
@@ -102,6 +103,7 @@ function slider(key: string, label: string, min: number, max: number, step: numb
   input.step = String(step);
   input.value = String(val);
   input.dataset.key = key;
+  input.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? val);
   row.append(buildSliderLabel(label, `val_${key}`, valueText, badgeText), input);
   return row;
 }
@@ -366,6 +368,11 @@ function wireControls(): void {
         }
       }
 
+      // Safe Z tracks material thickness
+      if (key === 'baseThickness') {
+        syncSbpSafeZ();
+      }
+
       // Clear active preset/profile on manual change
       if (STATE.activePreset) {
         STATE.activePreset = null;
@@ -379,6 +386,63 @@ function wireControls(): void {
       }
 
       debouncedGenerate(key);
+    });
+
+    // Double-click slider to reset to default
+    sl.addEventListener('dblclick', () => {
+      const def = sl.dataset.default;
+      if (def === undefined) return;
+      sl.value = def;
+      sl.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
+
+  // Click value label to type exact number
+  document.querySelectorAll<HTMLElement>('.control-label .val').forEach(valSpan => {
+    const id = valSpan.id;
+    if (!id.startsWith('val_')) return;
+    const key = id.slice(4);
+    const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
+    if (!sl) return;
+    valSpan.style.cursor = 'pointer';
+    valSpan.title = 'Click to type a value';
+    valSpan.addEventListener('click', () => {
+      if (valSpan.querySelector('input')) return; // already editing
+      const current = valSpan.textContent ?? '';
+      const inp = createElement('input') as HTMLInputElement;
+      inp.type = 'text';
+      inp.value = current;
+      inp.className = 'val-edit';
+      inp.style.width = '50px';
+      inp.style.fontSize = '11px';
+      inp.style.fontFamily = 'var(--mono)';
+      inp.style.color = 'var(--accent)';
+      inp.style.background = 'var(--bg3)';
+      inp.style.border = '1px solid var(--accent)';
+      inp.style.borderRadius = '2px';
+      inp.style.textAlign = 'right';
+      inp.style.padding = '0 2px';
+      valSpan.textContent = '';
+      valSpan.appendChild(inp);
+      inp.focus();
+      inp.select();
+
+      const commit = (): void => {
+        const n = parseFloat(inp.value);
+        if (!isNaN(n)) {
+          const clamped = Math.max(parseFloat(sl.min), Math.min(parseFloat(sl.max), n));
+          sl.value = String(clamped);
+          sl.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          // Revert display
+          valSpan.textContent = current;
+        }
+      };
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); valSpan.textContent = current; }
+      });
+      inp.addEventListener('blur', commit);
     });
   });
 

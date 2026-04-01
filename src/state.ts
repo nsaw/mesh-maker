@@ -66,7 +66,7 @@ export interface MeshState {
   sbpStats: SbpStats | null;
 }
 
-const DEFAULTS: MeshState = {
+export const DEFAULTS: MeshState = {
   mode: 'noise',
   viewMode: 'wireframe',
   exportFormat: 'stl',
