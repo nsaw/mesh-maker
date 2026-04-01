@@ -269,9 +269,11 @@ function buildAdvancedNoiseSection(): HTMLElement {
     slider('persistence', 'Persistence', 0.1, 1, 0.05),
     slider('lacunarity', 'Lacunarity', 1, 4, 0.1),
     slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05),
+    slider('warpFreq', 'Warp Frequency', 0.02, 0.4, 0.01),
+    slider('warpCurl', 'Warp Curl (0=fold, 1=flow)', 0, 1, 0.05),
     slider('contrast', 'Contrast', 0.1, 3, 0.05),
     slider('sharpness', 'Sharpness', 0, 2, 0.05),
-  ], true, 'noise-only');
+  ], false, 'noise-only');
 }
 
 function buildSmoothingSection(): HTMLElement {
@@ -317,7 +319,7 @@ function buildViewControlsSection(): HTMLElement {
     slider('roll', 'Roll', -180, 180, 1),
     slider('zoom', 'Zoom', 0.1, 10, 0.05),
     note,
-  ], true);
+  ], false);
 }
 
 function wireControls(): void {

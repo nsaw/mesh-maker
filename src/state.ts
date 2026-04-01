@@ -20,6 +20,8 @@ export interface MeshState {
   persistence: number;
   lacunarity: number;
   distortion: number;
+  warpFreq: number;
+  warpCurl: number;
   contrast: number;
   sharpness: number;
   gaborAngle: number;
@@ -81,6 +83,8 @@ const DEFAULTS: MeshState = {
   persistence: 0.5,
   lacunarity: 2.0,
   distortion: 0,
+  warpFreq: 0.1,
+  warpCurl: 0,
   contrast: 1.0,
   sharpness: 0,
   gaborAngle: 45,
@@ -131,7 +135,7 @@ export function setDemoDepthMap(img: HTMLImageElement | null): void {
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
+  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
 ];

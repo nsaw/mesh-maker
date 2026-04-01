@@ -7,7 +7,7 @@ import { updateStats } from './stats';
 export function generateNoiseMesh(): void {
   const t0 = performance.now();
   const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
+          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
 
   const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
@@ -23,11 +23,33 @@ export function generateNoiseMesh(): void {
       const u = i / (cols - 1), v = j / (rows - 1);
       let x = u * meshX, y = v * meshY;
 
-      // Domain warp: x is warped first, then the warped x feeds into y's displacement.
-      // This cascading is intentional — it produces richer, asymmetric distortion patterns.
+      // Domain warp with convergent/curl blend.
+      // Convergent warp (curl=0) displaces toward noise extrema -- organic but creates
+      // donut-shaped folds at high amplitudes. Curl warp (curl=1) rotates the gradient
+      // 90 degrees producing divergence-free flow -- no folds, no donuts.
+      // Convergent x cascades into y lookup for asymmetric patterns.
       if (warpGen && distortion > 0) {
-        x += warpGen.noise(x * 0.1, y * 0.1) * distortion * 5;
-        y += warpGen.noise((x + 100) * 0.1, (y + 100) * 0.1) * distortion * 5;
+        const wf = warpFreq;
+        const amp = distortion * 5;
+        const sx = x * wf, sy = y * wf;
+
+        // Curl component: numerical gradient of noise, rotated 90 degrees
+        let curlDx = 0, curlDy = 0;
+        if (warpCurl > 0) {
+          const eps = 0.01;
+          const dndx = (warpGen.noise(sx + eps, sy) - warpGen.noise(sx - eps, sy)) / (2 * eps);
+          const dndy = (warpGen.noise(sx, sy + eps) - warpGen.noise(sx, sy - eps)) / (2 * eps);
+          curlDx = dndy;
+          curlDy = -dndx;
+        }
+
+        // X: blend convergent noise value with curl component
+        const convDx = warpGen.noise(sx, sy);
+        x += (convDx * (1 - warpCurl) + curlDx * warpCurl) * amp;
+
+        // Y: convergent uses warped x (cascading), curl uses original gradient
+        const convDy = warpGen.noise((x + 100) * wf, (y + 100) * wf);
+        y += (convDy * (1 - warpCurl) + curlDy * warpCurl) * amp;
       }
 
       let n: number;
