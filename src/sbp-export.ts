@@ -13,7 +13,6 @@ interface SbpState {
   roughingEnabled: boolean;
   finishingEnabled: boolean;
   materialProfile: MaterialProfile;
-  materialThickness: number;
   resolution: number;
   offsetX: number;
   offsetY: number;
@@ -34,7 +33,6 @@ const SBP_STATE: SbpState = {
   roughingEnabled: true,
   finishingEnabled: true,
   materialProfile: 'general',
-  materialThickness: 1.5,
   resolution: 200,
   offsetX: 2.0,
   offsetY: 2.0,
@@ -57,7 +55,7 @@ function buildConfig(): SbpConfig {
   const base = getDefaultConfig(SBP_STATE.materialProfile);
   base.roughingEnabled = SBP_STATE.roughingEnabled;
   base.finishingEnabled = SBP_STATE.finishingEnabled;
-  base.materialZ = SBP_STATE.materialThickness;
+  base.materialZ = STATE.baseThickness;
   base.offsetX = SBP_STATE.offsetX;
   base.offsetY = SBP_STATE.offsetY;
   base.safeZ = SBP_STATE.safeZ;
@@ -353,7 +351,6 @@ export function buildSBPSection(): HTMLElement {
     roughingRow,
     finishingRow,
     profileRow,
-    buildRangeControl('sl_sbpThickness', 'val_sbpThickness', 'Material Thickness (in)', SBP_STATE.materialThickness.toFixed(2), 0.25, 6, 0.05, SBP_STATE.materialThickness),
     buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', SBP_STATE.leaveStock.toFixed(3), 0, 0.1, 0.005, SBP_STATE.leaveStock),
     buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', SBP_STATE.offsetX.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetX),
     buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', SBP_STATE.offsetY.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetY),
@@ -423,17 +420,6 @@ export function wireSBPControls(): void {
         wireSBPControls();
         updateExportControls();
       }
-    });
-  }
-
-  // Thickness slider
-  const thicknessEl = document.getElementById('sl_sbpThickness') as HTMLInputElement | null;
-  if (thicknessEl) {
-    thicknessEl.addEventListener('input', () => {
-      SBP_STATE.materialThickness = parseFloat(thicknessEl.value);
-      const valEl = document.getElementById('val_sbpThickness');
-      if (valEl) valEl.textContent = SBP_STATE.materialThickness.toFixed(2);
-      invalidateSbpStats();
     });
   }
 

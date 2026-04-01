@@ -34,6 +34,9 @@ export function buildSidebar(): void {
   sb.replaceChildren(fragment);
 
   wireControls();
+  // Sync amplitude slider max to initial material thickness
+  const ampInit = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
+  if (ampInit) ampInit.max = String(STATE.baseThickness);
   wireSBPControls();
   updateExportControls();
 }
@@ -169,7 +172,7 @@ function buildMeshDimensionsSection(): HTMLElement {
   return buildSection('Mesh Dimensions', [
     inlineRow,
     slider('resolution', 'Grid Resolution', 16, 1024, 4),
-    slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05),
+    slider('baseThickness', 'Material Thickness (in)', 0.25, 6, 0.05),
     note,
   ]);
 }
@@ -240,7 +243,7 @@ function buildNoiseParametersSection(): HTMLElement {
 
   children.push(
     slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005),
-    slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05, 'max Z: 6"'),
+    slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05),
     slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05),
     slider('offset', 'Vertical Offset', -2, 2, 0.05),
     seedRow,
@@ -346,6 +349,20 @@ function wireControls(): void {
           const xVal = document.getElementById('val_meshX');
           if (xSlider) xSlider.value = String(STATE.meshX);
           if (xVal) xVal.textContent = String(STATE.meshX);
+        }
+      }
+
+      // Cut depth cannot exceed material thickness
+      if (key === 'baseThickness' || key === 'amplitude') {
+        const ampSlider = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
+        if (ampSlider) {
+          ampSlider.max = String(STATE.baseThickness);
+          if (STATE.amplitude > STATE.baseThickness) {
+            STATE.amplitude = STATE.baseThickness;
+            ampSlider.value = String(STATE.amplitude);
+            const ampVal = document.getElementById('val_amplitude');
+            if (ampVal) ampVal.textContent = STATE.amplitude.toFixed(2);
+          }
         }
       }
 

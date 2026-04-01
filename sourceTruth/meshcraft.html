@@ -1558,7 +1558,7 @@ function renderViewport() {
 function getFullMeshData() {
   // Returns vertices as {x,y,z} arrays for export, including bottom/sides if watertight
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
-  // Enforce minimum base thickness when watertight to avoid degenerate zero-height side triangles
+  // Enforce minimum material thickness when watertight to avoid degenerate zero-height side triangles
   const baseThickness = watertight ? Math.max(STATE.baseThickness, 0.01) : STATE.baseThickness;
   if (!vertices) return null;
 
@@ -1951,7 +1951,7 @@ function buildSidebar() {
       ${slider('meshY', 'Y (inches)', 1, 48, 1, '', ' <span class="cnc-badge">ShopBot: 24" max</span>')}
     </div>
     ${slider('resolution', 'Grid Resolution', 16, 256, 4)}
-    ${slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05)}
+    ${slider('baseThickness', 'Material Thickness (in)', 0, 4, 0.05)}
     <div style="margin-top:4px;font-size:10px;color:var(--text3);">ShopBot Desktop Max ATC -- 36"x24"x6"</div>
   `));
 
