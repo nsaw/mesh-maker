@@ -54,9 +54,9 @@ let sbpWorkerRunning = false;
 
 /** Sync SBP safe/home Z to current material thickness. Called when baseThickness changes. */
 export function syncSbpSafeZ(): void {
-  const safeZ = Math.min(6, parseFloat((STATE.baseThickness + 0.1).toFixed(1)));
+  const safeZ = Math.min(6, Math.max(0.5, parseFloat((STATE.baseThickness + 0.1).toFixed(1))));
   SBP_STATE.safeZ = safeZ;
-  if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, parseFloat((safeZ + 0.5).toFixed(1)));
+  if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, Math.max(1.0, parseFloat((safeZ + 0.5).toFixed(1))));
 
   const safeSlider = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
   const safeVal = document.getElementById('val_sbpSafeZ');
@@ -444,12 +444,24 @@ export function wireSBPControls(): void {
         sbpSection.replaceWith(newSection);
         wireSBPControls();
         updateExportControls();
-        // Re-wire accordion on the replaced section
+        // Re-wire accordion on the replaced section (including mobile behavior)
         const newHeader = newSection.querySelector<HTMLElement>('.section-header');
         if (newHeader) {
           newHeader.addEventListener('click', () => {
-            newSection.classList.toggle('collapsed');
-            newHeader.setAttribute('aria-expanded', String(!newSection.classList.contains('collapsed')));
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar && window.matchMedia('(max-width: 900px)').matches) {
+              const allSections = sidebar.querySelectorAll('.section');
+              const wasCollapsed = newSection.classList.contains('collapsed');
+              allSections.forEach(s => s.classList.add('collapsed'));
+              if (wasCollapsed) newSection.classList.remove('collapsed');
+              allSections.forEach(s => {
+                const h = s.querySelector<HTMLElement>('.section-header');
+                if (h) h.setAttribute('aria-expanded', String(!s.classList.contains('collapsed')));
+              });
+            } else {
+              newSection.classList.toggle('collapsed');
+              newHeader.setAttribute('aria-expanded', String(!newSection.classList.contains('collapsed')));
+            }
           });
         }
       }

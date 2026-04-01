@@ -25,7 +25,9 @@ export function attachValueEdit(valSpan: HTMLElement, sl: HTMLInputElement): voi
     inp.focus();
     inp.select();
 
+    let cancelled = false;
     const commit = (): void => {
+      if (cancelled) return;
       const n = parseFloat(inp.value);
       if (!isNaN(n)) {
         const clamped = Math.max(parseFloat(sl.min), Math.min(parseFloat(sl.max), n));
@@ -37,7 +39,7 @@ export function attachValueEdit(valSpan: HTMLElement, sl: HTMLInputElement): voi
     };
     inp.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      if (e.key === 'Escape') { e.preventDefault(); valSpan.textContent = current; }
+      if (e.key === 'Escape') { e.preventDefault(); cancelled = true; valSpan.textContent = current; }
     });
     inp.addEventListener('blur', commit);
   });
