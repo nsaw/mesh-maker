@@ -474,7 +474,7 @@ export function wireSBPControls(): void {
   if (safeZEl) safeZEl.addEventListener('input', () => {
     let val = parseFloat(safeZEl.value);
     if (val >= SBP_STATE.homeZ) val = SBP_STATE.homeZ - 0.1;
-    SBP_STATE.safeZ = Math.max(0.5, val);
+    SBP_STATE.safeZ = Math.max(0.5, parseFloat(val.toFixed(1)));
     safeZEl.value = String(SBP_STATE.safeZ);
     const v = document.getElementById('val_sbpSafeZ');
     if (v) v.textContent = SBP_STATE.safeZ.toFixed(1);
@@ -484,7 +484,7 @@ export function wireSBPControls(): void {
   if (homeZEl) homeZEl.addEventListener('input', () => {
     let val = parseFloat(homeZEl.value);
     if (val <= SBP_STATE.safeZ) val = SBP_STATE.safeZ + 0.1;
-    SBP_STATE.homeZ = Math.min(6, val);
+    SBP_STATE.homeZ = Math.min(6, parseFloat(val.toFixed(1)));
     homeZEl.value = String(SBP_STATE.homeZ);
     const v = document.getElementById('val_sbpHomeZ');
     if (v) v.textContent = SBP_STATE.homeZ.toFixed(1);

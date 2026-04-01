@@ -11,10 +11,15 @@ let _pointsObj: THREE.Points | null = null;
 let _encGroup: THREE.Group | null = null;
 let _gizmoScene: THREE.Scene;
 let _gizmoCamera: THREE.OrthographicCamera;
-let _needsRender = true;
+let _needsRender = false;
+let _rafPending = false;
 let _prevW = 0;
 let _prevH = 0;
 let _lastVerticesRef: number[][] | null = null;
+let _lastMeshX = 0;
+let _lastMeshY = 0;
+let _lastRows = 0;
+let _lastCols = 0;
 
 const BG_COLOR = 0x141418;
 const GIZMO_BG = 0x1e1e24;
@@ -122,16 +127,6 @@ function ensureRenderer(): void {
   _gizmoCamera = new THREE.OrthographicCamera(-1.8, 1.8, 1.8, -1.8, 0.1, 10);
 
   setCameraFromState();
-
-  // Animation loop -- renders only when _needsRender is true
-  const animate = (): void => {
-    requestAnimationFrame(animate);
-    if (_needsRender) {
-      _needsRender = false;
-      doRender();
-    }
-  };
-  animate();
 
   _prevW = w;
   _prevH = h;
@@ -250,12 +245,22 @@ export function setCameraFromState(): void {
   _camera.up.copy(up);
   _camera.lookAt(target);
 
-  _needsRender = true;
+  requestRender();
 }
 
-/** Signal that a render is needed on next animation frame. */
+/** Schedule a render on the next animation frame (on-demand, no permanent loop). */
 export function requestRender(): void {
   _needsRender = true;
+  if (!_rafPending) {
+    _rafPending = true;
+    requestAnimationFrame(() => {
+      _rafPending = false;
+      if (_needsRender) {
+        _needsRender = false;
+        doRender();
+      }
+    });
+  }
 }
 
 // --- Geometry ---
@@ -455,10 +460,16 @@ function updateVisibility(): void {
 export function renderViewport(): void {
   ensureRenderer();
 
-  const verticesChanged = STATE.vertices !== _lastVerticesRef;
+  const verticesChanged = STATE.vertices !== _lastVerticesRef
+    || STATE.meshX !== _lastMeshX || STATE.meshY !== _lastMeshY
+    || STATE.rows !== _lastRows || STATE.cols !== _lastCols;
 
   if (verticesChanged) {
     _lastVerticesRef = STATE.vertices;
+    _lastMeshX = STATE.meshX;
+    _lastMeshY = STATE.meshY;
+    _lastRows = STATE.rows;
+    _lastCols = STATE.cols;
     if (STATE.vertices) {
       buildSurface(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
       buildEnclosure(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
