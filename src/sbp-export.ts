@@ -3,6 +3,7 @@ import { stateToHeightmap } from './sbp/heightmap';
 import { generateSBP } from './sbp/generate';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
+import { updateExportControls } from './toolbar';
 import { showToast } from './toast';
 import type { MaterialProfile, SbpConfig, SbpStats } from './sbp/types';
 import type { GenerateResult } from './sbp/generate';
@@ -420,6 +421,7 @@ export function wireSBPControls(): void {
         const newSection = buildSBPSection();
         sbpSection.replaceWith(newSection);
         wireSBPControls();
+        updateExportControls();
       }
     });
   }

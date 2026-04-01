@@ -19,7 +19,7 @@ export function zoomExtents(): void {
 
   STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85));
   STATE.panX = 0; STATE.panY = 0;
-  STATE.orbit = 45; STATE.tilt = -30;
+  STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
 
   ['orbit','tilt','zoom'].forEach(k => {
     const sl = document.getElementById('sl_' + k) as HTMLInputElement | null;

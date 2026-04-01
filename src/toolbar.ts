@@ -93,7 +93,7 @@ export function setupToolbar(): void {
   document.getElementById('btnRandomSeed')!.addEventListener('click', randomSeed);
   document.getElementById('btnZoomExtents')!.addEventListener('click', zoomExtents);
   document.getElementById('btnResetCamera')!.addEventListener('click', () => {
-    STATE.orbit = 55; STATE.tilt = -25; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0;
+    STATE.orbit = 55; STATE.tilt = -25; STATE.roll = 0; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0;
     buildSidebar();
     setCameraFromState();
   });

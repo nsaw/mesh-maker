@@ -1,12 +1,10 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STATE } from './state';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;
 let _scene: THREE.Scene;
 let _camera: THREE.PerspectiveCamera;
-let _controls: OrbitControls;
 let _surfaceMesh: THREE.Mesh | null = null;
 let _wireLines: THREE.LineSegments | null = null;
 let _pointsObj: THREE.Points | null = null;
@@ -19,7 +17,52 @@ let _prevH = 0;
 let _lastVerticesRef: number[][] | null = null;
 
 const BG_COLOR = 0x141418;
+const GIZMO_BG = 0x1e1e24;
 const FOV = 60;
+
+// --- Color ramp texture (sampled per-pixel for smooth Z-height gradient) ---
+
+let _colorRampTexture: THREE.DataTexture | null = null;
+
+function getColorRampTexture(): THREE.DataTexture {
+  if (_colorRampTexture) return _colorRampTexture;
+
+  const width = 512;
+  const data = new Uint8Array(width * 4);
+
+  // Hypsometric tint: dark teal -> teal -> green -> yellow-green -> gold
+  const stops = [
+    { t: 0.00, r: 20, g: 65, b: 90 },
+    { t: 0.15, r: 30, g: 95, b: 100 },
+    { t: 0.35, r: 45, g: 135, b: 90 },
+    { t: 0.55, r: 80, g: 160, b: 70 },
+    { t: 0.75, r: 140, g: 175, b: 55 },
+    { t: 0.90, r: 185, g: 180, b: 45 },
+    { t: 1.00, r: 210, g: 190, b: 40 },
+  ];
+
+  for (let i = 0; i < width; i++) {
+    const t = i / (width - 1);
+    let lo = stops[0], hi = stops[stops.length - 1];
+    for (let s = 0; s < stops.length - 1; s++) {
+      if (t >= stops[s].t && t <= stops[s + 1].t) {
+        lo = stops[s]; hi = stops[s + 1]; break;
+      }
+    }
+    const f = (t - lo.t) / (hi.t - lo.t || 1);
+    data[i * 4] = Math.round(lo.r + (hi.r - lo.r) * f);
+    data[i * 4 + 1] = Math.round(lo.g + (hi.g - lo.g) * f);
+    data[i * 4 + 2] = Math.round(lo.b + (hi.b - lo.b) * f);
+    data[i * 4 + 3] = 255;
+  }
+
+  _colorRampTexture = new THREE.DataTexture(data, width, 1);
+  _colorRampTexture.magFilter = THREE.LinearFilter;
+  _colorRampTexture.minFilter = THREE.LinearFilter;
+  _colorRampTexture.wrapS = THREE.ClampToEdgeWrapping;
+  _colorRampTexture.needsUpdate = true;
+  return _colorRampTexture;
+}
 
 // --- Initialization ---
 
@@ -42,23 +85,17 @@ function ensureRenderer(): void {
   _camera = new THREE.PerspectiveCamera(FOV, w / h, 0.01, 2000);
   _camera.up.set(0, 0, 1); // Z-up for CNC
 
-  // Lighting: ambient 12% + directional 88% -- matches current Gouraud model
-  _scene.add(new THREE.AmbientLight(0xffffff, 0.12));
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.88);
-  dirLight.position.set(-0.4, -0.5, 0.75).normalize();
-  _scene.add(dirLight);
+  // Lighting: hemisphere for natural ambient fill + key + fill directional
+  const hemi = new THREE.HemisphereLight(0x8899bb, 0x445566, 0.35);
+  _scene.add(hemi);
 
-  // OrbitControls
-  _controls = new OrbitControls(_camera, _renderer.domElement);
-  _controls.enableDamping = true;
-  _controls.dampingFactor = 0.08;
-  _controls.screenSpacePanning = true;
-  _controls.minDistance = 0.5;
-  _controls.maxDistance = 500;
-  _controls.addEventListener('change', () => {
-    syncCameraToState();
-    _needsRender = true;
-  });
+  const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+  keyLight.position.set(-1, -0.8, 1.5).normalize();
+  _scene.add(keyLight);
+
+  const fillLight = new THREE.DirectionalLight(0x8899aa, 0.3);
+  fillLight.position.set(1, 0.5, 0.3).normalize();
+  _scene.add(fillLight);
 
   // Gizmo scene (AxesHelper in scissored inset)
   _gizmoScene = new THREE.Scene();
@@ -67,10 +104,9 @@ function ensureRenderer(): void {
 
   setCameraFromState();
 
-  // Animation loop (needed for OrbitControls damping)
+  // Animation loop -- renders only when _needsRender is true
   const animate = (): void => {
     requestAnimationFrame(animate);
-    _controls.update(); // fires 'change' during damping
     if (_needsRender) {
       _needsRender = false;
       doRender();
@@ -84,41 +120,50 @@ function ensureRenderer(): void {
 
 function doRender(): void {
   if (!_renderer) return;
+  // Three.js setViewport/setScissor apply DPR internally (set via setPixelRatio).
+  // Pass CSS pixel dimensions, NOT buffer pixels, to avoid double-multiplication.
   const w = _prevW;
   const h = _prevH;
-  const dpr = _renderer.getPixelRatio();
 
   // Main scene
-  _renderer.setViewport(0, 0, w * dpr, h * dpr);
-  _renderer.setScissor(0, 0, w * dpr, h * dpr);
+  _renderer.setViewport(0, 0, w, h);
+  _renderer.setScissor(0, 0, w, h);
   _renderer.setScissorTest(true);
+  _renderer.setClearColor(BG_COLOR);
   _renderer.clear();
   _renderer.render(_scene, _camera);
 
-  // Gizmo inset (top-left corner, 80x80px)
-  const gs = Math.floor(80 * dpr);
-  const gx = Math.floor(10 * dpr);
-  // WebGL origin is bottom-left; top-left corner = (gx, totalH - gs - margin)
-  const gy = Math.floor(h * dpr - gs - 10 * dpr);
-  _gizmoCamera.position.copy(_camera.position).sub(_controls.target).normalize().multiplyScalar(3);
+  // Gizmo inset (top-left corner, 80x80 CSS pixels)
+  const gs = 80;
+  const gx = 10;
+  // WebGL origin is bottom-left; top-left corner in CSS coords
+  const gy = h - gs - 10;
+
+  // Position gizmo camera from orbit/tilt (no pan influence)
+  const phi = Math.PI * (90 + STATE.tilt) / 180;
+  const theta = STATE.orbit * Math.PI / 180;
+  _gizmoCamera.position.set(
+    3 * Math.sin(phi) * Math.cos(theta),
+    3 * Math.sin(phi) * Math.sin(theta),
+    3 * Math.cos(phi),
+  );
   _gizmoCamera.up.copy(_camera.up);
   _gizmoCamera.lookAt(0, 0, 0);
+
   _renderer.setViewport(gx, gy, gs, gs);
   _renderer.setScissor(gx, gy, gs, gs);
-  _renderer.clearDepth();
+  _renderer.setClearColor(GIZMO_BG);
+  _renderer.clear(true, true, false);
   _renderer.render(_gizmoScene, _gizmoCamera);
 
   _renderer.setScissorTest(false);
 }
 
-// --- Camera sync ---
+// --- Camera ---
 
-export function setCameraFromState(): void {
-  if (!_controls || !_camera) return;
-
+function getMeshCenter(): THREE.Vector3 {
   const meshX = STATE.meshX || 36;
   const meshY = STATE.meshY || 24;
-
   let zMid = 0;
   if (STATE.vertices) {
     let zMin = Infinity, zMax = -Infinity;
@@ -131,41 +176,67 @@ export function setCameraFromState(): void {
       }
     zMid = (zMin + zMax) / 2;
   }
+  return new THREE.Vector3(meshX / 2, meshY / 2, zMid);
+}
 
-  const target = new THREE.Vector3(meshX / 2, meshY / 2, zMid);
-  const radius = Math.max(meshX, meshY) * 1.2 / Math.max(STATE.zoom, 0.01);
+export function setCameraFromState(): void {
+  if (!_camera) return;
+
+  const target = getMeshCenter();
+  const meshMax = Math.max(STATE.meshX || 36, STATE.meshY || 24);
+  const radius = meshMax * 1.2 / Math.max(STATE.zoom, 0.01);
+
   const phi = Math.PI * (90 + STATE.tilt) / 180;   // polar from Z-axis
   const theta = STATE.orbit * Math.PI / 180;        // azimuthal around Z
 
-  _camera.position.set(
+  // Camera position on sphere around target
+  const camPos = new THREE.Vector3(
     target.x + radius * Math.sin(phi) * Math.cos(theta),
     target.y + radius * Math.sin(phi) * Math.sin(theta),
     target.z + radius * Math.cos(phi),
   );
-  _controls.target.copy(target);
-  _controls.update();
+
+  // Compute camera basis vectors (before roll)
+  const forward = new THREE.Vector3().subVectors(target, camPos).normalize();
+  const baseUp = new THREE.Vector3(0, 0, 1);
+  const right = new THREE.Vector3().crossVectors(forward, baseUp).normalize();
+
+  // Handle degenerate case (looking straight up/down along Z)
+  if (right.lengthSq() < 0.001) {
+    right.set(1, 0, 0);
+  }
+  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+
+  // Apply roll: rotate camera up vector around forward axis
+  if (STATE.roll !== 0) {
+    const rollRad = STATE.roll * Math.PI / 180;
+    const q = new THREE.Quaternion().setFromAxisAngle(forward, rollRad);
+    up.applyQuaternion(q);
+  }
+
+  // Apply screen-space pan: convert pixel offsets to world-space camera shifts
+  if (STATE.panX !== 0 || STATE.panY !== 0) {
+    const h = _prevH || 1;
+    const fovRad = FOV * Math.PI / 180;
+    const pixelScale = (2 * radius * Math.tan(fovRad / 2)) / h;
+    // panX: negative because dragging right should shift view left (move camera right)
+    const panShift = new THREE.Vector3()
+      .addScaledVector(right, -STATE.panX * pixelScale)
+      .addScaledVector(up, STATE.panY * pixelScale);
+    camPos.add(panShift);
+    target.add(panShift);
+  }
+
+  _camera.position.copy(camPos);
+  _camera.up.copy(up);
+  _camera.lookAt(target);
+
   _needsRender = true;
 }
 
-function syncCameraToState(): void {
-  if (!_controls || !_camera) return;
-
-  const offset = _camera.position.clone().sub(_controls.target);
-  const spherical = new THREE.Spherical().setFromVector3(offset);
-
-  STATE.orbit = ((THREE.MathUtils.radToDeg(spherical.theta) % 360) + 360) % 360;
-  STATE.tilt = 90 - THREE.MathUtils.radToDeg(spherical.phi);
-  const meshMax = Math.max(STATE.meshX || 36, STATE.meshY || 24);
-  STATE.zoom = Math.max(0.1, Math.min(10, meshMax * 1.2 / spherical.radius));
-
-  // Update slider displays (no event firing)
-  for (const key of ['orbit', 'tilt', 'zoom']) {
-    const sl = document.getElementById(`sl_${key}`) as HTMLInputElement | null;
-    const valEl = document.getElementById(`val_${key}`);
-    const v = STATE[key as keyof typeof STATE] as number;
-    if (sl) sl.value = String(v);
-    if (valEl) valEl.textContent = key === 'zoom' ? v.toFixed(2) : String(Math.round(v));
-  }
+/** Signal that a render is needed on next animation frame. */
+export function requestRender(): void {
+  _needsRender = true;
 }
 
 // --- Geometry ---
@@ -192,8 +263,9 @@ function buildSurface(
   disposeGroup(_wireLines); _wireLines = null;
   disposeGroup(_pointsObj); _pointsObj = null;
 
-  // Positions + vertex colors
+  // Positions + UVs (for texture color ramp) + vertex colors (for wireframe)
   const positions = new Float32Array(rows * cols * 3);
+  const uvs = new Float32Array(rows * cols * 2);
   const colors = new Float32Array(rows * cols * 3);
 
   let zMin = Infinity, zMax = -Infinity;
@@ -212,11 +284,16 @@ function buildSurface(
       positions[idx * 3 + 1] = (j / (rows - 1)) * meshY;
       positions[idx * 3 + 2] = vertices[j][i];
 
-      // Blue-steel Z-height gradient (matches original Canvas 2D palette)
+      // UV: normalized Z maps to color ramp texture (per-pixel sampling = no banding)
       const t = Math.max(0, Math.min(1, (vertices[j][i] - zMin) / zRange));
-      colors[idx * 3] = (40 + t * 180) / 255;
-      colors[idx * 3 + 1] = (50 + t * 190) / 255;
-      colors[idx * 3 + 2] = (70 + t * 185) / 255;
+      uvs[idx * 2] = t;
+      uvs[idx * 2 + 1] = 0.5;
+
+      // Vertex colors for wireframe only
+      const g = (40 + t * 120) / 255;
+      colors[idx * 3] = g;
+      colors[idx * 3 + 1] = g + 15 / 255;
+      colors[idx * 3 + 2] = g + 30 / 255;
     }
   }
 
@@ -231,13 +308,17 @@ function buildSurface(
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.setIndex(indices);
   geo.computeVertexNormals();
 
+  // Texture-based color ramp: sampled per-pixel in fragment shader = smooth gradients
   _surfaceMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-    vertexColors: true,
+    map: getColorRampTexture(),
     side: THREE.DoubleSide,
+    shininess: 40,
+    specular: new THREE.Color(0x222233),
     polygonOffset: true,       // prevent z-fighting with wireframe overlay
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
@@ -362,17 +443,6 @@ export function renderViewport(): void {
     if (STATE.vertices) {
       buildSurface(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
       buildEnclosure(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
-      // Update controls target to mesh center
-      let zMin = Infinity, zMax = -Infinity;
-      for (let j = 0; j < STATE.rows; j++)
-        for (let i = 0; i < STATE.cols; i++) {
-          const z = STATE.vertices[j][i];
-          if (z < zMin) zMin = z;
-          if (z > zMax) zMax = z;
-        }
-      const zMid = (zMin + zMax) / 2;
-      _controls.target.set(STATE.meshX / 2, STATE.meshY / 2, zMid);
-      _controls.update();
     } else {
       disposeGroup(_surfaceMesh); _surfaceMesh = null;
       disposeGroup(_wireLines); _wireLines = null;
@@ -382,7 +452,7 @@ export function renderViewport(): void {
   }
 
   updateVisibility();
-  _needsRender = true;
+  setCameraFromState();
   updateDimsOverlay();
 }
 

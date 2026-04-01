@@ -43,6 +43,7 @@ export interface MeshState {
   // View
   orbit: number;
   tilt: number;
+  roll: number;
   zoom: number;
   panX: number;
   panY: number;
@@ -100,6 +101,7 @@ const DEFAULTS: MeshState = {
   aspectLocked: false,
   orbit: 235,
   tilt: -25,
+  roll: 0,
   zoom: 1.0,
   panX: 0,
   panY: 0,

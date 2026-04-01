@@ -209,7 +209,7 @@ export function weightedSmooth(verts: number[][], rows: number, cols: number, it
 }
 
 // Debounced generation — moved here to avoid circular dependency with stats.ts
-const VIEW_ONLY_KEYS = new Set(['orbit','tilt','zoom']);
+const VIEW_ONLY_KEYS = new Set(['orbit','tilt','roll','zoom']);
 let _genTimer: ReturnType<typeof setTimeout> | null = null;
 let _needsMeshRegen = false;
 
