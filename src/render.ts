@@ -35,14 +35,14 @@ function getColorRampTexture(): THREE.DataTexture {
   const width = 512;
   const data = new Uint8Array(width * 4);
 
-  // Blue -> teal -> white -> amber gradient (valleys -> peaks)
+  // Blue -> teal -> white -> amber gradient (30-10-30-30% distribution)
   const stops = [
-    { t: 0.00, r: 20, g: 60, b: 100 },
-    { t: 0.20, r: 40, g: 100, b: 140 },
-    { t: 0.40, r: 60, g: 150, b: 160 },
-    { t: 0.55, r: 140, g: 200, b: 200 },
-    { t: 0.70, r: 220, g: 235, b: 240 },
-    { t: 0.85, r: 250, g: 240, b: 220 },
+    { t: 0.00, r: 15, g: 50, b: 90 },
+    { t: 0.15, r: 30, g: 80, b: 125 },
+    { t: 0.30, r: 50, g: 130, b: 150 },
+    { t: 0.40, r: 150, g: 200, b: 210 },
+    { t: 0.50, r: 240, g: 240, b: 235 },
+    { t: 0.70, r: 255, g: 210, b: 150 },
     { t: 1.00, r: 255, g: 170, b: 78 },
   ];
 
