@@ -97,8 +97,8 @@ export function generateNoiseMesh(): void {
   // CNC z-model: z=0 is machine bed, stock from 0 to baseThickness.
   // amplitude = total cut depth (peak to valley), clamped to stock thickness.
   // Peaks sit at z=baseThickness (stock top), valleys at z=baseThickness-cutDepth.
-  // Floor to 0.01" to prevent degenerate geometry from URL-sourced values.
-  const bt = Math.max(0.01, baseThickness);
+  // Floor to 0.01" when watertight to prevent degenerate enclosure triangles.
+  const bt = STATE.watertight ? Math.max(0.01, baseThickness) : baseThickness;
   const cutDepth = Math.min(amplitude, bt);
   let nMin = Infinity, nMax = -Infinity;
   for (let j = 0; j < rows; j++)
@@ -175,7 +175,7 @@ export function generateDepthMapMesh(): void {
   const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
 
   // CNC z-model: same as noise path -- peaks at stock top, valleys at stock top - cut depth
-  const bt = Math.max(0.01, baseThickness);
+  const bt = STATE.watertight ? Math.max(0.01, baseThickness) : baseThickness;
   const cutDepth = Math.min(dmHeightScale, bt);
   let nMin = Infinity, nMax = -Infinity;
   for (let j = 0; j < rows; j++)

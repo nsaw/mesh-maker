@@ -183,7 +183,9 @@ function doRender(): void {
 function getMeshCenter(): THREE.Vector3 {
   const meshX = STATE.meshX || 36;
   const meshY = STATE.meshY || 24;
-  return new THREE.Vector3(meshX / 2, meshY / 2, _cachedZMid);
+  // When watertight, solid extends from z=0 (base) to zMax; center on full solid
+  const zMid = STATE.watertight ? (_cachedZMax + 0) / 2 : _cachedZMid;
+  return new THREE.Vector3(meshX / 2, meshY / 2, zMid);
 }
 
 export function setCameraFromState(): void {
