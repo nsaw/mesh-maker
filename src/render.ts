@@ -30,15 +30,13 @@ function getColorRampTexture(): THREE.DataTexture {
   const width = 512;
   const data = new Uint8Array(width * 4);
 
-  // Hypsometric tint: dark teal -> teal -> green -> yellow-green -> gold
+  // Blue-to-white gradient: deep blue (valleys) -> white (peaks)
   const stops = [
-    { t: 0.00, r: 20, g: 65, b: 90 },
-    { t: 0.15, r: 30, g: 95, b: 100 },
-    { t: 0.35, r: 45, g: 135, b: 90 },
-    { t: 0.55, r: 80, g: 160, b: 70 },
-    { t: 0.75, r: 140, g: 175, b: 55 },
-    { t: 0.90, r: 185, g: 180, b: 45 },
-    { t: 1.00, r: 210, g: 190, b: 40 },
+    { t: 0.00, r: 20, g: 60, b: 100 },
+    { t: 0.25, r: 50, g: 100, b: 150 },
+    { t: 0.50, r: 110, g: 150, b: 190 },
+    { t: 0.75, r: 180, g: 205, b: 225 },
+    { t: 1.00, r: 245, g: 248, b: 252 },
   ];
 
   for (let i = 0; i < width; i++) {
@@ -97,9 +95,30 @@ function ensureRenderer(): void {
   fillLight.position.set(1, 0.5, 0.3).normalize();
   _scene.add(fillLight);
 
-  // Gizmo scene (AxesHelper in scissored inset)
+  // Gizmo scene (AxesHelper + axis labels in scissored inset)
   _gizmoScene = new THREE.Scene();
   _gizmoScene.add(new THREE.AxesHelper(1));
+  // Axis labels using sprite textures
+  const labelAxes: [string, THREE.Color, THREE.Vector3][] = [
+    ['X', new THREE.Color(0xff4444), new THREE.Vector3(1.3, 0, 0)],
+    ['Y', new THREE.Color(0x44ff44), new THREE.Vector3(0, 1.3, 0)],
+    ['Z', new THREE.Color(0x4488ff), new THREE.Vector3(0, 0, 1.3)],
+  ];
+  for (const [text, color, pos] of labelAxes) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64; canvas.height = 64;
+    const ctx = canvas.getContext('2d')!;
+    ctx.font = 'bold 48px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = `#${color.getHexString()}`;
+    ctx.fillText(text, 32, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.copy(pos);
+    sprite.scale.set(0.5, 0.5, 1);
+    _gizmoScene.add(sprite);
+  }
   _gizmoCamera = new THREE.OrthographicCamera(-1.8, 1.8, 1.8, -1.8, 0.1, 10);
 
   setCameraFromState();
@@ -364,7 +383,7 @@ function buildEnclosure(
   disposeGroup(_encGroup);
   _encGroup = new THREE.Group();
   const zBase = 0;
-  const sideMat = new THREE.MeshPhongMaterial({ color: 0x253045, side: THREE.DoubleSide });
+  const sideMat = new THREE.MeshPhongMaterial({ color: 0x143c64, side: THREE.DoubleSide });
 
   // Bottom face
   const botGeo = new THREE.PlaneGeometry(meshX, meshY);
@@ -379,7 +398,7 @@ function buildEnclosure(
     botGeo.setIndex(arr);
   }
   botGeo.computeVertexNormals();
-  _encGroup.add(new THREE.Mesh(botGeo, new THREE.MeshPhongMaterial({ color: 0x1a2030 })));
+  _encGroup.add(new THREE.Mesh(botGeo, new THREE.MeshPhongMaterial({ color: 0x102e50 })));
 
   // Side walls (4 edge strips connecting top surface to z=0)
   function buildWall(edge: { x: number; y: number; z: number }[]): THREE.BufferGeometry {
