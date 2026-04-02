@@ -1,5 +1,5 @@
 import { STATE } from './state';
-import { renderViewport } from './render';
+import { setCameraFromState } from './render';
 import { zoomExtents } from './stats';
 
 export function setupInteraction(): void {
@@ -10,7 +10,7 @@ export function setupInteraction(): void {
   function queueRender(): void {
     if (!renderQueued) {
       renderQueued = true;
-      requestAnimationFrame(() => { renderQueued = false; renderViewport(); });
+      requestAnimationFrame(() => { renderQueued = false; setCameraFromState(); });
     }
   }
 
@@ -78,7 +78,6 @@ export function setupInteraction(): void {
         dx = 0;
       }
       // Screen-space pan, consistent with mouse-drag pan behavior.
-      // No orbit compensation — panX/panY are screen-space offsets in render.ts.
       const panSpeed = 1.2;
       STATE.panX = (STATE.panX || 0) - dx * panSpeed;
       STATE.panY = (STATE.panY || 0) - dy * panSpeed;

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "deploy": "npm run build && node -e \"for (const k of ['CLOUDFLARE_API_TOKEN','CLOUDFLARE_ACCOUNT_ID']) { if (!process.env[k]) { console.error(k + ' is required'); process.exit(1); } }\" && npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=main",
+    "deploy": "npm run build && node -e \"for (const k of ['CLOUDFLARE_API_TOKEN','CLOUDFLARE_ACCOUNT_ID']) { if (!process.env[k]) { console.error(k + ' is required'); process.exit(1); } }\" && npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=main --commit-dirty=true",
     "typecheck": "tsc --noEmit",
     "typecheck:cli": "tsc -p tsconfig.cli.json --noEmit",
     "lint": "eslint src/ cli/",
@@ -17,14 +17,18 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.0.3",
-    "husky": "^9.1.7",
-    "typescript": "~5.7.0",
-    "typescript-eslint": "^8.57.1",
-    "vite": "^6.0.0",
     "@types/better-sqlite3": "^7.6.8",
     "@types/node": "^22.0.0",
+    "@types/three": "^0.183.1",
     "better-sqlite3": "^12.8.0",
-    "tsx": "^4.19.0"
+    "eslint": "^10.0.3",
+    "husky": "^9.1.7",
+    "tsx": "^4.19.0",
+    "typescript": "~5.7.0",
+    "typescript-eslint": "^8.57.1",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "three": "^0.183.2"
   }
 }

@@ -20,6 +20,8 @@ export interface MeshState {
   persistence: number;
   lacunarity: number;
   distortion: number;
+  warpFreq: number;
+  warpCurl: number;
   contrast: number;
   sharpness: number;
   gaborAngle: number;
@@ -60,14 +62,11 @@ export interface MeshState {
   vertices: number[][] | null;
   cols: number;
   rows: number;
-  isDragging: boolean;
-  lastMX: number;
-  lastMY: number;
   genTime: number;
   sbpStats: SbpStats | null;
 }
 
-const DEFAULTS: MeshState = {
+export const DEFAULTS: MeshState = {
   mode: 'noise',
   viewMode: 'wireframe',
   exportFormat: 'stl',
@@ -84,13 +83,15 @@ const DEFAULTS: MeshState = {
   persistence: 0.5,
   lacunarity: 2.0,
   distortion: 0,
+  warpFreq: 0.1,
+  warpCurl: 0,
   contrast: 1.0,
   sharpness: 0,
   gaborAngle: 45,
   gaborBandwidth: 1.5,
   meshX: 36,
   meshY: 24,
-  resolution: 256,
+  resolution: 400,
   smoothIter: 0,
   smoothStr: 0.5,
   baseThickness: 0.75,
@@ -115,18 +116,15 @@ const DEFAULTS: MeshState = {
   activePreset: null,
   activeProfile: null,
   vertices: null,
-  cols: 256,
-  rows: 256,
-  isDragging: false,
-  lastMX: 0,
-  lastMY: 0,
+  cols: 400,
+  rows: 267,
   genTime: 0,
   sbpStats: null,
 };
 
 export const STATE: MeshState = { ...DEFAULTS };
 
-export const noiseDims = { meshX: 36, meshY: 24, resolution: 256 };
+export const noiseDims = { meshX: 36, meshY: 24, resolution: 400 };
 
 export let demoDepthMap: HTMLImageElement | null = null;
 export function setDemoDepthMap(img: HTMLImageElement | null): void {
@@ -137,19 +135,27 @@ export function setDemoDepthMap(img: HTMLImageElement | null): void {
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
+  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
 ];
 
+// Payload version: bump when DEFAULTS change to preserve old share links.
+// Legacy (v0) defaults for keys that changed since the original release:
+const CURRENT_PAYLOAD_VERSION = 1;
+const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
+  resolution: 256,
+};
+
 export function serializeConfig(): string {
-  const diff: Record<string, unknown> = {};
+  const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
     if (STATE[key] !== DEFAULTS[key]) {
       diff[key] = STATE[key];
     }
   }
-  if (Object.keys(diff).length === 0) return '';
+  // Only _v present means no diffs -- return empty (default config)
+  if (Object.keys(diff).length === 1) return '';
   return btoa(JSON.stringify(diff))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
@@ -164,6 +170,18 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     const json = atob(padded);
     const parsed = JSON.parse(json);
     const result: Partial<MeshState> = {};
+
+    // Apply legacy defaults for unversioned (v0) payloads so old share links
+    // keep their original behavior even when DEFAULTS change.
+    const payloadVersion: number = parsed._v ?? 0;
+    if (payloadVersion < 1) {
+      for (const [k, v] of Object.entries(LEGACY_V0_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
         (result as Record<string, unknown>)[key] = parsed[key];

@@ -1,8 +1,10 @@
 import { STATE } from './state';
+import { attachValueEdit } from './slider-utils';
 import { stateToHeightmap } from './sbp/heightmap';
 import { generateSBP } from './sbp/generate';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
+import { updateExportControls } from './toolbar';
 import { showToast } from './toast';
 import type { MaterialProfile, SbpConfig, SbpStats } from './sbp/types';
 import type { GenerateResult } from './sbp/generate';
@@ -12,13 +14,18 @@ interface SbpState {
   roughingEnabled: boolean;
   finishingEnabled: boolean;
   materialProfile: MaterialProfile;
-  materialThickness: number;
   resolution: number;
   offsetX: number;
   offsetY: number;
   safeZ: number;
   homeZ: number;
   leaveStock: number;
+  finishRasterAngle: number;
+  feedRateOverride: number | null;
+  plungeRateOverride: number | null;
+  rpmOverride: number | null;
+  stepdownOverride: number | null;
+  stepoverOverride: number | null;
   stlBuffer: ArrayBuffer | null;
   stlName: string;
 }
@@ -27,29 +34,77 @@ const SBP_STATE: SbpState = {
   roughingEnabled: true,
   finishingEnabled: true,
   materialProfile: 'general',
-  materialThickness: 1.5,
   resolution: 200,
   offsetX: 2.0,
   offsetY: 2.0,
-  safeZ: 1.6,
-  homeZ: 2.3,
+  safeZ: 0.9,   // baseThickness(0.75) + 0.1, rounded
+  homeZ: 1.4,   // safeZ + 0.5
   leaveStock: 0.02,
+  finishRasterAngle: 45,
+  feedRateOverride: null,
+  plungeRateOverride: null,
+  rpmOverride: null,
+  stepdownOverride: null,
+  stepoverOverride: null,
   stlBuffer: null,
   stlName: '',
 };
 
 let sbpWorkerRunning = false;
 
+/** Sync SBP safe/home Z to current material thickness. Called when baseThickness changes. */
+export function syncSbpSafeZ(): void {
+  const safeZ = Math.min(6, Math.max(0.5, parseFloat((STATE.baseThickness + 0.1).toFixed(1))));
+  SBP_STATE.safeZ = safeZ;
+  if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, Math.max(1.0, parseFloat((safeZ + 0.5).toFixed(1))));
+
+  const safeSlider = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
+  const safeVal = document.getElementById('val_sbpSafeZ');
+  if (safeSlider) {
+    safeSlider.value = String(SBP_STATE.safeZ);
+    safeSlider.dataset.default = String(SBP_STATE.safeZ);
+  }
+  if (safeVal) safeVal.textContent = SBP_STATE.safeZ.toFixed(1);
+
+  const homeSlider = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
+  const homeVal = document.getElementById('val_sbpHomeZ');
+  if (homeSlider) {
+    homeSlider.value = String(SBP_STATE.homeZ);
+    homeSlider.dataset.default = String(SBP_STATE.homeZ);
+  }
+  if (homeVal) homeVal.textContent = SBP_STATE.homeZ.toFixed(1);
+}
+
 function buildConfig(): SbpConfig {
   const base = getDefaultConfig(SBP_STATE.materialProfile);
   base.roughingEnabled = SBP_STATE.roughingEnabled;
   base.finishingEnabled = SBP_STATE.finishingEnabled;
-  base.materialZ = SBP_STATE.materialThickness;
+  base.materialZ = STATE.baseThickness;
   base.offsetX = SBP_STATE.offsetX;
   base.offsetY = SBP_STATE.offsetY;
   base.safeZ = SBP_STATE.safeZ;
   base.homeZ = SBP_STATE.homeZ;
   base.leaveStock = SBP_STATE.leaveStock;
+  base.finishRasterAngle = SBP_STATE.finishRasterAngle;
+
+  if (SBP_STATE.feedRateOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, feedRate: SBP_STATE.feedRateOverride } };
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, feedRate: SBP_STATE.feedRateOverride } };
+  }
+  if (SBP_STATE.plungeRateOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, plungeRate: SBP_STATE.plungeRateOverride } };
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, plungeRate: SBP_STATE.plungeRateOverride } };
+  }
+  if (SBP_STATE.rpmOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, rpm: SBP_STATE.rpmOverride } };
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, rpm: SBP_STATE.rpmOverride } };
+  }
+  if (SBP_STATE.stepdownOverride !== null) {
+    base.roughingTool = { ...base.roughingTool, cutting: { ...base.roughingTool.cutting, stepdown: SBP_STATE.stepdownOverride } };
+  }
+  if (SBP_STATE.stepoverOverride !== null) {
+    base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, stepover: SBP_STATE.stepoverOverride } };
+  }
 
   // Set materialX/Y from STATE mesh dims
   base.materialX = STATE.meshX;
@@ -196,6 +251,7 @@ function buildRangeControl(
   input.max = String(max);
   input.step = String(step);
   input.value = String(value);
+  input.dataset.default = String(value);
 
   row.append(controlLabel, input);
   return row;
@@ -320,10 +376,27 @@ export function buildSBPSection(): HTMLElement {
     roughingRow,
     finishingRow,
     profileRow,
-    buildRangeControl('sl_sbpThickness', 'val_sbpThickness', 'Material Thickness (in)', SBP_STATE.materialThickness.toFixed(2), 0.25, 6, 0.05, SBP_STATE.materialThickness),
     buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', SBP_STATE.leaveStock.toFixed(3), 0, 0.1, 0.005, SBP_STATE.leaveStock),
     buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', SBP_STATE.offsetX.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetX),
     buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', SBP_STATE.offsetY.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetY),
+    buildRangeControl('sl_sbpSafeZ', 'val_sbpSafeZ', 'Safe Z (in)', SBP_STATE.safeZ.toFixed(1), 0.5, 6, 0.1, SBP_STATE.safeZ),
+    buildRangeControl('sl_sbpHomeZ', 'val_sbpHomeZ', 'Home Z (in)', SBP_STATE.homeZ.toFixed(1), 1.0, 6, 0.1, SBP_STATE.homeZ),
+    buildRangeControl('sl_sbpRasterAngle', 'val_sbpRasterAngle', 'Raster Angle (deg)', String(SBP_STATE.finishRasterAngle), 0, 90, 5, SBP_STATE.finishRasterAngle),
+    buildRangeControl('sl_sbpFeedRate', 'val_sbpFeedRate', 'Feed Rate (ips)',
+      (SBP_STATE.feedRateOverride ?? finishingTool.cutting.feedRate).toFixed(1),
+      0.1, 8, 0.1, SBP_STATE.feedRateOverride ?? finishingTool.cutting.feedRate),
+    buildRangeControl('sl_sbpPlungeRate', 'val_sbpPlungeRate', 'Plunge Rate (ips)',
+      (SBP_STATE.plungeRateOverride ?? finishingTool.cutting.plungeRate).toFixed(2),
+      0.05, 3, 0.05, SBP_STATE.plungeRateOverride ?? finishingTool.cutting.plungeRate),
+    buildRangeControl('sl_sbpRpm', 'val_sbpRpm', 'Spindle RPM',
+      String(SBP_STATE.rpmOverride ?? finishingTool.cutting.rpm),
+      5000, 24000, 500, SBP_STATE.rpmOverride ?? finishingTool.cutting.rpm),
+    buildRangeControl('sl_sbpStepdown', 'val_sbpStepdown', 'Stepdown (in)',
+      (SBP_STATE.stepdownOverride ?? roughingTool.cutting.stepdown).toFixed(3),
+      0.01, 1, 0.01, SBP_STATE.stepdownOverride ?? roughingTool.cutting.stepdown),
+    buildRangeControl('sl_sbpStepover', 'val_sbpStepover', 'Stepover (in)',
+      (SBP_STATE.stepoverOverride ?? finishingTool.cutting.stepover).toFixed(3),
+      0.005, 0.5, 0.005, SBP_STATE.stepoverOverride ?? finishingTool.cutting.stepover),
     uploadZone,
   );
 
@@ -359,18 +432,39 @@ export function wireSBPControls(): void {
   if (profileEl) {
     profileEl.addEventListener('change', () => {
       SBP_STATE.materialProfile = profileEl.value as MaterialProfile;
+      SBP_STATE.feedRateOverride = null;
+      SBP_STATE.plungeRateOverride = null;
+      SBP_STATE.rpmOverride = null;
+      SBP_STATE.stepdownOverride = null;
+      SBP_STATE.stepoverOverride = null;
       invalidateSbpStats();
-    });
-  }
-
-  // Thickness slider
-  const thicknessEl = document.getElementById('sl_sbpThickness') as HTMLInputElement | null;
-  if (thicknessEl) {
-    thicknessEl.addEventListener('input', () => {
-      SBP_STATE.materialThickness = parseFloat(thicknessEl.value);
-      const valEl = document.getElementById('val_sbpThickness');
-      if (valEl) valEl.textContent = SBP_STATE.materialThickness.toFixed(2);
-      invalidateSbpStats();
+      const sbpSection = document.getElementById('sbpSection');
+      if (sbpSection) {
+        const newSection = buildSBPSection();
+        sbpSection.replaceWith(newSection);
+        wireSBPControls();
+        updateExportControls();
+        // Re-wire accordion on the replaced section (including mobile behavior)
+        const newHeader = newSection.querySelector<HTMLElement>('.section-header');
+        if (newHeader) {
+          newHeader.addEventListener('click', () => {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar && window.matchMedia('(max-width: 900px)').matches) {
+              const allSections = sidebar.querySelectorAll('.section');
+              const wasCollapsed = newSection.classList.contains('collapsed');
+              allSections.forEach(s => s.classList.add('collapsed'));
+              if (wasCollapsed) newSection.classList.remove('collapsed');
+              allSections.forEach(s => {
+                const h = s.querySelector<HTMLElement>('.section-header');
+                if (h) h.setAttribute('aria-expanded', String(!s.classList.contains('collapsed')));
+              });
+            } else {
+              newSection.classList.toggle('collapsed');
+              newHeader.setAttribute('aria-expanded', String(!newSection.classList.contains('collapsed')));
+            }
+          });
+        }
+      }
     });
   }
 
@@ -403,6 +497,105 @@ export function wireSBPControls(): void {
       const valEl = document.getElementById('val_sbpOffsetY');
       if (valEl) valEl.textContent = SBP_STATE.offsetY.toFixed(1);
       invalidateSbpStats();
+    });
+  }
+
+  const safeZEl = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
+  const homeZEl = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
+  if (safeZEl) safeZEl.addEventListener('input', () => {
+    let val = parseFloat(safeZEl.value);
+    if (val >= SBP_STATE.homeZ) val = SBP_STATE.homeZ - 0.1;
+    SBP_STATE.safeZ = Math.min(6, Math.max(0.5, parseFloat(val.toFixed(1))));
+    safeZEl.value = String(SBP_STATE.safeZ);
+    const v = document.getElementById('val_sbpSafeZ');
+    if (v) v.textContent = SBP_STATE.safeZ.toFixed(1);
+    invalidateSbpStats();
+  });
+
+  if (homeZEl) homeZEl.addEventListener('input', () => {
+    let val = parseFloat(homeZEl.value);
+    if (val <= SBP_STATE.safeZ) val = SBP_STATE.safeZ + 0.1;
+    SBP_STATE.homeZ = Math.min(6, parseFloat(val.toFixed(1)));
+    homeZEl.value = String(SBP_STATE.homeZ);
+    const v = document.getElementById('val_sbpHomeZ');
+    if (v) v.textContent = SBP_STATE.homeZ.toFixed(1);
+    invalidateSbpStats();
+  });
+
+  const rasterEl = document.getElementById('sl_sbpRasterAngle') as HTMLInputElement | null;
+  if (rasterEl) rasterEl.addEventListener('input', () => {
+    SBP_STATE.finishRasterAngle = parseFloat(rasterEl.value);
+    const v = document.getElementById('val_sbpRasterAngle');
+    if (v) v.textContent = String(SBP_STATE.finishRasterAngle);
+    invalidateSbpStats();
+  });
+
+  // Override sliders: drag to set, double-click to reset to profile default
+  const finishingTool = getDefaultConfig(SBP_STATE.materialProfile).finishingTool;
+  const roughingTool = getDefaultConfig(SBP_STATE.materialProfile).roughingTool;
+
+  function wireOverrideSlider(
+    sliderId: string, valueId: string,
+    getDefault: () => number, format: (n: number) => string,
+    setOverride: (v: number | null) => void,
+  ): void {
+    const el = document.getElementById(sliderId) as HTMLInputElement | null;
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const val = parseFloat(el.value);
+      setOverride(val);
+      const v = document.getElementById(valueId);
+      if (v) v.textContent = format(val);
+      invalidateSbpStats();
+    });
+    el.addEventListener('dblclick', () => {
+      setOverride(null);
+      const def = getDefault();
+      el.value = String(def);
+      const v = document.getElementById(valueId);
+      if (v) v.textContent = format(def);
+      invalidateSbpStats();
+    });
+  }
+
+  wireOverrideSlider('sl_sbpFeedRate', 'val_sbpFeedRate',
+    () => finishingTool.cutting.feedRate, n => n.toFixed(1),
+    v => { SBP_STATE.feedRateOverride = v; });
+  wireOverrideSlider('sl_sbpPlungeRate', 'val_sbpPlungeRate',
+    () => finishingTool.cutting.plungeRate, n => n.toFixed(2),
+    v => { SBP_STATE.plungeRateOverride = v; });
+  wireOverrideSlider('sl_sbpRpm', 'val_sbpRpm',
+    () => finishingTool.cutting.rpm, n => String(n),
+    v => { SBP_STATE.rpmOverride = v; });
+  wireOverrideSlider('sl_sbpStepdown', 'val_sbpStepdown',
+    () => roughingTool.cutting.stepdown, n => n.toFixed(3),
+    v => { SBP_STATE.stepdownOverride = v; });
+  wireOverrideSlider('sl_sbpStepover', 'val_sbpStepover',
+    () => finishingTool.cutting.stepover, n => n.toFixed(3),
+    v => { SBP_STATE.stepoverOverride = v; });
+
+  // Click value label to type exact number (SBP sliders)
+  const sbpSection = document.getElementById('sbpSection');
+  if (sbpSection) {
+    sbpSection.querySelectorAll<HTMLElement>('.control-label .val').forEach(valSpan => {
+      const valueId = valSpan.id;
+      if (!valueId) return;
+      const row = valSpan.closest('.control-row');
+      const sl = row?.querySelector<HTMLInputElement>('input[type="range"]');
+      if (!sl) return;
+      attachValueEdit(valSpan, sl);
+    });
+
+    // Double-click non-override sliders to reset default
+    sbpSection.querySelectorAll<HTMLInputElement>('input[type="range"][data-default]').forEach(sl => {
+      // Skip override sliders -- they already have dblclick via wireOverrideSlider
+      if (sl.id.match(/Feed|Plunge|Rpm|Stepdown|Stepover/)) return;
+      sl.addEventListener('dblclick', () => {
+        const def = sl.dataset.default;
+        if (def === undefined) return;
+        sl.value = def;
+        sl.dispatchEvent(new Event('input', { bubbles: true }));
+      });
     });
   }
 

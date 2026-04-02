@@ -39,9 +39,10 @@ docs/plans/
 .claude/
 __pycache__/
 .playwright-mcp/
-.codex/critiques/abundant-gathering-muffin-critique.md
+.codex/
 .agents/
 mesh-maker.code-workspace
+AGENTS.md
 
 # Source truth large binaries (STL, Aspire project files, reference SBP)
 sourceTruth/stl-to-sbp/example/*.stl

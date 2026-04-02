@@ -1,7 +1,8 @@
-import { STATE } from './state';
+import { STATE, DEFAULTS } from './state';
+import { attachValueEdit } from './slider-utils';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
-import { buildSBPSection, wireSBPControls } from './sbp-export';
+import { buildSBPSection, wireSBPControls, syncSbpSafeZ } from './sbp-export';
 import { updateExportControls } from './toolbar';
 
 
@@ -34,6 +35,12 @@ export function buildSidebar(): void {
   sb.replaceChildren(fragment);
 
   wireControls();
+  // Sync cut-depth slider maxes and SBP safe Z to initial material thickness
+  const ampInit = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
+  if (ampInit) ampInit.max = String(STATE.baseThickness);
+  const dmInit = document.querySelector<HTMLInputElement>('input[data-key="dmHeightScale"]');
+  if (dmInit) dmInit.max = String(STATE.baseThickness);
+  syncSbpSafeZ();
   wireSBPControls();
   updateExportControls();
 }
@@ -99,6 +106,7 @@ function slider(key: string, label: string, min: number, max: number, step: numb
   input.step = String(step);
   input.value = String(val);
   input.dataset.key = key;
+  input.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? val);
   row.append(buildSliderLabel(label, `val_${key}`, valueText, badgeText), input);
   return row;
 }
@@ -169,7 +177,7 @@ function buildMeshDimensionsSection(): HTMLElement {
   return buildSection('Mesh Dimensions', [
     inlineRow,
     slider('resolution', 'Grid Resolution', 16, 1024, 4),
-    slider('baseThickness', 'Base Thickness (in)', 0, 4, 0.05),
+    slider('baseThickness', 'Material Thickness (in)', 0.25, 6, 0.05),
     note,
   ]);
 }
@@ -240,7 +248,7 @@ function buildNoiseParametersSection(): HTMLElement {
 
   children.push(
     slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005),
-    slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05, 'max Z: 6"'),
+    slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05),
     slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05),
     slider('offset', 'Vertical Offset', -2, 2, 0.05),
     seedRow,
@@ -269,9 +277,11 @@ function buildAdvancedNoiseSection(): HTMLElement {
     slider('persistence', 'Persistence', 0.1, 1, 0.05),
     slider('lacunarity', 'Lacunarity', 1, 4, 0.1),
     slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05),
+    slider('warpFreq', 'Warp Frequency', 0.02, 0.4, 0.01),
+    slider('warpCurl', 'Warp Curl (0=fold, 1=flow)', 0, 1, 0.05),
     slider('contrast', 'Contrast', 0.1, 3, 0.05),
     slider('sharpness', 'Sharpness', 0, 2, 0.05),
-  ], true, 'noise-only');
+  ], false, 'noise-only');
 }
 
 function buildSmoothingSection(): HTMLElement {
@@ -317,7 +327,7 @@ function buildViewControlsSection(): HTMLElement {
     slider('roll', 'Roll', -180, 180, 1),
     slider('zoom', 'Zoom', 0.1, 10, 0.05),
     note,
-  ], true);
+  ], false);
 }
 
 function wireControls(): void {
@@ -347,6 +357,36 @@ function wireControls(): void {
         }
       }
 
+      // Cut depths cannot exceed material thickness
+      if (key === 'baseThickness' || key === 'amplitude' || key === 'dmHeightScale') {
+        const bt = STATE.baseThickness;
+        const ampSlider = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
+        if (ampSlider) {
+          ampSlider.max = String(bt);
+          if (STATE.amplitude > bt) {
+            STATE.amplitude = bt;
+            ampSlider.value = String(bt);
+            const ampVal = document.getElementById('val_amplitude');
+            if (ampVal) ampVal.textContent = bt.toFixed(2);
+          }
+        }
+        const dmSlider = document.querySelector<HTMLInputElement>('input[data-key="dmHeightScale"]');
+        if (dmSlider) {
+          dmSlider.max = String(bt);
+          if (STATE.dmHeightScale > bt) {
+            STATE.dmHeightScale = bt;
+            dmSlider.value = String(bt);
+            const dmVal = document.getElementById('val_dmHeightScale');
+            if (dmVal) dmVal.textContent = bt.toFixed(2);
+          }
+        }
+      }
+
+      // Safe Z tracks material thickness
+      if (key === 'baseThickness') {
+        syncSbpSafeZ();
+      }
+
       // Clear active preset/profile on manual change
       if (STATE.activePreset) {
         STATE.activePreset = null;
@@ -361,37 +401,67 @@ function wireControls(): void {
 
       debouncedGenerate(key);
     });
+
+    // Double-click slider to reset to default
+    sl.addEventListener('dblclick', () => {
+      const def = sl.dataset.default;
+      if (def === undefined) return;
+      sl.value = def;
+      sl.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
+
+  // Click value label to type exact number
+  document.querySelectorAll<HTMLElement>('.control-label .val').forEach(valSpan => {
+    const id = valSpan.id;
+    if (!id.startsWith('val_')) return;
+    const key = id.slice(4);
+    const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
+    if (!sl) return;
+    attachValueEdit(valSpan, sl);
   });
 
   // Section collapse
-  const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+  wireSectionCollapse();
+}
+
+const isMobile = (): boolean => window.matchMedia('(max-width: 900px)').matches;
+
+/** Wire accordion collapse/expand on a single section. Exported for SBP profile rebuild. */
+export function wireSectionAccordion(section: Element): void {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const header = section.querySelector<HTMLElement>('.section-header');
+  if (!header) return;
+  const syncExpanded = (): void => {
+    header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
+  };
+  header.addEventListener('click', () => {
+    if (isMobile()) {
+      const sections = sidebar.querySelectorAll('.section');
+      const wasCollapsed = section.classList.contains('collapsed');
+      sections.forEach(s => s.classList.add('collapsed'));
+      if (wasCollapsed) section.classList.remove('collapsed');
+      sections.forEach(s => {
+        const h = s.querySelector<HTMLElement>('.section-header');
+        if (h) h.setAttribute('aria-expanded', String(!s.classList.contains('collapsed')));
+      });
+    } else {
+      section.classList.toggle('collapsed');
+      syncExpanded();
+    }
+  });
+  syncExpanded();
+}
+
+function wireSectionCollapse(): void {
   const sidebar = document.getElementById('sidebar')!;
   const sections = sidebar.querySelectorAll('.section');
-  const syncExpandedState = (section: Element): void => {
-    const header = section.querySelector<HTMLElement>('.section-header');
-    if (header) {
-      header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
-    }
-  };
-  sidebar.querySelectorAll('.section-header').forEach(h => {
-    h.addEventListener('click', () => {
-      const section = h.parentElement!;
-      if (isMobile()) {
-        const wasCollapsed = section.classList.contains('collapsed');
-        sections.forEach(s => s.classList.add('collapsed'));
-        if (wasCollapsed) section.classList.remove('collapsed');
-        sections.forEach(syncExpandedState);
-      } else {
-        section.classList.toggle('collapsed');
-        syncExpandedState(section);
-      }
-    });
-  });
+  sections.forEach(s => wireSectionAccordion(s));
   if (isMobile()) {
     const visible = [...sections].filter(s => (s as HTMLElement).offsetParent !== null);
     visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
   }
-  sections.forEach(syncExpandedState);
 
   // Noise type select
   const sel = document.getElementById('selNoiseType') as HTMLSelectElement | null;

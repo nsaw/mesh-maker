@@ -85,7 +85,7 @@ Exported STL/OBJ files are ready for CAM software like VCarve, Aspire, or Fusion
 
 ## Architecture
 
-Vite + TypeScript. No WebGL, no frameworks. Canvas 2D rendering is intentional -- simpler, more portable, and performant for typical CNC mesh resolutions.
+Vite + TypeScript + Three.js. Hardware-accelerated WebGL rendering with Phong shading, depth buffer, and MSAA anti-aliasing.
 
 ```text
 src/
@@ -96,7 +96,7 @@ src/
 │   ├── generators.ts    # 14+ noise classes + factory
 │   └── presets.ts       # 15 CNC presets, 6 texture profiles
 ├── mesh.ts              # Mesh generation + smoothing
-├── render.ts            # Canvas 2D 3D rendering (painter's algo, Gouraud shading)
+├── render.ts            # Three.js WebGL rendering (Phong shading, custom camera)
 ├── export.ts            # STL, OBJ, heightmap PNG, SBP export dispatcher
 ├── sbp-export.ts        # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 ├── ui.ts                # Sidebar, sliders, depth map upload, SBP config panel
