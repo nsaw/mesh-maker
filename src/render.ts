@@ -327,11 +327,31 @@ function buildSurface(
       }
     }
 
+  // Analytical heightfield normals from central differences -- much smoother than
+  // computeVertexNormals() which averages discrete face normals and creates visible
+  // faceting seams on steep terrain.
+  const normals = new Float32Array(rows * cols * 3);
+  const sx = meshX / (cols - 1);
+  const sy = meshY / (rows - 1);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const il = i > 0 ? i - 1 : i, ir = i < cols - 1 ? i + 1 : i;
+      const jd = j > 0 ? j - 1 : j, ju = j < rows - 1 ? j + 1 : j;
+      const dzdx = (vertices[j][ir] - vertices[j][il]) / ((ir - il) * sx);
+      const dzdy = (vertices[ju][i] - vertices[jd][i]) / ((ju - jd) * sy);
+      const len = Math.sqrt(dzdx * dzdx + dzdy * dzdy + 1);
+      const idx = j * cols + i;
+      normals[idx * 3] = -dzdx / len;
+      normals[idx * 3 + 1] = -dzdy / len;
+      normals[idx * 3 + 2] = 1 / len;
+    }
+  }
+
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geo.setIndex(indices);
-  geo.computeVertexNormals();
 
   // Texture-based color ramp: sampled per-pixel in fragment shader = smooth gradients
   _surfaceMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
