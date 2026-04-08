@@ -25,14 +25,24 @@ function triNormal(a: Vertex3D, b: Vertex3D, c: Vertex3D): Vertex3D {
   return len > 0 ? { x: nx/len, y: ny/len, z: nz/len } : { x: 0, y: 0, z: 1 };
 }
 
+/** Shortest-diagonal heuristic: split quad along the diagonal with smaller Z-difference. */
+export function useAlternateDiagonal(z00: number, z10: number, z01: number, z11: number): boolean {
+  return Math.abs(z10 - z01) < Math.abs(z00 - z11);
+}
+
 function collectTriangles(mesh: MeshData): Triangle[] {
   const tris: Triangle[] = [];
   const { top, cols, rows, watertight } = mesh;
   const zBase = 0;
 
   for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
-    tris.push([top[j][i], top[j][i+1], top[j+1][i]]);
-    tris.push([top[j][i+1], top[j+1][i+1], top[j+1][i]]);
+    if (useAlternateDiagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
+      tris.push([top[j][i], top[j][i+1], top[j+1][i+1]]);
+      tris.push([top[j][i], top[j+1][i+1], top[j+1][i]]);
+    } else {
+      tris.push([top[j][i], top[j][i+1], top[j+1][i]]);
+      tris.push([top[j][i+1], top[j+1][i+1], top[j+1][i]]);
+    }
   }
 
   if (watertight) {
@@ -123,7 +133,11 @@ function exportOBJ(mesh: MeshData): string {
   s += '\n# Top surface\n';
   for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
     const a = topStart + j*cols+i, b = a+1, c = a+cols, d = c+1;
-    s += `f ${a} ${b} ${c}\nf ${b} ${d} ${c}\n`;
+    if (useAlternateDiagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
+      s += `f ${a} ${b} ${d}\nf ${a} ${d} ${c}\n`;
+    } else {
+      s += `f ${a} ${b} ${c}\nf ${b} ${d} ${c}\n`;
+    }
   }
 
   if (watertight) {
@@ -203,6 +217,7 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
 
   try {
     file = new rhino.File3dm();
+    file.settings().modelUnitSystem = rhino.UnitSystem.Inches;
 
     if (asPointCloud) {
       const points: number[][] = [];

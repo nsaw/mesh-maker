@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { STATE } from './state';
+import { useAlternateDiagonal } from './export';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;
@@ -312,13 +313,18 @@ function buildSurface(
     }
   }
 
-  // Indexed triangles (2 per quad)
+  // Indexed triangles (2 per quad, shortest-diagonal split)
   const indices: number[] = [];
   for (let j = 0; j < rows - 1; j++)
     for (let i = 0; i < cols - 1; i++) {
       const a = j * cols + i;
-      indices.push(a, a + 1, a + cols);
-      indices.push(a + 1, a + cols + 1, a + cols);
+      if (useAlternateDiagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1])) {
+        indices.push(a, a + 1, a + cols + 1);
+        indices.push(a, a + cols + 1, a + cols);
+      } else {
+        indices.push(a, a + 1, a + cols);
+        indices.push(a + 1, a + cols + 1, a + cols);
+      }
     }
 
   const geo = new THREE.BufferGeometry();
