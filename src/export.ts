@@ -245,7 +245,13 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
       for (let j = 0; j < rows - 1; j++)
         for (let i = 0; i < cols - 1; i++) {
           const a = j * cols + i;
-          m.faces().addQuadFace(a, a + 1, a + cols + 1, a + cols);
+          if (preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
+            m.faces().addFace(a, a + 1, a + cols + 1);
+            m.faces().addFace(a, a + cols + 1, a + cols);
+          } else {
+            m.faces().addFace(a, a + 1, a + cols);
+            m.faces().addFace(a + 1, a + cols + 1, a + cols);
+          }
         }
 
       if (watertight) {
