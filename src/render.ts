@@ -1,8 +1,4 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { STATE } from './state';
 import { useAlternateDiagonal } from './export';
 
@@ -16,7 +12,6 @@ let _pointsObj: THREE.Points | null = null;
 let _encGroup: THREE.Group | null = null;
 let _gizmoScene: THREE.Scene;
 let _gizmoCamera: THREE.OrthographicCamera;
-let _composer: EffectComposer | null = null;
 let _needsRender = false;
 let _rafPending = false;
 let _prevW = 0;
@@ -111,16 +106,6 @@ function ensureRenderer(): void {
   fillLight.position.set(1, 0.5, 0.3).normalize();
   _scene.add(fillLight);
 
-  // FXAA post-processing: smooths polygon-edge aliasing on steep ridge silhouettes
-  // that hardware MSAA alone cannot fully resolve.
-  _composer = new EffectComposer(_renderer);
-  const renderPass = new RenderPass(_scene, _camera);
-  renderPass.clearColor = new THREE.Color(BG_COLOR);
-  renderPass.clearAlpha = 1;
-  _composer.addPass(renderPass);
-  _composer.addPass(new FXAAPass());
-  _composer.addPass(new OutputPass());
-
   // Gizmo scene (AxesHelper + axis labels in scissored inset)
   _gizmoScene = new THREE.Scene();
   _gizmoScene.add(new THREE.AxesHelper(1));
@@ -154,18 +139,21 @@ function ensureRenderer(): void {
 }
 
 function doRender(): void {
-  if (!_renderer || !_composer) return;
+  if (!_renderer) return;
   // Three.js setViewport/setScissor apply DPR internally (set via setPixelRatio).
   // Pass CSS pixel dimensions, NOT buffer pixels, to avoid double-multiplication.
   const w = _prevW;
   const h = _prevH;
 
-  // Main scene through FXAA post-processing compositor
-  _renderer.setScissorTest(false);
+  // Main scene
   _renderer.setViewport(0, 0, w, h);
-  _composer.render();
+  _renderer.setScissor(0, 0, w, h);
+  _renderer.setScissorTest(true);
+  _renderer.setClearColor(BG_COLOR);
+  _renderer.clear();
+  _renderer.render(_scene, _camera);
 
-  // Gizmo inset (top-left corner, 80x80 CSS pixels, rendered on top of FXAA output)
+  // Gizmo inset (top-left corner, 80x80 CSS pixels)
   const gs = 80;
   const gx = 10;
   // WebGL origin is bottom-left; top-left corner in CSS coords
@@ -182,10 +170,8 @@ function doRender(): void {
   _gizmoCamera.up.copy(_camera.up);
   _gizmoCamera.lookAt(0, 0, 0);
 
-  _renderer.setRenderTarget(null);
   _renderer.setViewport(gx, gy, gs, gs);
   _renderer.setScissor(gx, gy, gs, gs);
-  _renderer.setScissorTest(true);
   _renderer.setClearColor(GIZMO_BG);
   _renderer.clear(true, true, false);
   _renderer.render(_gizmoScene, _gizmoCamera);
@@ -523,7 +509,6 @@ export function resizeCanvas(): void {
   const h = wrap.clientHeight;
   if (w !== _prevW || h !== _prevH) {
     _renderer.setSize(w, h);
-    if (_composer) _composer.setSize(w, h);
     _camera.aspect = w / h;
     _camera.updateProjectionMatrix();
     _prevW = w;
