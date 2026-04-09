@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { STATE } from './state';
-import { useAlternateDiagonal } from './export';
+import { useAlternateDiagonal } from './geometry';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;

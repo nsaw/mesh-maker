@@ -1,6 +1,7 @@
 import { STATE } from './state';
 import type { Vertex3D, Triangle, MeshData } from './types';
 import { showToast } from './toast';
+import { useAlternateDiagonal } from './geometry';
 
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
@@ -25,10 +26,6 @@ function triNormal(a: Vertex3D, b: Vertex3D, c: Vertex3D): Vertex3D {
   return len > 0 ? { x: nx/len, y: ny/len, z: nz/len } : { x: 0, y: 0, z: 1 };
 }
 
-/** Shortest-diagonal heuristic: split quad along the diagonal with smaller Z-difference. */
-export function useAlternateDiagonal(z00: number, z10: number, z01: number, z11: number): boolean {
-  return Math.abs(z10 - z01) < Math.abs(z00 - z11);
-}
 
 function collectTriangles(mesh: MeshData): Triangle[] {
   const tris: Triangle[] = [];
