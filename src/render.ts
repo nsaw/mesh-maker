@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { STATE } from './state';
-import { useAlternateDiagonal } from './geometry';
+import { preferZ00Z11Diagonal } from './geometry';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;
@@ -318,7 +318,7 @@ function buildSurface(
   for (let j = 0; j < rows - 1; j++)
     for (let i = 0; i < cols - 1; i++) {
       const a = j * cols + i;
-      if (useAlternateDiagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1])) {
+      if (preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1])) {
         indices.push(a, a + 1, a + cols + 1);
         indices.push(a, a + cols + 1, a + cols);
       } else {

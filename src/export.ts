@@ -1,7 +1,7 @@
 import { STATE } from './state';
 import type { Vertex3D, Triangle, MeshData } from './types';
 import { showToast } from './toast';
-import { useAlternateDiagonal } from './geometry';
+import { preferZ00Z11Diagonal } from './geometry';
 
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
@@ -33,7 +33,7 @@ function collectTriangles(mesh: MeshData): Triangle[] {
   const zBase = 0;
 
   for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
-    if (useAlternateDiagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
+    if (preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
       tris.push([top[j][i], top[j][i+1], top[j+1][i+1]]);
       tris.push([top[j][i], top[j+1][i+1], top[j+1][i]]);
     } else {
@@ -130,7 +130,7 @@ function exportOBJ(mesh: MeshData): string {
   s += '\n# Top surface\n';
   for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
     const a = topStart + j*cols+i, b = a+1, c = a+cols, d = c+1;
-    if (useAlternateDiagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
+    if (preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
       s += `f ${a} ${b} ${d}\nf ${a} ${d} ${c}\n`;
     } else {
       s += `f ${a} ${b} ${c}\nf ${b} ${d} ${c}\n`;
