@@ -283,7 +283,7 @@ export function generateDepthMapMesh(): void {
         const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
         const iy = Math.min(Math.floor(v * depthMap.height), depthMap.height - 1);
         const idx = (iy * depthMap.width + ix) * 4;
-        verts[j][i] = (imgData.data[idx] / 255) * dmHeightScale;
+        verts[j][i] = imgData.data[idx] / 255;
       }
     }
 

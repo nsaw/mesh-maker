@@ -142,9 +142,12 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 1;
+const CURRENT_PAYLOAD_VERSION = 2;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
+};
+const LEGACY_V1_DEFAULTS: Partial<MeshState> = {
+  viewMode: 'wireframe',
 };
 
 export function serializeConfig(): string {
@@ -176,6 +179,13 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     const payloadVersion: number = parsed._v ?? 0;
     if (payloadVersion < 1) {
       for (const [k, v] of Object.entries(LEGACY_V0_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 2) {
+      for (const [k, v] of Object.entries(LEGACY_V1_DEFAULTS)) {
         if (!(k in parsed)) {
           (result as Record<string, unknown>)[k] = v;
         }

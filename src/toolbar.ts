@@ -46,8 +46,8 @@ export function setupTabs(): void {
         buildSidebar();
       }
 
-      // Re-fit mesh to depth map aspect when entering depthmap/blend with existing image
-      if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && STATE.depthMap && !STATE.aspectLocked) {
+      // Re-fit mesh to depth map aspect only when entering from noise mode
+      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'blend') && STATE.depthMap && !STATE.aspectLocked) {
         fitMeshToAspect(STATE.depthMap.width, STATE.depthMap.height);
         buildSidebar();
       }
