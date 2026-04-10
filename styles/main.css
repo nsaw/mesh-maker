@@ -526,9 +526,10 @@ canvas {
 }
 .tip-btn:hover { background: #ffbb33; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(255,170,78,0.3); }
 
-/* DEPTH MAP ONLY */
+/* DEPTH MAP / BLEND visibility */
 .depth-map-only { display: none; }
-body.mode-depthmap .depth-map-only { display: block; }
+body.mode-depthmap .depth-map-only,
+body.mode-blend .depth-map-only { display: block; }
 body.mode-depthmap .noise-only { display: none; }
 
 /* SBP TOOLPATH SECTION */

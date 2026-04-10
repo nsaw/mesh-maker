@@ -68,7 +68,7 @@ export interface MeshState {
 
 export const DEFAULTS: MeshState = {
   mode: 'noise',
-  viewMode: 'wireframe',
+  viewMode: 'solid',
   exportFormat: 'stl',
   noiseType: 'simplex',
   frequency: 0.1,

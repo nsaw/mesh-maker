@@ -45,6 +45,13 @@ export function setupTabs(): void {
         }
         buildSidebar();
       }
+
+      // Re-fit mesh to depth map aspect when entering depthmap/blend with existing image
+      if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && STATE.depthMap && !STATE.aspectLocked) {
+        fitMeshToAspect(STATE.depthMap.width, STATE.depthMap.height);
+        buildSidebar();
+      }
+
       generateMesh();
     });
   });

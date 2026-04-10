@@ -468,7 +468,7 @@ function updateVisibility(): void {
   if (_surfaceMesh) _surfaceMesh.visible = showSolid;
   if (_wireLines) _wireLines.visible = mode === 'wireframe' || mode === 'both';
   if (_pointsObj) _pointsObj.visible = mode === 'points';
-  if (_encGroup) _encGroup.visible = STATE.watertight && STATE.baseThickness > 0;
+  if (_encGroup) _encGroup.visible = showSolid && STATE.watertight && STATE.baseThickness > 0;
 }
 
 // --- Public API ---

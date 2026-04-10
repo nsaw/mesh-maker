@@ -56,3 +56,4 @@ sourceTruth/**/*.DS_Store
 
 # stl-to-sbp working directory (old location, root only)
 /stl-to-sbp/
+verification/

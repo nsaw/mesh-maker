@@ -122,6 +122,8 @@ export function generateNoiseMesh(): void {
 export function generateDepthMapMesh(): void {
   const t0 = performance.now();
   const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency,
+          noiseExp, peakExp, valleyExp, valleyFloor, distortion, warpFreq, warpCurl,
+          contrast, sharpness, smoothIter, smoothStr,
           seed, octaves, persistence, lacunarity, meshX, meshY, resolution, noiseType, baseThickness } = STATE;
 
   if (!depthMap) { STATE.vertices = null; return; }
@@ -139,60 +141,171 @@ export function generateDepthMapMesh(): void {
   tmpCtx.drawImage(depthMap, 0, 0);
   const imgData = tmpCtx.getImageData(0, 0, depthMap.width, depthMap.height);
 
-  const verts: number[][] = [];
-  for (let j = 0; j < rows; j++) {
-    verts[j] = [];
-    for (let i = 0; i < cols; i++) {
-      const u = i / (cols - 1), v = j / (rows - 1);
-      const x = u * meshX, y = v * meshY;
-
-      const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
-      const iy = Math.min(Math.floor(v * depthMap.height), depthMap.height - 1);
-      const idx = (iy * depthMap.width + ix) * 4;
-      const r = imgData.data[idx];
-      const h = (r / 255) * dmHeightScale;
-
-      let n: number;
-      if ('fbm' in gen) {
-        n = (gen as FBMGenerator).fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
-      } else if (octaves > 1) {
-        n = 0; let amp = 1, freq = 1, max = 0;
-        for (let o = 0; o < octaves; o++) {
-          n += gen.noise(x * frequency * freq, y * frequency * freq) * amp;
-          max += amp; amp *= persistence; freq *= lacunarity;
-        }
-        n /= max;
-      } else {
-        n = gen.noise(x * frequency, y * frequency);
-      }
-      const noiseH = ((n + 1) / 2) * dmHeightScale;
-
-      const effectiveBlend = STATE.mode === 'depthmap' ? 0 : (STATE.mode === 'noise' ? 1 : blend);
-      verts[j][i] = effectiveBlend * noiseH + (1 - effectiveBlend) * h;
-    }
-  }
-
-  const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
-
-  // CNC z-model: same as noise path -- peaks at stock top, valleys at stock top - cut depth
+  const effectiveBlend = STATE.mode === 'depthmap' ? 0 : blend;
   const bt = STATE.watertight ? Math.max(0.01, baseThickness) : baseThickness;
   const cutDepth = Math.min(dmHeightScale, bt);
-  let nMin = Infinity, nMax = -Infinity;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      if (finalVerts[j][i] < nMin) nMin = finalVerts[j][i];
-      if (finalVerts[j][i] > nMax) nMax = finalVerts[j][i];
-    }
-  const nRange = nMax - nMin || 1;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      const t = (finalVerts[j][i] - nMin) / nRange;
-      // Clamp to material boundaries: hard crop at stock top and machine bed
-      const raw = (bt - cutDepth) + t * cutDepth + dmOffset;
-      finalVerts[j][i] = Math.max(0, Math.min(bt, raw));
+
+  if (effectiveBlend > 0) {
+    // Blend approach matching the p5.js prototype: both noise and depth map
+    // normalized to [0, 1], linearly blended in shared space, then a single
+    // CNC normalization at the end. This ensures both surfaces occupy the
+    // same z-range so the blend slider produces a natural transition.
+    const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
+
+    // --- Noise grid (full pipeline from generateNoiseMesh) ---
+    const noiseVerts: number[][] = [];
+    for (let j = 0; j < rows; j++) {
+      noiseVerts[j] = [];
+      for (let i = 0; i < cols; i++) {
+        const u = i / (cols - 1), v = j / (rows - 1);
+        let x = u * meshX, y = v * meshY;
+
+        if (warpGen && distortion > 0) {
+          const wf = warpFreq;
+          const wAmp = distortion * 5;
+          const sx = x * wf, sy = y * wf;
+          let curlDx = 0, curlDy = 0;
+          if (warpCurl > 0) {
+            const eps = 0.01;
+            const dndx = (warpGen.noise(sx + eps, sy) - warpGen.noise(sx - eps, sy)) / (2 * eps);
+            const dndy = (warpGen.noise(sx, sy + eps) - warpGen.noise(sx, sy - eps)) / (2 * eps);
+            curlDx = dndy;
+            curlDy = -dndx;
+          }
+          const convW = 1 - warpCurl;
+          if (convW > 0) {
+            const convDx = warpGen.noise(sx, sy);
+            x += (convDx * convW + curlDx * warpCurl) * wAmp;
+            const convDy = warpGen.noise((x + 100) * wf, (y + 100) * wf);
+            y += (convDy * convW + curlDy * warpCurl) * wAmp;
+          } else {
+            x += curlDx * wAmp;
+            y += curlDy * wAmp;
+          }
+        }
+
+        let n: number;
+        if ('fbm' in gen) {
+          n = (gen as FBMGenerator).fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
+        } else if (octaves > 1) {
+          n = 0; let a = 1, freq = 1, max = 0;
+          for (let o = 0; o < octaves; o++) {
+            n += gen.noise(x * frequency * freq, y * frequency * freq) * a;
+            max += a; a *= persistence; freq *= lacunarity;
+          }
+          n /= max;
+        } else {
+          n = gen.noise(x * frequency, y * frequency);
+        }
+
+        n *= contrast;
+        if (sharpness > 0) {
+          const s = n >= 0 ? 1 : -1;
+          n = s * Math.pow(Math.abs(n), 1 + sharpness);
+        }
+        const sgn = n >= 0 ? 1 : -1;
+        n = sgn * Math.pow(Math.abs(n), noiseExp);
+        if (n >= 0) n = Math.pow(n, peakExp);
+        else n = -Math.pow(-n, valleyExp);
+        if (valleyFloor > 0 && n < 0) n = n * (1 - valleyFloor);
+
+        noiseVerts[j][i] = n;
+      }
     }
 
-  STATE.vertices = finalVerts;
+    // Smooth noise independently, then normalize to [0, 1]
+    const smoothedNoise = smoothIter > 0 ? weightedSmooth(noiseVerts, rows, cols, smoothIter, smoothStr) : noiseVerts;
+    let nMin = Infinity, nMax = -Infinity;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++) {
+        if (smoothedNoise[j][i] < nMin) nMin = smoothedNoise[j][i];
+        if (smoothedNoise[j][i] > nMax) nMax = smoothedNoise[j][i];
+      }
+    const nRange = nMax - nMin || 1;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++)
+        smoothedNoise[j][i] = (smoothedNoise[j][i] - nMin) / nRange;
+
+    // --- Depth map grid, normalized to [0, 1] ---
+    const dmVerts: number[][] = [];
+    for (let j = 0; j < rows; j++) {
+      dmVerts[j] = [];
+      for (let i = 0; i < cols; i++) {
+        const u = i / (cols - 1), v = j / (rows - 1);
+        const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
+        const iy = Math.min(Math.floor(v * depthMap.height), depthMap.height - 1);
+        const idx = (iy * depthMap.width + ix) * 4;
+        dmVerts[j][i] = imgData.data[idx] / 255;
+      }
+    }
+    let dmMin = Infinity, dmMax = -Infinity;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++) {
+        if (dmVerts[j][i] < dmMin) dmMin = dmVerts[j][i];
+        if (dmVerts[j][i] > dmMax) dmMax = dmVerts[j][i];
+      }
+    const dmRange = dmMax - dmMin || 1;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++)
+        dmVerts[j][i] = (dmVerts[j][i] - dmMin) / dmRange;
+    const smoothedDM = dmSmoothing > 0 ? weightedSmooth(dmVerts, rows, cols, dmSmoothing, 0.6) : dmVerts;
+
+    // --- Blend in shared [0, 1] space, then CNC normalize once ---
+    // Both surfaces in [0, 1]. blend=0 -> pure depth map, blend=1 -> pure noise.
+    // Matches the p5.js prototype approach: blend * noise + (1-blend) * dm.
+    const b = effectiveBlend;
+    const blended: number[][] = [];
+    for (let j = 0; j < rows; j++) {
+      blended[j] = [];
+      for (let i = 0; i < cols; i++) {
+        const lerped = b * smoothedNoise[j][i] + (1 - b) * smoothedDM[j][i];
+        // Depth map is the floor -- noise can add texture above it but never cave in
+        blended[j][i] = Math.max(lerped, smoothedDM[j][i]);
+      }
+    }
+
+    // CNC z-model: scale blended [0,1] to [bt - cutDepth, bt]
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++) {
+        const raw = (bt - cutDepth) + blended[j][i] * cutDepth + dmOffset;
+        blended[j][i] = Math.max(0, Math.min(bt, raw));
+      }
+
+    STATE.vertices = blended;
+  } else {
+    // Pure depth map path -- no noise, original pipeline unchanged
+    const verts: number[][] = [];
+    for (let j = 0; j < rows; j++) {
+      verts[j] = [];
+      for (let i = 0; i < cols; i++) {
+        const u = i / (cols - 1), v = j / (rows - 1);
+
+        const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
+        const iy = Math.min(Math.floor(v * depthMap.height), depthMap.height - 1);
+        const idx = (iy * depthMap.width + ix) * 4;
+        verts[j][i] = (imgData.data[idx] / 255) * dmHeightScale;
+      }
+    }
+
+    const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
+
+    let nMin = Infinity, nMax = -Infinity;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++) {
+        if (finalVerts[j][i] < nMin) nMin = finalVerts[j][i];
+        if (finalVerts[j][i] > nMax) nMax = finalVerts[j][i];
+      }
+    const nRange = nMax - nMin || 1;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++) {
+        const t = (finalVerts[j][i] - nMin) / nRange;
+        const raw = (bt - cutDepth) + t * cutDepth + dmOffset;
+        finalVerts[j][i] = Math.max(0, Math.min(bt, raw));
+      }
+
+    STATE.vertices = finalVerts;
+  }
+
   STATE.genTime = performance.now() - t0;
 }
 
