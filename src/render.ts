@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { STATE } from './state';
-import { preferZ00Z11Diagonal } from './geometry';
+import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;
@@ -286,13 +286,7 @@ function buildSurface(
   const positions = new Float32Array(rows * cols * 3);
   const uvs = new Float32Array(rows * cols * 2);
 
-  let zMin = Infinity, zMax = -Infinity;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      const z = vertices[j][i];
-      if (z < zMin) zMin = z;
-      if (z > zMax) zMax = z;
-    }
+  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
   const zRange = zMax - zMin || 1;
   _cachedZMin = zMin;
   _cachedZMax = zMax;
@@ -318,13 +312,10 @@ function buildSurface(
   for (let j = 0; j < rows - 1; j++)
     for (let i = 0; i < cols - 1; i++) {
       const a = j * cols + i;
-      if (preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1])) {
-        indices.push(a, a + 1, a + cols + 1);
-        indices.push(a, a + cols + 1, a + cols);
-      } else {
-        indices.push(a, a + 1, a + cols);
-        indices.push(a + 1, a + cols + 1, a + cols);
-      }
+      const [t1, t2] = cellTriangleOffsets(
+        preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
+      indices.push(a + t1[0], a + t1[1], a + t1[2]);
+      indices.push(a + t2[0], a + t2[1], a + t2[2]);
     }
 
   // Analytical heightfield normals from central differences -- much smoother than

@@ -1,24 +1,20 @@
 import { STATE } from './state';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
-import type { FBMGenerator, NoiseConfig } from './types';
+import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
 import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
+import { gridMinMax } from './geometry';
 
-export function generateNoiseMesh(): void {
-  const t0 = performance.now();
-  const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
+/** Sample a raw noise grid with domain warping + FBM + post-processing.
+ *  Returns values in noise-native range (no CNC normalization, no smoothing). */
+function sampleNoiseGrid(p: NoiseGridParams): number[][] {
+  const { cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp,
+          valleyFloor, contrast, sharpness, octaves, persistence, lacunarity,
+          distortion, warpFreq, warpCurl, gen, warpGen } = p;
 
-  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
-  STATE.cols = cols; STATE.rows = rows;
-
-  const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
-  const gen = createNoiseGen(noiseType, seed, noiseConfig);
-  const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
-
-  const verts: number[][] = [];
+  const grid: number[][] = [];
   for (let j = 0; j < rows; j++) {
-    verts[j] = [];
+    grid[j] = [];
     for (let i = 0; i < cols; i++) {
       const u = i / (cols - 1), v = j / (rows - 1);
       let x = u * meshX, y = v * meshY;
@@ -30,7 +26,7 @@ export function generateNoiseMesh(): void {
       // Convergent x cascades into y lookup for asymmetric patterns.
       if (warpGen && distortion > 0) {
         const wf = warpFreq;
-        const amp = distortion * 5;
+        const wAmp = distortion * 5;
         const sx = x * wf, sy = y * wf;
 
         // Curl component: numerical gradient of noise, rotated 90 degrees
@@ -47,12 +43,12 @@ export function generateNoiseMesh(): void {
         const convW = 1 - warpCurl;
         if (convW > 0) {
           const convDx = warpGen.noise(sx, sy);
-          x += (convDx * convW + curlDx * warpCurl) * amp;
+          x += (convDx * convW + curlDx * warpCurl) * wAmp;
           const convDy = warpGen.noise((x + 100) * wf, (y + 100) * wf);
-          y += (convDy * convW + curlDy * warpCurl) * amp;
+          y += (convDy * convW + curlDy * warpCurl) * wAmp;
         } else {
-          x += curlDx * amp;
-          y += curlDy * amp;
+          x += curlDx * wAmp;
+          y += curlDy * wAmp;
         }
       }
 
@@ -60,10 +56,10 @@ export function generateNoiseMesh(): void {
       if ('fbm' in gen) {
         n = (gen as FBMGenerator).fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
       } else if (octaves > 1) {
-        n = 0; let amp = 1, freq = 1, max = 0;
+        n = 0; let a = 1, freq = 1, max = 0;
         for (let o = 0; o < octaves; o++) {
-          n += gen.noise(x * frequency * freq, y * frequency * freq) * amp;
-          max += amp; amp *= persistence; freq *= lacunarity;
+          n += gen.noise(x * frequency * freq, y * frequency * freq) * a;
+          max += a; a *= persistence; freq *= lacunarity;
         }
         n /= max;
       } else {
@@ -77,20 +73,33 @@ export function generateNoiseMesh(): void {
       }
       const sgn = n >= 0 ? 1 : -1;
       n = sgn * Math.pow(Math.abs(n), noiseExp);
+      if (n >= 0) n = Math.pow(n, peakExp);
+      else n = -Math.pow(-n, valleyExp);
+      if (valleyFloor > 0 && n < 0) n = n * (1 - valleyFloor);
 
-      if (n >= 0) {
-        n = Math.pow(n, peakExp);
-      } else {
-        n = -Math.pow(-n, valleyExp);
-      }
-
-      if (valleyFloor > 0 && n < 0) {
-        n = n * (1 - valleyFloor);
-      }
-
-      verts[j][i] = n;
+      grid[j][i] = n;
     }
   }
+  return grid;
+}
+
+export function generateNoiseMesh(): void {
+  const t0 = performance.now();
+  const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
+          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
+
+  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
+  STATE.cols = cols; STATE.rows = rows;
+
+  const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
+  const gen = createNoiseGen(noiseType, seed, noiseConfig);
+  const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
+
+  const verts = sampleNoiseGrid({
+    cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp, valleyFloor,
+    contrast, sharpness, octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
+    gen, warpGen,
+  });
 
   const finalVerts = smoothIter > 0 ? weightedSmooth(verts, rows, cols, smoothIter, smoothStr) : verts;
 
@@ -100,12 +109,7 @@ export function generateNoiseMesh(): void {
   // Floor to 0.01" when watertight to prevent degenerate enclosure triangles.
   const bt = STATE.watertight ? Math.max(0.01, baseThickness) : baseThickness;
   const cutDepth = Math.min(amplitude, bt);
-  let nMin = Infinity, nMax = -Infinity;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      if (finalVerts[j][i] < nMin) nMin = finalVerts[j][i];
-      if (finalVerts[j][i] > nMax) nMax = finalVerts[j][i];
-    }
+  const [nMin, nMax] = gridMinMax(finalVerts, rows, cols);
   const range = nMax - nMin || 1;
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++) {
@@ -152,75 +156,15 @@ export function generateDepthMapMesh(): void {
     // same z-range so the blend slider produces a natural transition.
     const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
 
-    // --- Noise grid (full pipeline from generateNoiseMesh) ---
-    const noiseVerts: number[][] = [];
-    for (let j = 0; j < rows; j++) {
-      noiseVerts[j] = [];
-      for (let i = 0; i < cols; i++) {
-        const u = i / (cols - 1), v = j / (rows - 1);
-        let x = u * meshX, y = v * meshY;
-
-        if (warpGen && distortion > 0) {
-          const wf = warpFreq;
-          const wAmp = distortion * 5;
-          const sx = x * wf, sy = y * wf;
-          let curlDx = 0, curlDy = 0;
-          if (warpCurl > 0) {
-            const eps = 0.01;
-            const dndx = (warpGen.noise(sx + eps, sy) - warpGen.noise(sx - eps, sy)) / (2 * eps);
-            const dndy = (warpGen.noise(sx, sy + eps) - warpGen.noise(sx, sy - eps)) / (2 * eps);
-            curlDx = dndy;
-            curlDy = -dndx;
-          }
-          const convW = 1 - warpCurl;
-          if (convW > 0) {
-            const convDx = warpGen.noise(sx, sy);
-            x += (convDx * convW + curlDx * warpCurl) * wAmp;
-            const convDy = warpGen.noise((x + 100) * wf, (y + 100) * wf);
-            y += (convDy * convW + curlDy * warpCurl) * wAmp;
-          } else {
-            x += curlDx * wAmp;
-            y += curlDy * wAmp;
-          }
-        }
-
-        let n: number;
-        if ('fbm' in gen) {
-          n = (gen as FBMGenerator).fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
-        } else if (octaves > 1) {
-          n = 0; let a = 1, freq = 1, max = 0;
-          for (let o = 0; o < octaves; o++) {
-            n += gen.noise(x * frequency * freq, y * frequency * freq) * a;
-            max += a; a *= persistence; freq *= lacunarity;
-          }
-          n /= max;
-        } else {
-          n = gen.noise(x * frequency, y * frequency);
-        }
-
-        n *= contrast;
-        if (sharpness > 0) {
-          const s = n >= 0 ? 1 : -1;
-          n = s * Math.pow(Math.abs(n), 1 + sharpness);
-        }
-        const sgn = n >= 0 ? 1 : -1;
-        n = sgn * Math.pow(Math.abs(n), noiseExp);
-        if (n >= 0) n = Math.pow(n, peakExp);
-        else n = -Math.pow(-n, valleyExp);
-        if (valleyFloor > 0 && n < 0) n = n * (1 - valleyFloor);
-
-        noiseVerts[j][i] = n;
-      }
-    }
+    const noiseVerts = sampleNoiseGrid({
+      cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp, valleyFloor,
+      contrast, sharpness, octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
+      gen, warpGen,
+    });
 
     // Smooth noise independently, then normalize to [0, 1]
     const smoothedNoise = smoothIter > 0 ? weightedSmooth(noiseVerts, rows, cols, smoothIter, smoothStr) : noiseVerts;
-    let nMin = Infinity, nMax = -Infinity;
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++) {
-        if (smoothedNoise[j][i] < nMin) nMin = smoothedNoise[j][i];
-        if (smoothedNoise[j][i] > nMax) nMax = smoothedNoise[j][i];
-      }
+    const [nMin, nMax] = gridMinMax(smoothedNoise, rows, cols);
     const nRange = nMax - nMin || 1;
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++)
@@ -238,12 +182,7 @@ export function generateDepthMapMesh(): void {
         dmVerts[j][i] = imgData.data[idx] / 255;
       }
     }
-    let dmMin = Infinity, dmMax = -Infinity;
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++) {
-        if (dmVerts[j][i] < dmMin) dmMin = dmVerts[j][i];
-        if (dmVerts[j][i] > dmMax) dmMax = dmVerts[j][i];
-      }
+    const [dmMin, dmMax] = gridMinMax(dmVerts, rows, cols);
     const dmRange = dmMax - dmMin || 1;
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++)
@@ -289,12 +228,7 @@ export function generateDepthMapMesh(): void {
 
     const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
 
-    let nMin = Infinity, nMax = -Infinity;
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++) {
-        if (finalVerts[j][i] < nMin) nMin = finalVerts[j][i];
-        if (finalVerts[j][i] > nMax) nMax = finalVerts[j][i];
-      }
+    const [nMin, nMax] = gridMinMax(finalVerts, rows, cols);
     const nRange = nMax - nMin || 1;
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++) {

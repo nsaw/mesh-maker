@@ -1,7 +1,7 @@
 import { STATE } from './state';
 import type { Vertex3D, Triangle, MeshData } from './types';
 import { showToast } from './toast';
-import { preferZ00Z11Diagonal } from './geometry';
+import { preferZ00Z11Diagonal, cellTriangleOffsets, emitWatertightTriangles, gridMinMax } from './geometry';
 
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
@@ -28,49 +28,30 @@ function triNormal(a: Vertex3D, b: Vertex3D, c: Vertex3D): Vertex3D {
 
 
 function collectTriangles(mesh: MeshData): Triangle[] {
-  const tris: Triangle[] = [];
   const { top, cols, rows, watertight } = mesh;
-  const zBase = 0;
 
-  for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
-    if (preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
-      tris.push([top[j][i], top[j][i+1], top[j+1][i+1]]);
-      tris.push([top[j][i], top[j+1][i+1], top[j+1][i]]);
-    } else {
-      tris.push([top[j][i], top[j][i+1], top[j+1][i]]);
-      tris.push([top[j][i+1], top[j+1][i+1], top[j+1][i]]);
-    }
+  // Flatten top[][] for index-based access: flat[j*cols+i] === top[j][i]
+  const flat: Vertex3D[] = [];
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++) flat.push(top[j][i]);
+
+  const tris: Triangle[] = [];
+  for (let j = 0; j < rows - 1; j++) for (let i = 0; i < cols - 1; i++) {
+    const a = j * cols + i;
+    const [t1, t2] = cellTriangleOffsets(
+      preferZ00Z11Diagonal(flat[a].z, flat[a + 1].z, flat[a + cols].z, flat[a + cols + 1].z), cols);
+    tris.push([flat[a + t1[0]], flat[a + t1[1]], flat[a + t1[2]]]);
+    tris.push([flat[a + t2[0]], flat[a + t2[1]], flat[a + t2[2]]]);
   }
 
   if (watertight) {
-    for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
-      const b00: Vertex3D = {x:top[j][i].x, y:top[j][i].y, z:zBase};
-      const b10: Vertex3D = {x:top[j][i+1].x, y:top[j][i+1].y, z:zBase};
-      const b01: Vertex3D = {x:top[j+1][i].x, y:top[j+1][i].y, z:zBase};
-      const b11: Vertex3D = {x:top[j+1][i+1].x, y:top[j+1][i+1].y, z:zBase};
-      tris.push([b00, b01, b10]);
-      tris.push([b10, b01, b11]);
-    }
-    for (let i = 0; i < cols-1; i++) {
-      const tl = top[0][i], tr = top[0][i+1];
-      const bl: Vertex3D = {x:tl.x,y:tl.y,z:zBase}, br: Vertex3D = {x:tr.x,y:tr.y,z:zBase};
-      tris.push([tl, bl, tr]); tris.push([tr, bl, br]);
-    }
-    for (let i = 0; i < cols-1; i++) {
-      const tl = top[rows-1][i], tr = top[rows-1][i+1];
-      const bl: Vertex3D = {x:tl.x,y:tl.y,z:zBase}, br: Vertex3D = {x:tr.x,y:tr.y,z:zBase};
-      tris.push([tl, tr, bl]); tris.push([tr, br, bl]);
-    }
-    for (let j = 0; j < rows-1; j++) {
-      const tt = top[j][0], tb = top[j+1][0];
-      const bt: Vertex3D = {x:tt.x,y:tt.y,z:zBase}, bb: Vertex3D = {x:tb.x,y:tb.y,z:zBase};
-      tris.push([tt, tb, bt]); tris.push([tb, bb, bt]);
-    }
-    for (let j = 0; j < rows-1; j++) {
-      const tt = top[j][cols-1], tb = top[j+1][cols-1];
-      const bt: Vertex3D = {x:tt.x,y:tt.y,z:zBase}, bb: Vertex3D = {x:tb.x,y:tb.y,z:zBase};
-      tris.push([tt, bt, tb]); tris.push([tb, bt, bb]);
-    }
+    const botStart = flat.length;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++)
+        flat.push({ x: top[j][i].x, y: top[j][i].y, z: 0 });
+    emitWatertightTriangles(cols, rows, 0, botStart, (a, b, c) => {
+      tris.push([flat[a], flat[b], flat[c]]);
+    });
   }
   return tris;
 }
@@ -128,38 +109,18 @@ function exportOBJ(mesh: MeshData): string {
   }
 
   s += '\n# Top surface\n';
-  for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
-    const a = topStart + j*cols+i, b = a+1, c = a+cols, d = c+1;
-    if (preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
-      s += `f ${a} ${b} ${d}\nf ${a} ${d} ${c}\n`;
-    } else {
-      s += `f ${a} ${b} ${c}\nf ${b} ${d} ${c}\n`;
-    }
+  for (let j = 0; j < rows - 1; j++) for (let i = 0; i < cols - 1; i++) {
+    const a = topStart + j * cols + i;
+    const [t1, t2] = cellTriangleOffsets(
+      preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z), cols);
+    s += `f ${a + t1[0]} ${a + t1[1]} ${a + t1[2]}\nf ${a + t2[0]} ${a + t2[1]} ${a + t2[2]}\n`;
   }
 
   if (watertight) {
-    s += '\n# Bottom surface\n';
-    for (let j = 0; j < rows-1; j++) for (let i = 0; i < cols-1; i++) {
-      const a = botStart + j*cols+i, b = a+1, c = a+cols, d = c+1;
-      s += `f ${a} ${c} ${b}\nf ${b} ${c} ${d}\n`;
-    }
-    s += '\n# Side walls\n';
-    for (let i = 0; i < cols-1; i++) {
-      const tl = topStart+i, tr = tl+1, bl = botStart+i, br = bl+1;
-      s += `f ${tl} ${bl} ${tr}\nf ${tr} ${bl} ${br}\n`;
-    }
-    for (let i = 0; i < cols-1; i++) {
-      const tl = topStart+(rows-1)*cols+i, tr = tl+1, bl = botStart+(rows-1)*cols+i, br = bl+1;
-      s += `f ${tl} ${tr} ${bl}\nf ${tr} ${br} ${bl}\n`;
-    }
-    for (let j = 0; j < rows-1; j++) {
-      const tt = topStart+j*cols, tb = tt+cols, bt = botStart+j*cols, bb = bt+cols;
-      s += `f ${tt} ${tb} ${bt}\nf ${tb} ${bb} ${bt}\n`;
-    }
-    for (let j = 0; j < rows-1; j++) {
-      const tt = topStart+j*cols+(cols-1), tb = tt+cols, bt = botStart+j*cols+(cols-1), bb = bt+cols;
-      s += `f ${tt} ${bt} ${tb}\nf ${tb} ${bt} ${bb}\n`;
-    }
+    s += '\n# Bottom + side walls\n';
+    emitWatertightTriangles(cols, rows, topStart, botStart, (a, b, c) => {
+      s += `f ${a} ${b} ${c}\n`;
+    });
   }
   return s;
 }
@@ -245,13 +206,10 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
       for (let j = 0; j < rows - 1; j++)
         for (let i = 0; i < cols - 1; i++) {
           const a = j * cols + i;
-          if (preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z)) {
-            m.faces().addTriFace(a, a + 1, a + cols + 1);
-            m.faces().addTriFace(a, a + cols + 1, a + cols);
-          } else {
-            m.faces().addTriFace(a, a + 1, a + cols);
-            m.faces().addTriFace(a + 1, a + cols + 1, a + cols);
-          }
+          const [t1, t2] = cellTriangleOffsets(
+            preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z), cols);
+          m.faces().addTriFace(a + t1[0], a + t1[1], a + t1[2]);
+          m.faces().addTriFace(a + t2[0], a + t2[1], a + t2[2]);
         }
 
       if (watertight) {
@@ -311,11 +269,7 @@ function exportHeightmapPNG(): Promise<Blob | null> {
   const { vertices, cols, rows } = STATE;
   if (!vertices) return Promise.resolve(null);
 
-  let zMin = Infinity, zMax = -Infinity;
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-    if (vertices[j][i] < zMin) zMin = vertices[j][i];
-    if (vertices[j][i] > zMax) zMax = vertices[j][i];
-  }
+  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
   const zRange = zMax - zMin || 1;
 
   const c = document.createElement('canvas');
