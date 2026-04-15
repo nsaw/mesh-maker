@@ -170,7 +170,7 @@ export function generateDepthMapMesh(): void {
       for (let i = 0; i < cols; i++)
         smoothedNoise[j][i] = (smoothedNoise[j][i] - nMin) / nRange;
 
-    // --- Depth map grid, normalized to [0, 1] ---
+    // --- Depth map grid: smooth then normalize to [0, 1] (same order as pure DM path) ---
     const dmVerts: number[][] = [];
     for (let j = 0; j < rows; j++) {
       dmVerts[j] = [];
@@ -182,12 +182,12 @@ export function generateDepthMapMesh(): void {
         dmVerts[j][i] = imgData.data[idx] / 255;
       }
     }
-    const [dmMin, dmMax] = gridMinMax(dmVerts, rows, cols);
+    const smoothedDM = dmSmoothing > 0 ? weightedSmooth(dmVerts, rows, cols, dmSmoothing, 0.6) : dmVerts;
+    const [dmMin, dmMax] = gridMinMax(smoothedDM, rows, cols);
     const dmRange = dmMax - dmMin || 1;
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++)
-        dmVerts[j][i] = (dmVerts[j][i] - dmMin) / dmRange;
-    const smoothedDM = dmSmoothing > 0 ? weightedSmooth(dmVerts, rows, cols, dmSmoothing, 0.6) : dmVerts;
+        smoothedDM[j][i] = (smoothedDM[j][i] - dmMin) / dmRange;
 
     // --- Blend in shared [0, 1] space, then CNC normalize once ---
     // Both surfaces in [0, 1]. blend=0 -> pure depth map, blend=1 -> noise
