@@ -45,7 +45,7 @@ function sampleNoiseGrid(p: NoiseGridParams): number[][] {
       // Convergent x cascades into y lookup for asymmetric patterns.
       if (warpGen && distortion > 0) {
         const wf = warpFreq;
-        const wAmp = distortion * 5;
+        const wAmp = distortion * 5; // empirically tuned for visible warp at slider range [0,1]
         const sx = x * wf, sy = y * wf;
 
         // Curl component: numerical gradient of noise, rotated 90 degrees
