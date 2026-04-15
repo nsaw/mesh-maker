@@ -149,7 +149,7 @@ function buildPresetSection(): HTMLElement {
       buttonRow.append(button);
     });
 
-  return buildSection('Presets', [controlRow, buttonRow]);
+  return buildSection('Presets', [controlRow, buttonRow], false, 'noise-only');
 }
 
 function buildMeshDimensionsSection(): HTMLElement {
@@ -288,7 +288,7 @@ function buildSmoothingSection(): HTMLElement {
   return buildSection('Smoothing', [
     slider('smoothIter', 'Iterations', 0, 15, 1),
     slider('smoothStr', 'Strength', 0, 1, 0.05),
-  ]);
+  ], false, 'noise-only');
 }
 
 function buildDepthMapSection(): HTMLElement {
@@ -551,10 +551,10 @@ function wireSectionCollapse(): void {
 export function updateSectionVisibility(): void {
   const mode = STATE.mode;
   document.querySelectorAll<HTMLElement>('.noise-only').forEach(el => {
-    el.style.display = (mode === 'noise' || mode === 'blend') ? '' : 'none';
+    el.style.display = (mode === 'noise' || mode === 'blend') ? 'block' : 'none';
   });
   document.querySelectorAll<HTMLElement>('.depth-map-only').forEach(el => {
-    el.style.display = (mode === 'depthmap' || mode === 'blend') ? '' : 'none';
+    el.style.display = (mode === 'depthmap' || mode === 'blend') ? 'block' : 'none';
   });
 }
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { STATE } from './state';
+import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;
@@ -285,13 +286,7 @@ function buildSurface(
   const positions = new Float32Array(rows * cols * 3);
   const uvs = new Float32Array(rows * cols * 2);
 
-  let zMin = Infinity, zMax = -Infinity;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      const z = vertices[j][i];
-      if (z < zMin) zMin = z;
-      if (z > zMax) zMax = z;
-    }
+  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
   const zRange = zMax - zMin || 1;
   _cachedZMin = zMin;
   _cachedZMax = zMax;
@@ -312,20 +307,42 @@ function buildSurface(
     }
   }
 
-  // Indexed triangles (2 per quad)
+  // Indexed triangles (2 per quad, shortest-diagonal split)
   const indices: number[] = [];
   for (let j = 0; j < rows - 1; j++)
     for (let i = 0; i < cols - 1; i++) {
       const a = j * cols + i;
-      indices.push(a, a + 1, a + cols);
-      indices.push(a + 1, a + cols + 1, a + cols);
+      const [t1, t2] = cellTriangleOffsets(
+        preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
+      indices.push(a + t1[0], a + t1[1], a + t1[2]);
+      indices.push(a + t2[0], a + t2[1], a + t2[2]);
     }
+
+  // Analytical heightfield normals from central differences -- much smoother than
+  // computeVertexNormals() which averages discrete face normals and creates visible
+  // faceting seams on steep terrain.
+  const normals = new Float32Array(rows * cols * 3);
+  const sx = meshX / (cols - 1);
+  const sy = meshY / (rows - 1);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const il = i > 0 ? i - 1 : i, ir = i < cols - 1 ? i + 1 : i;
+      const jd = j > 0 ? j - 1 : j, ju = j < rows - 1 ? j + 1 : j;
+      const dzdx = (vertices[j][ir] - vertices[j][il]) / ((ir - il) * sx);
+      const dzdy = (vertices[ju][i] - vertices[jd][i]) / ((ju - jd) * sy);
+      const len = Math.sqrt(dzdx * dzdx + dzdy * dzdy + 1);
+      const idx = j * cols + i;
+      normals[idx * 3] = -dzdx / len;
+      normals[idx * 3 + 1] = -dzdy / len;
+      normals[idx * 3 + 2] = 1 / len;
+    }
+  }
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geo.setIndex(indices);
-  geo.computeVertexNormals();
 
   // Texture-based color ramp: sampled per-pixel in fragment shader = smooth gradients
   _surfaceMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
@@ -442,7 +459,7 @@ function updateVisibility(): void {
   if (_surfaceMesh) _surfaceMesh.visible = showSolid;
   if (_wireLines) _wireLines.visible = mode === 'wireframe' || mode === 'both';
   if (_pointsObj) _pointsObj.visible = mode === 'points';
-  if (_encGroup) _encGroup.visible = STATE.watertight && STATE.baseThickness > 0;
+  if (_encGroup) _encGroup.visible = showSolid && STATE.watertight && STATE.baseThickness > 0;
 }
 
 // --- Public API ---

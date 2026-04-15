@@ -34,7 +34,6 @@ assets/*.png
 assets/*.jpg
 assets/*.jpeg
 assets/*.psd
-verification/*.png
 docs/plans/
 .claude/
 __pycache__/
@@ -56,3 +55,4 @@ sourceTruth/**/*.DS_Store
 
 # stl-to-sbp working directory (old location, root only)
 /stl-to-sbp/
+verification/

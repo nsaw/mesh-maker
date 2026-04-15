@@ -11,6 +11,28 @@ export interface NoiseConfig {
   gaborBandwidth?: number;
 }
 
+export interface NoiseGridParams {
+  cols: number;
+  rows: number;
+  meshX: number;
+  meshY: number;
+  frequency: number;
+  noiseExp: number;
+  peakExp: number;
+  valleyExp: number;
+  valleyFloor: number;
+  contrast: number;
+  sharpness: number;
+  octaves: number;
+  persistence: number;
+  lacunarity: number;
+  distortion: number;
+  warpFreq: number;
+  warpCurl: number;
+  gen: NoiseGenerator;
+  warpGen: NoiseGenerator | null;
+}
+
 export interface Vertex3D {
   x: number;
   y: number;

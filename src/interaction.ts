@@ -49,8 +49,8 @@ export function setupInteraction(): void {
     const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
 
     if (dragMode === 'orbit') {
-      STATE.orbit = ((dragStartOrbit + dx * 0.4) % 360 + 360) % 360;
-      STATE.tilt = Math.max(-90, Math.min(90, dragStartTilt + dy * 0.3));
+      STATE.orbit = ((dragStartOrbit - dx * 0.4) % 360 + 360) % 360;
+      STATE.tilt = Math.max(-90, Math.min(90, dragStartTilt - dy * 0.3));
       syncSlider('orbit'); syncSlider('tilt');
     } else if (dragMode === 'pan') {
       STATE.panX = dragStartPanX + dx;
@@ -111,8 +111,8 @@ export function setupInteraction(): void {
 
     if (cur.length === 1) {
       const dx = cur[0].clientX - dragStartX, dy = cur[0].clientY - dragStartY;
-      STATE.orbit = ((touchStartOrbit + dx * 0.4) % 360 + 360) % 360;
-      STATE.tilt = Math.max(-90, Math.min(90, touchStartTilt + dy * 0.3));
+      STATE.orbit = ((touchStartOrbit - dx * 0.4) % 360 + 360) % 360;
+      STATE.tilt = Math.max(-90, Math.min(90, touchStartTilt - dy * 0.3));
       syncSlider('orbit'); syncSlider('tilt');
     } else if (cur.length === 2) {
       const midX = (cur[0].clientX + cur[1].clientX) / 2;

@@ -1,15 +1,11 @@
 import { STATE } from './state';
 import { setCameraFromState } from './render';
+import { gridMinMax } from './geometry';
 
 export function zoomExtents(): void {
   if (!STATE.vertices) return;
   const { meshX, meshY, vertices, rows, cols } = STATE;
-  let zMin = Infinity, zMax = -Infinity;
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-    const z = vertices[j][i];
-    if (z < zMin) zMin = z;
-    if (z > zMax) zMax = z;
-  }
+  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
   const halfW = meshX / 2, halfH = meshY / 2, halfZ = (zMax - zMin) / 2;
   const radius = Math.sqrt(halfW * halfW + halfH * halfH + halfZ * halfZ);
 

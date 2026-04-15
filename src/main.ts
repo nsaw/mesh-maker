@@ -39,6 +39,14 @@ function init(): void {
   // Sync body class with potentially URL-overridden mode
   document.body.className = 'mode-' + STATE.mode;
 
+  // Sync button active states with URL-deserialized STATE
+  document.querySelectorAll('.view-btn').forEach(btn =>
+    btn.classList.toggle('active', (btn as HTMLElement).dataset.view === STATE.viewMode));
+  document.querySelectorAll('.mode-tab').forEach(btn =>
+    btn.classList.toggle('active', (btn as HTMLElement).dataset.mode === STATE.mode));
+  document.querySelectorAll('.format-btn').forEach(btn =>
+    btn.classList.toggle('active', (btn as HTMLElement).dataset.fmt === STATE.exportFormat));
+
   buildSidebar();
   setupTabs();
   setupToolbar();
