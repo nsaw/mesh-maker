@@ -107,7 +107,7 @@ export function generateNoiseMesh(): void {
   const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
           distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
 
-  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
+  const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
 
   const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
@@ -151,7 +151,7 @@ export function generateDepthMapMesh(): void {
 
   if (!depthMap) { STATE.vertices = null; return; }
 
-  const cols = resolution, rows = Math.max(4, Math.round(resolution * (meshY / meshX)));
+  const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
 
   const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
