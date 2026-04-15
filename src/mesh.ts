@@ -5,6 +5,25 @@ import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
 import { gridMinMax } from './geometry';
 
+/** Sample a depth map image into a grid of raw [0,1] grayscale values. */
+function sampleDepthMapGrid(
+  imgData: ImageData, imgW: number, imgH: number,
+  cols: number, rows: number,
+): number[][] {
+  const grid: number[][] = [];
+  for (let j = 0; j < rows; j++) {
+    grid[j] = [];
+    for (let i = 0; i < cols; i++) {
+      const u = i / (cols - 1), v = j / (rows - 1);
+      const ix = Math.min(Math.floor(u * imgW), imgW - 1);
+      const iy = Math.min(Math.floor(v * imgH), imgH - 1);
+      const idx = (iy * imgW + ix) * 4;
+      grid[j][i] = imgData.data[idx] / 255;
+    }
+  }
+  return grid;
+}
+
 /** Sample a raw noise grid with domain warping + FBM + post-processing.
  *  Returns values in noise-native range (no CNC normalization, no smoothing). */
 function sampleNoiseGrid(p: NoiseGridParams): number[][] {
@@ -171,17 +190,7 @@ export function generateDepthMapMesh(): void {
         smoothedNoise[j][i] = (smoothedNoise[j][i] - nMin) / nRange;
 
     // --- Depth map grid: smooth then normalize to [0, 1] (same order as pure DM path) ---
-    const dmVerts: number[][] = [];
-    for (let j = 0; j < rows; j++) {
-      dmVerts[j] = [];
-      for (let i = 0; i < cols; i++) {
-        const u = i / (cols - 1), v = j / (rows - 1);
-        const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
-        const iy = Math.min(Math.floor(v * depthMap.height), depthMap.height - 1);
-        const idx = (iy * depthMap.width + ix) * 4;
-        dmVerts[j][i] = imgData.data[idx] / 255;
-      }
-    }
+    const dmVerts = sampleDepthMapGrid(imgData, depthMap.width, depthMap.height, cols, rows);
     const smoothedDM = dmSmoothing > 0 ? weightedSmooth(dmVerts, rows, cols, dmSmoothing, 0.6) : dmVerts;
     const [dmMin, dmMax] = gridMinMax(smoothedDM, rows, cols);
     const dmRange = dmMax - dmMin || 1;
@@ -213,18 +222,7 @@ export function generateDepthMapMesh(): void {
     STATE.vertices = blended;
   } else {
     // Pure depth map path -- no noise, original pipeline unchanged
-    const verts: number[][] = [];
-    for (let j = 0; j < rows; j++) {
-      verts[j] = [];
-      for (let i = 0; i < cols; i++) {
-        const u = i / (cols - 1), v = j / (rows - 1);
-
-        const ix = Math.min(Math.floor(u * depthMap.width), depthMap.width - 1);
-        const iy = Math.min(Math.floor(v * depthMap.height), depthMap.height - 1);
-        const idx = (iy * depthMap.width + ix) * 4;
-        verts[j][i] = imgData.data[idx] / 255;
-      }
-    }
+    const verts = sampleDepthMapGrid(imgData, depthMap.width, depthMap.height, cols, rows);
 
     const finalVerts = dmSmoothing > 0 ? weightedSmooth(verts, rows, cols, dmSmoothing, 0.6) : verts;
 
