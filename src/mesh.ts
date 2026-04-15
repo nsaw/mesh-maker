@@ -190,8 +190,8 @@ export function generateDepthMapMesh(): void {
     const smoothedDM = dmSmoothing > 0 ? weightedSmooth(dmVerts, rows, cols, dmSmoothing, 0.6) : dmVerts;
 
     // --- Blend in shared [0, 1] space, then CNC normalize once ---
-    // Both surfaces in [0, 1]. blend=0 -> pure depth map, blend=1 -> pure noise.
-    // Matches the p5.js prototype approach: blend * noise + (1-blend) * dm.
+    // Both surfaces in [0, 1]. blend=0 -> pure depth map, blend=1 -> noise
+    // floored by depth map (noise adds texture above it but never caves in).
     const b = effectiveBlend;
     const blended: number[][] = [];
     for (let j = 0; j < rows; j++) {
