@@ -156,8 +156,25 @@ function exportFromMesh(): void {
 
   const heightmap = stateToHeightmap(vertices, rows, cols, meshX, meshY);
   const config = buildConfig();
+  warnIfReliefStepoverTooCoarse(config.finishingTool.cutting.stepover);
   const result = generateSBP(heightmap, config);
   handleResult(result, `${STATE.filename}.sbp`);
+}
+
+/** Voronoi-relief seams are narrow V-grooves; ball-nose stepover must be ≤ half the seam width
+ *  or the cutter rolls over the seam instead of cutting it. Non-blocking — user picks the tool. */
+function warnIfReliefStepoverTooCoarse(stepoverIn: number): void {
+  if (STATE.noiseType !== 'voronoi-relief') return;
+  const seamWidthIn = STATE.reliefSeamWidth * STATE.reliefCellSize;
+  if (seamWidthIn <= 0) return;
+  const recommendedMax = seamWidthIn * 0.5;
+  if (stepoverIn > recommendedMax) {
+    showToast(
+      `Finishing stepover ${stepoverIn.toFixed(3)}" rounds seams (${seamWidthIn.toFixed(3)}" wide). ` +
+      `Recommend ≤ ${recommendedMax.toFixed(3)}".`,
+      6000,
+    );
+  }
 }
 
 /** Export using uploaded STL via Web Worker */

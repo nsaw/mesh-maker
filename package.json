@@ -12,6 +12,7 @@
     "lint": "eslint src/ cli/",
     "lint:fix": "eslint src/ cli/ --fix",
     "stl-to-sbp": "tsx cli/stl-to-sbp.ts",
+    "test:relief": "tsx cli/voronoi-relief.spec.ts",
     "preview": "vite preview",
     "prepare": "husky"
   },

@@ -1,4 +1,5 @@
 import type { SbpStats } from './sbp/types';
+import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile } from './types';
 
 export interface MeshState {
   mode: 'noise' | 'depthmap' | 'blend';
@@ -7,7 +8,8 @@ export interface MeshState {
   // Noise params
   noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi'
     | 'value' | 'opensimplex2' | 'worley' | 'billow' | 'turbulence'
-    | 'hybrid' | 'hetero' | 'domainwarp' | 'gabor' | 'wavelet';
+    | 'hybrid' | 'hetero' | 'domainwarp' | 'gabor' | 'wavelet'
+    | 'voronoi-relief';
   frequency: number;
   amplitude: number;
   noiseExp: number;
@@ -26,6 +28,25 @@ export interface MeshState {
   sharpness: number;
   gaborAngle: number;
   gaborBandwidth: number;
+  // Voronoi-relief params (only used when noiseType === 'voronoi-relief')
+  reliefCellSize: number;
+  reliefJitter: number;
+  reliefRelaxIterations: number;
+  reliefPolarity: ReliefPolarity;
+  reliefProfile: ReliefProfile;
+  reliefSeamDepth: number;
+  reliefSeamWidth: number;
+  reliefAnisotropy: number;
+  reliefAnisotropyAngle: number;
+  reliefAttractorMode: ReliefAttractorMode;
+  reliefAttractorX: number;
+  reliefAttractorY: number;
+  reliefAttractorRadius: number;
+  reliefAttractorFalloff: number;
+  reliefDensityStrength: number;
+  reliefIntensityStrength: number;
+  reliefTransitionSoftness: number;
+  reliefBaseMode: ReliefBaseMode;
   // Mesh params
   meshX: number;
   meshY: number;
@@ -89,6 +110,24 @@ export const DEFAULTS: MeshState = {
   sharpness: 0,
   gaborAngle: 45,
   gaborBandwidth: 1.5,
+  reliefCellSize: 1.5,
+  reliefJitter: 0.7,
+  reliefRelaxIterations: 1,
+  reliefPolarity: 'domes',
+  reliefProfile: 'hemisphere',
+  reliefSeamDepth: 0.6,
+  reliefSeamWidth: 0.15,
+  reliefAnisotropy: 0,
+  reliefAnisotropyAngle: 0,
+  reliefAttractorMode: 'none',
+  reliefAttractorX: 0.5,
+  reliefAttractorY: 0.5,
+  reliefAttractorRadius: 0.5,
+  reliefAttractorFalloff: 1,
+  reliefDensityStrength: 0,
+  reliefIntensityStrength: 1,
+  reliefTransitionSoftness: 0.3,
+  reliefBaseMode: 'flat',
   meshX: 36,
   meshY: 24,
   resolution: 400,
@@ -135,19 +174,46 @@ export function setDemoDepthMap(img: HTMLImageElement | null): void {
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
+  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth',
+  'reliefCellSize', 'reliefJitter', 'reliefRelaxIterations', 'reliefPolarity', 'reliefProfile',
+  'reliefSeamDepth', 'reliefSeamWidth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
+  'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
+  'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
+  'reliefTransitionSoftness', 'reliefBaseMode',
+  'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
 ];
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 2;
+const CURRENT_PAYLOAD_VERSION = 3;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
 const LEGACY_V1_DEFAULTS: Partial<MeshState> = {
   viewMode: 'wireframe',
+};
+// v2→v3 added Voronoi Relief fields. Old links never set them; they fall back to current defaults.
+const LEGACY_V2_DEFAULTS: Partial<MeshState> = {
+  reliefCellSize: 1.5,
+  reliefJitter: 0.7,
+  reliefRelaxIterations: 1,
+  reliefPolarity: 'domes',
+  reliefProfile: 'hemisphere',
+  reliefSeamDepth: 0.6,
+  reliefSeamWidth: 0.15,
+  reliefAnisotropy: 0,
+  reliefAnisotropyAngle: 0,
+  reliefAttractorMode: 'none',
+  reliefAttractorX: 0.5,
+  reliefAttractorY: 0.5,
+  reliefAttractorRadius: 0.5,
+  reliefAttractorFalloff: 1,
+  reliefDensityStrength: 0,
+  reliefIntensityStrength: 1,
+  reliefTransitionSoftness: 0.3,
+  reliefBaseMode: 'flat',
 };
 
 export function serializeConfig(): string {
@@ -186,6 +252,13 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     }
     if (payloadVersion < 2) {
       for (const [k, v] of Object.entries(LEGACY_V1_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 3) {
+      for (const [k, v] of Object.entries(LEGACY_V2_DEFAULTS)) {
         if (!(k in parsed)) {
           (result as Record<string, unknown>)[k] = v;
         }

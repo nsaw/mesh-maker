@@ -12,6 +12,7 @@ const PRESET_GROUPS: [string, string[]][] = [
   ['Aggressive', ['deep-carve', 'hard-wave', 'turbulent-marble']],
   ['Ridge & Stone', ['sharp-ridges', 'eroded-stone', 'natural-ridge']],
   ['Cell & Directional', ['voronoi-cells', 'worley-cracks', 'brushed-metal']],
+  ['Relief', ['relief-vertical', 'relief-radial', 'relief-pockets']],
 ];
 
 function formatPresetName(key: string): string {
@@ -21,17 +22,24 @@ function formatPresetName(key: string): string {
 export function buildSidebar(): void {
   const sb = document.getElementById('sidebar')!;
   const fragment = document.createDocumentFragment();
-  fragment.append(
+  const isRelief = STATE.noiseType === 'voronoi-relief';
+  const sections: Node[] = [
     buildPresetSection(),
     buildMeshDimensionsSection(),
     buildNoiseParametersSection(),
-    buildPeakValleySection(),
-    buildAdvancedNoiseSection(),
+  ];
+  if (isRelief) {
+    sections.push(buildReliefSection());
+  } else {
+    sections.push(buildPeakValleySection(), buildAdvancedNoiseSection());
+  }
+  sections.push(
     buildSmoothingSection(),
     buildDepthMapSection(),
     buildViewControlsSection(),
     buildSBPSection(),
   );
+  fragment.append(...sections);
   sb.replaceChildren(fragment);
 
   wireControls();
@@ -108,6 +116,25 @@ function slider(key: string, label: string, min: number, max: number, step: numb
   input.dataset.key = key;
   input.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? val);
   row.append(buildSliderLabel(label, `val_${key}`, valueText, badgeText), input);
+  return row;
+}
+
+/** Enum/string select control bound to a STATE key, wired in wireControls(). */
+function enumSelect(key: string, label: string, options: Array<[string, string]>): HTMLDivElement {
+  const row = createElement('div', 'control-row');
+  const lab = createElement('div', 'control-label', label);
+  const sel = createElement('select', 'select-input') as HTMLSelectElement;
+  sel.id = `sl_${key}`;
+  sel.dataset.key = key;
+  const current = String(STATE[key as keyof typeof STATE]);
+  for (const [value, text] of options) {
+    const opt = createElement('option') as HTMLOptionElement;
+    opt.value = value;
+    opt.textContent = text;
+    opt.selected = value === current;
+    sel.append(opt);
+  }
+  row.append(lab, sel);
   return row;
 }
 
@@ -206,6 +233,10 @@ function buildNoiseParametersSection(): HTMLElement {
       options: [['voronoi', 'Voronoi'], ['worley', 'Worley (Cell Edges)']],
     },
     {
+      label: 'Relief',
+      options: [['voronoi-relief', 'Voronoi Relief']],
+    },
+    {
       label: 'Advanced',
       options: [['gabor', 'Gabor'], ['wavelet', 'Wavelet']],
     },
@@ -246,6 +277,15 @@ function buildNoiseParametersSection(): HTMLElement {
     );
   }
 
+  if (STATE.noiseType === 'voronoi-relief') {
+    children.push(
+      slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05),
+      slider('offset', 'Vertical Offset', -2, 2, 0.05),
+      seedRow,
+    );
+    return buildSection('Noise Parameters', children, false, 'noise-only');
+  }
+
   children.push(
     slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005),
     slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05),
@@ -255,6 +295,52 @@ function buildNoiseParametersSection(): HTMLElement {
   );
 
   return buildSection('Noise Parameters', children, false, 'noise-only');
+}
+
+function buildReliefSection(): HTMLElement {
+  const cellLayoutLabel = createElement('div');
+  cellLayoutLabel.style.fontSize = '10px';
+  cellLayoutLabel.style.color = 'var(--text3)';
+  cellLayoutLabel.style.marginBottom = '4px';
+  cellLayoutLabel.textContent = 'Cell layout';
+
+  const shapeLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
+  shapeLabel.textContent = 'Cell shape';
+  const anisoLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
+  anisoLabel.textContent = 'Anisotropy';
+  const attractorLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
+  attractorLabel.textContent = 'Attractor';
+  const baseLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
+  baseLabel.textContent = 'Base field';
+
+  return buildSection('Cell Relief', [
+    cellLayoutLabel,
+    slider('reliefCellSize', 'Cell Size (inches)', 0.4, 6, 0.1),
+    slider('reliefJitter', 'Jitter', 0, 1, 0.05),
+    slider('reliefRelaxIterations', 'Lloyd Relaxation', 0, 2, 1),
+    shapeLabel,
+    enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
+    enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
+    slider('reliefSeamDepth', 'Seam Depth', 0, 1, 0.05),
+    slider('reliefSeamWidth', 'Seam Width', 0.02, 0.6, 0.01),
+    anisoLabel,
+    slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
+    slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
+    attractorLabel,
+    enumSelect('reliefAttractorMode', 'Mode', [
+      ['none', 'None'], ['vertical', 'Vertical'], ['horizontal', 'Horizontal'],
+      ['radial', 'Radial'], ['point', 'Point (inverse)'],
+    ]),
+    slider('reliefAttractorX', 'Anchor X (0-1)', 0, 1, 0.01),
+    slider('reliefAttractorY', 'Anchor Y (0-1)', 0, 1, 0.01),
+    slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
+    slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
+    slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
+    slider('reliefIntensityStrength', 'Intensity Strength', 0, 1, 0.05),
+    slider('reliefTransitionSoftness', 'Transition Softness', 0, 1, 0.05),
+    baseLabel,
+    enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
+  ], false, 'noise-only');
 }
 
 function buildPeakValleySection(): HTMLElement {
@@ -419,6 +505,26 @@ function wireControls(): void {
     const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
     if (!sl) return;
     attachValueEdit(valSpan, sl);
+  });
+
+  // Enum/string select controls bound to STATE keys (excludes the noise-type and preset selects).
+  document.querySelectorAll<HTMLSelectElement>('select[data-key]').forEach(sel => {
+    const key = sel.dataset.key!;
+    sel.addEventListener('change', () => {
+      (STATE as unknown as Record<string, unknown>)[key] = sel.value;
+      // Clear active preset/profile on manual change — same as slider behavior.
+      if (STATE.activePreset) {
+        STATE.activePreset = null;
+        const presetSel = document.getElementById('selPreset') as HTMLSelectElement | null;
+        if (presetSel) presetSel.value = '';
+      }
+      if (STATE.activeProfile) {
+        STATE.activeProfile = null;
+        const pill = document.querySelector('.preset-pill.active[data-profile]');
+        if (pill) pill.classList.remove('active');
+      }
+      debouncedGenerate(key);
+    });
   });
 
   // Section collapse
