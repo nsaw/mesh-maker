@@ -292,6 +292,13 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // anisotropyScale > 1 squashes along the angle's perpendicular → elongated cells along the angle axis.
     const anisotropyScale = 1 + p.anisotropy * ANISOTROPY_SCALE_MULTIPLIER;
 
+    // Hoisted + clamped wave-mode params. transitionSoftness must stay in [0, 1] —
+    // negative values would make the exponent ≤ 0 and `Math.pow(0, ≤0)` = Infinity,
+    // which the non-finite guard later flattens to 0, punching dead bands into the mesh.
+    const transitionSoftness = Math.max(0, Math.min(1, p.transitionSoftness));
+    const transitionExponent = TRANSITION_EXPONENT_MIN
+      + transitionSoftness * (TRANSITION_EXPONENT_MAX - TRANSITION_EXPONENT_MIN);
+
     const cols = p.cols;
     const rows = p.rows;
 
@@ -347,11 +354,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (p.baseMode === 'wave') {
           // Low-frequency simplex base that cells transition into. transitionSoftness=0 →
           // sharp boundary (cells take over abruptly where mask rises); transitionSoftness=1 →
-          // gradual lerp from base to cells across the full mask range.
+          // gradual lerp from base to cells across the full mask range. Exponent is hoisted
+          // above the loop and guaranteed positive, so Math.pow(mask, exponent) is finite.
           const base = waveGen.noise(x * WAVE_NOISE_FREQUENCY, y * WAVE_NOISE_FREQUENCY) * WAVE_AMPLITUDE;
-          const exponent = TRANSITION_EXPONENT_MIN
-            + p.transitionSoftness * (TRANSITION_EXPONENT_MAX - TRANSITION_EXPONENT_MIN);
-          const cellWeight = Math.pow(mask, exponent);
+          const cellWeight = Math.pow(mask, transitionExponent);
           h = base * (1 - cellWeight) + h * cellWeight * intensityFactor;
         } else {
           h *= intensityFactor;

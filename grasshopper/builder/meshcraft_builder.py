@@ -404,11 +404,15 @@ class WaveletNoise(object):
 # ── Voronoi Relief (grid-aware) ───────────────────────────────────────────────
 class VoronoiReliefNoise(object):
     def __init__(self, seed=0):
-        self.seed = seed
+        # mulberry32 state — byte-equivalent to TS sampler so same seed produces same site layout.
+        self._prng_state = int(seed) & 0xffffffff
         self.wave = SimplexNoise(seed + 17)
-    def _sr(self, s):
-        x = math.sin(s) * 10000.0
-        return x - math.floor(x)
+    def _rand(self):
+        self._prng_state = (self._prng_state + 0x6D2B79F5) & 0xffffffff
+        r = self._prng_state
+        r = (((r ^ (r >> 15)) * (r | 1)) & 0xffffffff)
+        r ^= ((r + (((r ^ (r >> 7)) * (r | 61)) & 0xffffffff)) & 0xffffffff)
+        return float((r ^ (r >> 14)) & 0xffffffff) / 4294967296.0
     def _smoothstep(self, e0, e1, x):
         if e1 <= e0: return 0.0 if x < e0 else 1.0
         t = (x - e0) / (e1 - e0)
@@ -443,7 +447,6 @@ class VoronoiReliefNoise(object):
         ny = max(2, int(math.ceil(p['mesh_y'] / spacing)) + 1)
         sx = p['mesh_x'] / nx; sy = p['mesh_y'] / ny
         sites = []
-        rk = self.seed
         for j in range(ny):
             if len(sites) >= self.SITE_COUNT_MAX: break
             for i in range(nx):
@@ -455,13 +458,12 @@ class VoronoiReliefNoise(object):
                     p['attractor_radius'], p['attractor_falloff'])
                 local = max(0.0, min(self.LOCAL_DENSITY_MAX, 1.0 + p['density_strength'] * mask))
                 reps = int(math.floor(local))
-                rk += 1
-                if self._sr(rk) < (local - math.floor(local)):
+                if self._rand() < (local - math.floor(local)):
                     reps += 1
                 for _ in range(reps):
                     if len(sites) >= self.SITE_COUNT_MAX: break
-                    rk += 1; jx = (self._sr(rk) - 0.5) * p['jitter'] * sx
-                    rk += 1; jy = (self._sr(rk) - 0.5) * p['jitter'] * sy
+                    jx = (self._rand() - 0.5) * p['jitter'] * sx
+                    jy = (self._rand() - 0.5) * p['jitter'] * sy
                     sites.append([
                         max(0.0, min(p['mesh_x'], cx + jx)),
                         max(0.0, min(p['mesh_y'], cy + jy)),
@@ -519,6 +521,9 @@ class VoronoiReliefNoise(object):
         a_rad = p['anisotropy_angle'] * math.pi / 180.0
         cosA = math.cos(a_rad); sinA = math.sin(a_rad)
         aniso_scale = 1.0 + p['anisotropy'] * 1.5
+        # Clamp + hoist transition_softness so pow(mask, exponent) is finite at mask=0.
+        ts_clamped = max(0.0, min(1.0, p['transition_softness']))
+        transition_exponent = 0.2 + ts_clamped * 1.8
         cols = p['cols']; rows = p['rows']
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
@@ -545,10 +550,8 @@ class VoronoiReliefNoise(object):
                     p['attractor_radius'], p['attractor_falloff'])
                 intensity = (1.0 - p['intensity_strength']) + p['intensity_strength'] * mask
                 if p['base_mode'] == 'wave':
-                    # softness=0 → exponent 0.2 (sharp); softness=1 → exponent 2.0 (gradual).
                     base = self.wave.noise(x * 0.1, y * 0.1) * 0.5
-                    exponent = 0.2 + p['transition_softness'] * 1.8
-                    cw = pow(mask, exponent)
+                    cw = pow(mask, transition_exponent)
                     h = base * (1.0 - cw) + h * cw * intensity
                 else:
                     h = h * intensity

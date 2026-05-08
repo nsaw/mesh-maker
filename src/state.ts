@@ -281,6 +281,12 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     if (typeof result.reliefDensityStrength === 'number') {
       result.reliefDensityStrength = Math.max(0, Math.min(2, result.reliefDensityStrength));
     }
+    // transitionSoftness drives an exponent for Math.pow(mask, ...) — a negative value
+    // makes the exponent ≤ 0 and produces Infinity at mask=0, which the sampler's NaN
+    // guard then zeroes, punching dead bands into the mesh. Slider range is [0, 1].
+    if (typeof result.reliefTransitionSoftness === 'number') {
+      result.reliefTransitionSoftness = Math.max(0, Math.min(1, result.reliefTransitionSoftness));
+    }
     return result;
   } catch {
     return {};
