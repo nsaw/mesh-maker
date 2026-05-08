@@ -43,6 +43,12 @@ const OUTPUT_CLAMP = 1.05;
 // transitionSoftness=1 → exponent 2.0 (gradual lerp from waves to cells).
 const TRANSITION_EXPONENT_MIN = 0.2;
 const TRANSITION_EXPONENT_MAX = 2.0;
+// Hard caps to prevent DoS via crafted params. Both passes are O(rows·cols·sites);
+// at ~107K pixels and the SITE_COUNT_MAX below, two passes ≈ 870M ops → ~1s on
+// modern hardware. Anything beyond this either freezes the tab or produces a
+// mesh that's noisier than the underlying CNC tool can resolve anyway.
+const SITE_COUNT_MAX = 4096;
+const LOCAL_DENSITY_MAX = 4;
 
 /** Deterministic per-seed PRNG (mulberry32) — better distribution than sin-hash for site jitter. */
 function mulberry32(seed: number): () => number {
@@ -96,12 +102,14 @@ function attractorMask(
   const dy = v - ay;
   const d = Math.sqrt(dx * dx + dy * dy);
   const r = Math.max(0.001, radius);
+  // falloff shapes the smoothstep curve for radial/point modes — < 1 broadens, > 1 sharpens.
+  const shapedFalloff = Math.max(0.05, falloff);
   if (mode === 'radial') {
     // Inside radius → 1; outside falls off — high density at center, sparse at edge.
-    return 1 - smoothstep(r * 0.5, r, d);
+    return Math.pow(1 - smoothstep(r * 0.5, r, d), shapedFalloff);
   }
   // 'point': inverse — sparse at center, dense outside (useful for vignette/border patterns).
-  return smoothstep(r * 0.5, r, d);
+  return Math.pow(smoothstep(r * 0.5, r, d), shapedFalloff);
 }
 
 /** Generate a roughly-uniform jittered grid of sites scaled by the attractor mask. */
@@ -116,7 +124,10 @@ function generateSites(p: ReliefSampleParams, rand: () => number): Site[] {
   const sy = meshY / ny;
 
   const sites: Site[] = [];
-  for (let j = 0; j < ny; j++) {
+  // Hard caps: defense in depth on top of state.ts URL clamps. SITE_COUNT_MAX bounds the
+  // O(rows·cols·sites) cost of both passes; LOCAL_DENSITY_MAX prevents a single cell from
+  // exploding even if densityStrength sneaks past the URL clamp via tests/future code paths.
+  outer: for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const cx = (i + 0.5) * sx;
       const cy = (j + 0.5) * sy;
@@ -127,10 +138,11 @@ function generateSites(p: ReliefSampleParams, rand: () => number): Site[] {
         p.attractorMode, u, v, p.attractorX, p.attractorY,
         p.attractorRadius, p.attractorFalloff,
       );
-      const localDensity = 1 + p.densityStrength * mask;
+      const localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
       // Stochastic acceptance: density 1 keeps all, density 2 doubles via extra in-cell sample.
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
       for (let k = 0; k < reps; k++) {
+        if (sites.length >= SITE_COUNT_MAX) break outer;
         const jx = (rand() - 0.5) * jitter * sx;
         const jy = (rand() - 0.5) * jitter * sy;
         sites.push({

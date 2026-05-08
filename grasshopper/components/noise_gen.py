@@ -21,8 +21,8 @@ if mesh_x      is None: mesh_x      = 36.0
 if mesh_y      is None: mesh_y      = 24.0
 if resolution  is None: resolution  = 96
 # Voronoi-relief inputs. Two failure modes for a missing value:
-#   1) the pin doesn't exist on the component → NameError (component compiled before
-#      relief mode was added)
+#   1) the pin doesn't exist on the component → globals()[name] raises KeyError
+#      (component was compiled before relief mode was added)
 #   2) the pin exists but is unwired → GhPython binds the name to None (component
 #      was rebuilt with relief pins but user hasn't wired them yet)
 # Both must fall through to the documented default so `noise_type=='voronoi-relief'`
@@ -365,9 +365,11 @@ class VoronoiReliefNoise(object):
         dx = u - ax; dy = v - ay
         d = math.sqrt(dx * dx + dy * dy)
         r = max(0.001, radius)
+        # Falloff shapes the curve for radial/point modes too: < 1 broadens, > 1 sharpens.
+        shaped = max(0.05, falloff)
         if mode == 'radial':
-            return 1.0 - self._smoothstep(r * 0.5, r, d)
-        return self._smoothstep(r * 0.5, r, d)  # 'point'
+            return pow(1.0 - self._smoothstep(r * 0.5, r, d), shaped)
+        return pow(self._smoothstep(r * 0.5, r, d), shaped)  # 'point'
     def _dome(self, profile, d, R):
         if R <= 0: return 0.0
         t = min(1.0, d / R)
@@ -377,6 +379,8 @@ class VoronoiReliefNoise(object):
         if profile == 'cosine':
             return math.cos(t * math.pi * 0.5)
         return max(0.0, 1.0 - t * t)  # parabolic
+    SITE_COUNT_MAX = 4096
+    LOCAL_DENSITY_MAX = 4.0
     def _gen_sites(self, p):
         spacing = max(0.2, p['cell_size'])
         nx = max(2, int(math.ceil(p['mesh_x'] / spacing)) + 1)
@@ -384,19 +388,23 @@ class VoronoiReliefNoise(object):
         sx = p['mesh_x'] / nx; sy = p['mesh_y'] / ny
         sites = []
         rk = self.seed
+        # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
+            if len(sites) >= self.SITE_COUNT_MAX: break
             for i in range(nx):
+                if len(sites) >= self.SITE_COUNT_MAX: break
                 cx = (i + 0.5) * sx; cy = (j + 0.5) * sy
                 u = cx / p['mesh_x']; v = cy / p['mesh_y']
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
-                local = 1.0 + p['density_strength'] * mask
+                local = max(0.0, min(self.LOCAL_DENSITY_MAX, 1.0 + p['density_strength'] * mask))
                 reps = int(math.floor(local))
                 rk += 1
                 if self._sr(rk) < (local - math.floor(local)):
                     reps += 1
                 for _ in range(reps):
+                    if len(sites) >= self.SITE_COUNT_MAX: break
                     rk += 1; jx = (self._sr(rk) - 0.5) * p['jitter'] * sx
                     rk += 1; jy = (self._sr(rk) - 0.5) * p['jitter'] * sy
                     sites.append([

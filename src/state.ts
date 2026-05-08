@@ -270,11 +270,16 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
         (result as Record<string, unknown>)[key] = parsed[key];
       }
     }
-    // Clamp untrusted numeric ranges from URL payloads. A crafted share link with
-    // huge reliefRelaxIterations would otherwise spin the browser inside a Lloyd
-    // loop. Slider UI bounds are not enforced here — payload comes from any source.
+    // Clamp untrusted numeric ranges from URL payloads. Sliders enforce these in the UI,
+    // but payloads can come from any source (manual URL edit, third-party share). Without
+    // these guards, a crafted link can spin the browser:
+    //   - reliefRelaxIterations: each pass scans every sample × every site (O(rows·cols·sites))
+    //   - reliefDensityStrength: multiplies the site count itself, then both Pass 1+2 scan all sites
     if (typeof result.reliefRelaxIterations === 'number') {
       result.reliefRelaxIterations = Math.max(0, Math.min(2, Math.floor(result.reliefRelaxIterations)));
+    }
+    if (typeof result.reliefDensityStrength === 'number') {
+      result.reliefDensityStrength = Math.max(0, Math.min(2, result.reliefDensityStrength));
     }
     return result;
   } catch {

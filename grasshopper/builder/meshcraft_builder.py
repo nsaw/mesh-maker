@@ -422,9 +422,10 @@ class VoronoiReliefNoise(object):
         dx = u - ax; dy = v - ay
         d = math.sqrt(dx * dx + dy * dy)
         r = max(0.001, radius)
+        shaped = max(0.05, falloff)
         if mode == 'radial':
-            return 1.0 - self._smoothstep(r * 0.5, r, d)
-        return self._smoothstep(r * 0.5, r, d)
+            return pow(1.0 - self._smoothstep(r * 0.5, r, d), shaped)
+        return pow(self._smoothstep(r * 0.5, r, d), shaped)
     def _dome(self, profile, d, R):
         if R <= 0: return 0.0
         t = min(1.0, d / R)
@@ -434,6 +435,8 @@ class VoronoiReliefNoise(object):
         if profile == 'cosine':
             return math.cos(t * math.pi * 0.5)
         return max(0.0, 1.0 - t * t)
+    SITE_COUNT_MAX = 4096
+    LOCAL_DENSITY_MAX = 4.0
     def _gen_sites(self, p):
         spacing = max(0.2, p['cell_size'])
         nx = max(2, int(math.ceil(p['mesh_x'] / spacing)) + 1)
@@ -442,18 +445,21 @@ class VoronoiReliefNoise(object):
         sites = []
         rk = self.seed
         for j in range(ny):
+            if len(sites) >= self.SITE_COUNT_MAX: break
             for i in range(nx):
+                if len(sites) >= self.SITE_COUNT_MAX: break
                 cx = (i + 0.5) * sx; cy = (j + 0.5) * sy
                 u = cx / p['mesh_x']; v = cy / p['mesh_y']
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
-                local = 1.0 + p['density_strength'] * mask
+                local = max(0.0, min(self.LOCAL_DENSITY_MAX, 1.0 + p['density_strength'] * mask))
                 reps = int(math.floor(local))
                 rk += 1
                 if self._sr(rk) < (local - math.floor(local)):
                     reps += 1
                 for _ in range(reps):
+                    if len(sites) >= self.SITE_COUNT_MAX: break
                     rk += 1; jx = (self._sr(rk) - 0.5) * p['jitter'] * sx
                     rk += 1; jy = (self._sr(rk) - 0.5) * p['jitter'] * sy
                     sites.append([
