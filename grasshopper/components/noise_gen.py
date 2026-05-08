@@ -459,6 +459,12 @@ class VoronoiReliefNoise(object):
                 sites[i][0] = sumX[i] / counts[i]
                 sites[i][1] = sumY[i] / counts[i]
     def sample_grid(self, p):
+        # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
+        # sampler — same seed produces same site layout and wave field even when the
+        # generator instance is reused across GH evaluations.
+        seed = int(p.get('seed', 0)) & 0xffffffff
+        self._prng_state = seed
+        self.wave = SimplexNoise(seed + 17)
         sites = self._gen_sites(p)
         if not sites:
             return [0.0] * (p['cols'] * p['rows'])
@@ -551,6 +557,7 @@ if is_relief:
     relief_params = {
         'cols': cols, 'rows': rows,
         'mesh_x': mesh_x, 'mesh_y': mesh_y,
+        'seed': int(seed),
         'cell_size': float(relief_cell_size),
         'jitter': float(relief_jitter),
         'relax_iter': int(relief_relax_iter),
