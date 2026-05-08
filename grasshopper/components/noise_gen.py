@@ -342,10 +342,13 @@ class WaveletNoise(object):
 
 
 # ── Voronoi Relief (grid-aware, not stateless per-pixel) ──────────────────────
+# 3D Voronoi cell relief — domed/pocketed cells with deep V-seams.
+# Mirrors src/noise/voronoi-relief.ts. Per-cell radius from mean F1 inside the cell.
+# Skip domain warp; relief sampler handles its own anisotropy.
+# (Class docstring is intentionally a comment, not a triple-quoted string, so this
+#  block can be embedded byte-equivalently inside the NOISE_SCRIPT triple-quoted
+#  literal in grasshopper/builder/meshcraft_builder.py.)
 class VoronoiReliefNoise(object):
-    """3D Voronoi cell relief — domed/pocketed cells with deep V-seams.
-    Mirrors src/noise/voronoi-relief.ts. Per-cell radius from mean F1 inside the cell.
-    Skip domain warp; relief sampler handles its own anisotropy."""
     def __init__(self, seed=0):
         self._prng_state = int(seed) & 0xffffffff
         self.wave = SimplexNoise(seed + 17)

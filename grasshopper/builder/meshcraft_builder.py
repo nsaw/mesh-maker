@@ -86,7 +86,13 @@ if gabor_bw    is None: gabor_bw    = 1.5
 if mesh_x      is None: mesh_x      = 36.0
 if mesh_y      is None: mesh_y      = 24.0
 if resolution  is None: resolution  = 96
-# Voronoi-relief inputs. Handles both missing pins (NameError) and unwired pins (None).
+# Voronoi-relief inputs. Two failure modes for a missing value:
+#   1) the pin doesn't exist on the component → globals()[name] raises KeyError
+#      (component was compiled before relief mode was added)
+#   2) the pin exists but is unwired → GhPython binds the name to None (component
+#      was rebuilt with relief pins but user hasn't wired them yet)
+# Both must fall through to the documented default so `noise_type=='voronoi-relief'`
+# never hits float(None) / int(None) downstream.
 def _relief_default(name, default):
     try:
         v = globals()[name]
@@ -97,13 +103,13 @@ def _relief_default(name, default):
 relief_cell_size           = _relief_default('relief_cell_size',           1.5)
 relief_jitter              = _relief_default('relief_jitter',              0.7)
 relief_relax_iter          = _relief_default('relief_relax_iter',          1)
-relief_polarity            = _relief_default('relief_polarity',            'domes')
-relief_profile             = _relief_default('relief_profile',             'hemisphere')
+relief_polarity            = _relief_default('relief_polarity',            'domes')        # 'domes' | 'pockets'
+relief_profile             = _relief_default('relief_profile',             'hemisphere')   # 'hemisphere' | 'cosine' | 'parabolic'
 relief_seam_depth          = _relief_default('relief_seam_depth',          0.6)
 relief_seam_width          = _relief_default('relief_seam_width',          0.15)
 relief_anisotropy          = _relief_default('relief_anisotropy',          0.0)
 relief_anisotropy_angle    = _relief_default('relief_anisotropy_angle',    0.0)
-relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')
+relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')         # 'none'|'vertical'|'horizontal'|'radial'|'point'
 relief_attractor_x         = _relief_default('relief_attractor_x',         0.5)
 relief_attractor_y         = _relief_default('relief_attractor_y',         0.5)
 relief_attractor_radius    = _relief_default('relief_attractor_radius',    0.5)
@@ -111,7 +117,7 @@ relief_attractor_falloff   = _relief_default('relief_attractor_falloff',   1.0)
 relief_density_strength    = _relief_default('relief_density_strength',    0.0)
 relief_intensity_strength  = _relief_default('relief_intensity_strength',  1.0)
 relief_transition_softness = _relief_default('relief_transition_softness', 0.3)
-relief_base_mode           = _relief_default('relief_base_mode',           'flat')
+relief_base_mode           = _relief_default('relief_base_mode',           'flat')         # 'flat'|'wave'
 
 seed        = int(seed)
 octaves     = int(octaves)
@@ -401,13 +407,21 @@ class WaveletNoise(object):
         return (1.0-v)*((1.0-u)*i00+u*i10)+v*((1.0-u)*i01+u*i11)
 
 
-# ── Voronoi Relief (grid-aware) ───────────────────────────────────────────────
+# ── Voronoi Relief (grid-aware, not stateless per-pixel) ──────────────────────
+# 3D Voronoi cell relief — domed/pocketed cells with deep V-seams.
+# Mirrors src/noise/voronoi-relief.ts. Per-cell radius from mean F1 inside the cell.
+# Skip domain warp; relief sampler handles its own anisotropy.
+# (Class docstring is intentionally a comment, not a triple-quoted string, so this
+#  block can be embedded byte-equivalently inside the NOISE_SCRIPT triple-quoted
+#  literal in grasshopper/builder/meshcraft_builder.py.)
 class VoronoiReliefNoise(object):
     def __init__(self, seed=0):
-        # mulberry32 state — byte-equivalent to TS sampler so same seed produces same site layout.
         self._prng_state = int(seed) & 0xffffffff
         self.wave = SimplexNoise(seed + 17)
     def _rand(self):
+        # mulberry32 — byte-equivalent to the TS sampler so the same seed produces the
+        # same site layout in both the browser and Grasshopper. The previous sin-based
+        # _sr() drifted from the TS mulberry32 sequence even with the same seed.
         self._prng_state = (self._prng_state + 0x6D2B79F5) & 0xffffffff
         r = self._prng_state
         r = (((r ^ (r >> 15)) * (r | 1)) & 0xffffffff)
@@ -426,10 +440,11 @@ class VoronoiReliefNoise(object):
         dx = u - ax; dy = v - ay
         d = math.sqrt(dx * dx + dy * dy)
         r = max(0.001, radius)
+        # Falloff shapes the curve for radial/point modes too: < 1 broadens, > 1 sharpens.
         shaped = max(0.05, falloff)
         if mode == 'radial':
             return pow(1.0 - self._smoothstep(r * 0.5, r, d), shaped)
-        return pow(self._smoothstep(r * 0.5, r, d), shaped)
+        return pow(self._smoothstep(r * 0.5, r, d), shaped)  # 'point'
     def _dome(self, profile, d, R):
         if R <= 0: return 0.0
         t = min(1.0, d / R)
@@ -438,7 +453,7 @@ class VoronoiReliefNoise(object):
             return math.sqrt(inside) if inside > 0 else 0.0
         if profile == 'cosine':
             return math.cos(t * math.pi * 0.5)
-        return max(0.0, 1.0 - t * t)
+        return max(0.0, 1.0 - t * t)  # parabolic
     SITE_COUNT_MAX = 4096
     LOCAL_DENSITY_MAX = 4.0
     def _gen_sites(self, p):
@@ -447,6 +462,7 @@ class VoronoiReliefNoise(object):
         ny = max(2, int(math.ceil(p['mesh_y'] / spacing)) + 1)
         sx = p['mesh_x'] / nx; sy = p['mesh_y'] / ny
         sites = []
+        # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
             if len(sites) >= self.SITE_COUNT_MAX: break
             for i in range(nx):
@@ -467,11 +483,12 @@ class VoronoiReliefNoise(object):
                     sites.append([
                         max(0.0, min(p['mesh_x'], cx + jx)),
                         max(0.0, min(p['mesh_y'], cy + jy)),
-                        0.0, 0.0, 0
+                        0.0, 0.0, 0  # radius, _radius_sum, _radius_n
                     ])
         return sites
     def _nearest_two(self, sites, x, y, cosA, sinA, aniso_scale):
-        # Rotation preserves length; scale x' in the rotated frame and take hypot directly.
+        # Anisotropy: rotate into stretched frame, scale x', take hypot. Rotation preserves length
+        # so we don't need to rotate back.
         f1 = float('inf'); f2 = float('inf'); idx = 0
         isotropic = (aniso_scale == 1.0)
         for i in range(len(sites)):
@@ -493,6 +510,7 @@ class VoronoiReliefNoise(object):
             f /= base
         return result
     def _lloyd_relax(self, sites, p, samples):
+        # One Lloyd pass — move each site toward the centroid of its assigned low-discrepancy samples.
         n = len(sites)
         sumX = [0.0] * n; sumY = [0.0] * n; counts = [0] * n
         for s in range(samples):
@@ -510,13 +528,16 @@ class VoronoiReliefNoise(object):
                 sites[i][0] = sumX[i] / counts[i]
                 sites[i][1] = sumY[i] / counts[i]
     def sample_grid(self, p):
-        # Re-seed PRNG + wave generator from p.seed (canonical source).
+        # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
+        # sampler — same seed produces same site layout and wave field even when the
+        # generator instance is reused across GH evaluations.
         seed = int(p.get('seed', 0)) & 0xffffffff
         self._prng_state = seed
         self.wave = SimplexNoise(seed + 17)
         sites = self._gen_sites(p)
         if not sites:
             return [0.0] * (p['cols'] * p['rows'])
+        # Lloyd relaxation passes — clamped 0..2.
         relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
         if relax_iter > 0:
             lloyd_samples = min(8192, len(sites) * 64)
@@ -525,10 +546,13 @@ class VoronoiReliefNoise(object):
         a_rad = p['anisotropy_angle'] * math.pi / 180.0
         cosA = math.cos(a_rad); sinA = math.sin(a_rad)
         aniso_scale = 1.0 + p['anisotropy'] * 1.5
-        # Clamp + hoist transition_softness so pow(mask, exponent) is finite at mask=0.
+        # Clamp + hoist transition_softness so pow(mask, exponent) is finite when
+        # mask=0 even if a crafted param sneaks past the URL boundary.
         ts_clamped = max(0.0, min(1.0, p['transition_softness']))
         transition_exponent = 0.2 + ts_clamped * 1.8
         cols = p['cols']; rows = p['rows']
+        # Pass 1: accumulate mean F1 per site to derive per-cell radius. Owner/F1 grid
+        # not retained — Pass 2 re-runs _nearest_two for F1+F2 together.
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
             for i in range(cols):
@@ -537,6 +561,7 @@ class VoronoiReliefNoise(object):
                 sites[idx][3] += f1; sites[idx][4] += 1
         for s in sites:
             s[2] = (s[3] / s[4]) * 2.0 if s[4] > 0 else p['cell_size']
+        # Pass 2: heights
         polarity = -1.0 if p['polarity'] == 'pockets' else 1.0
         out = [0.0] * (cols * rows)
         for j in range(rows):
@@ -559,7 +584,7 @@ class VoronoiReliefNoise(object):
                     h = base * (1.0 - cw) + h * cw * intensity
                 else:
                     h = h * intensity
-                if h != h or h == float('inf') or h == float('-inf'):
+                if h != h or h == float('inf') or h == float('-inf'):  # NaN/Inf guard
                     h = 0.0
                 if h < -1.05: h = -1.05
                 elif h > 1.05: h = 1.05
@@ -597,6 +622,7 @@ cols = resolution
 rows = max(4, int(round(resolution * (mesh_y / mesh_x))))
 
 if is_relief:
+    # Relief sampler skips per-pixel domain warp + octaves; takes its own param dict.
     relief_params = {
         'cols': cols, 'rows': rows,
         'mesh_x': mesh_x, 'mesh_y': mesh_y,
@@ -830,7 +856,8 @@ mesh_x       = p['mesh_x']
 mesh_y       = p['mesh_y']
 smooth_iter  = p['smooth_iter']
 smooth_str   = p['smooth_str']
-# Voronoi Relief outputs (defaults applied when preset doesn't set them)
+# Voronoi Relief outputs (only meaningful when noise_type == 'voronoi-relief'; non-relief
+# presets fall back to the in-component defaults via .get).
 relief_cell_size           = p.get('relief_cell_size',           1.5)
 relief_jitter              = p.get('relief_jitter',              0.7)
 relief_relax_iter          = p.get('relief_relax_iter',          1)

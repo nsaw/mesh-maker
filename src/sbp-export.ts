@@ -138,12 +138,19 @@ function buildSbpToastMessage(stats: SbpStats): string {
   return `SBP exported! ${parts.join(', ')}`;
 }
 
-function handleResult(result: GenerateResult, filename: string): void {
+function handleResult(result: GenerateResult, filename: string, warning?: string): void {
   const { sbp, stats } = result;
   STATE.sbpStats = stats;
   triggerDownload(sbp, filename);
   updateStats();
-  showToast(buildSbpToastMessage(stats));
+  // If we have a warning, show it alongside the success summary with the longer duration —
+  // a separate showToast() call would be cancelled by this one (synchronous flow, single
+  // event-loop tick before paint), so the user would only ever see one of the two.
+  if (warning) {
+    showToast(`${buildSbpToastMessage(stats)} — ${warning}`, 6000);
+  } else {
+    showToast(buildSbpToastMessage(stats));
+  }
 }
 
 /** Export using current MeshCraft mesh (STATE.vertices) */
@@ -156,25 +163,23 @@ function exportFromMesh(): void {
 
   const heightmap = stateToHeightmap(vertices, rows, cols, meshX, meshY);
   const config = buildConfig();
-  warnIfReliefStepoverTooCoarse(config.finishingTool.cutting.stepover);
+  const reliefWarning = buildReliefStepoverWarning(config.finishingTool.cutting.stepover);
   const result = generateSBP(heightmap, config);
-  handleResult(result, `${STATE.filename}.sbp`);
+  handleResult(result, `${STATE.filename}.sbp`, reliefWarning);
 }
 
 /** Voronoi-relief seams are narrow V-grooves; ball-nose stepover must be ≤ half the seam width
- *  or the cutter rolls over the seam instead of cutting it. Non-blocking — user picks the tool. */
-function warnIfReliefStepoverTooCoarse(stepoverIn: number): void {
-  if (STATE.noiseType !== 'voronoi-relief') return;
+ *  or the cutter rolls over the seam instead of cutting it. Returns a warning string or null
+ *  so handleResult can fold it into the export toast — separate toasts in the same tick get
+ *  collapsed to whichever ran last. */
+function buildReliefStepoverWarning(stepoverIn: number): string | undefined {
+  if (STATE.noiseType !== 'voronoi-relief') return undefined;
   const seamWidthIn = STATE.reliefSeamWidth * STATE.reliefCellSize;
-  if (seamWidthIn <= 0) return;
+  if (seamWidthIn <= 0) return undefined;
   const recommendedMax = seamWidthIn * 0.5;
-  if (stepoverIn > recommendedMax) {
-    showToast(
-      `Finishing stepover ${stepoverIn.toFixed(3)}" rounds seams (${seamWidthIn.toFixed(3)}" wide). ` +
-      `Recommend ≤ ${recommendedMax.toFixed(3)}".`,
-      6000,
-    );
-  }
+  if (stepoverIn <= recommendedMax) return undefined;
+  return `Finishing stepover ${stepoverIn.toFixed(3)}" rounds seams (${seamWidthIn.toFixed(3)}" wide). ` +
+    `Recommend ≤ ${recommendedMax.toFixed(3)}".`;
 }
 
 /** Export using uploaded STL via Web Worker */
