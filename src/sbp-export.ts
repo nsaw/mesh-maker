@@ -163,7 +163,11 @@ function exportFromMesh(): void {
 
   const heightmap = stateToHeightmap(vertices, rows, cols, meshX, meshY);
   const config = buildConfig();
-  const reliefWarning = buildReliefStepoverWarning(config.finishingTool.cutting.stepover);
+  // Only emit the seam-rounding warning when finishing is actually enabled. The warning
+  // refers to the finishing-pass stepover, which is meaningless for roughing-only exports.
+  const reliefWarning = config.finishingEnabled
+    ? buildReliefStepoverWarning(config.finishingTool.cutting.stepover)
+    : undefined;
   const result = generateSBP(heightmap, config);
   handleResult(result, `${STATE.filename}.sbp`, reliefWarning);
 }
