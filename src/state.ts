@@ -287,6 +287,12 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     if (typeof result.reliefTransitionSoftness === 'number') {
       result.reliefTransitionSoftness = Math.max(0, Math.min(1, result.reliefTransitionSoftness));
     }
+    // intensityStrength enters `(1 - is) + is * mask` — outside [0, 1] it can invert the
+    // relief sign or amplify it past the output clamp. No DoS risk (clamp catches it),
+    // but parity with the other relief URL clamps prevents cosmetic surprises.
+    if (typeof result.reliefIntensityStrength === 'number') {
+      result.reliefIntensityStrength = Math.max(0, Math.min(1, result.reliefIntensityStrength));
+    }
     return result;
   } catch {
     return {};
