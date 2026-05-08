@@ -274,9 +274,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const cols = p.cols;
     const rows = p.rows;
 
-    // Pass 1: compute F1 owned by each site to derive per-cell radius.
-    const ownerF1: Float32Array = new Float32Array(cols * rows);
-    const ownerIdx: Int32Array = new Int32Array(cols * rows);
+    // Pass 1: accumulate per-site mean F1 to derive per-cell radius. We don't keep the
+    // F1/owner grid around — Pass 2 re-runs nearestTwo to also get F2, which is faster
+    // than caching F1 at every grid point (~850 KB heap on a 400×267 grid for no benefit).
     for (let j = 0; j < rows; j++) {
       const v = j / Math.max(1, rows - 1);
       const y = v * p.meshY;
@@ -284,9 +284,6 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
         const { f1, idx } = nearestTwo(sites, x, y, cosA, sinA, anisotropyScale);
-        const k = j * cols + i;
-        ownerF1[k] = f1;
-        ownerIdx[k] = idx;
         const s = sites[idx];
         s._radiusSum += f1;
         s._radiusN++;
@@ -297,7 +294,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
       s.radius = s._radiusN > 0 ? (s._radiusSum / s._radiusN) * 2 : p.cellSize;
     }
 
-    // Pass 2: compute heights using cached F1 and F2 (recompute F2 alongside F1).
+    // Pass 2: compute heights using F1 + F2 + owner from a fresh nearestTwo call.
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {

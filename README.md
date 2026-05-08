@@ -303,15 +303,6 @@ After baking the mesh:
 
 The `grasshopper/builder/` directory contains the Python scripts used to programmatically generate the `.gh` file via the Grasshopper SDK. These are development tools — you don't need them to use the definition.
 
-## Secrets & Environment Files (for agents working in this repo)
-
-All env vars and secrets live in the files below. Read them directly — don't ask.
-
-- User-level (shared across projects): `/Users/sawyer/.env`, `/Users/sawyer/.env.zsh`, `/Users/sawyer/.zshenv`
-- Project-local (gitignored): `/Users/sawyer/Code/mesh-maker/.env`
-
-Read pattern: `VAR=$(grep '^KEY=' /path/to/.env | tail -1 | cut -d= -f2-)`. Never commit `.env*`. Never echo secret values.
-
 ## License
 
 MIT

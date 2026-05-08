@@ -1,14 +1,15 @@
 /**
  * Deterministic verification of the Voronoi Relief sampler.
- * Run: npx tsx verification/voronoi-relief.spec.ts
+ * Run: npm run test:relief  (or: npx tsx cli/voronoi-relief.spec.ts)
  *
  * Asserts:
  *   1. determinism (same seed → byte-identical grid)
- *   2. finiteness (no NaN/Infinity)
- *   3. range bounds (within [-1.05, 1.05])
+ *   2-3. finiteness + range bounds (within [-1.05, 1.05])
  *   4. polarity inversion (pockets vs domes have flipped sign)
  *   5. density attractor (vertical mode increases site density toward bottom)
- *   6. profile sanity (dome at F1=0 ≈ 1, dome at F1=R ≈ 0)
+ *   6. profile sanity (peak at cell center, decay between cells)
+ *   7-7b. wave base mode + transitionSoftness semantics
+ *   8. Lloyd relaxation effect
  */
 
 import { VoronoiReliefGen } from '../src/noise/voronoi-relief';

@@ -465,16 +465,13 @@ class VoronoiReliefNoise(object):
         cosA = math.cos(a_rad); sinA = math.sin(a_rad)
         aniso_scale = 1.0 + p['anisotropy'] * 1.5
         cols = p['cols']; rows = p['rows']
-        # Pass 1: F1 + owner index
-        owner_f1 = [0.0] * (cols * rows)
-        owner_idx = [0] * (cols * rows)
+        # Pass 1: accumulate mean F1 per site to derive per-cell radius. Owner/F1 grid
+        # not retained — Pass 2 re-runs _nearest_two for F1+F2 together.
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
             for i in range(cols):
                 u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
                 f1, f2, idx = self._nearest_two(sites, x, y, cosA, sinA, aniso_scale)
-                k = j * cols + i
-                owner_f1[k] = f1; owner_idx[k] = idx
                 sites[idx][3] += f1; sites[idx][4] += 1
         for s in sites:
             s[2] = (s[3] / s[4]) * 2.0 if s[4] > 0 else p['cell_size']

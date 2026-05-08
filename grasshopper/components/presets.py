@@ -54,3 +54,23 @@ mesh_x       = p['mesh_x']
 mesh_y       = p['mesh_y']
 smooth_iter  = p['smooth_iter']
 smooth_str   = p['smooth_str']
+# Voronoi Relief outputs (only meaningful when noise_type == 'voronoi-relief'; non-relief
+# presets fall back to the in-component defaults via .get).
+relief_cell_size           = p.get('relief_cell_size',           1.5)
+relief_jitter              = p.get('relief_jitter',              0.7)
+relief_relax_iter          = p.get('relief_relax_iter',          1)
+relief_polarity            = p.get('relief_polarity',            'domes')
+relief_profile             = p.get('relief_profile',             'hemisphere')
+relief_seam_depth          = p.get('relief_seam_depth',          0.6)
+relief_seam_width          = p.get('relief_seam_width',          0.15)
+relief_anisotropy          = p.get('relief_anisotropy',          0.0)
+relief_anisotropy_angle    = p.get('relief_anisotropy_angle',    0.0)
+relief_attractor_mode      = p.get('relief_attractor_mode',      'none')
+relief_attractor_x         = p.get('relief_attractor_x',         0.5)
+relief_attractor_y         = p.get('relief_attractor_y',         0.5)
+relief_attractor_radius    = p.get('relief_attractor_radius',    0.5)
+relief_attractor_falloff   = p.get('relief_attractor_falloff',   1.0)
+relief_density_strength    = p.get('relief_density_strength',    0.0)
+relief_intensity_strength  = p.get('relief_intensity_strength',  1.0)
+relief_transition_softness = p.get('relief_transition_softness', 0.3)
+relief_base_mode           = p.get('relief_base_mode',           'flat')
