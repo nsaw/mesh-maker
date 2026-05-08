@@ -86,43 +86,32 @@ if gabor_bw    is None: gabor_bw    = 1.5
 if mesh_x      is None: mesh_x      = 36.0
 if mesh_y      is None: mesh_y      = 24.0
 if resolution  is None: resolution  = 96
-# Voronoi-relief inputs (only used when noise_type == 'voronoi-relief')
-try: relief_cell_size
-except NameError: relief_cell_size = 1.5
-try: relief_jitter
-except NameError: relief_jitter = 0.7
-try: relief_relax_iter
-except NameError: relief_relax_iter = 1
-try: relief_polarity
-except NameError: relief_polarity = 'domes'
-try: relief_profile
-except NameError: relief_profile = 'hemisphere'
-try: relief_seam_depth
-except NameError: relief_seam_depth = 0.6
-try: relief_seam_width
-except NameError: relief_seam_width = 0.15
-try: relief_anisotropy
-except NameError: relief_anisotropy = 0.0
-try: relief_anisotropy_angle
-except NameError: relief_anisotropy_angle = 0.0
-try: relief_attractor_mode
-except NameError: relief_attractor_mode = 'none'
-try: relief_attractor_x
-except NameError: relief_attractor_x = 0.5
-try: relief_attractor_y
-except NameError: relief_attractor_y = 0.5
-try: relief_attractor_radius
-except NameError: relief_attractor_radius = 0.5
-try: relief_attractor_falloff
-except NameError: relief_attractor_falloff = 1.0
-try: relief_density_strength
-except NameError: relief_density_strength = 0.0
-try: relief_intensity_strength
-except NameError: relief_intensity_strength = 1.0
-try: relief_transition_softness
-except NameError: relief_transition_softness = 0.3
-try: relief_base_mode
-except NameError: relief_base_mode = 'flat'
+# Voronoi-relief inputs. Handles both missing pins (NameError) and unwired pins (None).
+def _relief_default(name, default):
+    try:
+        v = globals()[name]
+    except KeyError:
+        return default
+    return default if v is None else v
+
+relief_cell_size           = _relief_default('relief_cell_size',           1.5)
+relief_jitter              = _relief_default('relief_jitter',              0.7)
+relief_relax_iter          = _relief_default('relief_relax_iter',          1)
+relief_polarity            = _relief_default('relief_polarity',            'domes')
+relief_profile             = _relief_default('relief_profile',             'hemisphere')
+relief_seam_depth          = _relief_default('relief_seam_depth',          0.6)
+relief_seam_width          = _relief_default('relief_seam_width',          0.15)
+relief_anisotropy          = _relief_default('relief_anisotropy',          0.0)
+relief_anisotropy_angle    = _relief_default('relief_anisotropy_angle',    0.0)
+relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')
+relief_attractor_x         = _relief_default('relief_attractor_x',         0.5)
+relief_attractor_y         = _relief_default('relief_attractor_y',         0.5)
+relief_attractor_radius    = _relief_default('relief_attractor_radius',    0.5)
+relief_attractor_falloff   = _relief_default('relief_attractor_falloff',   1.0)
+relief_density_strength    = _relief_default('relief_density_strength',    0.0)
+relief_intensity_strength  = _relief_default('relief_intensity_strength',  1.0)
+relief_transition_softness = _relief_default('relief_transition_softness', 0.3)
+relief_base_mode           = _relief_default('relief_base_mode',           'flat')
 
 seed        = int(seed)
 octaves     = int(octaves)
@@ -934,6 +923,21 @@ relief_base_mode           = p.get('relief_base_mode',           'flat')
         ("Worley",              "worley"),
         ("Gabor",               "gabor"),
         ("Wavelet",             "wavelet"),
+        ("Voronoi Relief",      "voronoi-relief"),
+    ]
+
+    # relief_* input pins added to the Noise component when the user wires the
+    # voronoi-relief mode. They mirror `relief*` fields in the TS state.
+    RELIEF_INPUTS = [
+        "relief_cell_size", "relief_jitter", "relief_relax_iter",
+        "relief_polarity", "relief_profile",
+        "relief_seam_depth", "relief_seam_width",
+        "relief_anisotropy", "relief_anisotropy_angle",
+        "relief_attractor_mode",
+        "relief_attractor_x", "relief_attractor_y",
+        "relief_attractor_radius", "relief_attractor_falloff",
+        "relief_density_strength", "relief_intensity_strength",
+        "relief_transition_softness", "relief_base_mode",
     ]
 
     PRESET_NAMES = [
@@ -952,6 +956,9 @@ relief_base_mode           = p.get('relief_base_mode',           'flat')
         ("Organic Swirl",     "organic-swirl"),
         ("Worley Cracks",     "worley-cracks"),
         ("Brushed Metal",     "brushed-metal"),
+        ("Relief Vertical",   "relief-vertical"),
+        ("Relief Radial",     "relief-radial"),
+        ("Relief Pockets",    "relief-pockets"),
     ]
 
     # ── Canvas x anchors ──────────────────────────────────────────────────
@@ -975,6 +982,11 @@ relief_base_mode           = p.get('relief_base_mode',           'flat')
     for name in ["noise_type","seed","frequency","octaves","persistence",
                  "lacunarity","distortion","gabor_angle","gabor_bw",
                  "mesh_x","mesh_y","resolution"]:
+        ni[name] = add_in(noise_comp, name)
+    # Voronoi-relief input pins. Unwired by default — the embedded NOISE_SCRIPT
+    # handles missing/None values via `_relief_default`, so these pins can sit
+    # empty when noise_type != 'voronoi-relief'.
+    for name in RELIEF_INPUTS:
         ni[name] = add_in(noise_comp, name)
 
     no = {}
@@ -1024,6 +1036,10 @@ relief_base_mode           = p.get('relief_base_mode',           'flat')
                  "valley_exp","valley_floor","offset","octaves","persistence",
                  "lacunarity","distortion","contrast","sharpness",
                  "mesh_x","mesh_y","smooth_iter","smooth_str"]:
+        pro[name] = add_out(preset_comp, name)
+    # Voronoi-relief preset outputs — wire to the Noise component's matching pins
+    # to use the relief presets (relief-vertical / relief-radial / relief-pockets).
+    for name in RELIEF_INPUTS:
         pro[name] = add_out(preset_comp, name)
 
     a = "checkpoint: step 5 - creating sliders"

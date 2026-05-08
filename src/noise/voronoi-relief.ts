@@ -238,19 +238,25 @@ function nearestTwo(
 
 export class VoronoiReliefGen implements ReliefGenerator {
   readonly kind = 'voronoi-relief' as const;
-  private seed: number;
-  private waveGen: SimplexNoiseGen;
+  /** Fallback seed for callers that ignore the params struct (none in current pipeline). */
+  private fallbackSeed: number;
 
   constructor(seed: number) {
-    this.seed = seed;
-    this.waveGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET);
+    this.fallbackSeed = seed;
   }
 
   /** Per-pixel noise() not meaningful for relief — return 0 for any caller that ignores `kind`. */
   noise(): number { return 0; }
 
   sampleGrid(p: ReliefSampleParams): number[][] {
-    const rand = mulberry32(this.seed >>> 0);
+    // Use the per-call seed from params (the canonical source — STATE.seed flows through
+    // sampleReliefParamsFromState into p.seed). Fall back to constructor seed only if
+    // p.seed is missing (defensive — currently never happens).
+    const seed = (p.seed ?? this.fallbackSeed) >>> 0;
+    const rand = mulberry32(seed);
+    // Re-seed the wave generator per call so same p.seed → same wave field even when the
+    // generator instance is reused across renders.
+    const waveGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET);
     const sites = generateSites(p, rand);
     if (sites.length === 0) {
       // Defensive: empty cellgrid → flat field.
@@ -259,9 +265,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
       return empty;
     }
 
-    // Lloyd relaxation passes (default 1, max 2). Sample budget scales with sites for stability.
+    // Lloyd relaxation passes (default 1, max 2). Defensive clamp — STATE is the canonical
+    // source, but params may originate from URLs, tests, or future callers. Hard-cap at 2
+    // to prevent a denial-of-service via a crafted share link.
+    const relaxIters = Math.max(0, Math.min(2, Math.floor(p.relaxIterations) || 0));
     const lloydSamples = Math.min(LLOYD_SAMPLE_BUDGET_MAX, sites.length * LLOYD_SAMPLES_PER_SITE);
-    for (let r = 0; r < p.relaxIterations; r++) {
+    for (let r = 0; r < relaxIters; r++) {
       lloydRelax(sites, p, lloydSamples);
     }
 
@@ -327,7 +336,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
           // Low-frequency simplex base that cells transition into. transitionSoftness=0 →
           // sharp boundary (cells take over abruptly where mask rises); transitionSoftness=1 →
           // gradual lerp from base to cells across the full mask range.
-          const base = this.waveGen.noise(x * WAVE_NOISE_FREQUENCY, y * WAVE_NOISE_FREQUENCY) * WAVE_AMPLITUDE;
+          const base = waveGen.noise(x * WAVE_NOISE_FREQUENCY, y * WAVE_NOISE_FREQUENCY) * WAVE_AMPLITUDE;
           const exponent = TRANSITION_EXPONENT_MIN
             + p.transitionSoftness * (TRANSITION_EXPONENT_MAX - TRANSITION_EXPONENT_MIN);
           const cellWeight = Math.pow(mask, exponent);

@@ -270,6 +270,12 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
         (result as Record<string, unknown>)[key] = parsed[key];
       }
     }
+    // Clamp untrusted numeric ranges from URL payloads. A crafted share link with
+    // huge reliefRelaxIterations would otherwise spin the browser inside a Lloyd
+    // loop. Slider UI bounds are not enforced here — payload comes from any source.
+    if (typeof result.reliefRelaxIterations === 'number') {
+      result.reliefRelaxIterations = Math.max(0, Math.min(2, Math.floor(result.reliefRelaxIterations)));
+    }
     return result;
   } catch {
     return {};

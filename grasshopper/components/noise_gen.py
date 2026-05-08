@@ -20,43 +20,38 @@ if gabor_bw    is None: gabor_bw    = 1.5
 if mesh_x      is None: mesh_x      = 36.0
 if mesh_y      is None: mesh_y      = 24.0
 if resolution  is None: resolution  = 96
-# Voronoi-relief inputs (only used when noise_type == 'voronoi-relief')
-try: relief_cell_size
-except NameError: relief_cell_size = 1.5
-try: relief_jitter
-except NameError: relief_jitter = 0.7
-try: relief_relax_iter
-except NameError: relief_relax_iter = 1
-try: relief_polarity
-except NameError: relief_polarity = 'domes'  # 'domes' or 'pockets'
-try: relief_profile
-except NameError: relief_profile = 'hemisphere'  # 'hemisphere'|'cosine'|'parabolic'
-try: relief_seam_depth
-except NameError: relief_seam_depth = 0.6
-try: relief_seam_width
-except NameError: relief_seam_width = 0.15
-try: relief_anisotropy
-except NameError: relief_anisotropy = 0.0
-try: relief_anisotropy_angle
-except NameError: relief_anisotropy_angle = 0.0
-try: relief_attractor_mode
-except NameError: relief_attractor_mode = 'none'  # 'none'|'vertical'|'horizontal'|'radial'|'point'
-try: relief_attractor_x
-except NameError: relief_attractor_x = 0.5
-try: relief_attractor_y
-except NameError: relief_attractor_y = 0.5
-try: relief_attractor_radius
-except NameError: relief_attractor_radius = 0.5
-try: relief_attractor_falloff
-except NameError: relief_attractor_falloff = 1.0
-try: relief_density_strength
-except NameError: relief_density_strength = 0.0
-try: relief_intensity_strength
-except NameError: relief_intensity_strength = 1.0
-try: relief_transition_softness
-except NameError: relief_transition_softness = 0.3
-try: relief_base_mode
-except NameError: relief_base_mode = 'flat'  # 'flat'|'wave'
+# Voronoi-relief inputs. Two failure modes for a missing value:
+#   1) the pin doesn't exist on the component → NameError (component compiled before
+#      relief mode was added)
+#   2) the pin exists but is unwired → GhPython binds the name to None (component
+#      was rebuilt with relief pins but user hasn't wired them yet)
+# Both must fall through to the documented default so `noise_type=='voronoi-relief'`
+# never hits float(None) / int(None) downstream.
+def _relief_default(name, default):
+    try:
+        v = globals()[name]
+    except KeyError:
+        return default
+    return default if v is None else v
+
+relief_cell_size           = _relief_default('relief_cell_size',           1.5)
+relief_jitter              = _relief_default('relief_jitter',              0.7)
+relief_relax_iter          = _relief_default('relief_relax_iter',          1)
+relief_polarity            = _relief_default('relief_polarity',            'domes')        # 'domes' | 'pockets'
+relief_profile             = _relief_default('relief_profile',             'hemisphere')   # 'hemisphere' | 'cosine' | 'parabolic'
+relief_seam_depth          = _relief_default('relief_seam_depth',          0.6)
+relief_seam_width          = _relief_default('relief_seam_width',          0.15)
+relief_anisotropy          = _relief_default('relief_anisotropy',          0.0)
+relief_anisotropy_angle    = _relief_default('relief_anisotropy_angle',    0.0)
+relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')         # 'none'|'vertical'|'horizontal'|'radial'|'point'
+relief_attractor_x         = _relief_default('relief_attractor_x',         0.5)
+relief_attractor_y         = _relief_default('relief_attractor_y',         0.5)
+relief_attractor_radius    = _relief_default('relief_attractor_radius',    0.5)
+relief_attractor_falloff   = _relief_default('relief_attractor_falloff',   1.0)
+relief_density_strength    = _relief_default('relief_density_strength',    0.0)
+relief_intensity_strength  = _relief_default('relief_intensity_strength',  1.0)
+relief_transition_softness = _relief_default('relief_transition_softness', 0.3)
+relief_base_mode           = _relief_default('relief_base_mode',           'flat')         # 'flat'|'wave'
 
 seed        = int(seed)
 octaves     = int(octaves)
