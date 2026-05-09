@@ -14,8 +14,14 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// Resolve the repo root via the platform-correct path API. `URL.pathname` returns
+// posix-style paths on Windows (e.g. `/C:/Users/...`) and string-concatenating breaks
+// when the repo path contains spaces or special characters. fileURLToPath + path.resolve
+// produce a native path that works on macOS, Linux, and Windows.
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -49,9 +55,21 @@ function normalize(src: string): string {
     .join('\n');
 }
 
-const builderSrc = readFileSync(`${ROOT}grasshopper/builder/meshcraft_builder.py`, 'utf8');
-const noiseGenSrc = readFileSync(`${ROOT}grasshopper/components/noise_gen.py`, 'utf8');
-const presetsSrc = readFileSync(`${ROOT}grasshopper/components/presets.py`, 'utf8');
+/** Print n lines of context around `i`, marking the divergence row with `>`.
+ *  Marker position is computed from the actual slice start so the `>` lands on the
+ *  divergence even when `i < n` (slice gets clamped to 0 and the row index shifts). */
+function ctx(lines: string[], i: number, n = 2): string {
+  const start = Math.max(0, i - n);
+  const marker = i - start;
+  return lines
+    .slice(start, i + n + 1)
+    .map((l, k) => `      ${k === marker ? '>' : ' '} ${l}`)
+    .join('\n');
+}
+
+const builderSrc = readFileSync(resolve(ROOT, 'grasshopper/builder/meshcraft_builder.py'), 'utf8');
+const noiseGenSrc = readFileSync(resolve(ROOT, 'grasshopper/components/noise_gen.py'), 'utf8');
+const presetsSrc = readFileSync(resolve(ROOT, 'grasshopper/components/presets.py'), 'utf8');
 
 const embeddedNoise = extractEmbedded(builderSrc, 'NOISE_SCRIPT');
 const embeddedPresets = extractEmbedded(builderSrc, 'PRESETS_SCRIPT');
@@ -75,8 +93,6 @@ if (a === b) {
   for (let i = 0; i < Math.max(aLines.length, bLines.length); i++) {
     if (aLines[i] !== bLines[i]) { diffIdx = i; break; }
   }
-  const ctx = (lines: string[], i: number, n = 2): string =>
-    lines.slice(Math.max(0, i - n), i + n + 1).map((l, k) => `      ${k === n ? '>' : ' '} ${l}`).join('\n');
   process.stdout.write(`  FAIL identical after whitespace normalization (first divergence at line ${diffIdx})\n`);
   process.stdout.write(`    EMBEDDED (NOISE_SCRIPT in meshcraft_builder.py):\n${ctx(aLines, diffIdx)}\n`);
   process.stdout.write(`    CANONICAL (noise_gen.py):\n${ctx(bLines, diffIdx)}\n`);
@@ -96,12 +112,25 @@ if (c === d) {
   for (let i = 0; i < Math.max(aLines.length, bLines.length); i++) {
     if (aLines[i] !== bLines[i]) { diffIdx = i; break; }
   }
-  const ctx = (lines: string[], i: number, n = 2): string =>
-    lines.slice(Math.max(0, i - n), i + n + 1).map((l, k) => `      ${k === n ? '>' : ' '} ${l}`).join('\n');
   process.stdout.write(`  FAIL identical after whitespace normalization (first divergence at line ${diffIdx})\n`);
   process.stdout.write(`    EMBEDDED (PRESETS_SCRIPT in meshcraft_builder.py):\n${ctx(aLines, diffIdx)}\n`);
   process.stdout.write(`    CANONICAL (presets.py):\n${ctx(bLines, diffIdx)}\n`);
   failures++;
+}
+
+// 4. ctx() marker placement — regression for the k === n bug at file boundaries.
+process.stdout.write('4. ctx() marker placement\n');
+{
+  const lines = ['a', 'b', 'c', 'd', 'e'];
+  // Divergence at index 0: slice = [0..2], marker should be at row 0 (`>` on 'a').
+  const head = ctx(lines, 0, 2);
+  assert(head.split('\n')[0].trimStart().startsWith('> a'), 'marker on first line when divergence at start');
+  // Divergence at index 4 (last): slice = [2..4], marker should be at row 2 (`>` on 'e').
+  const tail = ctx(lines, 4, 2);
+  assert(tail.split('\n')[2].trimStart().startsWith('> e'), 'marker on last line when divergence at end');
+  // Divergence in middle: slice = [1..3], marker at row 1 (`>` on 'c').
+  const mid = ctx(lines, 2, 1);
+  assert(mid.split('\n')[1].trimStart().startsWith('> c'), 'marker on center line when divergence in middle');
 }
 
 if (failures === 0) {
