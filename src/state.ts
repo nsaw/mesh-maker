@@ -47,6 +47,8 @@ export interface MeshState {
   reliefIntensityStrength: number;
   reliefTransitionSoftness: number;
   reliefBaseMode: ReliefBaseMode;
+  reliefCellSizeGradient: number;
+  reliefVoidStrength: number;
   // Mesh params
   meshX: number;
   meshY: number;
@@ -128,6 +130,8 @@ export const DEFAULTS: MeshState = {
   reliefIntensityStrength: 1,
   reliefTransitionSoftness: 0.3,
   reliefBaseMode: 'flat',
+  reliefCellSizeGradient: 0,
+  reliefVoidStrength: 0,
   meshX: 36,
   meshY: 24,
   resolution: 400,
@@ -180,6 +184,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
   'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
   'reliefTransitionSoftness', 'reliefBaseMode',
+  'reliefCellSizeGradient', 'reliefVoidStrength',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
@@ -187,7 +192,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 3;
+const CURRENT_PAYLOAD_VERSION = 4;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -214,6 +219,12 @@ const LEGACY_V2_DEFAULTS: Partial<MeshState> = {
   reliefIntensityStrength: 1,
   reliefTransitionSoftness: 0.3,
   reliefBaseMode: 'flat',
+};
+// v3→v4 added cell-size gradient + void-strength fields. Old links never set them; they
+// fall back to the documented defaults so prior reliefs render unchanged.
+const LEGACY_V3_DEFAULTS: Partial<MeshState> = {
+  reliefCellSizeGradient: 0,
+  reliefVoidStrength: 0,
 };
 
 export function serializeConfig(): string {
@@ -264,6 +275,13 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
         }
       }
     }
+    if (payloadVersion < 4) {
+      for (const [k, v] of Object.entries(LEGACY_V3_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -303,6 +321,12 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     // relief sign or amplify it past the output clamp. No DoS risk (clamp catches it),
     // but parity with the other relief URL clamps prevents cosmetic surprises.
     if ('reliefIntensityStrength' in result) clampField('reliefIntensityStrength', 0, 1);
+    // cellSizeGradient drives a multiplicative shrink on local cell radius; > 1 inverts the
+    // ratio (cells get bigger where mask is high), still bounded but no DoS path.
+    if ('reliefCellSizeGradient' in result) clampField('reliefCellSizeGradient', 0, 2);
+    // voidStrength gates the "cut-through" mode — values above 1 are meaningless (already
+    // saturates), and below 0 disables it; clamp to slider range.
+    if ('reliefVoidStrength' in result) clampField('reliefVoidStrength', 0, 1);
     return result;
   } catch {
     return {};

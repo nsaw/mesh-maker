@@ -36,6 +36,9 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
     attractorRadius: 0.5, attractorFalloff: 1,
     densityStrength: 0, intensityStrength: 1,
     transitionSoftness: 0.3, baseMode: 'flat',
+    // New fields (round-12): warp pipeline integration + cell-size gradient + void mode.
+    warpDistortion: 0, warpFrequency: 0.1,
+    cellSizeGradient: 0, voidStrength: 0,
     ...overrides,
   };
 }
@@ -215,6 +218,75 @@ function mean(values: number[]): number {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) differing++;
   assert(differing > a.length * 0.1,
     'Lloyd relaxation changes >10% of grid values from non-relaxed',
+    `differing=${differing}/${a.length}`);
+}
+
+// 9. Warp displacement actually moves sites (regression for the round-12 fix that wired
+//    the global distortion slider into the relief sampler). Same seed, same params, but
+//    one run has warpDistortion=0 and the other has warpDistortion=1 — outputs must differ.
+{
+  process.stdout.write('9. warp displacement effect\n');
+  const noWarp = new VoronoiReliefGen(55).sampleGrid(baseParams({
+    seed: 55, warpDistortion: 0, warpFrequency: 0.1,
+  }));
+  const warped = new VoronoiReliefGen(55).sampleGrid(baseParams({
+    seed: 55, warpDistortion: 1.0, warpFrequency: 0.1,
+  }));
+  let differing = 0;
+  const a = flatten(noWarp);
+  const b = flatten(warped);
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) differing++;
+  assert(differing > a.length * 0.2,
+    'warpDistortion changes >20% of grid values from no-warp baseline',
+    `differing=${differing}/${a.length}`);
+}
+
+// 10. Void mode forces -clamp where mask × seam exceeds threshold (regression for the
+//     round-12 fix that produces lafabrica-style cut-through fingers).
+{
+  process.stdout.write('10. void mode\n');
+  const grid = new VoronoiReliefGen(77).sampleGrid(baseParams({
+    seed: 77, attractorMode: 'vertical', attractorFalloff: 1.4,
+    densityStrength: 1, seamDepth: 0.7, voidStrength: 0.6,
+  }));
+  // Bottom band must contain values near the negative clamp (-1.05).
+  const bottomBand = flatten(grid.slice(grid.length - Math.floor(grid.length / 4)));
+  const minBot = Math.min(...bottomBand);
+  assert(minBot < -1.0,
+    'void mode produces values at the negative clamp (will floor to z=0 in CNC normalize)',
+    `minBot=${minBot.toFixed(4)}`);
+  // Without void mode at the same params, nothing should reach that depth.
+  const noVoidGrid = new VoronoiReliefGen(77).sampleGrid(baseParams({
+    seed: 77, attractorMode: 'vertical', attractorFalloff: 1.4,
+    densityStrength: 1, seamDepth: 0.7, voidStrength: 0,
+  }));
+  const minBotNoVoid = Math.min(...flatten(noVoidGrid.slice(noVoidGrid.length - Math.floor(noVoidGrid.length / 4))));
+  assert(minBotNoVoid > minBot,
+    'void mode cuts deeper than no-void at the same seamDepth',
+    `void min=${minBot.toFixed(4)} vs no-void min=${minBotNoVoid.toFixed(4)}`);
+}
+
+// 11. Cell-size gradient — under a vertical attractor, dome peaks in the dense (high-mask)
+//     band should be smaller than peaks in the sparse (low-mask) band. We approximate this
+//     by counting peaks above 0.9 — gradient should not eliminate peaks but should redistribute.
+{
+  process.stdout.write('11. cell-size gradient\n');
+  const flat = new VoronoiReliefGen(91).sampleGrid(baseParams({
+    seed: 91, cols: 80, rows: 80, attractorMode: 'vertical', attractorFalloff: 1,
+    densityStrength: 1, cellSizeGradient: 0,
+  }));
+  const graded = new VoronoiReliefGen(91).sampleGrid(baseParams({
+    seed: 91, cols: 80, rows: 80, attractorMode: 'vertical', attractorFalloff: 1,
+    densityStrength: 1, cellSizeGradient: 1.5,
+  }));
+  // Both grids should still hit dome peaks; the test is that the OUTPUTS DIFFER materially
+  // when the gradient is engaged.
+  let differing = 0;
+  const a = flatten(flat);
+  const b = flatten(graded);
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 0.01) differing++;
+  assert(differing > a.length * 0.1,
+    'cellSizeGradient changes >10% of grid values from baseline',
     `differing=${differing}/${a.length}`);
 }
 

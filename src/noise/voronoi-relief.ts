@@ -112,8 +112,11 @@ function attractorMask(
   return Math.pow(smoothstep(r * 0.5, r, d), shapedFalloff);
 }
 
-/** Generate a roughly-uniform jittered grid of sites scaled by the attractor mask. */
-function generateSites(p: ReliefSampleParams, rand: () => number): Site[] {
+/** Generate a roughly-uniform jittered grid of sites scaled by the attractor mask.
+ *  When `warpDistortion > 0`, a SimplexNoise warp field displaces site positions so the
+ *  Voronoi grid flows organically with the noise pipeline (matches lafabrica panels where
+ *  cells curve around the panel rather than gridding). */
+function generateSites(p: ReliefSampleParams, rand: () => number, warpGen: SimplexNoiseGen | null): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
   // baseSpacing converts cellSize (avg cell diameter) to grid spacing for site placement.
   const baseSpacing = Math.max(0.2, cellSize);
@@ -122,6 +125,11 @@ function generateSites(p: ReliefSampleParams, rand: () => number): Site[] {
   const ny = Math.max(2, Math.ceil(meshY / baseSpacing) + 1);
   const sx = meshX / nx;
   const sy = meshY / ny;
+
+  // Warp tuning: amplitude scales with cellSize so warp displacement is visible relative
+  // to grid spacing but never large enough to push sites off-panel before the clamp.
+  const warpAmp = warpGen ? p.warpDistortion * baseSpacing * 0.7 : 0;
+  const warpFreq = Math.max(0.02, p.warpFrequency);
 
   const sites: Site[] = [];
   // Hard caps: defense in depth on top of state.ts URL clamps. SITE_COUNT_MAX bounds the
@@ -145,9 +153,19 @@ function generateSites(p: ReliefSampleParams, rand: () => number): Site[] {
         if (sites.length >= SITE_COUNT_MAX) break outer;
         const jx = (rand() - 0.5) * jitter * sx;
         const jy = (rand() - 0.5) * jitter * sy;
+        let px = cx + jx;
+        let py = cy + jy;
+        // Domain warp on site positions — shifts the whole grid by a smoothly-varying field
+        // so cells curve and flow rather than tile uniformly.
+        if (warpGen && warpAmp > 0) {
+          const wx = warpGen.noise(px * warpFreq, py * warpFreq);
+          const wy = warpGen.noise(px * warpFreq + 31.7, py * warpFreq + 17.3);
+          px += wx * warpAmp;
+          py += wy * warpAmp;
+        }
         sites.push({
-          x: Math.max(0, Math.min(meshX, cx + jx)),
-          y: Math.max(0, Math.min(meshY, cy + jy)),
+          x: Math.max(0, Math.min(meshX, px)),
+          y: Math.max(0, Math.min(meshY, py)),
           radius: 0,
           _radiusSum: 0,
           _radiusN: 0,
@@ -269,7 +287,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // Re-seed the wave generator per call so same p.seed → same wave field even when the
     // generator instance is reused across renders.
     const waveGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET);
-    const sites = generateSites(p, rand);
+    // Separate warp generator (only created when distortion > 0) — driven by the global
+    // distortion/warpFreq sliders so the existing noise UI integrates with relief mode.
+    const warpGen = p.warpDistortion > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13)
+      : null;
+    const sites = generateSites(p, rand, warpGen);
     if (sites.length === 0) {
       // Defensive: empty cellgrid → flat field.
       const empty: number[][] = [];
@@ -323,6 +346,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     }
 
     // Pass 2: compute heights using F1 + F2 + owner from a fresh nearestTwo call.
+    // Defensive clamps for new fields — both already clamped at the URL boundary, but the
+    // sampler is also called from tests and future callers that may bypass deserializeConfig.
+    const cellSizeGradient = Math.max(0, Math.min(2, p.cellSizeGradient));
+    const voidStrength = Math.max(0, Math.min(1, p.voidStrength));
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
@@ -334,7 +361,17 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const x = u * p.meshX;
         const { f1, f2, idx } = nearestTwo(sites, x, y, cosA, sinA, anisotropyScale);
         const site = sites[idx];
-        const R = Math.max(0.05, site.radius);
+        // Spatial attractor on intensity — relief amplitude varies with mask.
+        const mask = attractorMask(
+          p.attractorMode, u, v, p.attractorX, p.attractorY,
+          p.attractorRadius, p.attractorFalloff,
+        );
+        // Cell-size gradient — shrinks the effective per-cell radius where mask is high so
+        // the dense-attractor zone has visibly smaller domes (not just more of them). Without
+        // this the "vertical" attractor only multiplies cell COUNT, never their physical size,
+        // and the panel reads as uniform tessellation regardless of attractor strength.
+        const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
+        const R = Math.max(0.05, site.radius * Math.max(0.2, sizeShrink));
         const dome = domeHeight(p.profile, f1, R);
         // Seam: 1 at boundary (F1≈F2), 0 well inside cells.
         const seam = 1 - smoothstep(0, Math.max(0.001, p.seamWidth * R), f2 - f1);
@@ -344,11 +381,6 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // the trough back above the surface.
         let h = polarity * (dome * (1 - seam) - p.seamDepth * seam);
 
-        // Spatial attractor on intensity — relief amplitude varies with mask.
-        const mask = attractorMask(
-          p.attractorMode, u, v, p.attractorX, p.attractorY,
-          p.attractorRadius, p.attractorFalloff,
-        );
         const intensityFactor = (1 - p.intensityStrength) + p.intensityStrength * mask;
 
         if (p.baseMode === 'wave') {
@@ -361,6 +393,18 @@ export class VoronoiReliefGen implements ReliefGenerator {
           h = base * (1 - cellWeight) + h * cellWeight * intensityFactor;
         } else {
           h *= intensityFactor;
+        }
+
+        // Void mode — at high mask + seam, force h far below clamp so CNC normalization
+        // drops to z=0 (machine bed). Produces the spike-finger zone seen in lafabrica
+        // panels where seams cut through the entire panel and cells become disconnected
+        // protrusions rather than continuous relief.
+        if (voidStrength > 0) {
+          const voidGate = mask * seam;
+          if (voidGate > 1 - voidStrength) {
+            // Push past the negative clamp so downstream CNC normalize floors to bed.
+            h = -OUTPUT_CLAMP;
+          }
         }
 
         // Clamp to a sane native range — downstream pipeline handles full normalization.
@@ -398,6 +442,10 @@ export function sampleReliefParamsFromState(
     reliefIntensityStrength: number;
     reliefTransitionSoftness: number;
     reliefBaseMode: ReliefBaseMode;
+    reliefCellSizeGradient: number;
+    reliefVoidStrength: number;
+    distortion: number;
+    warpFreq: number;
   },
 ): ReliefSampleParams {
   return {
@@ -420,5 +468,11 @@ export function sampleReliefParamsFromState(
     intensityStrength: s.reliefIntensityStrength,
     transitionSoftness: s.reliefTransitionSoftness,
     baseMode: s.reliefBaseMode,
+    // Wire upstream global noise sliders into relief — restores the warp/distortion
+    // pipeline that was disconnected when the relief sampler bypassed the per-pixel loop.
+    warpDistortion: s.distortion,
+    warpFrequency: s.warpFreq,
+    cellSizeGradient: s.reliefCellSizeGradient,
+    voidStrength: s.reliefVoidStrength,
   };
 }

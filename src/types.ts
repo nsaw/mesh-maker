@@ -32,6 +32,19 @@ export interface ReliefParams {
   intensityStrength: number;
   transitionSoftness: number;
   baseMode: ReliefBaseMode;
+  /** Domain warp distortion applied to Voronoi site positions. Reuses the global
+   *  `distortion` slider so the existing noise pipeline integrates with relief. */
+  warpDistortion: number;
+  /** Frequency of the warp noise field (matches the global `warpFreq` semantics). */
+  warpFrequency: number;
+  /** When > 0, dense areas of the attractor mask not only get more sites but also
+   *  proportionally smaller per-cell radii — produces dramatic size variation across
+   *  a panel (huge cells where mask=0, tight cells where mask=1). */
+  cellSizeGradient: number;
+  /** When > 0, seams in high-mask regions cut through the panel (output = -∞ pre-clamp,
+   *  CNC normalizer drops to z=0). Produces the spike-finger zone seen in lafabrica
+   *  panels where cells become disconnected protrusions. */
+  voidStrength: number;
 }
 
 export interface ReliefSampleParams extends ReliefParams {

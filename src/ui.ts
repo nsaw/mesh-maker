@@ -281,6 +281,10 @@ function buildNoiseParametersSection(): HTMLElement {
     children.push(
       slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05),
       slider('offset', 'Vertical Offset', -2, 2, 0.05),
+      // distortion + warpFreq drive the relief sampler's site-position warp; keeping these
+      // visible in relief mode is what the user means by "we lost the warp functions".
+      slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05),
+      slider('warpFreq', 'Warp Frequency', 0.02, 0.4, 0.01),
       seedRow,
     );
     return buildSection('Noise Parameters', children, false, 'noise-only');
@@ -336,8 +340,10 @@ function buildReliefSection(): HTMLElement {
     slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
     slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
     slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
+    slider('reliefCellSizeGradient', 'Cell Size Gradient', 0, 2, 0.05),
     slider('reliefIntensityStrength', 'Intensity Strength', 0, 1, 0.05),
     slider('reliefTransitionSoftness', 'Transition Softness', 0, 1, 0.05),
+    slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
   ], false, 'noise-only');
