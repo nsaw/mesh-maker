@@ -344,6 +344,9 @@ function buildReliefSection(): HTMLElement {
     slider('reliefIntensityStrength', 'Intensity Strength', 0, 1, 0.05),
     slider('reliefTransitionSoftness', 'Transition Softness', 0, 1, 0.05),
     slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
+    slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
+    slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
+    slider('reliefFlowAnisotropy', 'Flow Anisotropy', 0, 1, 0.05),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
   ], false, 'noise-only');

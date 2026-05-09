@@ -49,12 +49,19 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
     reliefCellSizeGradient:0.6, reliefVoidStrength:0,
     meshX:24, meshY:24, smoothIter:1, smoothStr:0.4 },
-  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.2, contrast:1, sharpness:0,
+  // relief-pockets — sunken-cell relief with patchy/stretched cells driven by noise-modulated
+  // attractor + flow-field anisotropy, matching the lafabrica reference where huge stretched
+  // cells coexist with tight ones and orientation varies organically across the panel.
+  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
-    reliefCellSize:2.0, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
-    reliefSeamDepth:0.45, reliefSeamWidth:0.18, reliefAnisotropy:0, reliefAnisotropyAngle:0,
-    reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
-    reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.3, reliefBaseMode:'flat',
-    reliefCellSizeGradient:0, reliefVoidStrength:0,
-    meshX:36, meshY:24, smoothIter:1, smoothStr:0.5 },
+    reliefCellSize:5, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
+    reliefSeamDepth:0.4, reliefSeamWidth:0.45, reliefAnisotropy:0.5, reliefAnisotropyAngle:80,
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:1.6,
+    reliefDensityStrength:1.6, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'wave',
+    reliefCellSizeGradient:0.6, reliefVoidStrength:0.1,
+    // Patchy mask + flow-anisotropy give the random-points-stretched-and-expanded look:
+    // attractor noise breaks the linear gradient into organic blobs, flow anisotropy lets
+    // each region's stretch direction curve smoothly across the panel.
+    reliefAttractorNoise:0.7, reliefAttractorNoiseFreq:0.18, reliefFlowAnisotropy:0.7,
+    meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.4 },
 };

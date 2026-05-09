@@ -45,6 +45,17 @@ export interface ReliefParams {
    *  CNC normalizer drops to z=0). Produces the spike-finger zone seen in lafabrica
    *  panels where cells become disconnected protrusions. */
   voidStrength: number;
+  /** Patches the otherwise-smooth attractor mask with a 2D noise field — produces
+   *  patchy, random-looking density/intensity variation instead of a single linear
+   *  gradient. 0 = pure mathematical attractor, 1 = pure noise modulation. */
+  attractorNoise: number;
+  /** Spatial frequency of the attractor noise field. Lower = larger blobs. */
+  attractorNoiseFreq: number;
+  /** Per-pixel deviation of the anisotropy angle from the global `anisotropyAngle`,
+   *  driven by a flow-noise field. 0 = uniform global angle (current behavior),
+   *  1 = anisotropy direction varies wildly across the panel. Produces the
+   *  organic, randomly-stretched-in-different-directions look. */
+  flowAnisotropy: number;
 }
 
 export interface ReliefSampleParams extends ReliefParams {

@@ -49,6 +49,9 @@ export interface MeshState {
   reliefBaseMode: ReliefBaseMode;
   reliefCellSizeGradient: number;
   reliefVoidStrength: number;
+  reliefAttractorNoise: number;
+  reliefAttractorNoiseFreq: number;
+  reliefFlowAnisotropy: number;
   // Mesh params
   meshX: number;
   meshY: number;
@@ -132,6 +135,9 @@ export const DEFAULTS: MeshState = {
   reliefBaseMode: 'flat',
   reliefCellSizeGradient: 0,
   reliefVoidStrength: 0,
+  reliefAttractorNoise: 0,
+  reliefAttractorNoiseFreq: 0.15,
+  reliefFlowAnisotropy: 0,
   meshX: 36,
   meshY: 24,
   resolution: 400,
@@ -185,6 +191,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
   'reliefTransitionSoftness', 'reliefBaseMode',
   'reliefCellSizeGradient', 'reliefVoidStrength',
+  'reliefAttractorNoise', 'reliefAttractorNoiseFreq', 'reliefFlowAnisotropy',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
@@ -192,7 +199,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 4;
+const CURRENT_PAYLOAD_VERSION = 5;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -225,6 +232,12 @@ const LEGACY_V2_DEFAULTS: Partial<MeshState> = {
 const LEGACY_V3_DEFAULTS: Partial<MeshState> = {
   reliefCellSizeGradient: 0,
   reliefVoidStrength: 0,
+};
+// v4→v5 added noise-modulated attractor + flow-anisotropy. Old links never set them.
+const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
+  reliefAttractorNoise: 0,
+  reliefAttractorNoiseFreq: 0.15,
+  reliefFlowAnisotropy: 0,
 };
 
 export function serializeConfig(): string {
@@ -354,6 +367,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 5) {
+      for (const [k, v] of Object.entries(LEGACY_V4_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -399,6 +419,9 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // voidStrength gates the "cut-through" mode — values above 1 are meaningless (already
     // saturates), and below 0 disables it; clamp to slider range.
     if ('reliefVoidStrength' in result) clampField('reliefVoidStrength', 0, 1);
+    if ('reliefAttractorNoise' in result) clampField('reliefAttractorNoise', 0, 1);
+    if ('reliefAttractorNoiseFreq' in result) clampField('reliefAttractorNoiseFreq', 0.02, 0.5);
+    if ('reliefFlowAnisotropy' in result) clampField('reliefFlowAnisotropy', 0, 1);
     return result;
   } catch {
     return {};

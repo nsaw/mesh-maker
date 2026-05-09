@@ -39,6 +39,8 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
     // New fields (round-12): warp pipeline integration + cell-size gradient + void mode.
     warpDistortion: 0, warpFrequency: 0.1,
     cellSizeGradient: 0, voidStrength: 0,
+    // Round-14: noise-modulated attractor + flow-field anisotropy.
+    attractorNoise: 0, attractorNoiseFreq: 0.15, flowAnisotropy: 0,
     ...overrides,
   };
 }
@@ -322,6 +324,46 @@ function mean(values: number[]): number {
   assert(botSdAnchorBot > topSdAnchorBot * 1.1,
     'attractorY=1 puts dense band at bottom of grid (high j, viewport top)',
     `top σ=${topSdAnchorBot.toFixed(4)} bot σ=${botSdAnchorBot.toFixed(4)}`);
+}
+
+// 13. Attractor patchiness — round-14 fix that breaks the smooth linear gradient into
+//     organic blobs via 2D noise modulation. Same seed/params, two grids, only attractor
+//     noise differs — outputs must differ materially.
+{
+  process.stdout.write('13. attractor patchiness\n');
+  const smooth = new VoronoiReliefGen(31).sampleGrid(baseParams({
+    seed: 31, attractorMode: 'vertical', attractorY: 0, densityStrength: 1.5,
+    attractorNoise: 0,
+  }));
+  const patchy = new VoronoiReliefGen(31).sampleGrid(baseParams({
+    seed: 31, attractorMode: 'vertical', attractorY: 0, densityStrength: 1.5,
+    attractorNoise: 1, attractorNoiseFreq: 0.2,
+  }));
+  let differing = 0;
+  const a = flatten(smooth);
+  const b = flatten(patchy);
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 0.01) differing++;
+  assert(differing > a.length * 0.2,
+    'attractorNoise modulates >20% of grid values from smooth-gradient baseline',
+    `differing=${differing}/${a.length}`);
+}
+
+// 14. Flow anisotropy — per-pixel angle deviation. Same seed/aniso/angle, only flow differs.
+{
+  process.stdout.write('14. flow anisotropy\n');
+  const uniform = new VoronoiReliefGen(41).sampleGrid(baseParams({
+    seed: 41, anisotropy: 0.6, anisotropyAngle: 30, flowAnisotropy: 0,
+  }));
+  const flowing = new VoronoiReliefGen(41).sampleGrid(baseParams({
+    seed: 41, anisotropy: 0.6, anisotropyAngle: 30, flowAnisotropy: 1,
+  }));
+  let differing = 0;
+  const a = flatten(uniform);
+  const b = flatten(flowing);
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 0.01) differing++;
+  assert(differing > a.length * 0.15,
+    'flowAnisotropy curves the stretch direction across the panel (>15% differ)',
+    `differing=${differing}/${a.length}`);
 }
 
 if (failures === 0) {

@@ -297,6 +297,17 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const warpGen = p.warpDistortion > 0
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13)
       : null;
+    // Patchy modulator for the attractor mask — produces random "blob" zones of
+    // density/intensity instead of a smooth linear gradient. Off when attractorNoise=0.
+    const attractorNoiseGen = p.attractorNoise > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 29)
+      : null;
+    // Flow field for per-pixel anisotropy direction — drives organic stretched-in-different-
+    // directions look. Off when flowAnisotropy=0; otherwise creates two noise channels
+    // (ang + freq variation) so cell orientation curves smoothly across the panel.
+    const flowGen = p.flowAnisotropy > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 47)
+      : null;
     const sites = generateSites(p, rand, warpGen);
     if (sites.length === 0) {
       // Defensive: empty cellgrid → flat field.
@@ -333,13 +344,21 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // Pass 1: accumulate per-site mean F1 to derive per-cell radius. We don't keep the
     // F1/owner grid around — Pass 2 re-runs nearestTwo to also get F2, which is faster
     // than caching F1 at every grid point (~850 KB heap on a 400×267 grid for no benefit).
+    // Pre-clamp flow strength so the inner loop branch is predictable.
+    const pass1FlowAnisotropyAmt = Math.max(0, Math.min(1, p.flowAnisotropy));
     for (let j = 0; j < rows; j++) {
       const v = j / Math.max(1, rows - 1);
       const y = v * p.meshY;
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
-        const { f1, idx } = nearestTwo(sites, x, y, cosA, sinA, anisotropyScale);
+        let pxCosA = cosA, pxSinA = sinA;
+        if (flowGen && pass1FlowAnisotropyAmt > 0) {
+          const flow = flowGen.noise(x * 0.18, y * 0.18);
+          const localAngle = (p.anisotropyAngle + flow * pass1FlowAnisotropyAmt * 90) * Math.PI / 180;
+          pxCosA = Math.cos(localAngle); pxSinA = Math.sin(localAngle);
+        }
+        const { f1, idx } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
         const s = sites[idx];
         s._radiusSum += f1;
         s._radiusN++;
@@ -355,6 +374,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // sampler is also called from tests and future callers that may bypass deserializeConfig.
     const cellSizeGradient = Math.max(0, Math.min(2, p.cellSizeGradient));
     const voidStrength = Math.max(0, Math.min(1, p.voidStrength));
+    const attractorNoiseAmt = Math.max(0, Math.min(1, p.attractorNoise));
+    const attractorNoiseFreq = Math.max(0.02, Math.min(0.5, p.attractorNoiseFreq));
+    const flowAnisotropyAmt = Math.max(0, Math.min(1, p.flowAnisotropy));
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
@@ -364,13 +386,34 @@ export class VoronoiReliefGen implements ReliefGenerator {
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
-        const { f1, f2, idx } = nearestTwo(sites, x, y, cosA, sinA, anisotropyScale);
+        // Per-pixel anisotropy angle when flow is enabled — angle deviates from the global
+        // anisotropyAngle by up to ±90° based on a smooth flow-noise field. Fast path uses
+        // hoisted cosA/sinA when flowAnisotropy=0.
+        let pxCosA = cosA, pxSinA = sinA;
+        if (flowGen && flowAnisotropyAmt > 0) {
+          const flow = flowGen.noise(x * 0.18, y * 0.18);
+          const localAngle = (p.anisotropyAngle + flow * flowAnisotropyAmt * 90) * Math.PI / 180;
+          pxCosA = Math.cos(localAngle); pxSinA = Math.sin(localAngle);
+        }
+        const { f1, f2, idx } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
         const site = sites[idx];
         // Spatial attractor on intensity — relief amplitude varies with mask.
-        const mask = attractorMask(
+        let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
           p.attractorRadius, p.attractorFalloff,
         );
+        // Patchy noise modulation — multiplies the smooth attractor mask by a noise field
+        // so dense/intense zones form random blobs rather than a uniform gradient. Produces
+        // the lafabrica look where cells of vastly different sizes coexist in the same band.
+        if (attractorNoiseGen && attractorNoiseAmt > 0) {
+          // Map noise [-1, 1] to [0, 1] then lerp from "1.0 (no modulation)" toward the
+          // noise field as attractorNoise increases.
+          const n = attractorNoiseGen.noise(x * attractorNoiseFreq, y * attractorNoiseFreq);
+          const modulator = (n + 1) * 0.5;
+          mask = mask * ((1 - attractorNoiseAmt) + attractorNoiseAmt * modulator * 1.5);
+          if (mask > 1) mask = 1;
+          if (mask < 0) mask = 0;
+        }
         // Cell-size gradient — shrinks the effective per-cell radius where mask is high so
         // the dense-attractor zone has visibly smaller domes (not just more of them). Without
         // this the "vertical" attractor only multiplies cell COUNT, never their physical size,
@@ -449,6 +492,9 @@ export function sampleReliefParamsFromState(
     reliefBaseMode: ReliefBaseMode;
     reliefCellSizeGradient: number;
     reliefVoidStrength: number;
+    reliefAttractorNoise: number;
+    reliefAttractorNoiseFreq: number;
+    reliefFlowAnisotropy: number;
     distortion: number;
     warpFreq: number;
   },
@@ -479,5 +525,8 @@ export function sampleReliefParamsFromState(
     warpFrequency: s.warpFreq,
     cellSizeGradient: s.reliefCellSizeGradient,
     voidStrength: s.reliefVoidStrength,
+    attractorNoise: s.reliefAttractorNoise,
+    attractorNoiseFreq: s.reliefAttractorNoiseFreq,
+    flowAnisotropy: s.reliefFlowAnisotropy,
   };
 }
