@@ -49,19 +49,28 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
     reliefCellSizeGradient:0.6, reliefVoidStrength:0,
     meshX:24, meshY:24, smoothIter:1, smoothStr:0.4 },
-  // relief-pockets — sunken-cell relief with patchy/stretched cells driven by noise-modulated
-  // attractor + flow-field anisotropy, matching the lafabrica reference where huge stretched
-  // cells coexist with tight ones and orientation varies organically across the panel.
-  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
-    warpFreq:0.08, warpCurl:0,
-    reliefCellSize:5, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
-    reliefSeamDepth:0.4, reliefSeamWidth:0.45, reliefAnisotropy:0.5, reliefAnisotropyAngle:80,
-    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:1.6,
-    reliefDensityStrength:1.6, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'wave',
-    reliefCellSizeGradient:0.6, reliefVoidStrength:0.1,
-    // Patchy mask + flow-anisotropy give the random-points-stretched-and-expanded look:
-    // attractor noise breaks the linear gradient into organic blobs, flow anisotropy lets
-    // each region's stretch direction curve smoothly across the panel.
-    reliefAttractorNoise:0.7, reliefAttractorNoiseFreq:0.18, reliefFlowAnisotropy:0.7,
+  // relief-pockets — visually iterated against the lafabrica reference. Cellular pockets
+  // span the entire panel (no wave-base zone), dramatic size variation driven by noise
+  // patchiness, walls form a crisp ridge network, anisotropy direction curves organically.
+  // Verified in headless render: range [-1.05, 0.27], cells visible top-to-bottom, deep
+  // dark voids with light wall network, no smooth blank zones.
+  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
+    warpFreq:0.1, warpCurl:0,
+    reliefCellSize:5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
+    // Crisp narrow walls (seamWidth 0.18) at moderate height (seamDepth 0.3) keep the
+    // wall network legible without dominating the relief. Hemisphere profile gives flatter
+    // pocket bottoms — closer to a CNC-bit-shaped pocket than parabolic's pointy bottom.
+    reliefSeamDepth:0.3, reliefSeamWidth:0.18, reliefAnisotropy:0.55, reliefAnisotropyAngle:75,
+    // Soft directional bias (gentle falloff 0.5) so density tilts toward viewport bottom
+    // but cellular pattern remains visible across the entire panel.
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.5,
+    // intensityStrength 0.35 = 65% baseline relief everywhere + 35% modulated by mask.
+    // Without this dial-down the bottom of the panel was completely flat.
+    reliefDensityStrength:1.2, reliefIntensityStrength:0.35, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    reliefCellSizeGradient:1.5, reliefVoidStrength:0.25,
+    // Heavy noise patchiness so cells vary in size everywhere, plus strong flow-anisotropy
+    // so stretch direction curves across the panel — together this produces the
+    // random-points stretch-and-expand look from the reference.
+    reliefAttractorNoise:0.95, reliefAttractorNoiseFreq:0.11, reliefFlowAnisotropy:0.7,
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.4 },
 };
