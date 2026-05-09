@@ -116,14 +116,20 @@ export function setupToolbar(): void {
   document.getElementById('chkBinary')!.addEventListener('change', e => { STATE.binary = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chk3dmPointCloud')!.addEventListener('change', e => { STATE.export3dmAsPointCloud = (e.target as HTMLInputElement).checked; });
 
-  // Copy Link button — URL state sharing
+  // Copy Link button — URL state sharing.
+  // Uses URL/searchParams instead of string concatenation so the encoded payload (which
+  // contains `=` after the trailing-padding strip is incomplete on some browsers) can never
+  // accidentally collide with the URL's own `?c=` separator. URL.searchParams.set() handles
+  // proper percent-encoding and produces a syntactically clean absolute URL.
   const copyLinkBtn = document.getElementById('btnCopyLink');
   if (copyLinkBtn) {
     copyLinkBtn.addEventListener('click', () => {
       const config = serializeConfig();
-      const url = config
-        ? `${window.location.origin}${window.location.pathname}?c=${config}`
-        : `${window.location.origin}${window.location.pathname}`;
+      const u = new URL(window.location.href);
+      u.search = '';
+      u.hash = '';
+      if (config) u.searchParams.set('c', config);
+      const url = u.toString();
       if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         navigator.clipboard.writeText(url).then(() => {
           showToast('Link copied!');

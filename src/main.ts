@@ -31,7 +31,10 @@ function preloadDemoDepthMap(): void {
 
 function init(): void {
   // Apply URL state if present
-  const urlConfig = deserializeConfig(new URLSearchParams(window.location.search));
+  // Pass the full Location so deserializeConfig can recover payloads from the search
+  // string, the hash, OR a malformed path (`meshcraft.sawyerdesign.io/=eyJ...`) that some
+  // copy-paste flows produce on iOS.
+  const urlConfig = deserializeConfig(window.location);
   for (const [key, value] of Object.entries(urlConfig)) {
     (STATE as unknown as Record<string, unknown>)[key] = value;
   }

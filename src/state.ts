@@ -242,8 +242,80 @@ export function serializeConfig(): string {
     .replace(/=+$/, '');
 }
 
-export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshState> {
-  const encoded = searchParams.get('c');
+/** Pull the encoded share-link payload out of a URL-like input. Tolerates payload-only
+ *  strings (e.g. when the user pastes a clipboard fragment into the URL bar without the
+ *  `?c=` prefix), payloads in the URL hash, and payloads embedded in the path component.
+ *  Returns the base64url-encoded blob, or null if nothing payload-shaped is found.
+ *  Callers in tests can pass a `URLSearchParams`; the production main.ts passes the full
+ *  `window.location` object so all three URL surfaces are inspected. */
+export function findEncodedPayload(input: URLSearchParams | Location | string): string | null {
+  // 1. URLSearchParams — current canonical path. Both encodeURIComponent forms ('c=eyJ...')
+  //    and the older un-prefixed form (the whole search starts with '=eyJ...') are accepted.
+  if (input instanceof URLSearchParams) {
+    return input.get('c') ?? null;
+  }
+  // Convert string or Location to a URL we can dissect; fall through to substring extraction
+  // when we don't have a URL constructor target.
+  let search: string;
+  let hash: string;
+  let pathname: string;
+  if (typeof input === 'string') {
+    try {
+      const u = new URL(input, 'https://placeholder.invalid');
+      search = u.search; hash = u.hash; pathname = u.pathname;
+    } catch {
+      // Not a URL — treat the whole string as a candidate payload.
+      return extractBase64UrlBlob(input);
+    }
+  } else {
+    search = input.search; hash = input.hash; pathname = input.pathname;
+  }
+  // 2. Standard ?c=eyJ... query.
+  if (search) {
+    try {
+      const sp = new URLSearchParams(search);
+      const c = sp.get('c');
+      if (c) return c;
+    } catch { /* fallthrough */ }
+  }
+  // 3. Bare ?eyJ... or ?=eyJ... — sometimes the `c=` is stripped by an intermediate
+  //    redirect or copy-paste.
+  if (search.length > 1) {
+    const blob = extractBase64UrlBlob(search.slice(1));
+    if (blob) return blob;
+  }
+  // 4. Hash component (#c=eyJ... or #eyJ...) — some routers move state to the hash.
+  if (hash.length > 1) {
+    const tail = hash.startsWith('#c=') ? hash.slice(3) : hash.slice(1);
+    const blob = extractBase64UrlBlob(tail);
+    if (blob) return blob;
+  }
+  // 5. Path component (/eyJ... or /=eyJ...) — last-ditch tolerance for the pattern the user
+  //    hits when iOS clipboard drops the URL prefix and they manually paste the orphan
+  //    payload after the domain.
+  if (pathname.length > 1) {
+    const blob = extractBase64UrlBlob(pathname.slice(1));
+    if (blob) return blob;
+  }
+  return null;
+}
+
+/** Detects a base64url-ish blob inside an arbitrary string. Strips a leading `=` (the
+ *  separator that escaped its key during a malformed paste), and validates that what
+ *  remains is plausibly base64 — at least 16 chars, only [A-Za-z0-9_-]. */
+function extractBase64UrlBlob(input: string): string | null {
+  let s = input;
+  if (s.startsWith('=')) s = s.slice(1);
+  // Strip any trailing slash or whitespace.
+  s = s.replace(/[/\s]+$/g, '');
+  if (s.length < 16) return null;
+  // Must look like base64url. Don't accept arbitrary text that just happens to match.
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
+  return s;
+}
+
+export function deserializeConfig(input: URLSearchParams | Location | string): Partial<MeshState> {
+  const encoded = findEncodedPayload(input);
   if (!encoded) return {};
   try {
     const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
