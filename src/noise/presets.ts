@@ -30,14 +30,17 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // `relief-vertical` targets the tall panel reference: smooth wave field at top, dense
   // domed cells in the middle, cut-through spike fingers at the bottom. Distortion drives
   // domain warp on Voronoi sites so the grid flows organically rather than tessellating.
-  'relief-vertical': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.8, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
+  'relief-vertical': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
-    reliefCellSize:2.0, reliefJitter:0.9, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'hemisphere',
-    reliefSeamDepth:0.85, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
-    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1.8,
-    reliefDensityStrength:1.5, reliefIntensityStrength:1, reliefTransitionSoftness:0.35, reliefBaseMode:'wave',
-    reliefCellSizeGradient:0.8, reliefVoidStrength:0.55,
-    meshX:24, meshY:48, smoothIter:1, smoothStr:0.4 },
+    reliefCellSize:1.6, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'hemisphere',
+    reliefSeamDepth:0.95, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
+    // attractorY:0 anchors the dense+void zone to the BOTTOM of the panel (viewport bottom
+    // with default camera) — matches the lafabrica reference orientation where smooth waves
+    // sit at the top and the cellular/spike zone hangs toward the bottom edge.
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:2.2,
+    reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
+    reliefCellSizeGradient:1.0, reliefVoidStrength:0.7,
+    meshX:24, meshY:48, baseThickness:1.5, smoothIter:1, smoothStr:0.35 },
   'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
     reliefCellSize:1.8, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'cosine',

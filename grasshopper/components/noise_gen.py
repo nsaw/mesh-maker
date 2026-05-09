@@ -371,8 +371,14 @@ class VoronoiReliefNoise(object):
         return t * t * (3.0 - 2.0 * t)
     def _attractor_mask(self, mode, u, v, ax, ay, radius, falloff):
         if mode == 'none': return 1.0
-        if mode == 'vertical': return pow(v, max(0.05, falloff))
-        if mode == 'horizontal': return pow(u, max(0.05, falloff))
+        if mode == 'vertical':
+            # attractorY anchors the peak: 0 = bottom of viewport (lafabrica panel orientation),
+            # 1 = top, 0.5 = middle band. Falloff sharpens or broadens the gradient.
+            dy = abs(v - ay)
+            return pow(max(0.0, 1.0 - dy), max(0.05, falloff))
+        if mode == 'horizontal':
+            dx = abs(u - ax)
+            return pow(max(0.0, 1.0 - dx), max(0.05, falloff))
         dx = u - ax; dy = v - ay
         d = math.sqrt(dx * dx + dy * dy)
         r = max(0.001, radius)

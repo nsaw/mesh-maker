@@ -91,11 +91,16 @@ function attractorMask(
 ): number {
   if (mode === 'none') return 1;
   if (mode === 'vertical') {
-    // Mask grows from 0 at top to 1 at bottom — matches lafabrica vertical panel.
-    return Math.pow(v, Math.max(0.05, falloff));
+    // Distance from the attractor anchor along Y, clamped to [0, 1] then sharpened by falloff.
+    // This makes `attractorY` a real directional control: 0 = peak at viewport bottom (matches
+    // lafabrica wall-panel orientation — dense cells gravitate to the bottom edge), 1 = peak at
+    // viewport top, 0.5 = peak band running across the middle. Falloff sharpens or broadens.
+    const dy = Math.abs(v - ay);
+    return Math.pow(Math.max(0, 1 - dy), Math.max(0.05, falloff));
   }
   if (mode === 'horizontal') {
-    return Math.pow(u, Math.max(0.05, falloff));
+    const dx = Math.abs(u - ax);
+    return Math.pow(Math.max(0, 1 - dx), Math.max(0.05, falloff));
   }
   // radial / point share the same distance-to-anchor formula.
   const dx = u - ax;

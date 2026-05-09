@@ -101,10 +101,11 @@ function mean(values: number[]): number {
 // 5. Density attractor (vertical mode)
 {
   process.stdout.write('5. density attractor\n');
-  // Use high resolution and a strong vertical density attractor — bottom rows should have more
-  // sub-cell features than top. Proxy: stdev(bottom 25% rows) > stdev(top 25% rows).
+  // Use high resolution and a strong vertical density attractor anchored at bottom of grid
+  // (high j). With attractorY=1, mask peaks at v=1 → high j → high-row band has more density.
   const params = baseParams({
-    cols: 80, rows: 60, attractorMode: 'vertical', densityStrength: 1.5, seed: 3,
+    cols: 80, rows: 60, attractorMode: 'vertical', attractorY: 1,
+    densityStrength: 1.5, seed: 3,
   });
   const grid = new VoronoiReliefGen(3).sampleGrid(params);
   const topBand = flatten(grid.slice(0, 15));
@@ -154,7 +155,7 @@ function mean(values: number[]): number {
   process.stdout.write('7. wave base mode + transitionSoftness\n');
   const wave = new VoronoiReliefGen(13).sampleGrid(baseParams({
     cols: 60, rows: 80, meshX: 24, meshY: 32, seed: 13,
-    baseMode: 'wave', attractorMode: 'vertical', attractorFalloff: 1.4,
+    baseMode: 'wave', attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     intensityStrength: 1, transitionSoftness: 1,
     seamDepth: 0.9, seamWidth: 0.15, cellSize: 1.5, polarity: 'domes',
   }));
@@ -246,7 +247,7 @@ function mean(values: number[]): number {
 {
   process.stdout.write('10. void mode\n');
   const grid = new VoronoiReliefGen(77).sampleGrid(baseParams({
-    seed: 77, attractorMode: 'vertical', attractorFalloff: 1.4,
+    seed: 77, attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     densityStrength: 1, seamDepth: 0.7, voidStrength: 0.6,
   }));
   // Bottom band must contain values near the negative clamp (-1.05).
@@ -288,6 +289,39 @@ function mean(values: number[]): number {
   assert(differing > a.length * 0.1,
     'cellSizeGradient changes >10% of grid values from baseline',
     `differing=${differing}/${a.length}`);
+}
+
+// 12. Vertical attractor direction is controlled by attractorY anchor — regression for the
+//     round-13 fix that flips the convention so cells gravitate toward attractorY (lafabrica
+//     panel orientation) instead of always peaking at v=1.
+{
+  process.stdout.write('12. vertical attractor anchor direction\n');
+  // Anchor at top of grid (v=0) — dense band should be at LOW j (top of noise grid).
+  const anchorTop = new VoronoiReliefGen(7).sampleGrid(baseParams({
+    cols: 80, rows: 80, attractorMode: 'vertical', attractorY: 0,
+    densityStrength: 1.5, seed: 7,
+  }));
+  const stdev = (vs: number[]): number => {
+    const m = mean(vs);
+    let s = 0;
+    for (const v of vs) s += (v - m) ** 2;
+    return Math.sqrt(s / vs.length);
+  };
+  const topSdAnchorTop = stdev(flatten(anchorTop.slice(0, 20)));
+  const botSdAnchorTop = stdev(flatten(anchorTop.slice(60)));
+  assert(topSdAnchorTop > botSdAnchorTop * 1.1,
+    'attractorY=0 puts dense band at top of grid (low j, viewport bottom)',
+    `top σ=${topSdAnchorTop.toFixed(4)} bot σ=${botSdAnchorTop.toFixed(4)}`);
+  // Anchor at bottom of grid (v=1) — dense band should be at HIGH j.
+  const anchorBot = new VoronoiReliefGen(7).sampleGrid(baseParams({
+    cols: 80, rows: 80, attractorMode: 'vertical', attractorY: 1,
+    densityStrength: 1.5, seed: 7,
+  }));
+  const topSdAnchorBot = stdev(flatten(anchorBot.slice(0, 20)));
+  const botSdAnchorBot = stdev(flatten(anchorBot.slice(60)));
+  assert(botSdAnchorBot > topSdAnchorBot * 1.1,
+    'attractorY=1 puts dense band at bottom of grid (high j, viewport top)',
+    `top σ=${topSdAnchorBot.toFixed(4)} bot σ=${botSdAnchorBot.toFixed(4)}`);
 }
 
 if (failures === 0) {
