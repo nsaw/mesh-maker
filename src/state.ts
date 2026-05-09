@@ -275,24 +275,34 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
     // these guards, a crafted link can spin the browser:
     //   - reliefRelaxIterations: each pass scans every sample × every site (O(rows·cols·sites))
     //   - reliefDensityStrength: multiplies the site count itself, then both Pass 1+2 scan all sites
-    if (typeof result.reliefRelaxIterations === 'number') {
-      result.reliefRelaxIterations = Math.max(0, Math.min(2, Math.floor(result.reliefRelaxIterations)));
-    }
-    if (typeof result.reliefDensityStrength === 'number') {
-      result.reliefDensityStrength = Math.max(0, Math.min(2, result.reliefDensityStrength));
-    }
+    //
+    // Values arrive as `unknown` from JSON.parse — accept anything coercible to a finite
+    // number (including numeric strings like "1000" that a crafted payload could use to
+    // bypass a strict `typeof === 'number'` check) but discard non-finite junk so it falls
+    // back to the field's default rather than poisoning STATE.
+    const toFiniteNumber = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const clampField = (key: keyof MeshState, lo: number, hi: number, integer = false): void => {
+      const n = toFiniteNumber(result[key]);
+      if (n === null) {
+        delete (result as Record<string, unknown>)[key];
+        return;
+      }
+      const v = integer ? Math.floor(n) : n;
+      (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
+    };
+    if ('reliefRelaxIterations' in result) clampField('reliefRelaxIterations', 0, 2, true);
+    if ('reliefDensityStrength' in result)  clampField('reliefDensityStrength',  0, 2);
     // transitionSoftness drives an exponent for Math.pow(mask, ...) — a negative value
     // makes the exponent ≤ 0 and produces Infinity at mask=0, which the sampler's NaN
     // guard then zeroes, punching dead bands into the mesh. Slider range is [0, 1].
-    if (typeof result.reliefTransitionSoftness === 'number') {
-      result.reliefTransitionSoftness = Math.max(0, Math.min(1, result.reliefTransitionSoftness));
-    }
+    if ('reliefTransitionSoftness' in result) clampField('reliefTransitionSoftness', 0, 1);
     // intensityStrength enters `(1 - is) + is * mask` — outside [0, 1] it can invert the
     // relief sign or amplify it past the output clamp. No DoS risk (clamp catches it),
     // but parity with the other relief URL clamps prevents cosmetic surprises.
-    if (typeof result.reliefIntensityStrength === 'number') {
-      result.reliefIntensityStrength = Math.max(0, Math.min(1, result.reliefIntensityStrength));
-    }
+    if ('reliefIntensityStrength' in result) clampField('reliefIntensityStrength', 0, 1);
     return result;
   } catch {
     return {};
