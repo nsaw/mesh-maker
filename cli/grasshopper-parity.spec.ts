@@ -37,9 +37,9 @@ function extractEmbedded(source: string, name: string): string {
 
 /**
  * Normalize a script for byte-comparison:
- *   - Strip lines containing only whitespace
- *   - rstrip every other line (drop trailing whitespace)
- *   - Drop fully-blank lines (both files use blank-line separators in different counts)
+ *   1. Right-trim every line (drop trailing whitespace).
+ *   2. Drop now-empty lines (the two files use blank-line separators in
+ *      different counts; a step that's purely a separator shouldn't fail parity).
  */
 function normalize(src: string): string {
   return src
