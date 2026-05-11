@@ -471,6 +471,8 @@ class VoronoiReliefNoise(object):
     # RADIUS_FIELD_SIGMA_CELLS and RADIUS_FIELD_CUTOFF_SIGMAS exactly.
     RADIUS_FIELD_SIGMA_CELLS = 0.8
     RADIUS_FIELD_CUTOFF_SIGMAS = 3.0
+    # Coarse-grid pitch in σ units for the Rfield optimization. See TS sampler.
+    RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5
     # Minimum seam smoothstep transition width in pixel units (anti-aliasing floor).
     SEAM_MIN_PIXEL_WIDTH = 3.0
     # Cap on the floor as a fraction of R per-pixel (prevents floor from inverting cells at low resolution).
@@ -604,19 +606,25 @@ class VoronoiReliefNoise(object):
                 radius_sum[idx] += f1; radius_n[idx] += 1
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
-        # Pass 1.5: build continuous radius field R(x,y) via Gaussian blend over sites within
-        # cutoff. Architectural fix for spike+sawtooth artifacts: any per-pixel formula that
-        # reads R must read a continuous quantity, NOT a per-site discrete lookup (which step-
-        # discontinues at ownership boundaries). Gaussian basis is C-infinity smooth.
+        # Pass 1.5: continuous radius field R(x,y) via Gaussian blend over sites. Computed
+        # on a coarse grid (pitch sigma/2, well above Nyquist for the Gaussian-smoothed
+        # field) and bilinear-interpolated to full resolution. Without the coarse-grid
+        # optimization the full-resolution computation is O(cols*rows*sites) which times
+        # out the browser at production resolution. Mirrors src/noise/voronoi-relief.ts.
         sigma_r = max(0.2, p['cell_size']) * self.RADIUS_FIELD_SIGMA_CELLS
         sigma_r2 = sigma_r * sigma_r
         cutoff_r = sigma_r * self.RADIUS_FIELD_CUTOFF_SIGMAS
         cutoff_r2 = cutoff_r * cutoff_r
-        r_field = [0.0] * (rows * cols)
-        for j in range(rows):
-            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
-            for i in range(cols):
-                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
+        coarse_pitch = sigma_r * self.RADIUS_FIELD_COARSE_PITCH_SIGMAS
+        coarse_cols = max(2, int(math.ceil(p['mesh_x'] / coarse_pitch)) + 1)
+        coarse_rows = max(2, int(math.ceil(p['mesh_y'] / coarse_pitch)) + 1)
+        coarse_step_x = p['mesh_x'] / float(coarse_cols - 1)
+        coarse_step_y = p['mesh_y'] / float(coarse_rows - 1)
+        r_coarse = [0.0] * (coarse_rows * coarse_cols)
+        for cj in range(coarse_rows):
+            y = cj * coarse_step_y
+            for ci in range(coarse_cols):
+                x = ci * coarse_step_x
                 sum_r = 0.0; sum_w = 0.0
                 for k in range(n_sites):
                     dx = x - sites[k][0]; dy = y - sites[k][1]
@@ -625,7 +633,26 @@ class VoronoiReliefNoise(object):
                     w = math.exp(-d2 / sigma_r2)
                     sum_r += sites[k][2] * w
                     sum_w += w
-                r_field[j * cols + i] = (sum_r / sum_w) if sum_w > 0 else p['cell_size']
+                r_coarse[cj * coarse_cols + ci] = (sum_r / sum_w) if sum_w > 0 else p['cell_size']
+        # Bilinear-interpolate coarse field to full resolution.
+        r_field = [0.0] * (rows * cols)
+        for j in range(rows):
+            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
+            cy = y / coarse_step_y
+            cj0 = min(coarse_rows - 2, int(math.floor(cy)))
+            ty = cy - cj0
+            for i in range(cols):
+                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
+                cx = x / coarse_step_x
+                ci0 = min(coarse_cols - 2, int(math.floor(cx)))
+                tx = cx - ci0
+                r00 = r_coarse[cj0 * coarse_cols + ci0]
+                r10 = r_coarse[cj0 * coarse_cols + ci0 + 1]
+                r01 = r_coarse[(cj0 + 1) * coarse_cols + ci0]
+                r11 = r_coarse[(cj0 + 1) * coarse_cols + ci0 + 1]
+                r0 = r00 * (1.0 - tx) + r10 * tx
+                r1 = r01 * (1.0 - tx) + r11 * tx
+                r_field[j * cols + i] = r0 * (1.0 - ty) + r1 * ty
         # Pass 2: heights
         polarity = -1.0 if p['polarity'] == 'pockets' else 1.0
         cell_size_grad = max(0.0, min(2.0, p.get('cell_size_gradient', 0.0)))

@@ -60,6 +60,12 @@ const RADIUS_FIELD_SIGMA_CELLS = 0.8;
 // Cutoff in σ units. At 3σ, Gaussian weight is e⁻⁹ ≈ 1.2e-4 — beyond noise. Halves the
 // inner loop cost vs full sum without measurable accuracy loss.
 const RADIUS_FIELD_CUTOFF_SIGMAS = 3;
+// Coarse-grid pitch in σ units. The Gaussian field varies on the scale of σ, so sampling
+// at σ/2 is well above Nyquist; bilinear interpolation to full resolution introduces no
+// visible error. This is the speed lever: full-resolution Rfield is O(cols·rows·sites)
+// which times out at production resolution; coarse Rfield is O((cols/k)·(rows/k)·sites)
+// where k = sigma/(2*pxPitch) is typically 30+ for relief-pockets.
+const RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5;
 // Minimum seam smoothstep transition width in pixel units. Below this, the smoothstep
 // alias-staircases along grid lines because adjacent pixels see seam values too far apart.
 // 3 pixels = ~half-cycle of bilinear smoothing; matches the resolution gate's natural floor.
@@ -386,28 +392,30 @@ export class VoronoiReliefGen implements ReliefGenerator {
       sites[k].radius = radiusN[k] > 0 ? (radiusSum[k] / radiusN[k]) * 2 : p.cellSize;
     }
 
-    // Pass 1.5: build a continuous radius field R(x,y) by Gaussian-weighted blending of
-    // all sites within cutoff. This is the architectural fix for the spike-and-sawtooth
-    // artifacts: any per-pixel formula that reads R must read a continuous quantity, NOT a
-    // per-site discrete lookup (which step-discontinues at ownership boundaries) and NOT a
-    // two-nearest blend (which step-discontinues at F2 ownership boundaries inside cells).
-    // The Gaussian basis is C∞, so R(x,y) has no discontinuities anywhere.
+    // Pass 1.5: build a continuous radius field R(x,y) via Gaussian blending of sites.
+    // Architectural fix for the spike-and-sawtooth artifacts: any per-pixel formula that
+    // reads R must read a continuous quantity, NOT a per-site discrete lookup. Gaussian
+    // basis is C∞ smooth, so the field has no discontinuities anywhere.
     //
-    // σ is tuned so each pixel "sees" mostly its own cell (~weight 1) and adjacent cells
-    // (~weight 0.2). Beyond 3σ the contribution is negligible — cutoff there for speed.
-    // Anisotropy is intentionally ignored when computing the field; R is a property of the
-    // panel geometry, not of the cell aspect ratio.
+    // OPTIMIZATION: compute Rfield on a coarse grid at pitch σ/2 (well above Nyquist for
+    // a Gaussian-smoothed field of scale σ), then bilinear-interpolate to full resolution.
+    // Without this optimization the full-resolution Rfield is O(cols·rows·sites) ≈ 224M
+    // ops at production resolution (400×800 × 700 sites), which times out the browser.
+    // The coarse grid is typically O(50×100 × 700) ≈ 3.5M ops — fast enough.
     const sigmaR = Math.max(0.2, p.cellSize) * RADIUS_FIELD_SIGMA_CELLS;
     const sigmaR2 = sigmaR * sigmaR;
     const cutoffR = sigmaR * RADIUS_FIELD_CUTOFF_SIGMAS;
     const cutoffR2 = cutoffR * cutoffR;
-    const Rfield = new Float64Array(rows * cols);
-    for (let j = 0; j < rows; j++) {
-      const v = j / Math.max(1, rows - 1);
-      const y = v * p.meshY;
-      for (let i = 0; i < cols; i++) {
-        const u = i / Math.max(1, cols - 1);
-        const x = u * p.meshX;
+    const coarsePitch = sigmaR * RADIUS_FIELD_COARSE_PITCH_SIGMAS;
+    const coarseCols = Math.max(2, Math.ceil(p.meshX / coarsePitch) + 1);
+    const coarseRows = Math.max(2, Math.ceil(p.meshY / coarsePitch) + 1);
+    const coarseStepX = p.meshX / (coarseCols - 1);
+    const coarseStepY = p.meshY / (coarseRows - 1);
+    const Rcoarse = new Float64Array(coarseRows * coarseCols);
+    for (let cj = 0; cj < coarseRows; cj++) {
+      const y = cj * coarseStepY;
+      for (let ci = 0; ci < coarseCols; ci++) {
+        const x = ci * coarseStepX;
         let sumR = 0;
         let sumW = 0;
         for (let k = 0; k < sites.length; k++) {
@@ -419,7 +427,33 @@ export class VoronoiReliefGen implements ReliefGenerator {
           sumR += sites[k].radius * w;
           sumW += w;
         }
-        Rfield[j * cols + i] = sumW > 0 ? sumR / sumW : p.cellSize;
+        Rcoarse[cj * coarseCols + ci] = sumW > 0 ? sumR / sumW : p.cellSize;
+      }
+    }
+    // Bilinear-interpolate the coarse field to full resolution. Result is C0 (the Gaussian
+    // field is C∞ but bilinear interp introduces piecewise-linear seams between coarse
+    // samples — invisible at this scale since the coarse pitch is well below the per-cell
+    // variation length).
+    const Rfield = new Float64Array(rows * cols);
+    for (let j = 0; j < rows; j++) {
+      const v = j / Math.max(1, rows - 1);
+      const y = v * p.meshY;
+      const cy = y / coarseStepY;
+      const cj0 = Math.min(coarseRows - 2, Math.floor(cy));
+      const ty = cy - cj0;
+      for (let i = 0; i < cols; i++) {
+        const u = i / Math.max(1, cols - 1);
+        const x = u * p.meshX;
+        const cx = x / coarseStepX;
+        const ci0 = Math.min(coarseCols - 2, Math.floor(cx));
+        const tx = cx - ci0;
+        const r00 = Rcoarse[cj0 * coarseCols + ci0];
+        const r10 = Rcoarse[cj0 * coarseCols + ci0 + 1];
+        const r01 = Rcoarse[(cj0 + 1) * coarseCols + ci0];
+        const r11 = Rcoarse[(cj0 + 1) * coarseCols + ci0 + 1];
+        const r0 = r00 * (1 - tx) + r10 * tx;
+        const r1 = r01 * (1 - tx) + r11 * tx;
+        Rfield[j * cols + i] = r0 * (1 - ty) + r1 * ty;
       }
     }
 
