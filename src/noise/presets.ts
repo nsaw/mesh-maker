@@ -56,22 +56,21 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // made F1 ownership change discontinuously as the local angle rotated, tearing the wall
   // network; (3) attractorNoise=0.95 produced such extreme per-cell radius differences that
   // adjacent cells had mismatched dome heights. Verified clean in headless render.
-  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
-    warpFreq:0.1, warpCurl:0,
-    reliefCellSize:4.5, reliefJitter:0.8, reliefRelaxIterations:2, reliefPolarity:'pockets', reliefProfile:'hemisphere',
-    // Narrower walls (seamWidth 0.12) at moderate height (seamDepth 0.22) so the wall
-    // network reads as a thin connected ridge instead of a thick raised band.
-    reliefSeamDepth:0.22, reliefSeamWidth:0.12, reliefAnisotropy:0.25, reliefAnisotropyAngle:75,
-    // Vertical bias toward viewport bottom — cells get denser and smaller toward the bottom
-    // edge, matching the lafabrica reference orientation.
-    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.4,
-    reliefDensityStrength:1.4, reliefIntensityStrength:0.4, reliefTransitionSoftness:0.6, reliefBaseMode:'flat',
-    // voidStrength MUST stay 0 here — even 0.1 produces scattered hard-floored pixels that
-    // render as triangular dark plateaus in the CNC mesh. Keep void mode for relief-vertical
-    // where the spike-finger effect is intended at the bottom edge.
-    reliefCellSizeGradient:1.3, reliefVoidStrength:0,
-    // Moderate noise patchiness + soft flow give size variation and organic stretch without
-    // discontinuous F1 transitions that previously created chunky wall artifacts.
-    reliefAttractorNoise:0.6, reliefAttractorNoiseFreq:0.11, reliefFlowAnisotropy:0.35,
+  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.5, contrast:1, sharpness:0,
+    warpFreq:0.08, warpCurl:0,
+    // Iteration 7 (post-radius-field rewrite): cellSizeGradient and attractorNoise can now
+    // be pushed much harder because the radius field is continuous — variation no longer
+    // causes the spike artifacts the prior algorithm produced. Targeting the lafabrica
+    // reference (image #18): cells span large to small, deep pockets, organic flow,
+    // dramatic patchiness in cell size.
+    reliefCellSize:5.0, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
+    reliefSeamDepth:0.25, reliefSeamWidth:0.10, reliefAnisotropy:0.35, reliefAnisotropyAngle:75,
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.5,
+    reliefDensityStrength:1.6, reliefIntensityStrength:0.5, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    // voidStrength stays 0 here — keep void mode for relief-vertical only.
+    reliefCellSizeGradient:1.8, reliefVoidStrength:0,
+    // Push attractorNoise to 0.85 and flowAnisotropy to 0.55 now that the radius field
+    // smooths out the F1/F2 ownership artifacts. Reference has very strong size variation.
+    reliefAttractorNoise:0.85, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.55,
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:2, smoothStr:0.5 },
 };
