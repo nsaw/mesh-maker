@@ -509,7 +509,7 @@ class VoronoiReliefNoise(object):
     def _nearest_two(self, sites, x, y, cosA, sinA, aniso_scale):
         # Anisotropy: rotate into stretched frame, scale x', take hypot. Rotation preserves length
         # so we don't need to rotate back.
-        f1 = float('inf'); f2 = float('inf'); idx = 0
+        f1 = float('inf'); f2 = float('inf'); idx = 0; idx2 = 0
         isotropic = (aniso_scale == 1.0)
         for i in range(len(sites)):
             dx = x - sites[i][0]; dy = y - sites[i][1]
@@ -519,9 +519,9 @@ class VoronoiReliefNoise(object):
                 xr = dx * cosA + dy * sinA
                 yr = -dx * sinA + dy * cosA
                 d = math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-            if d < f1: f2 = f1; f1 = d; idx = i
-            elif d < f2: f2 = d
-        return f1, f2, idx
+            if d < f1: f2 = f1; idx2 = idx; f1 = d; idx = i
+            elif d < f2: f2 = d; idx2 = i
+        return f1, f2, idx, idx2
     def _halton(self, index, base):
         result = 0.0; f = 1.0 / base; i = index
         while i > 0:
@@ -586,7 +586,7 @@ class VoronoiReliefNoise(object):
                     flow = flow_gen.noise(x * 0.18, y * 0.18)
                     local_angle = (p['anisotropy_angle'] + flow * pass1_flow_amt * 90.0) * math.pi / 180.0
                     px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
-                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
+                f1, f2, idx, idx2 = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
                 sites[idx][3] += f1; sites[idx][4] += 1
         for s in sites:
             s[2] = (s[3] / s[4]) * 2.0 if s[4] > 0 else p['cell_size']
@@ -607,7 +607,12 @@ class VoronoiReliefNoise(object):
                     flow = flow_gen.noise(x * 0.18, y * 0.18)
                     local_angle = (p['anisotropy_angle'] + flow * flow_anisotropy_amt * 90.0) * math.pi / 180.0
                     px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
-                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
+                f1, f2, idx, idx2 = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
+                # Continuous radius blend across cell boundaries — eliminates the sawtooth
+                # aliasing along seams caused by per-site radius being a discrete lookup.
+                # Mirrors src/noise/voronoi-relief.ts.
+                w1 = 1.0 / (f1 + 1e-6); w2 = 1.0 / (f2 + 1e-6)
+                blended_radius = (sites[idx][2] * w1 + sites[idx2][2] * w2) / (w1 + w2)
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
@@ -620,7 +625,7 @@ class VoronoiReliefNoise(object):
                 # Cell-size gradient — shrinks effective per-cell radius where mask is high so
                 # the dense-attractor zone has visibly smaller domes.
                 size_shrink = 1.0 - cell_size_grad * mask * 0.6
-                R = max(0.05, sites[idx][2] * max(0.2, size_shrink))
+                R = max(0.05, blended_radius * max(0.2, size_shrink))
                 dome = self._dome(p['profile'], f1, R)
                 seam = 1.0 - self._smoothstep(0.0, max(0.001, p['seam_width'] * R), f2 - f1)
                 # Dome decays at the seam so seamDepth represents the true trough depth.
@@ -632,11 +637,16 @@ class VoronoiReliefNoise(object):
                     h = base * (1.0 - cw) + h * cw * intensity
                 else:
                     h = h * intensity
-                # Void mode — at high mask + seam, force h far below clamp so CNC normalize
-                # drops to z=0 (machine bed). Produces lafabrica-style spike fingers.
+                # Void mode — at high mask + seam, smooth-blend h toward the negative clamp
+                # so CNC normalize drops to z=0 (machine bed). Uses smoothstep (not a hard
+                # threshold) to avoid dotted seam artifacts when adjacent pixels straddle
+                # the threshold. Mirrors src/noise/voronoi-relief.ts.
                 if void_strength > 0.0:
-                    if mask * seam > 1.0 - void_strength:
-                        h = -1.05
+                    void_gate = mask * seam
+                    void_edge0 = 1.0 - void_strength
+                    void_edge1 = 1.0 - void_strength * 0.5
+                    void_t = self._smoothstep(void_edge0, void_edge1, void_gate)
+                    h = h * (1.0 - void_t) - 1.05 * void_t
                 if h != h or h == float('inf') or h == float('-inf'):  # NaN/Inf guard
                     h = 0.0
                 if h < -1.05: h = -1.05
@@ -890,7 +900,7 @@ PRESETS = {
     'worley-cracks':   {'noise_type':'worley',     'frequency':0.12, 'amplitude':0.50, 'noise_exp':0.8, 'peak_exp':1.0, 'valley_exp':1.0,  'valley_floor':0.00, 'offset': 0.2, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.10, 'contrast':1.2, 'sharpness':0.30, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4},
     'brushed-metal':   {'noise_type':'gabor',      'frequency':0.10, 'amplitude':0.30, 'noise_exp':0.5, 'peak_exp':1.0, 'valley_exp':1.0,  'valley_floor':0.00, 'offset': 0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.00, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
     # Voronoi Relief presets — relief_* keys consumed by the noise component when noise_type == 'voronoi-relief'.
-    'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.55, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':1, 'smooth_str':0.35,
+    'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.55, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':3, 'smooth_str':0.55,
                         'relief_cell_size':1.6, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'hemisphere', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_cell_size_gradient':1.0, 'relief_void_strength':0.7},
     'relief-radial':   {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.20, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.25, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4,
                         'relief_cell_size':1.6, 'relief_jitter':0.6, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'cosine', 'relief_seam_depth':0.55, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.5, 'relief_attractor_y':0.4, 'relief_attractor_radius':0.6, 'relief_attractor_falloff':1.2, 'relief_density_strength':1.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.4, 'relief_base_mode':'flat', 'relief_cell_size_gradient':0.6, 'relief_void_strength':0.0},

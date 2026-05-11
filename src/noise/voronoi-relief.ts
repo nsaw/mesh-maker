@@ -249,10 +249,11 @@ function nearestTwo(
   cosA: number,
   sinA: number,
   anisotropyScale: number,
-): { f1: number; f2: number; idx: number } {
+): { f1: number; f2: number; idx: number; idx2: number } {
   let f1 = Infinity;
   let f2 = Infinity;
   let idx = 0;
+  let idx2 = 0;
   const isotropic = anisotropyScale === 1;
   for (let i = 0; i < sites.length; i++) {
     const dx = x - sites[i].x;
@@ -265,10 +266,10 @@ function nearestTwo(
       const yr = -dx * sinA + dy * cosA;
       d = Math.hypot(xr * anisotropyScale, yr);
     }
-    if (d < f1) { f2 = f1; f1 = d; idx = i; }
-    else if (d < f2) { f2 = d; }
+    if (d < f1) { f2 = f1; idx2 = idx; f1 = d; idx = i; }
+    else if (d < f2) { f2 = d; idx2 = i; }
   }
-  return { f1, f2, idx };
+  return { f1, f2, idx, idx2 };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -395,8 +396,17 @@ export class VoronoiReliefGen implements ReliefGenerator {
           const localAngle = (p.anisotropyAngle + flow * flowAnisotropyAmt * 90) * Math.PI / 180;
           pxCosA = Math.cos(localAngle); pxSinA = Math.sin(localAngle);
         }
-        const { f1, f2, idx } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
+        const { f1, f2, idx, idx2 } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
         const site = sites[idx];
+        // Continuous radius blend across cell boundaries — eliminates the sawtooth aliasing
+        // along seams caused by per-site `radius` being a discrete lookup. Weight by inverse
+        // distance so deep inside a cell the blend is ~100% owner radius, and at the F1=F2
+        // boundary the blend is the average of the two cells' radii. Without this, two
+        // adjacent pixels straddling a boundary read two different R values, producing the
+        // grid-aligned tooth pattern visible in the rendered mesh.
+        const w1 = 1 / (f1 + 1e-6);
+        const w2 = 1 / (f2 + 1e-6);
+        const blendedRadius = (site.radius * w1 + sites[idx2].radius * w2) / (w1 + w2);
         // Spatial attractor on intensity — relief amplitude varies with mask.
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -419,7 +429,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // this the "vertical" attractor only multiplies cell COUNT, never their physical size,
         // and the panel reads as uniform tessellation regardless of attractor strength.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        const R = Math.max(0.05, site.radius * Math.max(0.2, sizeShrink));
+        const R = Math.max(0.05, blendedRadius * Math.max(0.2, sizeShrink));
         const dome = domeHeight(p.profile, f1, R);
         // Seam: 1 at boundary (F1≈F2), 0 well inside cells.
         const seam = 1 - smoothstep(0, Math.max(0.001, p.seamWidth * R), f2 - f1);
@@ -443,16 +453,20 @@ export class VoronoiReliefGen implements ReliefGenerator {
           h *= intensityFactor;
         }
 
-        // Void mode — at high mask + seam, force h far below clamp so CNC normalization
-        // drops to z=0 (machine bed). Produces the spike-finger zone seen in lafabrica
-        // panels where seams cut through the entire panel and cells become disconnected
-        // protrusions rather than continuous relief.
+        // Void mode — at high mask + seam, blend h toward the negative clamp so CNC
+        // normalization drops to z=0 (machine bed). Produces the spike-finger zone seen in
+        // lafabrica panels where seams cut through the entire panel. Uses a smoothstep
+        // transition zone (not a hard threshold) so adjacent pixels can't flip discretely
+        // between continuous h and -OUTPUT_CLAMP, which produced dotted/sawtooth seam
+        // artifacts when rendered as a CNC mesh.
         if (voidStrength > 0) {
           const voidGate = mask * seam;
-          if (voidGate > 1 - voidStrength) {
-            // Push past the negative clamp so downstream CNC normalize floors to bed.
-            h = -OUTPUT_CLAMP;
-          }
+          const voidEdge0 = 1 - voidStrength;
+          // Transition band is half the voidStrength range so the cliff still feels sharp
+          // but spans multiple pixels — enough for smoothing to clean up grid alignment.
+          const voidEdge1 = 1 - voidStrength * 0.5;
+          const voidT = smoothstep(voidEdge0, voidEdge1, voidGate);
+          h = h * (1 - voidT) - OUTPUT_CLAMP * voidT;
         }
 
         // Clamp to a sane native range — downstream pipeline handles full normalization.

@@ -40,7 +40,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:2.2,
     reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
     reliefCellSizeGradient:1.0, reliefVoidStrength:0.7,
-    meshX:24, meshY:48, baseThickness:1.5, smoothIter:1, smoothStr:0.35 },
+    meshX:24, meshY:48, baseThickness:1.5, smoothIter:3, smoothStr:0.55 },
   'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
     reliefCellSize:1.8, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'cosine',
