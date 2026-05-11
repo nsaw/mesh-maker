@@ -38,7 +38,10 @@ const WAVE_GEN_SEED_OFFSET = 17;
 const WAVE_NOISE_FREQUENCY = 0.1;
 const WAVE_AMPLITUDE = 0.5;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
-const OUTPUT_CLAMP = 1.05;
+// Sampler output clamp. Positive constant; used with explicit `-` sign at carve sites
+// (e.g. void mode pushes h to `-OUTPUT_HEIGHT_CLAMP`). Naming clarifies the magnitude
+// vs. previous `OUTPUT_CLAMP` which was used asymmetrically and read confusingly.
+const OUTPUT_HEIGHT_CLAMP = 1.05;
 // transitionSoftness=0 → exponent 0.2 (cells take over abruptly).
 // transitionSoftness=1 → exponent 2.0 (gradual lerp from waves to cells).
 const TRANSITION_EXPONENT_MIN = 0.2;
@@ -49,6 +52,24 @@ const TRANSITION_EXPONENT_MAX = 2.0;
 // mesh that's noisier than the underlying CNC tool can resolve anyway.
 const SITE_COUNT_MAX = 4096;
 const LOCAL_DENSITY_MAX = 4;
+// Radius field (Pass 1.5) — Gaussian blend over all sites within cutoff. σ in units of
+// cellSize: small enough that R(x,y) follows per-cell radius near each cell center, but
+// large enough that the field has no discontinuities at F1 or F2 ownership boundaries.
+// σ=0.8 cellSize gives w≈0.21 at neighbor centers, w≈0.002 at 2 cellSizes away.
+const RADIUS_FIELD_SIGMA_CELLS = 0.8;
+// Cutoff in σ units. At 3σ, Gaussian weight is e⁻⁹ ≈ 1.2e-4 — beyond noise. Halves the
+// inner loop cost vs full sum without measurable accuracy loss.
+const RADIUS_FIELD_CUTOFF_SIGMAS = 3;
+// Minimum seam smoothstep transition width in pixel units. Below this, the smoothstep
+// alias-staircases along grid lines because adjacent pixels see seam values too far apart.
+// 3 pixels = ~half-cycle of bilinear smoothing; matches the resolution gate's natural floor.
+const SEAM_MIN_PIXEL_WIDTH = 3;
+// Cap the pixel-min floor at this fraction of the per-pixel R. Without this cap, at low
+// grid resolutions (small panels or test fixtures with few cols) the pixel-min would
+// dominate the natural seamWidth and turn entire cells into "wall" territory, inverting
+// the dome/seam balance. 30% of R keeps the wall < 60% of cell diameter even when the
+// floor kicks in.
+const SEAM_FLOOR_MAX_R_FRACTION = 0.3;
 
 /** Deterministic per-seed PRNG (mulberry32) — better distribution than sin-hash for site jitter. */
 function mulberry32(seed: number): () => number {
@@ -65,11 +86,9 @@ function mulberry32(seed: number): () => number {
 interface Site {
   x: number;
   y: number;
-  /** Per-cell scale derived from average F1 inside the cell (set after grid sweep). */
+  /** Per-cell scale derived from average F1 inside the cell (set after Pass 1). Used as
+   *  sample value for the Gaussian radius field (Pass 1.5); never read directly per-pixel. */
   radius: number;
-  /** Running mean accumulator for radius computation. */
-  _radiusSum: number;
-  _radiusN: number;
 }
 
 /** smoothstep(edge0, edge1, x) clamped — standard GLSL semantics. */
@@ -172,8 +191,6 @@ function generateSites(p: ReliefSampleParams, rand: () => number, warpGen: Simpl
           x: Math.max(0, Math.min(meshX, px)),
           y: Math.max(0, Math.min(meshY, py)),
           radius: 0,
-          _radiusSum: 0,
-          _radiusN: 0,
         });
       }
     }
@@ -249,11 +266,10 @@ function nearestTwo(
   cosA: number,
   sinA: number,
   anisotropyScale: number,
-): { f1: number; f2: number; idx: number; idx2: number } {
+): { f1: number; f2: number; idx: number } {
   let f1 = Infinity;
   let f2 = Infinity;
   let idx = 0;
-  let idx2 = 0;
   const isotropic = anisotropyScale === 1;
   for (let i = 0; i < sites.length; i++) {
     const dx = x - sites[i].x;
@@ -266,10 +282,10 @@ function nearestTwo(
       const yr = -dx * sinA + dy * cosA;
       d = Math.hypot(xr * anisotropyScale, yr);
     }
-    if (d < f1) { f2 = f1; idx2 = idx; f1 = d; idx = i; }
-    else if (d < f2) { f2 = d; idx2 = i; }
+    if (d < f1) { f2 = f1; f1 = d; idx = i; }
+    else if (d < f2) { f2 = d; }
   }
-  return { f1, f2, idx, idx2 };
+  return { f1, f2, idx };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -342,10 +358,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const cols = p.cols;
     const rows = p.rows;
 
-    // Pass 1: accumulate per-site mean F1 to derive per-cell radius. We don't keep the
-    // F1/owner grid around — Pass 2 re-runs nearestTwo to also get F2, which is faster
-    // than caching F1 at every grid point (~850 KB heap on a 400×267 grid for no benefit).
-    // Pre-clamp flow strength so the inner loop branch is predictable.
+    // Pass 1: accumulate per-site mean F1 to derive per-cell radius. Accumulators live in
+    // Float64Arrays local to this sampleGrid call so the Site interface stays slim and
+    // multiple concurrent sampleGrid calls (e.g. tests) can't trample each other.
+    const radiusSum = new Float64Array(sites.length);
+    const radiusN = new Int32Array(sites.length);
     const pass1FlowAnisotropyAmt = Math.max(0, Math.min(1, p.flowAnisotropy));
     for (let j = 0; j < rows; j++) {
       const v = j / Math.max(1, rows - 1);
@@ -360,24 +377,64 @@ export class VoronoiReliefGen implements ReliefGenerator {
           pxCosA = Math.cos(localAngle); pxSinA = Math.sin(localAngle);
         }
         const { f1, idx } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
-        const s = sites[idx];
-        s._radiusSum += f1;
-        s._radiusN++;
+        radiusSum[idx] += f1;
+        radiusN[idx]++;
       }
     }
     // Per-cell radius ≈ 2 × mean F1 (since mean F1 inside a Voronoi cell ≈ R/2 for a disk).
-    for (const s of sites) {
-      s.radius = s._radiusN > 0 ? (s._radiusSum / s._radiusN) * 2 : p.cellSize;
+    for (let k = 0; k < sites.length; k++) {
+      sites[k].radius = radiusN[k] > 0 ? (radiusSum[k] / radiusN[k]) * 2 : p.cellSize;
     }
 
-    // Pass 2: compute heights using F1 + F2 + owner from a fresh nearestTwo call.
-    // Defensive clamps for new fields — both already clamped at the URL boundary, but the
-    // sampler is also called from tests and future callers that may bypass deserializeConfig.
+    // Pass 1.5: build a continuous radius field R(x,y) by Gaussian-weighted blending of
+    // all sites within cutoff. This is the architectural fix for the spike-and-sawtooth
+    // artifacts: any per-pixel formula that reads R must read a continuous quantity, NOT a
+    // per-site discrete lookup (which step-discontinues at ownership boundaries) and NOT a
+    // two-nearest blend (which step-discontinues at F2 ownership boundaries inside cells).
+    // The Gaussian basis is C∞, so R(x,y) has no discontinuities anywhere.
+    //
+    // σ is tuned so each pixel "sees" mostly its own cell (~weight 1) and adjacent cells
+    // (~weight 0.2). Beyond 3σ the contribution is negligible — cutoff there for speed.
+    // Anisotropy is intentionally ignored when computing the field; R is a property of the
+    // panel geometry, not of the cell aspect ratio.
+    const sigmaR = Math.max(0.2, p.cellSize) * RADIUS_FIELD_SIGMA_CELLS;
+    const sigmaR2 = sigmaR * sigmaR;
+    const cutoffR = sigmaR * RADIUS_FIELD_CUTOFF_SIGMAS;
+    const cutoffR2 = cutoffR * cutoffR;
+    const Rfield = new Float64Array(rows * cols);
+    for (let j = 0; j < rows; j++) {
+      const v = j / Math.max(1, rows - 1);
+      const y = v * p.meshY;
+      for (let i = 0; i < cols; i++) {
+        const u = i / Math.max(1, cols - 1);
+        const x = u * p.meshX;
+        let sumR = 0;
+        let sumW = 0;
+        for (let k = 0; k < sites.length; k++) {
+          const dx = x - sites[k].x;
+          const dy = y - sites[k].y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > cutoffR2) continue;
+          const w = Math.exp(-d2 / sigmaR2);
+          sumR += sites[k].radius * w;
+          sumW += w;
+        }
+        Rfield[j * cols + i] = sumW > 0 ? sumR / sumW : p.cellSize;
+      }
+    }
+
+    // Pass 2: compute heights using F1 + F2 + Rfield. R is read from the continuous radius
+    // field (not from sites[idx]) — that's the key fix for the spike-and-sawtooth artifacts.
     const cellSizeGradient = Math.max(0, Math.min(2, p.cellSizeGradient));
     const voidStrength = Math.max(0, Math.min(1, p.voidStrength));
     const attractorNoiseAmt = Math.max(0, Math.min(1, p.attractorNoise));
     const attractorNoiseFreq = Math.max(0.02, Math.min(0.5, p.attractorNoiseFreq));
     const flowAnisotropyAmt = Math.max(0, Math.min(1, p.flowAnisotropy));
+    // Pixel pitch in physical units — used to enforce a minimum seam smoothstep width so
+    // walls can't alias below the grid resolution (the sawtooth artifact source). The floor
+    // is later capped to a fraction of R per-pixel so it can't dominate the natural width.
+    const pxPitch = p.meshX / Math.max(1, cols);
+    const pixelMinWidth = pxPitch * SEAM_MIN_PIXEL_WIDTH;
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
@@ -388,64 +445,54 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
         // Per-pixel anisotropy angle when flow is enabled — angle deviates from the global
-        // anisotropyAngle by up to ±90° based on a smooth flow-noise field. Fast path uses
-        // hoisted cosA/sinA when flowAnisotropy=0.
+        // anisotropyAngle by up to ±90° based on a smooth flow-noise field.
         let pxCosA = cosA, pxSinA = sinA;
         if (flowGen && flowAnisotropyAmt > 0) {
           const flow = flowGen.noise(x * 0.18, y * 0.18);
           const localAngle = (p.anisotropyAngle + flow * flowAnisotropyAmt * 90) * Math.PI / 180;
           pxCosA = Math.cos(localAngle); pxSinA = Math.sin(localAngle);
         }
-        const { f1, f2, idx, idx2 } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
-        const site = sites[idx];
-        // Continuous radius blend across cell boundaries — eliminates the sawtooth aliasing
-        // along seams caused by per-site `radius` being a discrete lookup. Weight by inverse
-        // distance so deep inside a cell the blend is ~100% owner radius, and at the F1=F2
-        // boundary the blend is the average of the two cells' radii. Without this, two
-        // adjacent pixels straddling a boundary read two different R values, producing the
-        // grid-aligned tooth pattern visible in the rendered mesh.
-        const w1 = 1 / (f1 + 1e-6);
-        const w2 = 1 / (f2 + 1e-6);
-        const blendedRadius = (site.radius * w1 + sites[idx2].radius * w2) / (w1 + w2);
+        const { f1, f2 } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
         // Spatial attractor on intensity — relief amplitude varies with mask.
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
           p.attractorRadius, p.attractorFalloff,
         );
         // Patchy noise modulation — multiplies the smooth attractor mask by a noise field
-        // so dense/intense zones form random blobs rather than a uniform gradient. Produces
-        // the lafabrica look where cells of vastly different sizes coexist in the same band.
+        // so dense/intense zones form random blobs rather than a uniform gradient.
         if (attractorNoiseGen && attractorNoiseAmt > 0) {
-          // Map noise [-1, 1] to [0, 1] then lerp from "1.0 (no modulation)" toward the
-          // noise field as attractorNoise increases.
           const n = attractorNoiseGen.noise(x * attractorNoiseFreq, y * attractorNoiseFreq);
           const modulator = (n + 1) * 0.5;
           mask = mask * ((1 - attractorNoiseAmt) + attractorNoiseAmt * modulator * 1.5);
           if (mask > 1) mask = 1;
           if (mask < 0) mask = 0;
         }
-        // Cell-size gradient — shrinks the effective per-cell radius where mask is high so
-        // the dense-attractor zone has visibly smaller domes (not just more of them). Without
-        // this the "vertical" attractor only multiplies cell COUNT, never their physical size,
-        // and the panel reads as uniform tessellation regardless of attractor strength.
+        // Cell-size gradient shrinks the effective radius where mask is high. R_field is
+        // already continuous; we just scale it by a continuous function of mask. The result
+        // is still C∞ continuous, so no ownership-boundary discontinuities are introduced.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        const R = Math.max(0.05, blendedRadius * Math.max(0.2, sizeShrink));
+        const R = Math.max(0.05, Rfield[j * cols + i] * Math.max(0.2, sizeShrink));
         const dome = domeHeight(p.profile, f1, R);
-        // Seam: 1 at boundary (F1≈F2), 0 well inside cells.
-        const seam = 1 - smoothstep(0, Math.max(0.001, p.seamWidth * R), f2 - f1);
+        // Seam smoothstep transition width: max of (seamWidth*R) and a pixel-aware floor,
+        // where the floor is itself capped to a fraction of R so it can't grow wider than
+        // the cell it lives in. This is the core anti-aliasing fix: in production resolution
+        // it does nothing (seamWidth*R dominates); in small-cell zones it forces ≥3 pixels
+        // of smoothstep transition so walls render smoothly instead of staircasing along the
+        // grid; at low test resolutions the R-fraction cap prevents the floor from inverting
+        // the dome/seam balance.
+        const cappedFloor = Math.min(pixelMinWidth, R * SEAM_FLOOR_MAX_R_FRACTION);
+        const seamWidthPhysical = Math.max(p.seamWidth * R, cappedFloor);
+        const seam = 1 - smoothstep(0, seamWidthPhysical, f2 - f1);
         // Combined relief: dome occupies cell interiors; seam carves a V where cells meet.
         // The (1 - seam) factor on dome ensures seamDepth represents an actual depth instead
-        // of a budget the dome partially consumes — without it, dome at the boundary lifts
-        // the trough back above the surface.
+        // of a budget the dome partially consumes.
         let h = polarity * (dome * (1 - seam) - p.seamDepth * seam);
 
         const intensityFactor = (1 - p.intensityStrength) + p.intensityStrength * mask;
 
         if (p.baseMode === 'wave') {
           // Low-frequency simplex base that cells transition into. transitionSoftness=0 →
-          // sharp boundary (cells take over abruptly where mask rises); transitionSoftness=1 →
-          // gradual lerp from base to cells across the full mask range. Exponent is hoisted
-          // above the loop and guaranteed positive, so Math.pow(mask, exponent) is finite.
+          // sharp boundary; transitionSoftness=1 → gradual lerp.
           const base = waveGen.noise(x * WAVE_NOISE_FREQUENCY, y * WAVE_NOISE_FREQUENCY) * WAVE_AMPLITUDE;
           const cellWeight = Math.pow(mask, transitionExponent);
           h = base * (1 - cellWeight) + h * cellWeight * intensityFactor;
@@ -453,25 +500,21 @@ export class VoronoiReliefGen implements ReliefGenerator {
           h *= intensityFactor;
         }
 
-        // Void mode — at high mask + seam, blend h toward the negative clamp so CNC
-        // normalization drops to z=0 (machine bed). Produces the spike-finger zone seen in
-        // lafabrica panels where seams cut through the entire panel. Uses a smoothstep
-        // transition zone (not a hard threshold) so adjacent pixels can't flip discretely
-        // between continuous h and -OUTPUT_CLAMP, which produced dotted/sawtooth seam
-        // artifacts when rendered as a CNC mesh.
+        // Void mode applied AFTER the wave/cell blend so the void floor-clamp intent
+        // (-OUTPUT_HEIGHT_CLAMP) isn't diluted by the wave base in transition zones.
+        // Smoothstep transition (not hard threshold) keeps adjacent pixels' h values
+        // close to each other; weightedSmooth at the mesh level cleans the rest.
         if (voidStrength > 0) {
           const voidGate = mask * seam;
           const voidEdge0 = 1 - voidStrength;
-          // Transition band is half the voidStrength range so the cliff still feels sharp
-          // but spans multiple pixels — enough for smoothing to clean up grid alignment.
           const voidEdge1 = 1 - voidStrength * 0.5;
           const voidT = smoothstep(voidEdge0, voidEdge1, voidGate);
-          h = h * (1 - voidT) - OUTPUT_CLAMP * voidT;
+          h = h * (1 - voidT) - OUTPUT_HEIGHT_CLAMP * voidT;
         }
 
         // Clamp to a sane native range — downstream pipeline handles full normalization.
         if (!Number.isFinite(h)) h = 0;
-        row[i] = Math.max(-OUTPUT_CLAMP, Math.min(OUTPUT_CLAMP, h));
+        row[i] = Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, h));
       }
       out.push(row);
     }

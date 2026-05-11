@@ -401,6 +401,16 @@ class VoronoiReliefNoise(object):
         return max(0.0, 1.0 - t * t)  # parabolic
     SITE_COUNT_MAX = 4096
     LOCAL_DENSITY_MAX = 4.0
+    # Radius field (Pass 1.5) Gaussian blend over sites within cutoff. Mirrors TS constants
+    # RADIUS_FIELD_SIGMA_CELLS and RADIUS_FIELD_CUTOFF_SIGMAS exactly.
+    RADIUS_FIELD_SIGMA_CELLS = 0.8
+    RADIUS_FIELD_CUTOFF_SIGMAS = 3.0
+    # Minimum seam smoothstep transition width in pixel units (anti-aliasing floor).
+    SEAM_MIN_PIXEL_WIDTH = 3.0
+    # Cap on the floor as a fraction of R per-pixel (prevents floor from inverting cells at low resolution).
+    SEAM_FLOOR_MAX_R_FRACTION = 0.3
+    # Output clamp magnitude. Used with explicit negative sign at carve sites.
+    OUTPUT_HEIGHT_CLAMP = 1.05
     def _gen_sites(self, p, warp_gen):
         spacing = max(0.2, p['cell_size'])
         nx = max(2, int(math.ceil(p['mesh_x'] / spacing)) + 1)
@@ -437,13 +447,13 @@ class VoronoiReliefNoise(object):
                     sites.append([
                         max(0.0, min(p['mesh_x'], px)),
                         max(0.0, min(p['mesh_y'], py)),
-                        0.0, 0.0, 0  # radius, _radius_sum, _radius_n
+                        0.0  # radius (set after Pass 1)
                     ])
         return sites
     def _nearest_two(self, sites, x, y, cosA, sinA, aniso_scale):
         # Anisotropy: rotate into stretched frame, scale x', take hypot. Rotation preserves length
         # so we don't need to rotate back.
-        f1 = float('inf'); f2 = float('inf'); idx = 0; idx2 = 0
+        f1 = float('inf'); f2 = float('inf'); idx = 0
         isotropic = (aniso_scale == 1.0)
         for i in range(len(sites)):
             dx = x - sites[i][0]; dy = y - sites[i][1]
@@ -453,9 +463,9 @@ class VoronoiReliefNoise(object):
                 xr = dx * cosA + dy * sinA
                 yr = -dx * sinA + dy * cosA
                 d = math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-            if d < f1: f2 = f1; idx2 = idx; f1 = d; idx = i
-            elif d < f2: f2 = d; idx2 = i
-        return f1, f2, idx, idx2
+            if d < f1: f2 = f1; f1 = d; idx = i
+            elif d < f2: f2 = d
+        return f1, f2, idx
     def _halton(self, index, base):
         result = 0.0; f = 1.0 / base; i = index
         while i > 0:
@@ -508,8 +518,12 @@ class VoronoiReliefNoise(object):
         ts_clamped = max(0.0, min(1.0, p['transition_softness']))
         transition_exponent = 0.2 + ts_clamped * 1.8
         cols = p['cols']; rows = p['rows']
-        # Pass 1: accumulate mean F1 per site to derive per-cell radius. Owner/F1 grid
-        # not retained — Pass 2 re-runs _nearest_two for F1+F2 together.
+        # Pass 1: accumulate mean F1 per site to derive per-cell radius. Accumulators live
+        # in local arrays so the site row stays slim and concurrent sample_grid calls don't
+        # trample each other (mirrors the Float64Array approach in the TS sampler).
+        n_sites = len(sites)
+        radius_sum = [0.0] * n_sites
+        radius_n = [0] * n_sites
         pass1_flow_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
@@ -520,10 +534,32 @@ class VoronoiReliefNoise(object):
                     flow = flow_gen.noise(x * 0.18, y * 0.18)
                     local_angle = (p['anisotropy_angle'] + flow * pass1_flow_amt * 90.0) * math.pi / 180.0
                     px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
-                f1, f2, idx, idx2 = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
-                sites[idx][3] += f1; sites[idx][4] += 1
-        for s in sites:
-            s[2] = (s[3] / s[4]) * 2.0 if s[4] > 0 else p['cell_size']
+                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
+                radius_sum[idx] += f1; radius_n[idx] += 1
+        for k in range(n_sites):
+            sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
+        # Pass 1.5: build continuous radius field R(x,y) via Gaussian blend over sites within
+        # cutoff. Architectural fix for spike+sawtooth artifacts: any per-pixel formula that
+        # reads R must read a continuous quantity, NOT a per-site discrete lookup (which step-
+        # discontinues at ownership boundaries). Gaussian basis is C-infinity smooth.
+        sigma_r = max(0.2, p['cell_size']) * self.RADIUS_FIELD_SIGMA_CELLS
+        sigma_r2 = sigma_r * sigma_r
+        cutoff_r = sigma_r * self.RADIUS_FIELD_CUTOFF_SIGMAS
+        cutoff_r2 = cutoff_r * cutoff_r
+        r_field = [0.0] * (rows * cols)
+        for j in range(rows):
+            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
+            for i in range(cols):
+                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
+                sum_r = 0.0; sum_w = 0.0
+                for k in range(n_sites):
+                    dx = x - sites[k][0]; dy = y - sites[k][1]
+                    d2 = dx * dx + dy * dy
+                    if d2 > cutoff_r2: continue
+                    w = math.exp(-d2 / sigma_r2)
+                    sum_r += sites[k][2] * w
+                    sum_w += w
+                r_field[j * cols + i] = (sum_r / sum_w) if sum_w > 0 else p['cell_size']
         # Pass 2: heights
         polarity = -1.0 if p['polarity'] == 'pockets' else 1.0
         cell_size_grad = max(0.0, min(2.0, p.get('cell_size_gradient', 0.0)))
@@ -531,6 +567,11 @@ class VoronoiReliefNoise(object):
         attractor_noise_amt = max(0.0, min(1.0, p.get('attractor_noise', 0.0)))
         attractor_noise_freq = max(0.02, min(0.5, p.get('attractor_noise_freq', 0.15)))
         flow_anisotropy_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
+        # Pixel pitch + minimum seam-transition width (anti-aliasing floor). The floor is
+        # later capped to a fraction of R per-pixel so it can't dominate the natural width
+        # at low grid resolutions (which would invert the dome/seam balance).
+        px_pitch = p['mesh_x'] / float(max(1, cols))
+        pixel_min_width = px_pitch * self.SEAM_MIN_PIXEL_WIDTH
         out = [0.0] * (cols * rows)
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
@@ -541,12 +582,7 @@ class VoronoiReliefNoise(object):
                     flow = flow_gen.noise(x * 0.18, y * 0.18)
                     local_angle = (p['anisotropy_angle'] + flow * flow_anisotropy_amt * 90.0) * math.pi / 180.0
                     px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
-                f1, f2, idx, idx2 = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
-                # Continuous radius blend across cell boundaries — eliminates the sawtooth
-                # aliasing along seams caused by per-site radius being a discrete lookup.
-                # Mirrors src/noise/voronoi-relief.ts.
-                w1 = 1.0 / (f1 + 1e-6); w2 = 1.0 / (f2 + 1e-6)
-                blended_radius = (sites[idx][2] * w1 + sites[idx2][2] * w2) / (w1 + w2)
+                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
@@ -556,12 +592,18 @@ class VoronoiReliefNoise(object):
                     mask = mask * ((1.0 - attractor_noise_amt) + attractor_noise_amt * modulator * 1.5)
                     if mask > 1.0: mask = 1.0
                     if mask < 0.0: mask = 0.0
-                # Cell-size gradient — shrinks effective per-cell radius where mask is high so
-                # the dense-attractor zone has visibly smaller domes.
+                # Cell-size gradient shrinks effective radius where mask is high. R is read
+                # from the continuous radius field (Pass 1.5), not from sites[idx], so it
+                # has no ownership-boundary discontinuities.
                 size_shrink = 1.0 - cell_size_grad * mask * 0.6
-                R = max(0.05, blended_radius * max(0.2, size_shrink))
+                R = max(0.05, r_field[j * cols + i] * max(0.2, size_shrink))
                 dome = self._dome(p['profile'], f1, R)
-                seam = 1.0 - self._smoothstep(0.0, max(0.001, p['seam_width'] * R), f2 - f1)
+                # Seam smoothstep transition width: max of (seam_width * R) and a pixel-aware
+                # floor, where the floor is capped to a fraction of R so it can't grow wider
+                # than the cell. Eliminates sub-pixel-wall sawtooth aliasing.
+                capped_floor = min(pixel_min_width, R * self.SEAM_FLOOR_MAX_R_FRACTION)
+                seam_width_physical = max(p['seam_width'] * R, capped_floor)
+                seam = 1.0 - self._smoothstep(0.0, seam_width_physical, f2 - f1)
                 # Dome decays at the seam so seamDepth represents the true trough depth.
                 h = polarity * (dome * (1.0 - seam) - p['seam_depth'] * seam)
                 intensity = (1.0 - p['intensity_strength']) + p['intensity_strength'] * mask
@@ -571,20 +613,18 @@ class VoronoiReliefNoise(object):
                     h = base * (1.0 - cw) + h * cw * intensity
                 else:
                     h = h * intensity
-                # Void mode — at high mask + seam, smooth-blend h toward the negative clamp
-                # so CNC normalize drops to z=0 (machine bed). Uses smoothstep (not a hard
-                # threshold) to avoid dotted seam artifacts when adjacent pixels straddle
-                # the threshold. Mirrors src/noise/voronoi-relief.ts.
+                # Void mode applied AFTER the wave/cell blend so the floor-clamp intent
+                # is not diluted by the wave base in transition zones.
                 if void_strength > 0.0:
                     void_gate = mask * seam
                     void_edge0 = 1.0 - void_strength
                     void_edge1 = 1.0 - void_strength * 0.5
                     void_t = self._smoothstep(void_edge0, void_edge1, void_gate)
-                    h = h * (1.0 - void_t) - 1.05 * void_t
+                    h = h * (1.0 - void_t) - self.OUTPUT_HEIGHT_CLAMP * void_t
                 if h != h or h == float('inf') or h == float('-inf'):  # NaN/Inf guard
                     h = 0.0
-                if h < -1.05: h = -1.05
-                elif h > 1.05: h = 1.05
+                if h < -self.OUTPUT_HEIGHT_CLAMP: h = -self.OUTPUT_HEIGHT_CLAMP
+                elif h > self.OUTPUT_HEIGHT_CLAMP: h = self.OUTPUT_HEIGHT_CLAMP
                 out[j * cols + i] = h
         return out
 

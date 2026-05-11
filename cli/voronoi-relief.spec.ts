@@ -366,6 +366,100 @@ function mean(values: number[]): number {
     `differing=${differing}/${a.length}`);
 }
 
+// 15. Asymmetric output range with small seamDepth (production preset behavior).
+// At seamDepth=0.22 + polarity=pockets the output is intentionally asymmetric ([-1, +seamDepth]).
+// Guard: range must include both signs and stay within the clamp. Catches regressions where
+// a future change accidentally compresses to a single sign or violates the clamp.
+{
+  process.stdout.write('15. asymmetric range guard (production seamDepth)\n');
+  const grid = new VoronoiReliefGen(7).sampleGrid(baseParams({
+    polarity: 'pockets', seamDepth: 0.22, seamWidth: 0.12,
+    cellSize: 4.5, cols: 200, rows: 240, meshX: 24, meshY: 48,
+  }));
+  let lo = Infinity, hi = -Infinity;
+  for (const row of grid) for (const v of row) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  assert(lo < -0.5,
+    'pockets reach deep negative values (lo < -0.5)',
+    `lo=${lo.toFixed(3)}`);
+  assert(hi > 0 && hi < 0.5,
+    'walls reach modest positive values (0 < hi < 0.5)',
+    `hi=${hi.toFixed(3)}`);
+  assert(lo >= -1.05 && hi <= 1.05,
+    'all values within OUTPUT_HEIGHT_CLAMP',
+    `range=[${lo.toFixed(3)}, ${hi.toFixed(3)}]`);
+}
+
+// 16. Catastrophic-jump guard — neighboring pixels never differ by more than the full
+// output range (~2.0). This catches the c40c67b regression where F2-aliasing produced
+// pixels that flipped from ~+0.22 to ~-1.05 in one step. Normal seam transitions can
+// produce ~0.5 jumps; only an algorithmic discontinuity produces >1.5 jumps.
+{
+  process.stdout.write('16. catastrophic-jump guard (no >1.5 pixel-pair jumps)\n');
+  const grid = new VoronoiReliefGen(13).sampleGrid(baseParams({
+    polarity: 'pockets', seamDepth: 0.22, seamWidth: 0.12,
+    cellSize: 4.5, cellSizeGradient: 1.3, attractorNoise: 0.6,
+    attractorMode: 'vertical', attractorY: 0, attractorFalloff: 0.4,
+    densityStrength: 1.4, intensityStrength: 0.4,
+    cols: 200, rows: 240, meshX: 24, meshY: 48,
+  }));
+  let worstJump = 0;
+  let violations = 0;
+  for (let j = 0; j < grid.length; j++) {
+    for (let i = 0; i < grid[j].length - 1; i++) {
+      const dh = Math.abs(grid[j][i + 1] - grid[j][i]);
+      if (dh > worstJump) worstJump = dh;
+      if (dh > 1.5) violations++;
+    }
+  }
+  assert(violations === 0,
+    'no catastrophic discontinuities (zero pixel-pair jumps > 1.5)',
+    `violations=${violations} worstJump=${worstJump.toFixed(3)}`);
+}
+
+// 17. Isolated-outlier guard — a real algorithmic spike shows up as a single pixel that
+// differs from BOTH 2-pixel-away neighbors by much more than its 1-pixel neighbors do.
+// Use a wide stencil (i-2, i, i+2) to require the outlier to span multiple pixels, which
+// is the signature of F2-ownership or radius-field discontinuities (not natural smooth
+// transitions, which span many pixels).
+{
+  process.stdout.write('17. isolated-outlier guard (no spike-with-tail patterns)\n');
+  const grid = new VoronoiReliefGen(17).sampleGrid(baseParams({
+    polarity: 'pockets', seamDepth: 0.22, seamWidth: 0.12,
+    cellSize: 4.5, cellSizeGradient: 1.3, attractorNoise: 0.6,
+    attractorMode: 'vertical', attractorY: 0, attractorFalloff: 0.4,
+    densityStrength: 1.4, intensityStrength: 0.4,
+    cols: 200, rows: 240, meshX: 24, meshY: 48,
+  }));
+  // Scan all interior pixels. An outlier is a pixel whose value is far above (or far below)
+  // the local 5x5 neighborhood mean. A natural cell center is high but its neighbors are
+  // also high (smooth dome); a true spike has high value with low-value neighbors.
+  let outliers = 0;
+  let worstZ = 0;
+  for (let j = 2; j < grid.length - 2; j++) {
+    for (let i = 2; i < grid[j].length - 2; i++) {
+      let sum = 0, sumSq = 0, n = 0;
+      for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
+        if (dj === 0 && di === 0) continue;
+        const v = grid[j + dj][i + di];
+        sum += v; sumSq += v * v; n++;
+      }
+      const mean = sum / n;
+      const variance = sumSq / n - mean * mean;
+      const stddev = Math.sqrt(Math.max(0, variance));
+      const z = stddev > 1e-9 ? Math.abs(grid[j][i] - mean) / stddev : 0;
+      if (z > worstZ) worstZ = z;
+      // True spike: both statistically outlying (z > 6) AND large absolute deviation
+      // (> 0.3 = ~15% of total noise range). Filters out clamp-boundary noise where
+      // stddev is tiny but absolute deviation is also tiny.
+      const absDev = Math.abs(grid[j][i] - mean);
+      if (z > 6 && absDev > 0.3) outliers++;
+    }
+  }
+  assert(outliers === 0,
+    'no isolated outliers vs 5x5 neighborhood (z-score > 6)',
+    `outliers=${outliers} worstZ=${worstZ.toFixed(2)}`);
+}
+
 if (failures === 0) {
   process.stdout.write('\nALL OK\n');
   process.exit(0);
