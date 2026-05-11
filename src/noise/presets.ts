@@ -49,28 +49,29 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
     reliefCellSizeGradient:0.6, reliefVoidStrength:0,
     meshX:24, meshY:24, smoothIter:1, smoothStr:0.4 },
-  // relief-pockets — visually iterated against the lafabrica reference. Cellular pockets
-  // span the entire panel (no wave-base zone), dramatic size variation driven by noise
-  // patchiness, walls form a crisp ridge network, anisotropy direction curves organically.
-  // Verified in headless render: range [-1.05, 0.27], cells visible top-to-bottom, deep
-  // dark voids with light wall network, no smooth blank zones.
-  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
+  // relief-pockets — iteration 5 against the lafabrica reference. Earlier iterations had
+  // three artifact sources that produced "chunky triangular plane" artifacts in the rendered
+  // mesh: (1) voidStrength=0.25 floored random pixels to -clamp wherever mask*seam>0.75,
+  // creating disconnected dark plateaus along walls; (2) anisotropy=0.55 + flowAnisotropy=0.7
+  // made F1 ownership change discontinuously as the local angle rotated, tearing the wall
+  // network; (3) attractorNoise=0.95 produced such extreme per-cell radius differences that
+  // adjacent cells had mismatched dome heights. Verified clean in headless render.
+  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
     warpFreq:0.1, warpCurl:0,
-    reliefCellSize:5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
-    // Crisp narrow walls (seamWidth 0.18) at moderate height (seamDepth 0.3) keep the
-    // wall network legible without dominating the relief. Hemisphere profile gives flatter
-    // pocket bottoms — closer to a CNC-bit-shaped pocket than parabolic's pointy bottom.
-    reliefSeamDepth:0.3, reliefSeamWidth:0.18, reliefAnisotropy:0.55, reliefAnisotropyAngle:75,
-    // Soft directional bias (gentle falloff 0.5) so density tilts toward viewport bottom
-    // but cellular pattern remains visible across the entire panel.
-    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.5,
-    // intensityStrength 0.35 = 65% baseline relief everywhere + 35% modulated by mask.
-    // Without this dial-down the bottom of the panel was completely flat.
-    reliefDensityStrength:1.2, reliefIntensityStrength:0.35, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
-    reliefCellSizeGradient:1.5, reliefVoidStrength:0.25,
-    // Heavy noise patchiness so cells vary in size everywhere, plus strong flow-anisotropy
-    // so stretch direction curves across the panel — together this produces the
-    // random-points stretch-and-expand look from the reference.
-    reliefAttractorNoise:0.95, reliefAttractorNoiseFreq:0.11, reliefFlowAnisotropy:0.7,
-    meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.4 },
+    reliefCellSize:4.5, reliefJitter:0.8, reliefRelaxIterations:2, reliefPolarity:'pockets', reliefProfile:'hemisphere',
+    // Narrower walls (seamWidth 0.12) at moderate height (seamDepth 0.22) so the wall
+    // network reads as a thin connected ridge instead of a thick raised band.
+    reliefSeamDepth:0.22, reliefSeamWidth:0.12, reliefAnisotropy:0.25, reliefAnisotropyAngle:75,
+    // Vertical bias toward viewport bottom — cells get denser and smaller toward the bottom
+    // edge, matching the lafabrica reference orientation.
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.4,
+    reliefDensityStrength:1.4, reliefIntensityStrength:0.4, reliefTransitionSoftness:0.6, reliefBaseMode:'flat',
+    // voidStrength MUST stay 0 here — even 0.1 produces scattered hard-floored pixels that
+    // render as triangular dark plateaus in the CNC mesh. Keep void mode for relief-vertical
+    // where the spike-finger effect is intended at the bottom edge.
+    reliefCellSizeGradient:1.3, reliefVoidStrength:0,
+    // Moderate noise patchiness + soft flow give size variation and organic stretch without
+    // discontinuous F1 transitions that previously created chunky wall artifacts.
+    reliefAttractorNoise:0.6, reliefAttractorNoiseFreq:0.11, reliefFlowAnisotropy:0.35,
+    meshX:24, meshY:48, baseThickness:5.2, smoothIter:2, smoothStr:0.5 },
 };
