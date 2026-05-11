@@ -63,14 +63,15 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // causes the spike artifacts the prior algorithm produced. Targeting the lafabrica
     // reference (image #18): cells span large to small, deep pockets, organic flow,
     // dramatic patchiness in cell size.
-    reliefCellSize:5.0, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
-    reliefSeamDepth:0.25, reliefSeamWidth:0.10, reliefAnisotropy:0.35, reliefAnisotropyAngle:75,
-    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.5,
-    reliefDensityStrength:1.6, reliefIntensityStrength:0.5, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
-    // voidStrength stays 0 here — keep void mode for relief-vertical only.
-    reliefCellSizeGradient:1.8, reliefVoidStrength:0,
-    // Push attractorNoise to 0.85 and flowAnisotropy to 0.55 now that the radius field
-    // smooths out the F1/F2 ownership artifacts. Reference has very strong size variation.
+    reliefCellSize:6.0, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
+    reliefSeamDepth:0.28, reliefSeamWidth:0.10, reliefAnisotropy:0.35, reliefAnisotropyAngle:75,
+    // Sharper attractor (falloff 0.8) concentrates dense small cells toward the bottom edge.
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.8,
+    // densityStrength + cellSizeGradient both at max clamp (2.0) for the most dramatic
+    // top-large-to-bottom-small gradient. With the radius field, this no longer produces
+    // the spike artifacts the old algorithm did at high values.
+    reliefDensityStrength:2.0, reliefIntensityStrength:0.55, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    reliefCellSizeGradient:2.0, reliefVoidStrength:0,
     reliefAttractorNoise:0.85, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.55,
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:2, smoothStr:0.5 },
 };
