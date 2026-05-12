@@ -1,7 +1,8 @@
 export interface NoiseGenerator {
   noise(x: number, y: number): number;
-  /** Discriminator for grid-aware generators that bypass the per-pixel sampleNoiseGrid loop. */
-  kind?: 'scalar' | 'voronoi-relief';
+  /** Discriminator for grid-aware generators that bypass the per-pixel sampleNoiseGrid loop.
+   *  Only 'voronoi-relief' branches the pipeline today; scalar generators leave it undefined. */
+  kind?: 'voronoi-relief';
 }
 
 export interface FBMGenerator extends NoiseGenerator {
@@ -71,7 +72,6 @@ export interface ReliefSampleParams extends ReliefParams {
 export interface NoiseConfig {
   gaborAngle?: number;
   gaborBandwidth?: number;
-  relief?: ReliefParams;
 }
 
 /** Generator-side interface for relief sampling — narrow contract used by mesh.ts. */
