@@ -123,6 +123,9 @@ relief_void_strength       = _relief_default('relief_void_strength',       0.0)
 relief_attractor_noise     = _relief_default('relief_attractor_noise',     0.0)
 relief_attractor_noise_freq= _relief_default('relief_attractor_noise_freq',0.15)
 relief_flow_anisotropy     = _relief_default('relief_flow_anisotropy',     0.0)
+# warp_freq for the relief sampler — mirrors `warpFreq` in TS sampleReliefParamsFromState.
+# Default 0.08 matches the canonical TS relief presets; the input pin can override per-run.
+relief_warp_freq           = _relief_default('relief_warp_freq',           0.08)
 
 seed        = int(seed)
 octaves     = int(octaves)
@@ -660,6 +663,9 @@ class VoronoiReliefNoise(object):
         attractor_noise_amt = max(0.0, min(1.0, p.get('attractor_noise', 0.0)))
         attractor_noise_freq = max(0.02, min(0.5, p.get('attractor_noise_freq', 0.15)))
         flow_anisotropy_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
+        # intensity_strength clamp — parity with the TS sampler's defensive clamp. Out-of-range
+        # values would invert (negative) or over-amplify (>1) the relief before output clamp.
+        intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
         # Pixel pitch + minimum seam-transition width (anti-aliasing floor). The floor is
         # later capped to a fraction of R per-pixel so it can't dominate the natural width
         # at low grid resolutions (which would invert the dome/seam balance).
@@ -699,7 +705,7 @@ class VoronoiReliefNoise(object):
                 seam = 1.0 - self._smoothstep(0.0, seam_width_physical, f2 - f1)
                 # Dome decays at the seam so seamDepth represents the true trough depth.
                 h = polarity * (dome * (1.0 - seam) - p['seam_depth'] * seam)
-                intensity = (1.0 - p['intensity_strength']) + p['intensity_strength'] * mask
+                intensity = (1.0 - intensity_strength) + intensity_strength * mask
                 if p['base_mode'] == 'wave':
                     base = self.wave.noise(x * 0.1, y * 0.1) * 0.5
                     cw = pow(mask, transition_exponent)
@@ -783,7 +789,7 @@ if is_relief:
         'attractor_noise_freq': float(relief_attractor_noise_freq),
         'flow_anisotropy': float(relief_flow_anisotropy),
         'warp_distortion': float(distortion),
-        'warp_frequency': 0.1,
+        'warp_frequency': float(relief_warp_freq),
     }
     z_values = gen.sample_grid(relief_params)
 else:
@@ -968,11 +974,11 @@ PRESETS = {
     'brushed-metal':   {'noise_type':'gabor',      'frequency':0.10, 'amplitude':0.30, 'noise_exp':0.5, 'peak_exp':1.0, 'valley_exp':1.0,  'valley_floor':0.00, 'offset': 0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.00, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
     # Voronoi Relief presets — relief_* keys consumed by the noise component when noise_type == 'voronoi-relief'.
     'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.55, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':3, 'smooth_str':0.55,
-                        'relief_cell_size':1.6, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'hemisphere', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_cell_size_gradient':1.0, 'relief_void_strength':0.7},
+                        'relief_cell_size':1.6, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'hemisphere', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_cell_size_gradient':1.0, 'relief_void_strength':0.7, 'relief_warp_freq':0.08},
     'relief-radial':   {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.20, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.25, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4,
-                        'relief_cell_size':1.6, 'relief_jitter':0.6, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'cosine', 'relief_seam_depth':0.55, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.5, 'relief_attractor_y':0.4, 'relief_attractor_radius':0.6, 'relief_attractor_falloff':1.2, 'relief_density_strength':1.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.4, 'relief_base_mode':'flat', 'relief_cell_size_gradient':0.6, 'relief_void_strength':0.0},
+                        'relief_cell_size':1.8, 'relief_jitter':0.7, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'cosine', 'relief_seam_depth':0.6, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.5, 'relief_attractor_y':0.4, 'relief_attractor_radius':0.6, 'relief_attractor_falloff':1.2, 'relief_density_strength':1.2, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.4, 'relief_base_mode':'flat', 'relief_cell_size_gradient':0.6, 'relief_void_strength':0.0, 'relief_warp_freq':0.08},
     'relief-pockets':  {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':4.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.5, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':2, 'smooth_str':0.5,
-                        'relief_cell_size':5.5, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'hemisphere', 'relief_seam_depth':0.26, 'relief_seam_width':0.13, 'relief_anisotropy':0.30, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.6, 'relief_density_strength':1.7, 'relief_intensity_strength':0.55, 'relief_transition_softness':0.5, 'relief_base_mode':'flat', 'relief_cell_size_gradient':1.5, 'relief_void_strength':0.0, 'relief_attractor_noise':0.8, 'relief_attractor_noise_freq':0.13, 'relief_flow_anisotropy':0.5},
+                        'relief_cell_size':5.5, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'hemisphere', 'relief_seam_depth':0.26, 'relief_seam_width':0.13, 'relief_anisotropy':0.30, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.6, 'relief_density_strength':1.7, 'relief_intensity_strength':0.55, 'relief_transition_softness':0.5, 'relief_base_mode':'flat', 'relief_cell_size_gradient':1.5, 'relief_void_strength':0.0, 'relief_attractor_noise':0.8, 'relief_attractor_noise_freq':0.13, 'relief_flow_anisotropy':0.5, 'relief_warp_freq':0.08},
 }
 
 p = PRESETS.get(str(preset), PRESETS['gentle-waves'])
@@ -1020,6 +1026,7 @@ relief_void_strength       = p.get('relief_void_strength',       0.0)
 relief_attractor_noise     = p.get('relief_attractor_noise',     0.0)
 relief_attractor_noise_freq= p.get('relief_attractor_noise_freq',0.15)
 relief_flow_anisotropy     = p.get('relief_flow_anisotropy',     0.0)
+relief_warp_freq           = p.get('relief_warp_freq',           0.08)
 """
 
     # ── Builder helpers ────────────────────────────────────────────────────
@@ -1125,6 +1132,7 @@ relief_flow_anisotropy     = p.get('relief_flow_anisotropy',     0.0)
         "relief_transition_softness", "relief_base_mode",
         "relief_cell_size_gradient", "relief_void_strength",
         "relief_attractor_noise", "relief_attractor_noise_freq", "relief_flow_anisotropy",
+        "relief_warp_freq",
     ]
 
     PRESET_NAMES = [

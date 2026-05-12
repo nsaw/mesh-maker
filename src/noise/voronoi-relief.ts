@@ -464,6 +464,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const attractorNoiseAmt = Math.max(0, Math.min(1, p.attractorNoise));
     const attractorNoiseFreq = Math.max(0.02, Math.min(0.5, p.attractorNoiseFreq));
     const flowAnisotropyAmt = Math.max(0, Math.min(1, p.flowAnisotropy));
+    // intensityStrength is the only sibling param previously read directly from p; clamp it
+    // defensively for parity with the others. Out-of-range values would invert (negative)
+    // or over-amplify (>1) the relief intensity before the final output clamp.
+    const intensityStrengthClamped = Math.max(0, Math.min(1, p.intensityStrength));
     // Pixel pitch in physical units — used to enforce a minimum seam smoothstep width so
     // walls can't alias below the grid resolution (the sawtooth artifact source). The floor
     // is later capped to a fraction of R per-pixel so it can't dominate the natural width.
@@ -522,7 +526,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // of a budget the dome partially consumes.
         let h = polarity * (dome * (1 - seam) - p.seamDepth * seam);
 
-        const intensityFactor = (1 - p.intensityStrength) + p.intensityStrength * mask;
+        const intensityFactor = (1 - intensityStrengthClamped) + intensityStrengthClamped * mask;
 
         if (p.baseMode === 'wave') {
           // Low-frequency simplex base that cells transition into. transitionSoftness=0 →

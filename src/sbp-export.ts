@@ -175,10 +175,18 @@ function exportFromMesh(): void {
 /** Voronoi-relief seams are narrow V-grooves; ball-nose stepover must be ≤ half the seam width
  *  or the cutter rolls over the seam instead of cutting it. Returns a warning string or null
  *  so handleResult can fold it into the export toast — separate toasts in the same tick get
- *  collapsed to whichever ran last. */
+ *  collapsed to whichever ran last.
+ *
+ *  Physical seam width derivation: in voronoi-relief.ts, the seam smoothstep gate is
+ *  `seamWidth * R` where R is the per-pixel radius field. For a Voronoi cell roughly
+ *  disk-shaped with diameter ≈ cellSize, mean F1 ≈ cellSize / 4, and
+ *  `site.radius = 2 × mean_F1 ≈ cellSize / 2`. So actual physical seam width is
+ *  `seamWidth × cellSize / 2` — the `* 0.5` below corrects a prior 2× overestimate
+ *  that prevented the warning from firing for stepovers in the
+ *  (actual_seam / 2, actual_seam) range. */
 function buildReliefStepoverWarning(stepoverIn: number): string | undefined {
   if (STATE.noiseType !== 'voronoi-relief') return undefined;
-  const seamWidthIn = STATE.reliefSeamWidth * STATE.reliefCellSize;
+  const seamWidthIn = STATE.reliefSeamWidth * STATE.reliefCellSize * 0.5;
   if (seamWidthIn <= 0) return undefined;
   const recommendedMax = seamWidthIn * 0.5;
   if (stepoverIn <= recommendedMax) return undefined;

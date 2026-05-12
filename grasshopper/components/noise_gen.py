@@ -57,6 +57,9 @@ relief_void_strength       = _relief_default('relief_void_strength',       0.0)
 relief_attractor_noise     = _relief_default('relief_attractor_noise',     0.0)
 relief_attractor_noise_freq= _relief_default('relief_attractor_noise_freq',0.15)
 relief_flow_anisotropy     = _relief_default('relief_flow_anisotropy',     0.0)
+# warp_freq for the relief sampler — mirrors `warpFreq` in TS sampleReliefParamsFromState.
+# Default 0.08 matches the canonical TS relief presets; the input pin can override per-run.
+relief_warp_freq           = _relief_default('relief_warp_freq',           0.08)
 
 seed        = int(seed)
 octaves     = int(octaves)
@@ -594,6 +597,9 @@ class VoronoiReliefNoise(object):
         attractor_noise_amt = max(0.0, min(1.0, p.get('attractor_noise', 0.0)))
         attractor_noise_freq = max(0.02, min(0.5, p.get('attractor_noise_freq', 0.15)))
         flow_anisotropy_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
+        # intensity_strength clamp — parity with the TS sampler's defensive clamp. Out-of-range
+        # values would invert (negative) or over-amplify (>1) the relief before output clamp.
+        intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
         # Pixel pitch + minimum seam-transition width (anti-aliasing floor). The floor is
         # later capped to a fraction of R per-pixel so it can't dominate the natural width
         # at low grid resolutions (which would invert the dome/seam balance).
@@ -633,7 +639,7 @@ class VoronoiReliefNoise(object):
                 seam = 1.0 - self._smoothstep(0.0, seam_width_physical, f2 - f1)
                 # Dome decays at the seam so seamDepth represents the true trough depth.
                 h = polarity * (dome * (1.0 - seam) - p['seam_depth'] * seam)
-                intensity = (1.0 - p['intensity_strength']) + p['intensity_strength'] * mask
+                intensity = (1.0 - intensity_strength) + intensity_strength * mask
                 if p['base_mode'] == 'wave':
                     base = self.wave.noise(x * 0.1, y * 0.1) * 0.5
                     cw = pow(mask, transition_exponent)
@@ -717,7 +723,7 @@ if is_relief:
         'attractor_noise_freq': float(relief_attractor_noise_freq),
         'flow_anisotropy': float(relief_flow_anisotropy),
         'warp_distortion': float(distortion),
-        'warp_frequency': 0.1,
+        'warp_frequency': float(relief_warp_freq),
     }
     z_values = gen.sample_grid(relief_params)
 else:

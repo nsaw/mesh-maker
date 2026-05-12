@@ -48,7 +48,9 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorMode:'radial', reliefAttractorX:0.5, reliefAttractorY:0.4, reliefAttractorRadius:0.6, reliefAttractorFalloff:1.2,
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
     reliefCellSizeGradient:0.6, reliefVoidStrength:0,
-    meshX:24, meshY:24, smoothIter:1, smoothStr:0.4 },
+    // baseThickness explicit so the preset is deterministic when merged into state — without
+    // this, applying relief-radial after another preset inherits the previous baseThickness.
+    meshX:24, meshY:24, baseThickness:1.2, smoothIter:1, smoothStr:0.4 },
   // relief-pockets — iteration 5 against the lafabrica reference. Earlier iterations had
   // three artifact sources that produced "chunky triangular plane" artifacts in the rendered
   // mesh: (1) voidStrength=0.25 floored random pixels to -clamp wherever mask*seam>0.75,

@@ -46,8 +46,10 @@ export interface ReliefParams {
    *  panels where cells become disconnected protrusions. */
   voidStrength: number;
   /** Patches the otherwise-smooth attractor mask with a 2D noise field — produces
-   *  patchy, random-looking density/intensity variation instead of a single linear
-   *  gradient. 0 = pure mathematical attractor, 1 = pure noise modulation. */
+   *  patchy, random-looking INTENSITY variation in the cellular zone (cell HEIGHTS
+   *  and SHAPES vary; cell COUNT/DENSITY stays a smooth gradient driven by the
+   *  unmodulated mask in generateSites). 0 = pure mathematical attractor, 1 = pure
+   *  noise modulation of intensity. */
   attractorNoise: number;
   /** Spatial frequency of the attractor noise field. Lower = larger blobs. */
   attractorNoiseFreq: number;

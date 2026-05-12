@@ -2,14 +2,13 @@
  * Deterministic verification of the Voronoi Relief sampler.
  * Run: npm run test:relief  (or: npx tsx cli/voronoi-relief.spec.ts)
  *
- * Asserts:
- *   1. determinism (same seed → byte-identical grid)
- *   2-3. finiteness + range bounds (within [-1.05, 1.05])
- *   4. polarity inversion (pockets vs domes have flipped sign)
- *   5. density attractor (vertical mode increases site density toward bottom)
- *   6. profile sanity (peak at cell center, decay between cells)
- *   7-7b. wave base mode + transitionSoftness semantics
- *   8. Lloyd relaxation effect
+ * 18 numbered test blocks covering: determinism, finiteness + range bounds, polarity
+ * inversion sign-symmetry, density-attractor mode effect, dome profile peak/decay
+ * sanity, wave base mode + transitionSoftness semantics, Lloyd relaxation effect,
+ * warp displacement, warp frequency, void mode (production + cuts deeper than no-void),
+ * cell-size gradient, vertical attractor anchor direction, attractor patchiness, flow
+ * anisotropy, asymmetric output range guard at production seamDepth, catastrophic-jump
+ * guard, and isolated-outlier guard via 5x5 z-score + absolute deviation.
  */
 
 import { VoronoiReliefGen } from '../src/noise/voronoi-relief';
@@ -241,6 +240,27 @@ function mean(values: number[]): number {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) differing++;
   assert(differing > a.length * 0.2,
     'warpDistortion changes >20% of grid values from no-warp baseline',
+    `differing=${differing}/${a.length}`);
+}
+
+// 9b. Warp FREQUENCY actually affects output (companion regression to 9 — would still
+//     pass test 9 if warpFrequency were ignored or hardcoded, since the noise field at
+//     freq 0.1 differs from freq 0.05 at every (x,y)). Catches a regression where the
+//     warpFrequency param gets dropped from sampleGrid's site-position warp pass.
+{
+  process.stdout.write('9b. warp frequency effect\n');
+  const lowFreq = new VoronoiReliefGen(55).sampleGrid(baseParams({
+    seed: 55, warpDistortion: 1.0, warpFrequency: 0.05,
+  }));
+  const highFreq = new VoronoiReliefGen(55).sampleGrid(baseParams({
+    seed: 55, warpDistortion: 1.0, warpFrequency: 0.25,
+  }));
+  let differing = 0;
+  const a = flatten(lowFreq);
+  const b = flatten(highFreq);
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 0.01) differing++;
+  assert(differing > a.length * 0.1,
+    'warpFrequency change > 0.01 in >10% of cells',
     `differing=${differing}/${a.length}`);
 }
 
