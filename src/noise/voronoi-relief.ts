@@ -515,17 +515,22 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // (uniform depth), higher seamDepth → only the biggest cells reach full depth.
         let bowlT = normDist / Math.max(0.05, p.seamDepth);
         if (bowlT > 1) bowlT = 1;
-        // Profile shapes the bowl falloff curve.
+        // Profile shapes the bowl falloff curve. CRITICAL: all profiles MUST have dh/dt = 0
+        // at t=0 (boundary), otherwise the height drops from 0 with non-zero slope and the
+        // mesh triangulation produces knife-edge spikes along every ridge. The prior
+        // hemisphere formula `sqrt(t)` had INFINITE derivative at t=0 — fixed below to
+        // `1 - sqrt(1 - t²)` which is a true hemisphere bowl shape (flat rim, round bottom).
         let bowlH: number;
         if (p.profile === 'hemisphere') {
-          // Sharp ridge at top, smooth round bottom: bowlH=0 at boundary, =1 at center
-          // with circular-arc-style approach (square root of t).
-          bowlH = Math.sqrt(bowlT);
+          // Hemisphere bowl: flat at rim (boundary, t=0), curved smooth bottom approaching
+          // vertical-wall asymptote at t=1. Derivative at t=0 is 0 → no knife edge.
+          const t2 = bowlT * bowlT;
+          bowlH = 1 - Math.sqrt(Math.max(0, 1 - t2));
         } else if (p.profile === 'cosine') {
-          // S-curve: gradual at both ends, fast in the middle (smoothstep-style).
+          // S-curve: gradual at both ends, fast in the middle. dh/dt = 0 at both t=0 and t=1.
           bowlH = 0.5 - 0.5 * Math.cos(bowlT * Math.PI);
         } else {
-          // 'parabolic' — sharp bottom, gradual top: x^2 grows slowly near 0, fast near 1.
+          // 'parabolic' — quadratic. dh/dt = 2t = 0 at t=0 (smooth boundary), 2 at t=1.
           bowlH = bowlT * bowlT;
         }
         // Polarity: pockets carve DOWN (negative h), domes raise UP (positive h).

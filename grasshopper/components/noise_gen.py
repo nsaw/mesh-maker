@@ -621,8 +621,11 @@ class VoronoiReliefNoise(object):
                 norm_dist = min(1.0, dist_diff / (2.0 * R))
                 bowl_t = norm_dist / max(0.05, p['seam_depth'])
                 if bowl_t > 1.0: bowl_t = 1.0
+                # All profiles MUST have dh/dt = 0 at t=0 (boundary). Otherwise the height
+                # drops from 0 with non-zero slope and mesh triangulation produces knife-edge
+                # spikes along ridges. Mirrors src/noise/voronoi-relief.ts.
                 if p['profile'] == 'hemisphere':
-                    bowl_h = math.sqrt(bowl_t)
+                    bowl_h = 1.0 - math.sqrt(max(0.0, 1.0 - bowl_t * bowl_t))
                 elif p['profile'] == 'cosine':
                     bowl_h = 0.5 - 0.5 * math.cos(bowl_t * math.pi)
                 else:  # parabolic

@@ -32,7 +32,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // domain warp on Voronoi sites so the grid flows organically rather than tessellating.
   'relief-vertical': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
-    reliefCellSize:1.6, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'hemisphere',
+    reliefCellSize:1.6, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'parabolic',
     reliefSeamDepth:0.95, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     // attractorY:0 anchors the dense+void zone to the BOTTOM of the panel (viewport bottom
     // with default camera) — matches the lafabrica reference orientation where smooth waves
@@ -72,7 +72,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // causes the spike artifacts the prior algorithm produced. Targeting the lafabrica
     // reference (image #18): cells span large to small, deep pockets, organic flow,
     // dramatic patchiness in cell size.
-    reliefCellSize:5.5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
+    reliefCellSize:5.5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
     // F2-F1 algorithm: seamDepth = saturation point. Lower = bowls saturate sooner (more
     // uniform depth across cells). Higher = only biggest cells reach full depth, smaller
     // cells stay shallow. 0.6 gives the lafabrica look — big cells reach near-clamp,

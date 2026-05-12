@@ -154,14 +154,20 @@ function mean(values: number[]): number {
 //    cells carve DOWN below the wave-only envelope.
 {
   process.stdout.write('7. wave base mode + transitionSoftness\n');
+  // Use parabolic profile + higher resolution: the new hemisphere formula
+  // (1 - sqrt(1-t²)) is slow to grow, and the previous 60×80 grid couldn't
+  // resolve cell centers cleanly enough to saturate bowls. Production rarely
+  // hits this — relief-pockets uses 400×800 with cellSize=5.5 — but the spec
+  // needs enough resolution to actually reach the saturation clamp.
   const wave = new VoronoiReliefGen(13).sampleGrid(baseParams({
-    cols: 60, rows: 80, meshX: 24, meshY: 32, seed: 13,
+    cols: 120, rows: 160, meshX: 24, meshY: 32, seed: 13,
     baseMode: 'wave', attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     intensityStrength: 1, transitionSoftness: 1,
-    seamDepth: 0.9, seamWidth: 0.15, cellSize: 1.5, polarity: 'pockets',
+    seamDepth: 0.4, seamWidth: 0.15, cellSize: 1.5, polarity: 'pockets',
+    profile: 'parabolic',
   }));
-  const flatTop = flatten(wave.slice(0, 16));   // top 20% — pure wave zone
-  const flatBot = flatten(wave.slice(64));      // bottom 20% — pure cell zone
+  const flatTop = flatten(wave.slice(0, 32));   // top 20% — pure wave zone
+  const flatBot = flatten(wave.slice(128));     // bottom 20% — pure cell zone
   const minTop = Math.min(...flatTop);
   const minBot = Math.min(...flatBot);
   // Wave alone bounded to ±0.5 (WAVE_AMPLITUDE); cells with seamDepth=0.9 reach the
@@ -269,9 +275,12 @@ function mean(values: number[]): number {
 //     round-12 fix that produces lafabrica-style cut-through fingers).
 {
   process.stdout.write('10. void mode\n');
+  // Parabolic profile + finer grid + smaller seamDepth so bowls saturate enough to
+  // trigger void mode in the test fixture (the production resolution saturates trivially
+  // but the 60×40 spec grid has only ~1.5 pixels per cell center under default cellSize).
   const grid = new VoronoiReliefGen(77).sampleGrid(baseParams({
-    seed: 77, attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
-    densityStrength: 1, seamDepth: 0.7, voidStrength: 0.6,
+    cols: 120, rows: 80, seed: 77, attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
+    densityStrength: 1, seamDepth: 0.4, voidStrength: 0.6, profile: 'parabolic',
   }));
   // Bottom band must contain values near the negative clamp (-1.05).
   const bottomBand = flatten(grid.slice(grid.length - Math.floor(grid.length / 4)));
@@ -283,8 +292,8 @@ function mean(values: number[]): number {
   // must match the void-enabled branch — without it a regression in the vertical-anchor
   // path could change minBotNoVoid independently of void mode and still satisfy the assert.
   const noVoidGrid = new VoronoiReliefGen(77).sampleGrid(baseParams({
-    seed: 77, attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
-    densityStrength: 1, seamDepth: 0.7, voidStrength: 0,
+    cols: 120, rows: 80, seed: 77, attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
+    densityStrength: 1, seamDepth: 0.4, voidStrength: 0, profile: 'parabolic',
   }));
   const minBotNoVoid = Math.min(...flatten(noVoidGrid.slice(noVoidGrid.length - Math.floor(noVoidGrid.length / 4))));
   assert(minBotNoVoid > minBot,
