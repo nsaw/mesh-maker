@@ -393,15 +393,8 @@ class VoronoiReliefNoise(object):
         if mode == 'radial':
             return pow(1.0 - self._smoothstep(r * 0.5, r, d), shaped)
         return pow(self._smoothstep(r * 0.5, r, d), shaped)  # 'point'
-    def _dome(self, profile, d, R):
-        if R <= 0: return 0.0
-        t = min(1.0, d / R)
-        if profile == 'hemisphere':
-            inside = 1.0 - t * t
-            return math.sqrt(inside) if inside > 0 else 0.0
-        if profile == 'cosine':
-            return math.cos(t * math.pi * 0.5)
-        return max(0.0, 1.0 - t * t)  # parabolic
+    # (_dome removed with the F2-F1 algorithm — profile is now a falloff curve applied to
+    # the normalized F2-F1 differential inside sample_grid, not a per-site radial profile.)
     SITE_COUNT_MAX = 4096
     LOCAL_DENSITY_MAX = 4.0
     # Radius field (Pass 1.5) Gaussian blend over sites within cutoff. Mirrors TS constants
@@ -410,10 +403,6 @@ class VoronoiReliefNoise(object):
     RADIUS_FIELD_CUTOFF_SIGMAS = 3.0
     # Coarse-grid pitch in σ units for the Rfield optimization. See TS sampler.
     RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5
-    # Minimum seam smoothstep transition width in pixel units (anti-aliasing floor).
-    SEAM_MIN_PIXEL_WIDTH = 3.0
-    # Cap on the floor as a fraction of R per-pixel (prevents floor from inverting cells at low resolution).
-    SEAM_FLOOR_MAX_R_FRACTION = 0.3
     # Output clamp magnitude. Used with explicit negative sign at carve sites.
     OUTPUT_HEIGHT_CLAMP = 1.05
     def _gen_sites(self, p, warp_gen):
@@ -600,13 +589,8 @@ class VoronoiReliefNoise(object):
         # intensity_strength clamp — parity with the TS sampler's defensive clamp. Out-of-range
         # values would invert (negative) or over-amplify (>1) the relief before output clamp.
         intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
-        # Pixel pitch + minimum seam-transition width (anti-aliasing floor). The floor is
-        # later capped to a fraction of R per-pixel so it can't dominate the natural width
-        # at low grid resolutions (which would invert the dome/seam balance). Use the LARGER
-        # of the two axis pitches: on non-square grids the coarser axis aliases first.
-        px_pitch_x = p['mesh_x'] / float(max(1, cols - 1))
-        px_pitch_y = p['mesh_y'] / float(max(1, rows - 1))
-        pixel_min_width = max(px_pitch_x, px_pitch_y) * self.SEAM_MIN_PIXEL_WIDTH
+        # (Pixel-pitch anti-alias floor removed with the F2-F1 algorithm — no per-pixel
+        # smoothstep transitions means no sub-pixel aliasing.)
         out = [0.0] * (cols * rows)
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
@@ -627,20 +611,23 @@ class VoronoiReliefNoise(object):
                     mask = mask * ((1.0 - attractor_noise_amt) + attractor_noise_amt * modulator * 1.5)
                     if mask > 1.0: mask = 1.0
                     if mask < 0.0: mask = 0.0
-                # Cell-size gradient shrinks effective radius where mask is high. R is read
-                # from the continuous radius field (Pass 1.5), not from sites[idx], so it
-                # has no ownership-boundary discontinuities.
+                # Cell-size gradient shrinks effective radius where mask is high.
                 size_shrink = 1.0 - cell_size_grad * mask * 0.6
                 R = max(0.05, r_field[j * cols + i] * max(0.2, size_shrink))
-                dome = self._dome(p['profile'], f1, R)
-                # Seam smoothstep transition width: max of (seam_width * R) and a pixel-aware
-                # floor, where the floor is capped to a fraction of R so it can't grow wider
-                # than the cell. Eliminates sub-pixel-wall sawtooth aliasing.
-                capped_floor = min(pixel_min_width, R * self.SEAM_FLOOR_MAX_R_FRACTION)
-                seam_width_physical = max(p['seam_width'] * R, capped_floor)
-                seam = 1.0 - self._smoothstep(0.0, seam_width_physical, f2 - f1)
-                # Dome decays at the seam so seamDepth represents the true trough depth.
-                h = polarity * (dome * (1.0 - seam) - p['seam_depth'] * seam)
+                # WORLEY F2-F1 DISTANCE FIELD — see src/noise/voronoi-relief.ts for the full
+                # derivation. height = (F2-F1)/(2R) gives a single C1 scalar field: 0 at
+                # boundaries, ~1 at cell centers, naturally deeper bowls in bigger cells.
+                dist_diff = f2 - f1
+                norm_dist = min(1.0, dist_diff / (2.0 * R))
+                bowl_t = norm_dist / max(0.05, p['seam_depth'])
+                if bowl_t > 1.0: bowl_t = 1.0
+                if p['profile'] == 'hemisphere':
+                    bowl_h = math.sqrt(bowl_t)
+                elif p['profile'] == 'cosine':
+                    bowl_h = 0.5 - 0.5 * math.cos(bowl_t * math.pi)
+                else:  # parabolic
+                    bowl_h = bowl_t * bowl_t
+                h = polarity * bowl_h
                 intensity = (1.0 - intensity_strength) + intensity_strength * mask
                 if p['base_mode'] == 'wave':
                     base = self.wave.noise(x * 0.1, y * 0.1) * 0.5
@@ -648,10 +635,10 @@ class VoronoiReliefNoise(object):
                     h = base * (1.0 - cw) + h * cw * intensity
                 else:
                     h = h * intensity
-                # Void mode applied AFTER the wave/cell blend so the floor-clamp intent
-                # is not diluted by the wave base in transition zones.
+                # Void mode pushes h toward the negative clamp where mask + bowl depth are
+                # high. Uses bowl_h as the carve-depth proxy (was 'seam' in the old algorithm).
                 if void_strength > 0.0:
-                    void_gate = mask * seam
+                    void_gate = mask * bowl_h
                     void_edge0 = 1.0 - void_strength
                     void_edge1 = 1.0 - void_strength * 0.5
                     void_t = self._smoothstep(void_edge0, void_edge1, void_gate)
