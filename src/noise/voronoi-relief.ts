@@ -18,8 +18,12 @@
  *      + optional smooth-wave base field; clamp to ~[-1, 1].
  *
  * Output is in noise-native range; the standard CNC-z normalization in mesh.ts handles
- * the rest. Domain warp is intentionally skipped for relief — warping discrete cells
- * tears them visually.
+ * the rest. Per-pixel domain warp (the warpGen mix in sampleNoiseGrid) is intentionally
+ * skipped for relief — warping discrete cells tears them visually. However `generateSites`
+ * DOES apply site-position warping when `warpDistortion > 0`: the warp displaces each
+ * jittered site rather than the heightmap, producing curving cell layouts without tearing.
+ * `sampleReliefParamsFromState` wires both `warpDistortion` and `warpFrequency` into that
+ * path so the global warp sliders affect relief output.
  */
 import type {
   ReliefAttractorMode,

@@ -40,6 +40,10 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:2.2,
     reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
     reliefCellSizeGradient:1.0, reliefVoidStrength:0.7,
+    // Explicit zeros so switching from relief-pockets (which sets these to non-zero) cleanly
+    // resets back to relief-vertical's designed appearance. Presets are key-only merges, so
+    // omitting a field means inheriting the previous preset's value.
+    reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
     meshX:24, meshY:48, baseThickness:1.5, smoothIter:3, smoothStr:0.55 },
   'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
@@ -48,6 +52,9 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorMode:'radial', reliefAttractorX:0.5, reliefAttractorY:0.4, reliefAttractorRadius:0.6, reliefAttractorFalloff:1.2,
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
     reliefCellSizeGradient:0.6, reliefVoidStrength:0,
+    // Explicit zeros for the same reason as relief-vertical above — prevents stale state
+    // carry-over when switching from relief-pockets.
+    reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
     // baseThickness explicit so the preset is deterministic when merged into state — without
     // this, applying relief-radial after another preset inherits the previous baseThickness.
     meshX:24, meshY:24, baseThickness:1.2, smoothIter:1, smoothStr:0.4 },

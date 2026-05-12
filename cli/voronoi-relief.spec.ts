@@ -278,9 +278,11 @@ function mean(values: number[]): number {
   assert(minBot < -1.0,
     'void mode produces values at the negative clamp (will floor to z=0 in CNC normalize)',
     `minBot=${minBot.toFixed(4)}`);
-  // Without void mode at the same params, nothing should reach that depth.
+  // Without void mode at the same params, nothing should reach that depth. attractorY:1
+  // must match the void-enabled branch — without it a regression in the vertical-anchor
+  // path could change minBotNoVoid independently of void mode and still satisfy the assert.
   const noVoidGrid = new VoronoiReliefGen(77).sampleGrid(baseParams({
-    seed: 77, attractorMode: 'vertical', attractorFalloff: 1.4,
+    seed: 77, attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     densityStrength: 1, seamDepth: 0.7, voidStrength: 0,
   }));
   const minBotNoVoid = Math.min(...flatten(noVoidGrid.slice(noVoidGrid.length - Math.floor(noVoidGrid.length / 4))));
