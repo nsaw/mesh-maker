@@ -128,6 +128,11 @@ export function setupToolbar(): void {
       const u = new URL(window.location.href);
       u.search = '';
       u.hash = '';
+      // Normalize pathname to '/'. If the page was reached via the iOS path-paste flow
+      // (https://meshcraft.sawyerdesign.io/eyJ...), the original payload-as-path persists
+      // here. Without this reset, copying a link from a defaults-only config would
+      // preserve the inherited payload in the pathname rather than producing a clean URL.
+      u.pathname = '/';
       if (config) u.searchParams.set('c', config);
       const url = u.toString();
       if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {

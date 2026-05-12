@@ -602,9 +602,11 @@ class VoronoiReliefNoise(object):
         intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
         # Pixel pitch + minimum seam-transition width (anti-aliasing floor). The floor is
         # later capped to a fraction of R per-pixel so it can't dominate the natural width
-        # at low grid resolutions (which would invert the dome/seam balance).
-        px_pitch = p['mesh_x'] / float(max(1, cols))
-        pixel_min_width = px_pitch * self.SEAM_MIN_PIXEL_WIDTH
+        # at low grid resolutions (which would invert the dome/seam balance). Use the LARGER
+        # of the two axis pitches: on non-square grids the coarser axis aliases first.
+        px_pitch_x = p['mesh_x'] / float(max(1, cols - 1))
+        px_pitch_y = p['mesh_y'] / float(max(1, rows - 1))
+        pixel_min_width = max(px_pitch_x, px_pitch_y) * self.SEAM_MIN_PIXEL_WIDTH
         out = [0.0] * (cols * rows)
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']

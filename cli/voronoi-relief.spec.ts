@@ -426,11 +426,20 @@ function mean(values: number[]): number {
   }));
   let worstJump = 0;
   let violations = 0;
+  // Horizontal pairs.
   for (let j = 0; j < grid.length; j++) {
     for (let i = 0; i < grid[j].length - 1; i++) {
       const dh = Math.abs(grid[j][i + 1] - grid[j][i]);
       if (dh > worstJump) worstJump = dh;
       if (dh > 1.5) violations++;
+    }
+  }
+  // Vertical pairs — a vertical spike regression would otherwise slip through.
+  for (let j = 0; j < grid.length - 1; j++) {
+    for (let i = 0; i < grid[j].length; i++) {
+      const dv = Math.abs(grid[j + 1][i] - grid[j][i]);
+      if (dv > worstJump) worstJump = dv;
+      if (dv > 1.5) violations++;
     }
   }
   assert(violations === 0,

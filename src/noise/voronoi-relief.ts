@@ -475,8 +475,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // Pixel pitch in physical units — used to enforce a minimum seam smoothstep width so
     // walls can't alias below the grid resolution (the sawtooth artifact source). The floor
     // is later capped to a fraction of R per-pixel so it can't dominate the natural width.
-    const pxPitch = p.meshX / Math.max(1, cols);
-    const pixelMinWidth = pxPitch * SEAM_MIN_PIXEL_WIDTH;
+    // Use the LARGER of the two axis pitches: on non-square sampling grids, the coarser
+    // axis is what aliases first, so the floor must match its sampling rate (the smaller
+    // axis can already resolve features at that width).
+    const pxPitchX = p.meshX / Math.max(1, cols - 1);
+    const pxPitchY = p.meshY / Math.max(1, rows - 1);
+    const pixelMinWidth = Math.max(pxPitchX, pxPitchY) * SEAM_MIN_PIXEL_WIDTH;
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
