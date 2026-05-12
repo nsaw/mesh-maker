@@ -1,4 +1,5 @@
 import type { SbpStats } from './sbp/types';
+import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile } from './types';
 
 export interface MeshState {
   mode: 'noise' | 'depthmap' | 'blend';
@@ -7,7 +8,8 @@ export interface MeshState {
   // Noise params
   noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi'
     | 'value' | 'opensimplex2' | 'worley' | 'billow' | 'turbulence'
-    | 'hybrid' | 'hetero' | 'domainwarp' | 'gabor' | 'wavelet';
+    | 'hybrid' | 'hetero' | 'domainwarp' | 'gabor' | 'wavelet'
+    | 'voronoi-relief';
   frequency: number;
   amplitude: number;
   noiseExp: number;
@@ -26,6 +28,30 @@ export interface MeshState {
   sharpness: number;
   gaborAngle: number;
   gaborBandwidth: number;
+  // Voronoi-relief params (only used when noiseType === 'voronoi-relief')
+  reliefCellSize: number;
+  reliefJitter: number;
+  reliefRelaxIterations: number;
+  reliefPolarity: ReliefPolarity;
+  reliefProfile: ReliefProfile;
+  reliefSeamDepth: number;
+  reliefSeamWidth: number;
+  reliefAnisotropy: number;
+  reliefAnisotropyAngle: number;
+  reliefAttractorMode: ReliefAttractorMode;
+  reliefAttractorX: number;
+  reliefAttractorY: number;
+  reliefAttractorRadius: number;
+  reliefAttractorFalloff: number;
+  reliefDensityStrength: number;
+  reliefIntensityStrength: number;
+  reliefTransitionSoftness: number;
+  reliefBaseMode: ReliefBaseMode;
+  reliefCellSizeGradient: number;
+  reliefVoidStrength: number;
+  reliefAttractorNoise: number;
+  reliefAttractorNoiseFreq: number;
+  reliefFlowAnisotropy: number;
   // Mesh params
   meshX: number;
   meshY: number;
@@ -89,6 +115,29 @@ export const DEFAULTS: MeshState = {
   sharpness: 0,
   gaborAngle: 45,
   gaborBandwidth: 1.5,
+  reliefCellSize: 1.5,
+  reliefJitter: 0.7,
+  reliefRelaxIterations: 1,
+  reliefPolarity: 'domes',
+  reliefProfile: 'hemisphere',
+  reliefSeamDepth: 0.6,
+  reliefSeamWidth: 0.15,
+  reliefAnisotropy: 0,
+  reliefAnisotropyAngle: 0,
+  reliefAttractorMode: 'none',
+  reliefAttractorX: 0.5,
+  reliefAttractorY: 0.5,
+  reliefAttractorRadius: 0.5,
+  reliefAttractorFalloff: 1,
+  reliefDensityStrength: 0,
+  reliefIntensityStrength: 1,
+  reliefTransitionSoftness: 0.3,
+  reliefBaseMode: 'flat',
+  reliefCellSizeGradient: 0,
+  reliefVoidStrength: 0,
+  reliefAttractorNoise: 0,
+  reliefAttractorNoiseFreq: 0.15,
+  reliefFlowAnisotropy: 0,
   meshX: 36,
   meshY: 24,
   resolution: 400,
@@ -135,19 +184,60 @@ export function setDemoDepthMap(img: HTMLImageElement | null): void {
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth', 'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
+  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth',
+  'reliefCellSize', 'reliefJitter', 'reliefRelaxIterations', 'reliefPolarity', 'reliefProfile',
+  'reliefSeamDepth', 'reliefSeamWidth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
+  'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
+  'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
+  'reliefTransitionSoftness', 'reliefBaseMode',
+  'reliefCellSizeGradient', 'reliefVoidStrength',
+  'reliefAttractorNoise', 'reliefAttractorNoiseFreq', 'reliefFlowAnisotropy',
+  'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
 ];
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 2;
+const CURRENT_PAYLOAD_VERSION = 5;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
 const LEGACY_V1_DEFAULTS: Partial<MeshState> = {
   viewMode: 'wireframe',
+};
+// v2→v3 added Voronoi Relief fields. Old links never set them; they fall back to current defaults.
+const LEGACY_V2_DEFAULTS: Partial<MeshState> = {
+  reliefCellSize: 1.5,
+  reliefJitter: 0.7,
+  reliefRelaxIterations: 1,
+  reliefPolarity: 'domes',
+  reliefProfile: 'hemisphere',
+  reliefSeamDepth: 0.6,
+  reliefSeamWidth: 0.15,
+  reliefAnisotropy: 0,
+  reliefAnisotropyAngle: 0,
+  reliefAttractorMode: 'none',
+  reliefAttractorX: 0.5,
+  reliefAttractorY: 0.5,
+  reliefAttractorRadius: 0.5,
+  reliefAttractorFalloff: 1,
+  reliefDensityStrength: 0,
+  reliefIntensityStrength: 1,
+  reliefTransitionSoftness: 0.3,
+  reliefBaseMode: 'flat',
+};
+// v3→v4 added cell-size gradient + void-strength fields. Old links never set them; they
+// fall back to the documented defaults so prior reliefs render unchanged.
+const LEGACY_V3_DEFAULTS: Partial<MeshState> = {
+  reliefCellSizeGradient: 0,
+  reliefVoidStrength: 0,
+};
+// v4→v5 added noise-modulated attractor + flow-anisotropy. Old links never set them.
+const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
+  reliefAttractorNoise: 0,
+  reliefAttractorNoiseFreq: 0.15,
+  reliefFlowAnisotropy: 0,
 };
 
 export function serializeConfig(): string {
@@ -165,8 +255,80 @@ export function serializeConfig(): string {
     .replace(/=+$/, '');
 }
 
-export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshState> {
-  const encoded = searchParams.get('c');
+/** Pull the encoded share-link payload out of a URL-like input. Tolerates payload-only
+ *  strings (e.g. when the user pastes a clipboard fragment into the URL bar without the
+ *  `?c=` prefix), payloads in the URL hash, and payloads embedded in the path component.
+ *  Returns the base64url-encoded blob, or null if nothing payload-shaped is found.
+ *  Callers in tests can pass a `URLSearchParams`; the production main.ts passes the full
+ *  `window.location` object so all three URL surfaces are inspected. */
+export function findEncodedPayload(input: URLSearchParams | Location | string): string | null {
+  // 1. URLSearchParams — current canonical path. Both encodeURIComponent forms ('c=eyJ...')
+  //    and the older un-prefixed form (the whole search starts with '=eyJ...') are accepted.
+  if (input instanceof URLSearchParams) {
+    return input.get('c') ?? null;
+  }
+  // Convert string or Location to a URL we can dissect; fall through to substring extraction
+  // when we don't have a URL constructor target.
+  let search: string;
+  let hash: string;
+  let pathname: string;
+  if (typeof input === 'string') {
+    try {
+      const u = new URL(input, 'https://placeholder.invalid');
+      search = u.search; hash = u.hash; pathname = u.pathname;
+    } catch {
+      // Not a URL — treat the whole string as a candidate payload.
+      return extractBase64UrlBlob(input);
+    }
+  } else {
+    search = input.search; hash = input.hash; pathname = input.pathname;
+  }
+  // 2. Standard ?c=eyJ... query.
+  if (search) {
+    try {
+      const sp = new URLSearchParams(search);
+      const c = sp.get('c');
+      if (c) return c;
+    } catch { /* fallthrough */ }
+  }
+  // 3. Bare ?eyJ... or ?=eyJ... — sometimes the `c=` is stripped by an intermediate
+  //    redirect or copy-paste.
+  if (search.length > 1) {
+    const blob = extractBase64UrlBlob(search.slice(1));
+    if (blob) return blob;
+  }
+  // 4. Hash component (#c=eyJ... or #eyJ...) — some routers move state to the hash.
+  if (hash.length > 1) {
+    const tail = hash.startsWith('#c=') ? hash.slice(3) : hash.slice(1);
+    const blob = extractBase64UrlBlob(tail);
+    if (blob) return blob;
+  }
+  // 5. Path component (/eyJ... or /=eyJ...) — last-ditch tolerance for the pattern the user
+  //    hits when iOS clipboard drops the URL prefix and they manually paste the orphan
+  //    payload after the domain.
+  if (pathname.length > 1) {
+    const blob = extractBase64UrlBlob(pathname.slice(1));
+    if (blob) return blob;
+  }
+  return null;
+}
+
+/** Detects a base64url-ish blob inside an arbitrary string. Strips a leading `=` (the
+ *  separator that escaped its key during a malformed paste), and validates that what
+ *  remains is plausibly base64 — at least 16 chars, only [A-Za-z0-9_-]. */
+function extractBase64UrlBlob(input: string): string | null {
+  let s = input;
+  if (s.startsWith('=')) s = s.slice(1);
+  // Strip any trailing slash or whitespace.
+  s = s.replace(/[/\s]+$/g, '');
+  if (s.length < 16) return null;
+  // Must look like base64url. Don't accept arbitrary text that just happens to match.
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
+  return s;
+}
+
+export function deserializeConfig(input: URLSearchParams | Location | string): Partial<MeshState> {
+  const encoded = findEncodedPayload(input);
   if (!encoded) return {};
   try {
     const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
@@ -191,12 +353,75 @@ export function deserializeConfig(searchParams: URLSearchParams): Partial<MeshSt
         }
       }
     }
+    if (payloadVersion < 3) {
+      for (const [k, v] of Object.entries(LEGACY_V2_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 4) {
+      for (const [k, v] of Object.entries(LEGACY_V3_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 5) {
+      for (const [k, v] of Object.entries(LEGACY_V4_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
         (result as Record<string, unknown>)[key] = parsed[key];
       }
     }
+    // Clamp untrusted numeric ranges from URL payloads. Sliders enforce these in the UI,
+    // but payloads can come from any source (manual URL edit, third-party share). Without
+    // these guards, a crafted link can spin the browser:
+    //   - reliefRelaxIterations: each pass scans every sample × every site (O(rows·cols·sites))
+    //   - reliefDensityStrength: multiplies the site count itself, then both Pass 1+2 scan all sites
+    //
+    // Values arrive as `unknown` from JSON.parse — accept anything coercible to a finite
+    // number (including numeric strings like "1000" that a crafted payload could use to
+    // bypass a strict `typeof === 'number'` check) but discard non-finite junk so it falls
+    // back to the field's default rather than poisoning STATE.
+    const toFiniteNumber = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const clampField = (key: keyof MeshState, lo: number, hi: number, integer = false): void => {
+      const n = toFiniteNumber(result[key]);
+      if (n === null) {
+        delete (result as Record<string, unknown>)[key];
+        return;
+      }
+      const v = integer ? Math.floor(n) : n;
+      (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
+    };
+    if ('reliefRelaxIterations' in result) clampField('reliefRelaxIterations', 0, 2, true);
+    if ('reliefDensityStrength' in result)  clampField('reliefDensityStrength',  0, 2);
+    // transitionSoftness drives an exponent for Math.pow(mask, ...) — a negative value
+    // makes the exponent ≤ 0 and produces Infinity at mask=0, which the sampler's NaN
+    // guard then zeroes, punching dead bands into the mesh. Slider range is [0, 1].
+    if ('reliefTransitionSoftness' in result) clampField('reliefTransitionSoftness', 0, 1);
+    // intensityStrength enters `(1 - is) + is * mask` — outside [0, 1] it can invert the
+    // relief sign or amplify it past the output clamp. No DoS risk (clamp catches it),
+    // but parity with the other relief URL clamps prevents cosmetic surprises.
+    if ('reliefIntensityStrength' in result) clampField('reliefIntensityStrength', 0, 1);
+    // cellSizeGradient drives a multiplicative shrink on local cell radius; > 1 inverts the
+    // ratio (cells get bigger where mask is high), still bounded but no DoS path.
+    if ('reliefCellSizeGradient' in result) clampField('reliefCellSizeGradient', 0, 2);
+    // voidStrength gates the "cut-through" mode — values above 1 are meaningless (already
+    // saturates), and below 0 disables it; clamp to slider range.
+    if ('reliefVoidStrength' in result) clampField('reliefVoidStrength', 0, 1);
+    if ('reliefAttractorNoise' in result) clampField('reliefAttractorNoise', 0, 1);
+    if ('reliefAttractorNoiseFreq' in result) clampField('reliefAttractorNoiseFreq', 0.02, 0.5);
+    if ('reliefFlowAnisotropy' in result) clampField('reliefFlowAnisotropy', 0, 1);
     return result;
   } catch {
     return {};

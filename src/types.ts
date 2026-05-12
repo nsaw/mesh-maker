@@ -1,14 +1,83 @@
 export interface NoiseGenerator {
   noise(x: number, y: number): number;
+  /** Discriminator for grid-aware generators that bypass the per-pixel sampleNoiseGrid loop.
+   *  Only 'voronoi-relief' branches the pipeline today; scalar generators leave it undefined. */
+  kind?: 'voronoi-relief';
 }
 
 export interface FBMGenerator extends NoiseGenerator {
   fbm(x: number, y: number, octaves: number, persistence: number, lacunarity: number): number;
 }
 
+export type ReliefPolarity = 'pockets' | 'domes';
+export type ReliefProfile = 'hemisphere' | 'cosine' | 'parabolic';
+export type ReliefAttractorMode = 'none' | 'vertical' | 'horizontal' | 'radial' | 'point';
+export type ReliefBaseMode = 'flat' | 'wave';
+
+export interface ReliefParams {
+  cellSize: number;
+  jitter: number;
+  relaxIterations: number;
+  polarity: ReliefPolarity;
+  profile: ReliefProfile;
+  seamDepth: number;
+  seamWidth: number;
+  anisotropy: number;
+  anisotropyAngle: number;
+  attractorMode: ReliefAttractorMode;
+  attractorX: number;
+  attractorY: number;
+  attractorRadius: number;
+  attractorFalloff: number;
+  densityStrength: number;
+  intensityStrength: number;
+  transitionSoftness: number;
+  baseMode: ReliefBaseMode;
+  /** Domain warp distortion applied to Voronoi site positions. Reuses the global
+   *  `distortion` slider so the existing noise pipeline integrates with relief. */
+  warpDistortion: number;
+  /** Frequency of the warp noise field (matches the global `warpFreq` semantics). */
+  warpFrequency: number;
+  /** When > 0, dense areas of the attractor mask not only get more sites but also
+   *  proportionally smaller per-cell radii — produces dramatic size variation across
+   *  a panel (huge cells where mask=0, tight cells where mask=1). */
+  cellSizeGradient: number;
+  /** When > 0, seams in high-mask regions cut through the panel (output = -∞ pre-clamp,
+   *  CNC normalizer drops to z=0). Produces the spike-finger zone seen in lafabrica
+   *  panels where cells become disconnected protrusions. */
+  voidStrength: number;
+  /** Patches the otherwise-smooth attractor mask with a 2D noise field — produces
+   *  patchy, random-looking INTENSITY variation in the cellular zone (cell HEIGHTS
+   *  and SHAPES vary; cell COUNT/DENSITY stays a smooth gradient driven by the
+   *  unmodulated mask in generateSites). 0 = pure mathematical attractor, 1 = pure
+   *  noise modulation of intensity. */
+  attractorNoise: number;
+  /** Spatial frequency of the attractor noise field. Lower = larger blobs. */
+  attractorNoiseFreq: number;
+  /** Per-pixel deviation of the anisotropy angle from the global `anisotropyAngle`,
+   *  driven by a flow-noise field. 0 = uniform global angle (current behavior),
+   *  1 = anisotropy direction varies wildly across the panel. Produces the
+   *  organic, randomly-stretched-in-different-directions look. */
+  flowAnisotropy: number;
+}
+
+export interface ReliefSampleParams extends ReliefParams {
+  cols: number;
+  rows: number;
+  meshX: number;
+  meshY: number;
+  seed: number;
+}
+
 export interface NoiseConfig {
   gaborAngle?: number;
   gaborBandwidth?: number;
+}
+
+/** Generator-side interface for relief sampling — narrow contract used by mesh.ts. */
+export interface ReliefGenerator extends NoiseGenerator {
+  kind: 'voronoi-relief';
+  sampleGrid(params: ReliefSampleParams): number[][];
 }
 
 export interface NoiseGridParams {

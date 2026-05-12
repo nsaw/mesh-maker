@@ -2,6 +2,7 @@ import { STATE } from './state';
 import type { Vertex3D, Triangle, MeshData } from './types';
 import { showToast } from './toast';
 import { preferZ00Z11Diagonal, cellTriangleOffsets, emitWatertightTriangles, gridMinMax } from './geometry';
+import { doSBPExport } from './sbp-export';
 
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
@@ -126,24 +127,53 @@ function exportOBJ(mesh: MeshData): string {
 }
 
 // --- Rhino 3DM export via lazy-loaded rhino3dm.js WASM from CDN ---
+//
+// Narrow local types over the rhino3dm WASM API. The CDN ships no .d.ts; we type only
+// the surface we use. `unknown` for opaque return types we never inspect — methods are
+// invoked but callers don't peek inside them.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _rhino: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _rhinoPromise: Promise<any> | null = null;
+interface RhinoMesh {
+  vertices(): { add(x: number, y: number, z: number): unknown };
+  faces(): { addTriFace(a: number, b: number, c: number): unknown; addQuadFace(a: number, b: number, c: number, d: number): unknown };
+  normals(): { computeNormals(): unknown };
+  compact(): unknown;
+  delete(): void;
+}
+interface RhinoPointCloud { addRangePoints(points: number[][]): unknown; delete(): void }
+interface RhinoFile3dmObjects { add(obj: unknown, attrs: unknown): unknown; addPointCloud(cloud: unknown, attrs: unknown): unknown }
+interface RhinoFile3dmSettings { modelUnitSystem: number }
+interface RhinoFile3dm {
+  settings(): RhinoFile3dmSettings;
+  objects(): RhinoFile3dmObjects;
+  toByteArray(): Uint8Array;
+  toByteArrayOptions(options: RhinoFile3dmWriteOptions): Uint8Array;
+  delete(): void;
+}
+interface RhinoFile3dmWriteOptions { version: number }
+interface RhinoApi {
+  Mesh: new () => RhinoMesh;
+  PointCloud: new () => RhinoPointCloud;
+  File3dm: new () => RhinoFile3dm;
+  File3dmWriteOptions: new () => RhinoFile3dmWriteOptions;
+  UnitSystem: { Inches: number };
+}
+interface Rhino3dmModule { default(): Promise<RhinoApi> }
+
+let _rhino: RhinoApi | null = null;
+let _rhinoPromise: Promise<RhinoApi> | null = null;
 
 // Version-pinned CDN URL — 8.17+ required for toByteArrayOptions(File3dmWriteOptions) for Rhino 7–compatible export.
 const RHINO3DM_URL = 'https://cdn.jsdelivr.net/npm/rhino3dm@8.17.0/rhino3dm.module.min.js';
 
-async function loadRhino3dm(): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
+async function loadRhino3dm(): Promise<RhinoApi> {
   if (_rhino) return _rhino;
   if (!_rhinoPromise) {
     // Cache the in-flight promise to prevent concurrent WASM downloads on rapid clicks.
     // Reset on failure so subsequent attempts can retry.
-    _rhinoPromise = (async () => {
-      let mod;
+    _rhinoPromise = (async (): Promise<RhinoApi> => {
+      let mod: Rhino3dmModule;
       try {
-        mod = await import(/* @vite-ignore */ RHINO3DM_URL);
+        mod = await import(/* @vite-ignore */ RHINO3DM_URL) as Rhino3dmModule;
       } catch (e) {
         _rhinoPromise = null;
         throw new Error(`CDN import failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e } as ErrorOptions);
@@ -168,9 +198,9 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
 
   const asPointCloud = STATE.export3dmAsPointCloud;
 
-  let m: ReturnType<typeof rhino.Mesh> | null = null;
-  let cloud: ReturnType<typeof rhino.PointCloud> | null = null;
-  let file: ReturnType<typeof rhino.File3dm> | null = null;
+  let m: RhinoMesh | null = null;
+  let cloud: RhinoPointCloud | null = null;
+  let file: RhinoFile3dm | null = null;
   let geometryAdded = false;
 
   try {
@@ -314,7 +344,6 @@ async function _doExportInner(): Promise<void> {
   const fmt = STATE.exportFormat;
 
   if (fmt === 'sbp') {
-    const { doSBPExport } = await import('./sbp-export');
     doSBPExport();
     return;
   }

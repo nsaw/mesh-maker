@@ -1,4 +1,5 @@
 import type { NoiseGenerator, FBMGenerator, NoiseConfig } from '../types';
+import { VoronoiReliefGen } from './voronoi-relief';
 
 // ── Base noise generators ────────────────────────────────────────────
 
@@ -407,6 +408,7 @@ export function createNoiseGen(type: string, seed: number, config?: NoiseConfig)
     case 'worley': return new WorleyNoiseGen(seed);
     case 'gabor': return new GaborNoiseGen(seed, config);
     case 'wavelet': return new WaveletNoiseGen(seed);
+    case 'voronoi-relief': return new VoronoiReliefGen(seed);
     default: return new SimplexNoiseGen(seed);
   }
 }

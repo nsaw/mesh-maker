@@ -138,12 +138,19 @@ function buildSbpToastMessage(stats: SbpStats): string {
   return `SBP exported! ${parts.join(', ')}`;
 }
 
-function handleResult(result: GenerateResult, filename: string): void {
+function handleResult(result: GenerateResult, filename: string, warning?: string): void {
   const { sbp, stats } = result;
   STATE.sbpStats = stats;
   triggerDownload(sbp, filename);
   updateStats();
-  showToast(buildSbpToastMessage(stats));
+  // If we have a warning, show it alongside the success summary with the longer duration —
+  // a separate showToast() call would be cancelled by this one (synchronous flow, single
+  // event-loop tick before paint), so the user would only ever see one of the two.
+  if (warning) {
+    showToast(`${buildSbpToastMessage(stats)} — ${warning}`, 6000);
+  } else {
+    showToast(buildSbpToastMessage(stats));
+  }
 }
 
 /** Export using current MeshCraft mesh (STATE.vertices) */
@@ -156,8 +163,35 @@ function exportFromMesh(): void {
 
   const heightmap = stateToHeightmap(vertices, rows, cols, meshX, meshY);
   const config = buildConfig();
+  // Only emit the seam-rounding warning when finishing is actually enabled. The warning
+  // refers to the finishing-pass stepover, which is meaningless for roughing-only exports.
+  const reliefWarning = config.finishingEnabled
+    ? buildReliefStepoverWarning(config.finishingTool.cutting.stepover)
+    : undefined;
   const result = generateSBP(heightmap, config);
-  handleResult(result, `${STATE.filename}.sbp`);
+  handleResult(result, `${STATE.filename}.sbp`, reliefWarning);
+}
+
+/** Voronoi-relief seams are narrow V-grooves; ball-nose stepover must be ≤ half the seam width
+ *  or the cutter rolls over the seam instead of cutting it. Returns a warning string or null
+ *  so handleResult can fold it into the export toast — separate toasts in the same tick get
+ *  collapsed to whichever ran last.
+ *
+ *  Physical seam width derivation: in voronoi-relief.ts, the seam smoothstep gate is
+ *  `seamWidth * R` where R is the per-pixel radius field. For a Voronoi cell roughly
+ *  disk-shaped with diameter ≈ cellSize, mean F1 ≈ cellSize / 4, and
+ *  `site.radius = 2 × mean_F1 ≈ cellSize / 2`. So actual physical seam width is
+ *  `seamWidth × cellSize / 2` — the `* 0.5` below corrects a prior 2× overestimate
+ *  that prevented the warning from firing for stepovers in the
+ *  (actual_seam / 2, actual_seam) range. */
+function buildReliefStepoverWarning(stepoverIn: number): string | undefined {
+  if (STATE.noiseType !== 'voronoi-relief') return undefined;
+  const seamWidthIn = STATE.reliefSeamWidth * STATE.reliefCellSize * 0.5;
+  if (seamWidthIn <= 0) return undefined;
+  const recommendedMax = seamWidthIn * 0.5;
+  if (stepoverIn <= recommendedMax) return undefined;
+  return `Finishing stepover ${stepoverIn.toFixed(3)}" rounds seams (${seamWidthIn.toFixed(3)}" wide). ` +
+    `Recommend ≤ ${recommendedMax.toFixed(3)}".`;
 }
 
 /** Export using uploaded STL via Web Worker */

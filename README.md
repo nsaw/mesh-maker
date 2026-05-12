@@ -45,9 +45,9 @@ Generate 3D meshes from procedural noise or depth map images, tuned for CNC mach
 
 ### Features
 
-- **14+ noise algorithms** — Simplex, Perlin, OpenSimplex2, Value, FBM, Ridged, Billow, Turbulence, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet
+- **16+ noise algorithms** — Simplex, Perlin, OpenSimplex2, Value, FBM, Ridged, Billow, Turbulence, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet, Voronoi Relief (3D cellular relief with attractor masks)
 - **Depth map import** — Upload any image, blend with noise
-- **CNC presets** — 15 presets tuned for the ShopBot Desktop Max ATC (36" x 24", 6" Z)
+- **CNC presets** — 18 presets tuned for the ShopBot Desktop Max ATC (36" x 24", 6" Z)
 - **STL-to-SBP toolpaths** — Two-pass roughing + finishing .sbp generation from any binary STL (CLI + web)
 - **Watertight export** — Bottom face + side walls for CNC-ready meshes
 - **Multiple formats** — STL (binary/ASCII), OBJ, 3DM (mesh or point cloud), heightmap PNG, SBP
@@ -93,8 +93,9 @@ src/
 ├── state.ts             # Typed STATE singleton, URL serialize/deserialize
 ├── types.ts             # Shared interfaces (Vertex3D, Triangle, MeshData)
 ├── noise/
-│   ├── generators.ts    # 14+ noise classes + factory
-│   └── presets.ts       # 15 CNC presets, 6 texture profiles
+│   ├── generators.ts        # 16+ noise classes + factory
+│   ├── voronoi-relief.ts    # 3D Voronoi cell relief sampler (grid-aware)
+│   └── presets.ts           # 18 CNC presets, 6 texture profiles
 ├── mesh.ts              # Mesh generation + smoothing
 ├── render.ts            # Three.js WebGL rendering (Phong shading, custom camera)
 ├── export.ts            # STL, OBJ, heightmap PNG, SBP export dispatcher
@@ -203,7 +204,7 @@ Each tool has cutting data for all three material profiles (General, MDF, Hardwo
 
 ## Grasshopper / Rhino 7
 
-MESHCRAFT is also available as a Grasshopper node set for Rhino 7. All 15 noise algorithms, shaping controls, smoothing, and CNC presets — running natively inside Grasshopper with real-time mesh output.
+MESHCRAFT is also available as a Grasshopper node set for Rhino 7. All 16 noise algorithms, shaping controls, smoothing, and CNC presets — running natively inside Grasshopper with real-time mesh output.
 
 <p align="center">
   <img src="grasshopper/assets/preview.jpg" alt="MeshCraft Grasshopper Definition" width="800">
@@ -230,7 +231,7 @@ The pipeline uses GhPython wrappers backed by a compiled C# DLL (`MeshCraftNoise
 | **MeshCraft \| Noise** | Generates raw noise heightfield (DLL) | noise type, seed, frequency, octaves, persistence, lacunarity, distortion, gabor angle/bandwidth, mesh dimensions, resolution |
 | **MeshCraft \| Shape** | Two-pass normalize + shape (DLL), optional smooth | amplitude, noise exponent, peak/valley exponents, valley floor, offset, contrast, sharpness, smooth_iter, smooth_str |
 | **MeshCraft \| Smooth** | Optional weighted Laplacian smoother (C# Script) | iterations (0-8), strength (0-1) |
-| **MeshCraft \| Presets** | Outputs all params for a named CNC preset | preset name (15 presets) |
+| **MeshCraft \| Presets** | Outputs all params for a named CNC preset | preset name (18 presets) |
 | **To Mesh** | Converts point grid to quad mesh surface (DLL face math) | pts, cols, rows, watertight |
 
 ### DLL Setup
@@ -258,7 +259,7 @@ A precompiled copy is also kept at `grasshopper/ghpy/MeshCraftNoise.dll` for con
 
 **What the DLL contains:**
 
-- `Generate()` -- all 15 noise algorithms
+- `Generate()` -- 15 scalar noise algorithms (Voronoi Relief is sampled in pure IronPython, not via the DLL)
 - `Shape()` -- two-pass normalization + CNC z-model mapping (amplitude, contrast, peak/valley shaping)
 - `Smooth()` -- weighted Laplacian smoothing on interleaved xyz arrays
 - `BuildFaces()` -- quad face index computation for mesh construction
@@ -273,9 +274,11 @@ At 128x128 resolution (~16K vertices), the full pipeline completes in under 2 se
 
 ### Noise Algorithms
 
-All 15 types are available from the noise type dropdown:
+All 16 types are available from the noise type dropdown:
 
-Simplex, Perlin, Value, OpenSimplex2, Ridged, Billow, FBM, Turbulence, Hybrid Multifractal, Hetero Terrain, Domain Warp, Voronoi, Worley, Gabor, Wavelet
+Simplex, Perlin, Value, OpenSimplex2, Ridged, Billow, FBM, Turbulence, Hybrid Multifractal, Hetero Terrain, Domain Warp, Voronoi, Worley, Gabor, Wavelet, Voronoi Relief
+
+**Voronoi Relief** is grid-aware (per-cell dome inflation, not per-pixel scalar noise) and reads additional `relief_*` inputs on the Noise component: `relief_cell_size`, `relief_jitter`, `relief_relax_iter`, `relief_polarity`, `relief_profile`, `relief_seam_depth`, `relief_seam_width`, `relief_anisotropy`, `relief_anisotropy_angle`, `relief_attractor_mode`, `relief_attractor_x/y/radius/falloff`, `relief_density_strength`, `relief_intensity_strength`, `relief_transition_softness`, `relief_base_mode`. These are sampled in IronPython rather than the DLL, so leave the resolution slider modest (≤128) for interactive feedback.
 
 ### Using Presets
 
@@ -285,7 +288,7 @@ The **MeshCraft | Presets** component is placed on the canvas but **unwired by d
 2. Wire individual preset outputs to the matching inputs on the Noise, Shape, or Smooth components — this overrides the slider value for that parameter
 3. To return to manual control, disconnect the preset wire and the slider takes over again
 
-Available presets: Gentle Waves, Organic Terrain, Sharp Ridges, Voronoi Cells, Subtle Texture, Deep Carve, Sculptural, Hard Wave, Eroded Stone, Billowy Clouds, Turbulent Marble, Natural Ridge, Organic Swirl, Worley Cracks, Brushed Metal
+Available presets: Gentle Waves, Organic Terrain, Sharp Ridges, Voronoi Cells, Subtle Texture, Deep Carve, Sculptural, Hard Wave, Eroded Stone, Billowy Clouds, Turbulent Marble, Natural Ridge, Organic Swirl, Worley Cracks, Brushed Metal, Relief Vertical, Relief Radial, Relief Pockets
 
 ### Exporting from Rhino
 

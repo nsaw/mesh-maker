@@ -26,4 +26,62 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   'organic-swirl': { noiseType:'domainwarp', frequency:0.05, amplitude:1.0, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.5, lacunarity:1.8, distortion:0, contrast:1.1, sharpness:0, meshX:36, meshY:24, smoothIter:2, smoothStr:0.5 },
   'worley-cracks': { noiseType:'worley', frequency:0.12, amplitude:0.5, noiseExp:0.8, peakExp:1, valleyExp:1, valleyFloor:0, offset:0.2, octaves:1, persistence:0.5, lacunarity:2, distortion:0.1, contrast:1.2, sharpness:0.3, meshX:36, meshY:24, smoothIter:1, smoothStr:0.4 },
   'brushed-metal': { noiseType:'gabor', frequency:0.1, amplitude:0.3, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, contrast:1, sharpness:0, gaborAngle:15, gaborBandwidth:1.2, meshX:36, meshY:24, smoothIter:1, smoothStr:0.3 },
+  // Voronoi Relief presets — reproduce lafabricatrun-style 3D Voronoi cell carvings.
+  // `relief-vertical` targets the tall panel reference: smooth wave field at top, dense
+  // domed cells in the middle, cut-through spike fingers at the bottom. Distortion drives
+  // domain warp on Voronoi sites so the grid flows organically rather than tessellating.
+  'relief-vertical': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
+    warpFreq:0.08, warpCurl:0,
+    reliefCellSize:1.6, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'hemisphere',
+    reliefSeamDepth:0.95, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
+    // attractorY:0 anchors the dense+void zone to the BOTTOM of the panel (viewport bottom
+    // with default camera) — matches the lafabrica reference orientation where smooth waves
+    // sit at the top and the cellular/spike zone hangs toward the bottom edge.
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:2.2,
+    reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
+    reliefCellSizeGradient:1.0, reliefVoidStrength:0.7,
+    // Explicit zeros so switching from relief-pockets (which sets these to non-zero) cleanly
+    // resets back to relief-vertical's designed appearance. Presets are key-only merges, so
+    // omitting a field means inheriting the previous preset's value.
+    reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
+    meshX:24, meshY:48, baseThickness:1.5, smoothIter:3, smoothStr:0.55 },
+  'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
+    warpFreq:0.08, warpCurl:0,
+    reliefCellSize:1.8, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'cosine',
+    reliefSeamDepth:0.6, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
+    reliefAttractorMode:'radial', reliefAttractorX:0.5, reliefAttractorY:0.4, reliefAttractorRadius:0.6, reliefAttractorFalloff:1.2,
+    reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
+    reliefCellSizeGradient:0.6, reliefVoidStrength:0,
+    // Explicit zeros for the same reason as relief-vertical above — prevents stale state
+    // carry-over when switching from relief-pockets.
+    reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
+    // baseThickness explicit so the preset is deterministic when merged into state — without
+    // this, applying relief-radial after another preset inherits the previous baseThickness.
+    meshX:24, meshY:24, baseThickness:1.2, smoothIter:1, smoothStr:0.4 },
+  // relief-pockets — iteration 5 against the lafabrica reference. Earlier iterations had
+  // three artifact sources that produced "chunky triangular plane" artifacts in the rendered
+  // mesh: (1) voidStrength=0.25 floored random pixels to -clamp wherever mask*seam>0.75,
+  // creating disconnected dark plateaus along walls; (2) anisotropy=0.55 + flowAnisotropy=0.7
+  // made F1 ownership change discontinuously as the local angle rotated, tearing the wall
+  // network; (3) attractorNoise=0.95 produced such extreme per-cell radius differences that
+  // adjacent cells had mismatched dome heights. Verified clean in headless render.
+  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.5, contrast:1, sharpness:0,
+    warpFreq:0.08, warpCurl:0,
+    // Iteration 7 (post-radius-field rewrite): cellSizeGradient and attractorNoise can now
+    // be pushed much harder because the radius field is continuous — variation no longer
+    // causes the spike artifacts the prior algorithm produced. Targeting the lafabrica
+    // reference (image #18): cells span large to small, deep pockets, organic flow,
+    // dramatic patchiness in cell size.
+    reliefCellSize:5.5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
+    // Slightly wider seam (0.13) gives more pixels of smoothstep transition in small-cell
+    // zones, eliminating the dotted-wall aliasing that appeared at cellSizeGradient=2.0.
+    reliefSeamDepth:0.26, reliefSeamWidth:0.13, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
+    reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.6,
+    // densityStrength 1.7 + cellSizeGradient 1.5 gives strong gradient without shrinking R
+    // below the pixel-floor safety margin. The lafabrica reference has dramatic but NOT
+    // extreme variation — small cells at the bottom are still resolved features, not noise.
+    reliefDensityStrength:1.7, reliefIntensityStrength:0.55, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    reliefCellSizeGradient:1.5, reliefVoidStrength:0,
+    reliefAttractorNoise:0.8, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.5,
+    meshX:24, meshY:48, baseThickness:5.2, smoothIter:2, smoothStr:0.5 },
 };

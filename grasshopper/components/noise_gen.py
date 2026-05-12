@@ -20,6 +20,46 @@ if gabor_bw    is None: gabor_bw    = 1.5
 if mesh_x      is None: mesh_x      = 36.0
 if mesh_y      is None: mesh_y      = 24.0
 if resolution  is None: resolution  = 96
+# Voronoi-relief inputs. Two failure modes for a missing value:
+#   1) the pin doesn't exist on the component → globals()[name] raises KeyError
+#      (component was compiled before relief mode was added)
+#   2) the pin exists but is unwired → GhPython binds the name to None (component
+#      was rebuilt with relief pins but user hasn't wired them yet)
+# Both must fall through to the documented default so `noise_type=='voronoi-relief'`
+# never hits float(None) / int(None) downstream.
+def _relief_default(name, default):
+    try:
+        v = globals()[name]
+    except KeyError:
+        return default
+    return default if v is None else v
+
+relief_cell_size           = _relief_default('relief_cell_size',           1.5)
+relief_jitter              = _relief_default('relief_jitter',              0.7)
+relief_relax_iter          = _relief_default('relief_relax_iter',          1)
+relief_polarity            = _relief_default('relief_polarity',            'domes')        # 'domes' | 'pockets'
+relief_profile             = _relief_default('relief_profile',             'hemisphere')   # 'hemisphere' | 'cosine' | 'parabolic'
+relief_seam_depth          = _relief_default('relief_seam_depth',          0.6)
+relief_seam_width          = _relief_default('relief_seam_width',          0.15)
+relief_anisotropy          = _relief_default('relief_anisotropy',          0.0)
+relief_anisotropy_angle    = _relief_default('relief_anisotropy_angle',    0.0)
+relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')         # 'none'|'vertical'|'horizontal'|'radial'|'point'
+relief_attractor_x         = _relief_default('relief_attractor_x',         0.5)
+relief_attractor_y         = _relief_default('relief_attractor_y',         0.5)
+relief_attractor_radius    = _relief_default('relief_attractor_radius',    0.5)
+relief_attractor_falloff   = _relief_default('relief_attractor_falloff',   1.0)
+relief_density_strength    = _relief_default('relief_density_strength',    0.0)
+relief_intensity_strength  = _relief_default('relief_intensity_strength',  1.0)
+relief_transition_softness = _relief_default('relief_transition_softness', 0.3)
+relief_base_mode           = _relief_default('relief_base_mode',           'flat')         # 'flat'|'wave'
+relief_cell_size_gradient  = _relief_default('relief_cell_size_gradient',  0.0)
+relief_void_strength       = _relief_default('relief_void_strength',       0.0)
+relief_attractor_noise     = _relief_default('relief_attractor_noise',     0.0)
+relief_attractor_noise_freq= _relief_default('relief_attractor_noise_freq',0.15)
+relief_flow_anisotropy     = _relief_default('relief_flow_anisotropy',     0.0)
+# warp_freq for the relief sampler — mirrors `warpFreq` in TS sampleReliefParamsFromState.
+# Default 0.08 matches the canonical TS relief presets; the input pin can override per-run.
+relief_warp_freq           = _relief_default('relief_warp_freq',           0.08)
 
 seed        = int(seed)
 octaves     = int(octaves)
@@ -309,6 +349,321 @@ class WaveletNoise(object):
         return (1.0-v)*((1.0-u)*i00+u*i10)+v*((1.0-u)*i01+u*i11)
 
 
+# ── Voronoi Relief (grid-aware, not stateless per-pixel) ──────────────────────
+# 3D Voronoi cell relief — domed/pocketed cells with deep V-seams.
+# Mirrors src/noise/voronoi-relief.ts. Per-cell radius from mean F1 inside the cell.
+# Skip domain warp; relief sampler handles its own anisotropy.
+# (Class docstring is intentionally a comment, not a triple-quoted string, so this
+#  block can be embedded byte-equivalently inside the NOISE_SCRIPT triple-quoted
+#  literal in grasshopper/builder/meshcraft_builder.py.)
+class VoronoiReliefNoise(object):
+    def __init__(self, seed=0):
+        self._prng_state = int(seed) & 0xffffffff
+        self.wave = SimplexNoise(seed + 17)
+    def _rand(self):
+        # mulberry32 — byte-equivalent to the TS sampler so the same seed produces the
+        # same site layout in both the browser and Grasshopper. The previous sin-based
+        # _sr() drifted from the TS mulberry32 sequence even with the same seed.
+        self._prng_state = (self._prng_state + 0x6D2B79F5) & 0xffffffff
+        r = self._prng_state
+        r = (((r ^ (r >> 15)) * (r | 1)) & 0xffffffff)
+        r ^= ((r + (((r ^ (r >> 7)) * (r | 61)) & 0xffffffff)) & 0xffffffff)
+        return float((r ^ (r >> 14)) & 0xffffffff) / 4294967296.0
+    def _smoothstep(self, e0, e1, x):
+        if e1 <= e0: return 0.0 if x < e0 else 1.0
+        t = (x - e0) / (e1 - e0)
+        if t < 0.0: t = 0.0
+        elif t > 1.0: t = 1.0
+        return t * t * (3.0 - 2.0 * t)
+    def _attractor_mask(self, mode, u, v, ax, ay, radius, falloff):
+        if mode == 'none': return 1.0
+        if mode == 'vertical':
+            # attractorY anchors the peak: 0 = bottom of viewport (lafabrica panel orientation),
+            # 1 = top, 0.5 = middle band. Falloff sharpens or broadens the gradient.
+            dy = abs(v - ay)
+            return pow(max(0.0, 1.0 - dy), max(0.05, falloff))
+        if mode == 'horizontal':
+            dx = abs(u - ax)
+            return pow(max(0.0, 1.0 - dx), max(0.05, falloff))
+        dx = u - ax; dy = v - ay
+        d = math.sqrt(dx * dx + dy * dy)
+        r = max(0.001, radius)
+        # Falloff shapes the curve for radial/point modes too: < 1 broadens, > 1 sharpens.
+        shaped = max(0.05, falloff)
+        if mode == 'radial':
+            return pow(1.0 - self._smoothstep(r * 0.5, r, d), shaped)
+        return pow(self._smoothstep(r * 0.5, r, d), shaped)  # 'point'
+    def _dome(self, profile, d, R):
+        if R <= 0: return 0.0
+        t = min(1.0, d / R)
+        if profile == 'hemisphere':
+            inside = 1.0 - t * t
+            return math.sqrt(inside) if inside > 0 else 0.0
+        if profile == 'cosine':
+            return math.cos(t * math.pi * 0.5)
+        return max(0.0, 1.0 - t * t)  # parabolic
+    SITE_COUNT_MAX = 4096
+    LOCAL_DENSITY_MAX = 4.0
+    # Radius field (Pass 1.5) Gaussian blend over sites within cutoff. Mirrors TS constants
+    # RADIUS_FIELD_SIGMA_CELLS and RADIUS_FIELD_CUTOFF_SIGMAS exactly.
+    RADIUS_FIELD_SIGMA_CELLS = 0.8
+    RADIUS_FIELD_CUTOFF_SIGMAS = 3.0
+    # Coarse-grid pitch in σ units for the Rfield optimization. See TS sampler.
+    RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5
+    # Minimum seam smoothstep transition width in pixel units (anti-aliasing floor).
+    SEAM_MIN_PIXEL_WIDTH = 3.0
+    # Cap on the floor as a fraction of R per-pixel (prevents floor from inverting cells at low resolution).
+    SEAM_FLOOR_MAX_R_FRACTION = 0.3
+    # Output clamp magnitude. Used with explicit negative sign at carve sites.
+    OUTPUT_HEIGHT_CLAMP = 1.05
+    def _gen_sites(self, p, warp_gen):
+        spacing = max(0.2, p['cell_size'])
+        nx = max(2, int(math.ceil(p['mesh_x'] / spacing)) + 1)
+        ny = max(2, int(math.ceil(p['mesh_y'] / spacing)) + 1)
+        sx = p['mesh_x'] / nx; sy = p['mesh_y'] / ny
+        # Warp tuning matches TS: amplitude scales with cellSize so warp is visible relative
+        # to grid spacing but never large enough to shove sites off-panel before the clamp.
+        warp_amp = (p.get('warp_distortion', 0.0) * spacing * 0.7) if warp_gen else 0.0
+        warp_freq = max(0.02, p.get('warp_frequency', 0.1))
+        sites = []
+        # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
+        for j in range(ny):
+            if len(sites) >= self.SITE_COUNT_MAX: break
+            for i in range(nx):
+                if len(sites) >= self.SITE_COUNT_MAX: break
+                cx = (i + 0.5) * sx; cy = (j + 0.5) * sy
+                u = cx / p['mesh_x']; v = cy / p['mesh_y']
+                mask = self._attractor_mask(p['attractor_mode'], u, v,
+                    p['attractor_x'], p['attractor_y'],
+                    p['attractor_radius'], p['attractor_falloff'])
+                local = max(0.0, min(self.LOCAL_DENSITY_MAX, 1.0 + p['density_strength'] * mask))
+                reps = int(math.floor(local))
+                if self._rand() < (local - math.floor(local)):
+                    reps += 1
+                for _ in range(reps):
+                    if len(sites) >= self.SITE_COUNT_MAX: break
+                    jx = (self._rand() - 0.5) * p['jitter'] * sx
+                    jy = (self._rand() - 0.5) * p['jitter'] * sy
+                    px = cx + jx; py = cy + jy
+                    if warp_gen and warp_amp > 0:
+                        wx = warp_gen.noise(px * warp_freq, py * warp_freq)
+                        wy = warp_gen.noise(px * warp_freq + 31.7, py * warp_freq + 17.3)
+                        px += wx * warp_amp; py += wy * warp_amp
+                    sites.append([
+                        max(0.0, min(p['mesh_x'], px)),
+                        max(0.0, min(p['mesh_y'], py)),
+                        0.0  # radius (set after Pass 1)
+                    ])
+        return sites
+    def _nearest_two(self, sites, x, y, cosA, sinA, aniso_scale):
+        # Anisotropy: rotate into stretched frame, scale x', take hypot. Rotation preserves length
+        # so we don't need to rotate back.
+        f1 = float('inf'); f2 = float('inf'); idx = 0
+        isotropic = (aniso_scale == 1.0)
+        for i in range(len(sites)):
+            dx = x - sites[i][0]; dy = y - sites[i][1]
+            if isotropic:
+                d = math.sqrt(dx * dx + dy * dy)
+            else:
+                xr = dx * cosA + dy * sinA
+                yr = -dx * sinA + dy * cosA
+                d = math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
+            if d < f1: f2 = f1; f1 = d; idx = i
+            elif d < f2: f2 = d
+        return f1, f2, idx
+    def _halton(self, index, base):
+        result = 0.0; f = 1.0 / base; i = index
+        while i > 0:
+            result += f * (i % base)
+            i = i // base
+            f /= base
+        return result
+    def _lloyd_relax(self, sites, p, samples):
+        # One Lloyd pass — move each site toward the centroid of its assigned low-discrepancy samples.
+        n = len(sites)
+        sumX = [0.0] * n; sumY = [0.0] * n; counts = [0] * n
+        for s in range(samples):
+            x = self._halton(s + 1, 2) * p['mesh_x']
+            y = self._halton(s + 1, 3) * p['mesh_y']
+            best_idx = 0; best_d = float('inf')
+            for i in range(n):
+                dx = sites[i][0] - x; dy = sites[i][1] - y
+                d = dx * dx + dy * dy
+                if d < best_d:
+                    best_d = d; best_idx = i
+            sumX[best_idx] += x; sumY[best_idx] += y; counts[best_idx] += 1
+        for i in range(n):
+            if counts[i] > 0:
+                sites[i][0] = sumX[i] / counts[i]
+                sites[i][1] = sumY[i] / counts[i]
+    def sample_grid(self, p):
+        # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
+        # sampler — same seed produces same site layout and wave field even when the
+        # generator instance is reused across GH evaluations.
+        seed = int(p.get('seed', 0)) & 0xffffffff
+        self._prng_state = seed
+        self.wave = SimplexNoise(seed + 17)
+        warp_gen = SimplexNoise(seed + 17 + 13) if p.get('warp_distortion', 0.0) > 0 else None
+        attractor_noise_gen = SimplexNoise(seed + 17 + 29) if p.get('attractor_noise', 0.0) > 0 else None
+        flow_gen = SimplexNoise(seed + 17 + 47) if p.get('flow_anisotropy', 0.0) > 0 else None
+        sites = self._gen_sites(p, warp_gen)
+        if not sites:
+            return [0.0] * (p['cols'] * p['rows'])
+        # Lloyd relaxation passes — clamped 0..2.
+        relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
+        if relax_iter > 0:
+            lloyd_samples = min(8192, len(sites) * 64)
+            for _ in range(relax_iter):
+                self._lloyd_relax(sites, p, lloyd_samples)
+        a_rad = p['anisotropy_angle'] * math.pi / 180.0
+        cosA = math.cos(a_rad); sinA = math.sin(a_rad)
+        aniso_scale = 1.0 + p['anisotropy'] * 1.5
+        # Clamp + hoist transition_softness so pow(mask, exponent) is finite when
+        # mask=0 even if a crafted param sneaks past the URL boundary.
+        ts_clamped = max(0.0, min(1.0, p['transition_softness']))
+        transition_exponent = 0.2 + ts_clamped * 1.8
+        cols = p['cols']; rows = p['rows']
+        # Pass 1: accumulate mean F1 per site to derive per-cell radius. Accumulators live
+        # in local arrays so the site row stays slim and concurrent sample_grid calls don't
+        # trample each other (mirrors the Float64Array approach in the TS sampler).
+        n_sites = len(sites)
+        radius_sum = [0.0] * n_sites
+        radius_n = [0] * n_sites
+        pass1_flow_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
+        for j in range(rows):
+            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
+            for i in range(cols):
+                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
+                px_cosA = cosA; px_sinA = sinA
+                if flow_gen and pass1_flow_amt > 0.0:
+                    flow = flow_gen.noise(x * 0.18, y * 0.18)
+                    local_angle = (p['anisotropy_angle'] + flow * pass1_flow_amt * 90.0) * math.pi / 180.0
+                    px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
+                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
+                radius_sum[idx] += f1; radius_n[idx] += 1
+        for k in range(n_sites):
+            sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
+        # Pass 1.5: continuous radius field R(x,y) via Gaussian blend over sites. Computed
+        # on a coarse grid (pitch sigma/2, well above Nyquist for the Gaussian-smoothed
+        # field) and bilinear-interpolated to full resolution. Without the coarse-grid
+        # optimization the full-resolution computation is O(cols*rows*sites) which times
+        # out the browser at production resolution. Mirrors src/noise/voronoi-relief.ts.
+        sigma_r = max(0.2, p['cell_size']) * self.RADIUS_FIELD_SIGMA_CELLS
+        sigma_r2 = sigma_r * sigma_r
+        cutoff_r = sigma_r * self.RADIUS_FIELD_CUTOFF_SIGMAS
+        cutoff_r2 = cutoff_r * cutoff_r
+        coarse_pitch = sigma_r * self.RADIUS_FIELD_COARSE_PITCH_SIGMAS
+        coarse_cols = max(2, int(math.ceil(p['mesh_x'] / coarse_pitch)) + 1)
+        coarse_rows = max(2, int(math.ceil(p['mesh_y'] / coarse_pitch)) + 1)
+        coarse_step_x = p['mesh_x'] / float(coarse_cols - 1)
+        coarse_step_y = p['mesh_y'] / float(coarse_rows - 1)
+        r_coarse = [0.0] * (coarse_rows * coarse_cols)
+        for cj in range(coarse_rows):
+            y = cj * coarse_step_y
+            for ci in range(coarse_cols):
+                x = ci * coarse_step_x
+                sum_r = 0.0; sum_w = 0.0
+                for k in range(n_sites):
+                    dx = x - sites[k][0]; dy = y - sites[k][1]
+                    d2 = dx * dx + dy * dy
+                    if d2 > cutoff_r2: continue
+                    w = math.exp(-d2 / sigma_r2)
+                    sum_r += sites[k][2] * w
+                    sum_w += w
+                r_coarse[cj * coarse_cols + ci] = (sum_r / sum_w) if sum_w > 0 else p['cell_size']
+        # Bilinear-interpolate coarse field to full resolution.
+        r_field = [0.0] * (rows * cols)
+        for j in range(rows):
+            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
+            cy = y / coarse_step_y
+            cj0 = min(coarse_rows - 2, int(math.floor(cy)))
+            ty = cy - cj0
+            for i in range(cols):
+                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
+                cx = x / coarse_step_x
+                ci0 = min(coarse_cols - 2, int(math.floor(cx)))
+                tx = cx - ci0
+                r00 = r_coarse[cj0 * coarse_cols + ci0]
+                r10 = r_coarse[cj0 * coarse_cols + ci0 + 1]
+                r01 = r_coarse[(cj0 + 1) * coarse_cols + ci0]
+                r11 = r_coarse[(cj0 + 1) * coarse_cols + ci0 + 1]
+                r0 = r00 * (1.0 - tx) + r10 * tx
+                r1 = r01 * (1.0 - tx) + r11 * tx
+                r_field[j * cols + i] = r0 * (1.0 - ty) + r1 * ty
+        # Pass 2: heights
+        polarity = -1.0 if p['polarity'] == 'pockets' else 1.0
+        cell_size_grad = max(0.0, min(2.0, p.get('cell_size_gradient', 0.0)))
+        void_strength = max(0.0, min(1.0, p.get('void_strength', 0.0)))
+        attractor_noise_amt = max(0.0, min(1.0, p.get('attractor_noise', 0.0)))
+        attractor_noise_freq = max(0.02, min(0.5, p.get('attractor_noise_freq', 0.15)))
+        flow_anisotropy_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
+        # intensity_strength clamp — parity with the TS sampler's defensive clamp. Out-of-range
+        # values would invert (negative) or over-amplify (>1) the relief before output clamp.
+        intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
+        # Pixel pitch + minimum seam-transition width (anti-aliasing floor). The floor is
+        # later capped to a fraction of R per-pixel so it can't dominate the natural width
+        # at low grid resolutions (which would invert the dome/seam balance). Use the LARGER
+        # of the two axis pitches: on non-square grids the coarser axis aliases first.
+        px_pitch_x = p['mesh_x'] / float(max(1, cols - 1))
+        px_pitch_y = p['mesh_y'] / float(max(1, rows - 1))
+        pixel_min_width = max(px_pitch_x, px_pitch_y) * self.SEAM_MIN_PIXEL_WIDTH
+        out = [0.0] * (cols * rows)
+        for j in range(rows):
+            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
+            for i in range(cols):
+                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
+                px_cosA = cosA; px_sinA = sinA
+                if flow_gen and flow_anisotropy_amt > 0.0:
+                    flow = flow_gen.noise(x * 0.18, y * 0.18)
+                    local_angle = (p['anisotropy_angle'] + flow * flow_anisotropy_amt * 90.0) * math.pi / 180.0
+                    px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
+                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
+                mask = self._attractor_mask(p['attractor_mode'], u, v,
+                    p['attractor_x'], p['attractor_y'],
+                    p['attractor_radius'], p['attractor_falloff'])
+                if attractor_noise_gen and attractor_noise_amt > 0.0:
+                    n = attractor_noise_gen.noise(x * attractor_noise_freq, y * attractor_noise_freq)
+                    modulator = (n + 1.0) * 0.5
+                    mask = mask * ((1.0 - attractor_noise_amt) + attractor_noise_amt * modulator * 1.5)
+                    if mask > 1.0: mask = 1.0
+                    if mask < 0.0: mask = 0.0
+                # Cell-size gradient shrinks effective radius where mask is high. R is read
+                # from the continuous radius field (Pass 1.5), not from sites[idx], so it
+                # has no ownership-boundary discontinuities.
+                size_shrink = 1.0 - cell_size_grad * mask * 0.6
+                R = max(0.05, r_field[j * cols + i] * max(0.2, size_shrink))
+                dome = self._dome(p['profile'], f1, R)
+                # Seam smoothstep transition width: max of (seam_width * R) and a pixel-aware
+                # floor, where the floor is capped to a fraction of R so it can't grow wider
+                # than the cell. Eliminates sub-pixel-wall sawtooth aliasing.
+                capped_floor = min(pixel_min_width, R * self.SEAM_FLOOR_MAX_R_FRACTION)
+                seam_width_physical = max(p['seam_width'] * R, capped_floor)
+                seam = 1.0 - self._smoothstep(0.0, seam_width_physical, f2 - f1)
+                # Dome decays at the seam so seamDepth represents the true trough depth.
+                h = polarity * (dome * (1.0 - seam) - p['seam_depth'] * seam)
+                intensity = (1.0 - intensity_strength) + intensity_strength * mask
+                if p['base_mode'] == 'wave':
+                    base = self.wave.noise(x * 0.1, y * 0.1) * 0.5
+                    cw = pow(mask, transition_exponent)
+                    h = base * (1.0 - cw) + h * cw * intensity
+                else:
+                    h = h * intensity
+                # Void mode applied AFTER the wave/cell blend so the floor-clamp intent
+                # is not diluted by the wave base in transition zones.
+                if void_strength > 0.0:
+                    void_gate = mask * seam
+                    void_edge0 = 1.0 - void_strength
+                    void_edge1 = 1.0 - void_strength * 0.5
+                    void_t = self._smoothstep(void_edge0, void_edge1, void_gate)
+                    h = h * (1.0 - void_t) - self.OUTPUT_HEIGHT_CLAMP * void_t
+                if h != h or h == float('inf') or h == float('-inf'):  # NaN/Inf guard
+                    h = 0.0
+                if h < -self.OUTPUT_HEIGHT_CLAMP: h = -self.OUTPUT_HEIGHT_CLAMP
+                elif h > self.OUTPUT_HEIGHT_CLAMP: h = self.OUTPUT_HEIGHT_CLAMP
+                out[j * cols + i] = h
+        return out
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 _NOISE_MAP = {
     'simplex':      lambda s, cfg: SimplexNoise(s),
@@ -326,40 +681,77 @@ _NOISE_MAP = {
     'worley':       lambda s, cfg: WorleyNoise(s),
     'gabor':        lambda s, cfg: GaborNoise(s, cfg.get('angle', 45.0), cfg.get('bw', 1.5)),
     'wavelet':      lambda s, cfg: WaveletNoise(s),
+    'voronoi-relief': lambda s, cfg: VoronoiReliefNoise(s),
 }
 
 cfg = {'angle': gabor_angle, 'bw': gabor_bw}
 gen = _NOISE_MAP.get(str(noise_type), _NOISE_MAP['simplex'])(seed, cfg)
 has_fbm = hasattr(gen, 'fbm')
+is_relief = isinstance(gen, VoronoiReliefNoise)
 
 # ── Grid generation ───────────────────────────────────────────────────────────
 cols = resolution
 rows = max(4, int(round(resolution * (mesh_y / mesh_x))))
 
-warp_gen = SimplexNoise(seed) if distortion > 0 else None
+if is_relief:
+    # Relief sampler skips per-pixel domain warp + octaves; takes its own param dict.
+    # warp_distortion + warp_frequency wire the global distortion/warpFreq sliders into the
+    # relief sampler's site-position warp pass.
+    relief_params = {
+        'cols': cols, 'rows': rows,
+        'mesh_x': mesh_x, 'mesh_y': mesh_y,
+        'seed': int(seed),
+        'cell_size': float(relief_cell_size),
+        'jitter': float(relief_jitter),
+        'relax_iter': int(relief_relax_iter),
+        'polarity': str(relief_polarity),
+        'profile': str(relief_profile),
+        'seam_depth': float(relief_seam_depth),
+        'seam_width': float(relief_seam_width),
+        'anisotropy': float(relief_anisotropy),
+        'anisotropy_angle': float(relief_anisotropy_angle),
+        'attractor_mode': str(relief_attractor_mode),
+        'attractor_x': float(relief_attractor_x),
+        'attractor_y': float(relief_attractor_y),
+        'attractor_radius': float(relief_attractor_radius),
+        'attractor_falloff': float(relief_attractor_falloff),
+        'density_strength': float(relief_density_strength),
+        'intensity_strength': float(relief_intensity_strength),
+        'transition_softness': float(relief_transition_softness),
+        'base_mode': str(relief_base_mode),
+        'cell_size_gradient': float(relief_cell_size_gradient),
+        'void_strength': float(relief_void_strength),
+        'attractor_noise': float(relief_attractor_noise),
+        'attractor_noise_freq': float(relief_attractor_noise_freq),
+        'flow_anisotropy': float(relief_flow_anisotropy),
+        'warp_distortion': float(distortion),
+        'warp_frequency': float(relief_warp_freq),
+    }
+    z_values = gen.sample_grid(relief_params)
+else:
+    warp_gen = SimplexNoise(seed) if distortion > 0 else None
+    raw = []
+    for j in range(rows):
+        for i in range(cols):
+            u = i / float(cols-1); v = j / float(rows-1)
+            x = u * mesh_x; y = v * mesh_y
 
-raw = []
-for j in range(rows):
-    for i in range(cols):
-        u = i / float(cols-1); v = j / float(rows-1)
-        x = u * mesh_x; y = v * mesh_y
+            if warp_gen:
+                x += warp_gen.noise(x*0.1, y*0.1) * distortion * 5.0
+                y += warp_gen.noise((x+100.0)*0.1, (y+100.0)*0.1) * distortion * 5.0
 
-        if warp_gen:
-            x += warp_gen.noise(x*0.1, y*0.1) * distortion * 5.0
-            y += warp_gen.noise((x+100.0)*0.1, (y+100.0)*0.1) * distortion * 5.0
+            if has_fbm:
+                n = gen.fbm(x*frequency, y*frequency, octaves, persistence, lacunarity)
+            elif octaves > 1:
+                n = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
+                for o in range(octaves):
+                    n += gen.noise(x*frequency*freq, y*frequency*freq)*amp
+                    mx += amp; amp *= persistence; freq *= lacunarity
+                n /= mx
+            else:
+                n = gen.noise(x*frequency, y*frequency)
 
-        if has_fbm:
-            n = gen.fbm(x*frequency, y*frequency, octaves, persistence, lacunarity)
-        elif octaves > 1:
-            n = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
-            for o in range(octaves):
-                n += gen.noise(x*frequency*freq, y*frequency*freq)*amp
-                mx += amp; amp *= persistence; freq *= lacunarity
-            n /= mx
-        else:
-            n = gen.noise(x*frequency, y*frequency)
+            raw.append(n)
 
-        raw.append(n)
-
-z_values = raw
+    z_values = raw
 # mesh_x and mesh_y pass through so Shape component can build the point grid

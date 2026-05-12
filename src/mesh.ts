@@ -1,5 +1,7 @@
 import { STATE } from './state';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
+import { sampleReliefParamsFromState } from './noise/voronoi-relief';
+import type { VoronoiReliefGen } from './noise/voronoi-relief';
 import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
 import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
@@ -30,6 +32,13 @@ function sampleNoiseGrid(p: NoiseGridParams): number[][] {
   const { cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp,
           valleyFloor, contrast, sharpness, octaves, persistence, lacunarity,
           distortion, warpFreq, warpCurl, gen, warpGen } = p;
+
+  // Grid-aware generators bypass the per-pixel loop. Domain-warp + discrete cells produces
+  // visible tearing, so we skip the warp here and let the relief sampler handle anisotropy.
+  if (gen.kind === 'voronoi-relief') {
+    const reliefParams = sampleReliefParamsFromState(cols, rows, meshX, meshY, STATE.seed, STATE);
+    return (gen as VoronoiReliefGen).sampleGrid(reliefParams);
+  }
 
   const grid: number[][] = [];
   for (let j = 0; j < rows; j++) {
