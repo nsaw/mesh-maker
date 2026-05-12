@@ -73,15 +73,18 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // reference (image #18): cells span large to small, deep pockets, organic flow,
     // dramatic patchiness in cell size.
     reliefCellSize:5.5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
-    // Slightly wider seam (0.13) gives more pixels of smoothstep transition in small-cell
-    // zones, eliminating the dotted-wall aliasing that appeared at cellSizeGradient=2.0.
-    reliefSeamDepth:0.26, reliefSeamWidth:0.13, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
+    // Wider seam (0.2) + shallower seamDepth (0.22) spreads the wall height transition
+    // over more triangulation cells so the Three.js mesh doesn't produce visible polygon
+    // teeth along the wall ridges. The previous 0.13 / 0.26 combination dropped ~0.28
+    // noise units over ~3 pixels, snapping triangulation onto each wall edge.
+    reliefSeamDepth:0.22, reliefSeamWidth:0.2, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.6,
-    // densityStrength 1.7 + cellSizeGradient 1.5 gives strong gradient without shrinking R
-    // below the pixel-floor safety margin. The lafabrica reference has dramatic but NOT
-    // extreme variation — small cells at the bottom are still resolved features, not noise.
     reliefDensityStrength:1.7, reliefIntensityStrength:0.55, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
     reliefCellSizeGradient:1.5, reliefVoidStrength:0,
     reliefAttractorNoise:0.8, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.5,
-    meshX:24, meshY:48, baseThickness:5.2, smoothIter:2, smoothStr:0.5 },
+    // smoothIter:4 (was 2) + smoothStr:0.6 (was 0.5) applies four 3×3 weighted-box-blur
+    // passes after sampling. Smooths out triangulation snap along wall ridges without
+    // visibly softening cell interiors (the dome heights are already smooth, so smoothing
+    // their interior is a no-op).
+    meshX:24, meshY:48, baseThickness:5.2, smoothIter:4, smoothStr:0.6 },
 };
