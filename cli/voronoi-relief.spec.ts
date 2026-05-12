@@ -150,22 +150,21 @@ function mean(values: number[]): number {
 }
 
 // 7. Wave base mode: with vertical attractor + wave, the bottom (cell zone) must reach
-//    deeper troughs than the top (wave zone). With pockets polarity (the production case)
-//    cells carve DOWN below the wave-only envelope.
+//    deeper troughs than the top (wave zone). Cells with seamDepth>0 cut to ≈ -0.7;
+//    the wave field alone is bounded to ±0.5 by WAVE_AMPLITUDE.
 {
   process.stdout.write('7. wave base mode + transitionSoftness\n');
   const wave = new VoronoiReliefGen(13).sampleGrid(baseParams({
     cols: 60, rows: 80, meshX: 24, meshY: 32, seed: 13,
     baseMode: 'wave', attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     intensityStrength: 1, transitionSoftness: 1,
-    seamDepth: 0.9, seamWidth: 0.15, cellSize: 1.5, polarity: 'pockets',
+    seamDepth: 0.9, seamWidth: 0.15, cellSize: 1.5, polarity: 'domes',
   }));
   const flatTop = flatten(wave.slice(0, 16));   // top 20% — pure wave zone
   const flatBot = flatten(wave.slice(64));      // bottom 20% — pure cell zone
   const minTop = Math.min(...flatTop);
   const minBot = Math.min(...flatBot);
-  // Wave alone bounded to ±0.5 (WAVE_AMPLITUDE); cells with seamDepth=0.9 reach the
-  // saturation clamp (-1.0). minBot should easily clear -0.5.
+  // Wave alone bounded to ±0.5; cells with seamDepth=0.9 cut deeper than -0.5.
   assert(minBot < -0.5,
     'wave-mode bottom reaches deep cell troughs (< -0.5)',
     `minBot=${minBot.toFixed(4)}`);
@@ -389,13 +388,12 @@ function mean(values: number[]): number {
     `differing=${differing}/${a.length}`);
 }
 
-// 15. Output range for Worley F2-F1 algorithm. With pockets polarity, the height is
-// `-bowlH` where `bowlH = (f2-f1)/(2R*seamDepth)^profile` ∈ [0, 1]. Boundaries (F1=F2)
-// produce h=0 (ridge at original surface), cell centers produce h≈-1 (deep bowl).
-// The range is symmetric around 0 — NOT the prior asymmetric range — and walls/ridges
-// are at exactly 0, not positive.
+// 15. Asymmetric output range with small seamDepth (production preset behavior).
+// At seamDepth=0.22 + polarity=pockets the output is intentionally asymmetric ([-1, +seamDepth]).
+// Guard: range must include both signs and stay within the clamp. Catches regressions where
+// a future change accidentally compresses to a single sign or violates the clamp.
 {
-  process.stdout.write('15. F2-F1 output range guard (production seamDepth)\n');
+  process.stdout.write('15. asymmetric range guard (production seamDepth)\n');
   const grid = new VoronoiReliefGen(7).sampleGrid(baseParams({
     polarity: 'pockets', seamDepth: 0.22, seamWidth: 0.12,
     cellSize: 4.5, cols: 200, rows: 240, meshX: 24, meshY: 48,
@@ -405,11 +403,8 @@ function mean(values: number[]): number {
   assert(lo < -0.5,
     'pockets reach deep negative values (lo < -0.5)',
     `lo=${lo.toFixed(3)}`);
-  // F2-F1 algorithm: ridges sit at the original surface (h≈0). Allow tiny epsilon for
-  // numerical drift but require hi ≤ 0.01 — anything substantially positive would be a
-  // regression to the old composite algorithm.
-  assert(Math.abs(hi) < 0.05,
-    'ridges sit at original surface (|hi| < 0.05)',
+  assert(hi > 0 && hi < 0.5,
+    'walls reach modest positive values (0 < hi < 0.5)',
     `hi=${hi.toFixed(3)}`);
   assert(lo >= -1.05 && hi <= 1.05,
     'all values within OUTPUT_HEIGHT_CLAMP',
@@ -452,13 +447,11 @@ function mean(values: number[]): number {
     `violations=${violations} worstJump=${worstJump.toFixed(3)}`);
 }
 
-// 17. Isolated-outlier guard. With the F2-F1 algorithm, cell centers ARE legitimate point
-// features (the deepest pixel of each bowl) and will appear as outliers vs their immediate
-// neighborhood — this is correct, not an artifact. The test now requires outliers to be
-// BOTH statistically outlying (z > 6 vs 5x5) AND show a large absolute deviation (> 0.4)
-// AND have their value be CLOSER to OUTPUT_HEIGHT_CLAMP than to neighbors. That last
-// constraint filters out natural cell-center peaks (which are still smooth-ish) while
-// catching algorithmic spikes (which would saturate to the clamp regardless of cell size).
+// 17. Isolated-outlier guard — a real algorithmic spike shows up as a single pixel that
+// differs from BOTH 2-pixel-away neighbors by much more than its 1-pixel neighbors do.
+// Use a wide stencil (i-2, i, i+2) to require the outlier to span multiple pixels, which
+// is the signature of F2-ownership or radius-field discontinuities (not natural smooth
+// transitions, which span many pixels).
 {
   process.stdout.write('17. isolated-outlier guard (no spike-with-tail patterns)\n');
   const grid = new VoronoiReliefGen(17).sampleGrid(baseParams({
@@ -486,13 +479,11 @@ function mean(values: number[]): number {
       const stddev = Math.sqrt(Math.max(0, variance));
       const z = stddev > 1e-9 ? Math.abs(grid[j][i] - mean) / stddev : 0;
       if (z > worstZ) worstZ = z;
-      // True algorithmic spike: statistically outlying (z > 8) AND large absolute deviation
-      // (> 0.5) AND the value is saturated near OUTPUT_HEIGHT_CLAMP. The clamp-saturation
-      // gate distinguishes natural cell-center peaks (which can be 0.4-0.8 deep in big cells)
-      // from algorithmic spikes (which would slam to -1.0+ regardless of cell size).
+      // True spike: both statistically outlying (z > 6) AND large absolute deviation
+      // (> 0.3 = ~15% of total noise range). Filters out clamp-boundary noise where
+      // stddev is tiny but absolute deviation is also tiny.
       const absDev = Math.abs(grid[j][i] - mean);
-      const nearClamp = Math.abs(grid[j][i]) > 0.95;
-      if (z > 8 && absDev > 0.5 && nearClamp) outliers++;
+      if (z > 6 && absDev > 0.3) outliers++;
     }
   }
   assert(outliers === 0,

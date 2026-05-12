@@ -70,10 +70,16 @@ const RADIUS_FIELD_CUTOFF_SIGMAS = 3;
 // which times out at production resolution; coarse Rfield is O((cols/k)·(rows/k)·sites)
 // where k = sigma/(2*pxPitch) is typically 30+ for relief-pockets.
 const RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5;
-// SEAM_MIN_PIXEL_WIDTH / SEAM_FLOOR_MAX_R_FRACTION (formerly used by the dome+seam composite
-// to enforce a minimum smoothstep transition width) are gone: the F2-F1 field has no seam
-// width concept — every pixel reads the same continuous distance differential, so there's
-// no smoothstep edge to alias.
+// Minimum seam smoothstep transition width in pixel units. Below this, the smoothstep
+// alias-staircases along grid lines because adjacent pixels see seam values too far apart.
+// 3 pixels = ~half-cycle of bilinear smoothing; matches the resolution gate's natural floor.
+const SEAM_MIN_PIXEL_WIDTH = 3;
+// Cap the pixel-min floor at this fraction of the per-pixel R. Without this cap, at low
+// grid resolutions (small panels or test fixtures with few cols) the pixel-min would
+// dominate the natural seamWidth and turn entire cells into "wall" territory, inverting
+// the dome/seam balance. 30% of R keeps the wall < 60% of cell diameter even when the
+// floor kicks in.
+const SEAM_FLOOR_MAX_R_FRACTION = 0.3;
 
 /** Deterministic per-seed PRNG (mulberry32) — better distribution than sin-hash for site jitter. */
 function mulberry32(seed: number): () => number {
@@ -243,6 +249,21 @@ function halton(index: number, base: number): number {
     f /= base;
   }
   return result;
+}
+
+/** Return the dome contribution at radial distance d from a site of effective radius R. */
+function domeHeight(profile: ReliefProfile, d: number, R: number): number {
+  if (R <= 0) return 0;
+  const t = Math.min(1, d / R);
+  if (profile === 'hemisphere') {
+    const inside = 1 - t * t;
+    return inside > 0 ? Math.sqrt(inside) : 0;
+  }
+  if (profile === 'cosine') {
+    return Math.cos(t * Math.PI * 0.5);
+  }
+  // parabolic
+  return Math.max(0, 1 - t * t);
 }
 
 /** Find F1, F2 and the index of the nearest site, with optional anisotropic distance metric.
@@ -451,8 +472,15 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // defensively for parity with the others. Out-of-range values would invert (negative)
     // or over-amplify (>1) the relief intensity before the final output clamp.
     const intensityStrengthClamped = Math.max(0, Math.min(1, p.intensityStrength));
-    // (Pixel-pitch anti-alias floor is gone with the F2-F1 algorithm — no smoothstep
-    // transitions on a per-pixel basis means no sub-pixel-aliasing risk.)
+    // Pixel pitch in physical units — used to enforce a minimum seam smoothstep width so
+    // walls can't alias below the grid resolution (the sawtooth artifact source). The floor
+    // is later capped to a fraction of R per-pixel so it can't dominate the natural width.
+    // Use the LARGER of the two axis pitches: on non-square sampling grids, the coarser
+    // axis is what aliases first, so the floor must match its sampling rate (the smaller
+    // axis can already resolve features at that width).
+    const pxPitchX = p.meshX / Math.max(1, cols - 1);
+    const pxPitchY = p.meshY / Math.max(1, rows - 1);
+    const pixelMinWidth = Math.max(pxPitchX, pxPitchY) * SEAM_MIN_PIXEL_WIDTH;
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
@@ -486,57 +514,31 @@ export class VoronoiReliefGen implements ReliefGenerator {
           if (mask < 0) mask = 0;
         }
         // Cell-size gradient shrinks the effective radius where mask is high. R_field is
-        // already continuous; we just scale it by a continuous function of mask.
+        // already continuous; we just scale it by a continuous function of mask. The result
+        // is still C∞ continuous, so no ownership-boundary discontinuities are introduced.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
         const R = Math.max(0.05, Rfield[j * cols + i] * Math.max(0.2, sizeShrink));
+        const dome = domeHeight(p.profile, f1, R);
+        // Seam smoothstep transition width: max of (seamWidth*R) and a pixel-aware floor,
+        // where the floor is itself capped to a fraction of R so it can't grow wider than
+        // the cell it lives in. This is the core anti-aliasing fix: in production resolution
+        // it does nothing (seamWidth*R dominates); in small-cell zones it forces ≥3 pixels
+        // of smoothstep transition so walls render smoothly instead of staircasing along the
+        // grid; at low test resolutions the R-fraction cap prevents the floor from inverting
+        // the dome/seam balance.
+        const cappedFloor = Math.min(pixelMinWidth, R * SEAM_FLOOR_MAX_R_FRACTION);
+        const seamWidthPhysical = Math.max(p.seamWidth * R, cappedFloor);
+        const seam = 1 - smoothstep(0, seamWidthPhysical, f2 - f1);
+        // Combined relief: dome occupies cell interiors; seam carves a V where cells meet.
+        // The (1 - seam) factor on dome ensures seamDepth represents an actual depth instead
+        // of a budget the dome partially consumes.
+        let h = polarity * (dome * (1 - seam) - p.seamDepth * seam);
 
-        // WORLEY F2-F1 DISTANCE-FIELD HEIGHT. Replaces the prior dome+seam composite which
-        // produced piecewise gradients (dome falloff inside cell + seam carve at boundary)
-        // that mesh triangulation couldn't represent without polygon-tooth aliasing along
-        // every ridge. The F2-F1 distance differential is a single C1 scalar field:
-        //   - at cell boundary (F1≈F2): F2-F1 → 0 → height = 0 (ridge stays at surface)
-        //   - at cell center: F2-F1 maximizes (proportional to neighbor distance, so big
-        //     cells naturally produce deep bowls and small cells stay shallow — exactly
-        //     the lafabricatrun reference look)
-        //   - everywhere in between: smooth monotonic gradient → smooth triangulation
-        //
-        // The optional dome profile (hemisphere/cosine/parabolic) now shapes the falloff
-        // CURVE applied to the normalized distance, controlling whether bowls have sharp
-        // tops + flat bottoms (hemisphere), s-curve sides (cosine), or sharp bottoms
-        // (parabolic). seamDepth controls the saturation depth (max bowl depth).
-        // seamWidth is no longer used — the F2-F1 field has no seam width concept.
-        const distDiff = f2 - f1;
-        // Normalize so cellSize-scale cells reach ~1.0 at center. distDiff at center ≈
-        // distance to nearest neighbor's site ≈ 2*R for a Voronoi cell of radius R. So
-        // dividing by 2R yields [0, 1] for an ideal disk-shaped cell. Bigger cells get
-        // more of the depth budget, smaller cells less — this is the lafabrica gradient.
-        const normDist = Math.min(1, distDiff / (2 * R));
-        // Apply seamDepth as the saturation point: lower seamDepth → bowls saturate sooner
-        // (uniform depth), higher seamDepth → only the biggest cells reach full depth.
-        let bowlT = normDist / Math.max(0.05, p.seamDepth);
-        if (bowlT > 1) bowlT = 1;
-        // Profile shapes the bowl falloff curve.
-        let bowlH: number;
-        if (p.profile === 'hemisphere') {
-          // Sharp ridge at top, smooth round bottom: bowlH=0 at boundary, =1 at center
-          // with circular-arc-style approach (square root of t).
-          bowlH = Math.sqrt(bowlT);
-        } else if (p.profile === 'cosine') {
-          // S-curve: gradual at both ends, fast in the middle (smoothstep-style).
-          bowlH = 0.5 - 0.5 * Math.cos(bowlT * Math.PI);
-        } else {
-          // 'parabolic' — sharp bottom, gradual top: x^2 grows slowly near 0, fast near 1.
-          bowlH = bowlT * bowlT;
-        }
-        // Polarity: pockets carve DOWN (negative h), domes raise UP (positive h).
-        let h = polarity * bowlH;
-
-        // Intensity mask scales bowl depth by attractor — preserves existing controls.
         const intensityFactor = (1 - intensityStrengthClamped) + intensityStrengthClamped * mask;
 
         if (p.baseMode === 'wave') {
-          // Wave base: low-frequency simplex that the cellular field transitions INTO.
-          // cellWeight from mask controls how much "cell" vs "wave" each pixel shows.
+          // Low-frequency simplex base that cells transition into. transitionSoftness=0 →
+          // sharp boundary; transitionSoftness=1 → gradual lerp.
           const base = waveGen.noise(x * WAVE_NOISE_FREQUENCY, y * WAVE_NOISE_FREQUENCY) * WAVE_AMPLITUDE;
           const cellWeight = Math.pow(mask, transitionExponent);
           h = base * (1 - cellWeight) + h * cellWeight * intensityFactor;
@@ -544,11 +546,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
           h *= intensityFactor;
         }
 
-        // Void mode pushes h toward the negative clamp where mask+bowl depth is high —
-        // produces the spike-finger zone for relief-vertical. With F2-F1 there's no seam
-        // value any more; substitute bowlH as the "carve depth" proxy (high near center).
+        // Void mode applied AFTER the wave/cell blend so the void floor-clamp intent
+        // (-OUTPUT_HEIGHT_CLAMP) isn't diluted by the wave base in transition zones.
+        // Smoothstep transition (not hard threshold) keeps adjacent pixels' h values
+        // close to each other; weightedSmooth at the mesh level cleans the rest.
         if (voidStrength > 0) {
-          const voidGate = mask * bowlH;
+          const voidGate = mask * seam;
           const voidEdge0 = 1 - voidStrength;
           const voidEdge1 = 1 - voidStrength * 0.5;
           const voidT = smoothstep(voidEdge0, voidEdge1, voidGate);

@@ -73,17 +73,18 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // reference (image #18): cells span large to small, deep pockets, organic flow,
     // dramatic patchiness in cell size.
     reliefCellSize:5.5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
-    // F2-F1 algorithm: seamDepth = saturation point. Lower = bowls saturate sooner (more
-    // uniform depth across cells). Higher = only biggest cells reach full depth, smaller
-    // cells stay shallow. 0.6 gives the lafabrica look — big cells reach near-clamp,
-    // small cells are visible but not saturated. seamWidth is unused under F2-F1.
-    reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
+    // Wider seam (0.2) + shallower seamDepth (0.22) spreads the wall height transition
+    // over more triangulation cells so the Three.js mesh doesn't produce visible polygon
+    // teeth along the wall ridges. The previous 0.13 / 0.26 combination dropped ~0.28
+    // noise units over ~3 pixels, snapping triangulation onto each wall edge.
+    reliefSeamDepth:0.22, reliefSeamWidth:0.2, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.6,
-    reliefDensityStrength:1.7, reliefIntensityStrength:0.6, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    reliefDensityStrength:1.7, reliefIntensityStrength:0.55, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
     reliefCellSizeGradient:1.5, reliefVoidStrength:0,
     reliefAttractorNoise:0.8, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.5,
-    // F2-F1 produces a C1-smooth height field everywhere, so heavy mesh-level smoothing is
-    // unnecessary. smoothIter:1 / smoothStr:0.3 just cleans triangle-orientation differences
-    // between adjacent quad-grid cells.
-    meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
+    // smoothIter:4 (was 2) + smoothStr:0.6 (was 0.5) applies four 3×3 weighted-box-blur
+    // passes after sampling. Smooths out triangulation snap along wall ridges without
+    // visibly softening cell interiors (the dome heights are already smooth, so smoothing
+    // their interior is a no-op).
+    meshX:24, meshY:48, baseThickness:5.2, smoothIter:4, smoothStr:0.6 },
 };
