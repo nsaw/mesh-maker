@@ -579,72 +579,73 @@ function mean(values: number[]): number {
   assert(modeDiffer > 80 * 80 * 0.1, 'rays vs rings modes produce meaningfully different output',
     `modeDiffer=${modeDiffer}/${80 * 80}`);
 
-  // v2 anti-regression #1 — no hole at focus center. v1's site-warp created site-free cavities
-  // at each focus, producing shallow "pucker" bowls that read as dark holes. v2 places a center
-  // site at (fx, fy) so F1=0 there; the 5×5 patch around each focus must have meaningful height
-  // variation (not collapsed to ~0 like v1's puckers).
+  // v3 anti-regression — no v1-style "pucker hole" or v2-style "drain hole" at focus center.
+  // Failure signatures: v1 puckers had the focus-center pixel saturated to the OUTPUT_HEIGHT_
+  // CLAMP (the most-negative value) because of the site-warp cavity; v2's polar-grid center
+  // site had the same saturation through a different mechanism. v3 organic Voronoi keeps the
+  // focus center as a normal cell pixel — its value is well off the global min. Assert the
+  // focus-center pixel sits above the bottom 5% quantile of the panel.
   const withFociPanelHeights: number[] = [];
   for (let j = 0; j < 80; j++) for (let i = 0; i < 120; i++) withFociPanelHeights.push(withFoci[j][i]);
-  const panelRange = Math.max(...withFociPanelHeights) - Math.min(...withFociPanelHeights);
+  const sorted = [...withFociPanelHeights].sort((a, b) => a - b);
+  const bottom5pct = sorted[Math.floor(sorted.length * 0.05)];
   const fociPositions = [{ x: 0.7, y: 0.2 }, { x: 0.25, y: 0.55 }, { x: 0.75, y: 0.85 }];
-  let worstCenterRange = Infinity;
+  let worstFocusValue = -Infinity;
   for (const f of fociPositions) {
     const ci = Math.round(f.x * (120 - 1));
     const cj = Math.round(f.y * (80 - 1));
-    const patch: number[] = [];
-    for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
-      const jj = cj + dj, ii = ci + di;
-      if (jj < 0 || jj >= 80 || ii < 0 || ii >= 120) continue;
-      patch.push(withFoci[jj][ii]);
-    }
-    const range = Math.max(...patch) - Math.min(...patch);
-    if (range < worstCenterRange) worstCenterRange = range;
+    const v = withFoci[cj][ci];
+    if (v < worstFocusValue || worstFocusValue === -Infinity) worstFocusValue = v;
   }
-  assert(worstCenterRange > 0.2 * panelRange,
-    'no hole at focus center (5×5 patch range ≥ 20% of panel range)',
-    `worstCenter=${worstCenterRange.toFixed(3)} panel=${panelRange.toFixed(3)}`);
+  // Anti-pucker: worstFocusValue must be ≥ bottom-5%-quantile (not in the saturated tail).
+  assert(worstFocusValue >= bottom5pct,
+    'no v1/v2 hole at focus center (focus pixel above bottom-5% height quantile)',
+    `worstFocus=${worstFocusValue.toFixed(3)} bottom5pct=${bottom5pct.toFixed(3)}`);
 
-  // v2 anti-regression #2 — wedge topology via ridge crossings on a circle around a single
-  // focus. Polar-grid rays mode places `angularCount = round(8 + strength·12)` sites per ring;
-  // at strength=2, angularCount=32. A ray traced around a circle inside the focus's coverage
-  // should cross 2·angularCount cell boundaries (one transition into each wedge + one out).
-  // We sample a circle at radius 0.2·diag and count near-zero crossings of the height field
-  // (each cell-boundary ridge sits at F2−F1≈0 → height≈0).
+  // v3 anti-regression — no mandala/spirograph patterning around a focus. v2's polar-grid
+  // mechanism produced mechanically perfect concentric ring structure (mandala): the radial
+  // power spectrum was dominated by a single angular frequency (= angularCount per ring).
+  // v3's Cartesian-jittered Voronoi with metric anisotropy produces an organic, irregular
+  // cell layout — the cell sizes seen along two concentric circles at different radii should
+  // be DIFFERENT (Cartesian sites are not on a polar grid), unlike v2 where both circles
+  // would see the same N wedges. Compare ridge-crossing counts at two radii — v2 would have
+  // count(r1) ≈ count(r2) ≈ 2·angularCount; v3 will have meaningfully different counts.
   const singleFocus = new VoronoiReliefGen(7).sampleGrid(baseParams({
     cols: 200, rows: 200, meshX: 48, meshY: 48, seed: 7,
-    polarity: 'pockets', profile: 'parabolic', cellSize: 3,
+    polarity: 'pockets', profile: 'parabolic', cellSize: 2,
     radialFoci: [{ x: 0.5, y: 0.5 }],
-    radialStrength: 2, radialFalloff: 0.5, radialGrow: 0.7, radialWarp: 0.3, radialMode: 'rays',
+    radialStrength: 2, radialFalloff: 0.4, radialGrow: 0.8, radialWarp: 0, radialMode: 'rays',
   }));
-  const circleRadiusPx = 0.18 * Math.hypot(200, 200);
-  const cx = 100, cy = 100;
-  // In pockets mode the height field is non-positive everywhere: ~-bowlDepth inside cells,
-  // ≈0 along cell-boundary ridges. Sample along a circle, threshold against the mean — each
-  // wedge boundary produces one "ridge" interval (h above mean) bounded by two "interior"
-  // intervals (h below mean). Transitions = 2·wedgeCount. With angularCount=32 at strength=2,
-  // expect ~64 transitions; relax to [30, 200] to absorb polar jitter / ring sampling effects.
-  const circleHeights: number[] = [];
-  for (let t = 0; t < 720; t++) {
-    const theta = (t / 720) * 2 * Math.PI;
-    const ii = Math.round(cx + circleRadiusPx * Math.cos(theta));
-    const jj = Math.round(cy + circleRadiusPx * Math.sin(theta));
-    if (jj < 0 || jj >= 200 || ii < 0 || ii >= 200) continue;
-    circleHeights.push(singleFocus[jj][ii]);
-  }
-  const circleMean = circleHeights.reduce((s, v) => s + v, 0) / Math.max(1, circleHeights.length);
-  let crossings = 0;
-  let prevAbove = circleHeights[0] > circleMean;
-  for (let k = 1; k < circleHeights.length; k++) {
-    const above = circleHeights[k] > circleMean;
-    if (above !== prevAbove) crossings++;
-    prevAbove = above;
-  }
-  // Threshold is generous: a non-radial Cartesian Voronoi at this radius would produce ~6
-  // crossings; ≥15 is a clear signal the polar-grid topology is in effect. Upper bound
-  // catches degenerate noise-from-jitter cases.
-  assert(crossings >= 15 && crossings <= 200,
-    'wedge topology — ridge crossings around a focus match angular cell count',
-    `crossings=${crossings} mean=${circleMean.toFixed(3)}`);
+  const countCrossings = (radiusPx: number): number => {
+    const cxC = 100, cyC = 100;
+    const heights: number[] = [];
+    for (let t = 0; t < 720; t++) {
+      const theta = (t / 720) * 2 * Math.PI;
+      const ii = Math.round(cxC + radiusPx * Math.cos(theta));
+      const jj = Math.round(cyC + radiusPx * Math.sin(theta));
+      if (jj < 0 || jj >= 200 || ii < 0 || ii >= 200) continue;
+      heights.push(singleFocus[jj][ii]);
+    }
+    const m = heights.reduce((s, v) => s + v, 0) / Math.max(1, heights.length);
+    let cr = 0;
+    let prev = heights[0] > m;
+    for (let k = 1; k < heights.length; k++) {
+      const cur = heights[k] > m;
+      if (cur !== prev) cr++;
+      prev = cur;
+    }
+    return cr;
+  };
+  const inner = countCrossings(0.12 * Math.hypot(200, 200));
+  const outer = countCrossings(0.30 * Math.hypot(200, 200));
+  // v2 mandala would give inner ≈ outer (within ~20%) because the polar grid has constant
+  // angularCount across rings. v3 organic Voronoi has Cartesian site spacing → ring-crossing
+  // count scales with circle circumference (≈ ratio of radii = 0.30/0.12 = 2.5). Test that
+  // outer/inner differs from 1.0 by ≥ 30% — confirms NON-mandala geometry.
+  const ratio = inner > 0 ? outer / inner : 0;
+  assert(Math.abs(ratio - 1) >= 0.3 || (inner === 0 && outer === 0),
+    'organic Voronoi (not mandala): crossing counts at different radii differ ≥ 30%',
+    `inner=${inner} outer=${outer} ratio=${ratio.toFixed(2)}`);
 
   // v2 anti-regression #3 — site-count budget. Extreme params must not blow past
   // SITE_COUNT_MAX=4096 sites; the polar generator caps per-focus and per-ring. Run with the

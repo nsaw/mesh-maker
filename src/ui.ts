@@ -363,10 +363,13 @@ function buildReliefSection(): HTMLElement {
     slider('reliefRadialFocus2Y', 'Focus 2 Y', 0, 1, 0.01),
     slider('reliefRadialFocus3X', 'Focus 3 X', 0, 1, 0.01),
     slider('reliefRadialFocus3Y', 'Focus 3 Y', 0, 1, 0.01),
-    slider('reliefRadialStrength', 'Rays per Focus', 0, 3, 0.05),
-    slider('reliefRadialFalloff', 'Radial Coverage', 0.05, 0.6, 0.01),
-    slider('reliefRadialGrow', 'Ring Growth', 0, 0.7, 0.05),
-    slider('reliefRadialWarp', 'Polar Jitter', 0, 1, 0.02),
+    slider('reliefRadialStrength', 'Radial Strength', 0, 3, 0.05),
+    slider('reliefRadialFalloff', 'Radial Falloff', 0.05, 0.6, 0.01),
+    slider('reliefRadialGrow', 'Radial Cell Density', 0, 2, 0.05),
+    // reliefRadialWarp is unused under v3 (no site-warp). Kept for v7 share-link round-trip
+    // and possible future repurposing; slider hidden by setting max=min would be cleaner but
+    // would also drop v7-saved values silently — leave visible with a clarifying label.
+    slider('reliefRadialWarp', 'Radial Warp (legacy)', 0, 1, 0.02),
     enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),

@@ -228,7 +228,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 7;
+const CURRENT_PAYLOAD_VERSION = 8;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -276,6 +276,16 @@ const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
 // rather than v1's broken puckers — strictly an improvement, so no forced reset is needed.
 // The version marker is kept for future migrations that may need to target pre-v2 links.
 const LEGACY_V6_DEFAULTS: Partial<MeshState> = {};
+// v7→v8 reverted from polar-grid placement (v2, produced mechanical mandala/spirograph
+// patterns) to Cartesian Voronoi with per-pixel metric anisotropy + density-boost near foci
+// (v3 = v1's idea minus the site-warp and density-cut that caused v1's puckers). State-key
+// surface unchanged; semantics revert to v1-style: reliefRadialStrength = anisotropy boost,
+// reliefRadialFalloff = Gaussian σ as fraction of diagonal, reliefRadialGrow = density boost
+// near foci (a BOOST, not a cut), reliefRadialWarp is unused (kept for backward compat).
+// v7 starburst links reinterpret their saved values under v3 semantics, which produces an
+// organic Voronoi with radial bias near foci rather than v2's mandala — again an improvement,
+// so no forced reset.
+const LEGACY_V7_DEFAULTS: Partial<MeshState> = {};
 // v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
 // `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
 const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
@@ -441,6 +451,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 8) {
+      for (const [k, v] of Object.entries(LEGACY_V7_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -510,7 +527,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefRadialFociCount' in result) clampField('reliefRadialFociCount', 0, 3, true);
     if ('reliefRadialStrength' in result) clampField('reliefRadialStrength', 0, 3);
     if ('reliefRadialFalloff' in result) clampField('reliefRadialFalloff', 0.05, 0.6);
-    if ('reliefRadialGrow' in result) clampField('reliefRadialGrow', 0, 0.7);
+    if ('reliefRadialGrow' in result) clampField('reliefRadialGrow', 0, 2);
     if ('reliefRadialWarp' in result) clampField('reliefRadialWarp', 0, 1);
     // Focus coordinates are normalized [0, 1] panel coords. Clamping here is load-bearing:
     // a crafted payload could pair a positive reliefRadialFociCount with NaN/Infinity in a

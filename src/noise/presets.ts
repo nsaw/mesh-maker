@@ -95,18 +95,20 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // unnecessary. smoothIter:1 / smoothStr:0.3 just cleans triangle-orientation differences
     // between adjacent quad-grid cells.
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
-  // relief-starburst — v2: three explicit focal points each generate a POLAR GRID of Voronoi
-  // sites (a center site at the focus + concentric rings of angular sectors), producing radial
-  // wedge cells that fan outward like the reference panel. v1's metric-anisotropy + site-warp
-  // mechanism produced "pucker hole" artifacts and has been replaced; the slider keys are the
-  // same but semantics changed: reliefRadialStrength → rays per focus (30 sectors at 1.8),
-  // reliefRadialGrow → ring-to-ring radius growth ratio (~1.77 at 0.7), reliefRadialFalloff →
-  // panel coverage radius (~0.9·diag at 0.5), reliefRadialWarp → polar (r,θ) jitter (~0.35).
-  // Foci 1/2/3 at top-right / mid-left / lower-right mirror the carved-panel reference; drag
-  // them, or set reliefRadialFociCount:0 to fall back to plain Voronoi relief.
+  // relief-starburst — v3: Cartesian-jittered Voronoi (the v0 base layout) shaped near each
+  // focus by per-pixel metric anisotropy (cells elongated along the radial direction, fading
+  // smoothly with Gaussian distance from focus) and a density BOOST (more sites near foci →
+  // smaller cells there). v1's site-warp ("pucker holes") and v2's polar-grid ("mandala")
+  // are both rejected — see voronoi-relief.ts header for the geometric reasoning.
+  // Slider semantics under v3:
+  //   reliefRadialStrength → anisotropy boost near focus (final scale = 1+(aniso+strength·blend)·1.5)
+  //   reliefRadialFalloff  → Gaussian σ as fraction of panel diagonal
+  //   reliefRadialGrow     → density boost multiplier (1+grow·fociWeight)
+  //   reliefRadialWarp     → unused (legacy v7 key, retained for share-link round-trip)
+  // Foci 1/2/3 at top-right / mid-left / lower-right mirror the carved-panel reference.
   'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.3, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
-    reliefCellSize:3.5, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
+    reliefCellSize:2.2, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
     reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
     reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
@@ -114,6 +116,6 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
     reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
-    reliefRadialStrength:1.8, reliefRadialFalloff:0.5, reliefRadialGrow:0.7, reliefRadialWarp:0.35, reliefRadialMode:'rays',
+    reliefRadialStrength:1.6, reliefRadialFalloff:0.4, reliefRadialGrow:0.8, reliefRadialWarp:0, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
 };
