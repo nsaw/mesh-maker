@@ -456,7 +456,18 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // is the Gaussian influence radius shared by the per-pixel elongation blend (pixelAnisoFrame),
     // the generateSites density cut, and the post-Lloyd site-warp. Defensive clamps mirror the
     // rest of this file — params can originate from URLs / tests / future callers.
-    const radialFociPhys = p.radialFoci.map(f => ({ x: f.x * p.meshX, y: f.y * p.meshY }));
+    //
+    // Sanitize radialFoci defensively even though sampleReliefParamsFromState already prunes
+    // the count: callers constructing ReliefSampleParams directly (tests, future paths) bypass
+    // that pruning, and a single NaN/Infinity coordinate would NaN-poison every output pixel
+    // through pixelAnisoFrame. Filter non-finite, clamp [0,1], cap to 3 (the documented bound).
+    const radialFociPhys = p.radialFoci
+      .filter(f => Number.isFinite(f.x) && Number.isFinite(f.y))
+      .slice(0, 3)
+      .map(f => ({
+        x: Math.max(0, Math.min(1, f.x)) * p.meshX,
+        y: Math.max(0, Math.min(1, f.y)) * p.meshY,
+      }));
     const sigmaRadial = Math.max(
       1e-3,
       Math.max(0.02, Math.min(0.6, p.radialFalloff)) * Math.hypot(p.meshX, p.meshY),

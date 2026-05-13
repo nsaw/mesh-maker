@@ -497,6 +497,18 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefRadialFalloff' in result) clampField('reliefRadialFalloff', 0.05, 0.6);
     if ('reliefRadialGrow' in result) clampField('reliefRadialGrow', 0, 0.7);
     if ('reliefRadialWarp' in result) clampField('reliefRadialWarp', 0, 1);
+    // Focus coordinates are normalized [0, 1] panel coords. Clamping here is load-bearing:
+    // a crafted payload could pair a positive reliefRadialFociCount with NaN/Infinity in a
+    // focus X/Y, which would propagate through sampleReliefParamsFromState → radialFoci →
+    // the sampler's per-pixel metric and either zero the site count (flat render) or NaN-poison
+    // every output pixel. Clamping to [0, 1] (with non-finite values dropped by toFiniteNumber)
+    // closes that path before the value reaches STATE.
+    if ('reliefRadialFocus1X' in result) clampField('reliefRadialFocus1X', 0, 1);
+    if ('reliefRadialFocus1Y' in result) clampField('reliefRadialFocus1Y', 0, 1);
+    if ('reliefRadialFocus2X' in result) clampField('reliefRadialFocus2X', 0, 1);
+    if ('reliefRadialFocus2Y' in result) clampField('reliefRadialFocus2Y', 0, 1);
+    if ('reliefRadialFocus3X' in result) clampField('reliefRadialFocus3X', 0, 1);
+    if ('reliefRadialFocus3Y' in result) clampField('reliefRadialFocus3Y', 0, 1);
     return result;
   } catch {
     return {};

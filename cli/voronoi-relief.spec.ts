@@ -578,6 +578,29 @@ function mean(values: number[]): number {
   }
   assert(modeDiffer > 80 * 80 * 0.1, 'rays vs rings modes produce meaningfully different output',
     `modeDiffer=${modeDiffer}/${80 * 80}`);
+
+  // PR #16 review — defense in depth: a focus list with NaN/Infinity coords or > 3 entries
+  // (callers constructing ReliefSampleParams directly bypass sampleReliefParamsFromState's
+  // pruning) must not NaN-poison the output. sampleGrid sanitizes radialFoci before use.
+  const poisoned = new VoronoiReliefGen(31).sampleGrid(baseParams({
+    cols: 60, rows: 60, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
+    radialFoci: [
+      { x: 0.5, y: 0.5 },
+      { x: Number.NaN, y: 0.3 },
+      { x: 0.7, y: Number.POSITIVE_INFINITY },
+      // 4th + 5th entries exceed the documented O(foci ≤ 3) bound and must be sliced off:
+      { x: 0.2, y: 0.2 },
+      { x: 0.8, y: 0.8 },
+    ],
+    radialStrength: 2, radialFalloff: 0.3, radialMode: 'rays',
+  }));
+  let poisonedAllFinite = true;
+  for (let j = 0; j < 60; j++) {
+    for (let i = 0; i < 60; i++) {
+      if (!Number.isFinite(poisoned[j][i])) poisonedAllFinite = false;
+    }
+  }
+  assert(poisonedAllFinite, 'NaN/Infinity foci coords are filtered, output stays finite');
 }
 
 if (failures === 0) {
