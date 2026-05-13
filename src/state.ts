@@ -228,7 +228,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 6;
+const CURRENT_PAYLOAD_VERSION = 7;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -268,6 +268,14 @@ const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
   reliefAttractorNoiseFreq: 0.15,
   reliefFlowAnisotropy: 0,
 };
+// v6→v7 reworked the radial-foci ("starburst") system from metric-anisotropy + site-warp
+// (v1, PR #16, produced "pucker hole" artifacts) to polar-grid site placement (v2). The
+// state-key surface is unchanged but the semantics of strength/falloff/grow/warp are
+// reinterpreted under v2. Empty defaults: v6 starburst links pass through and reinterpret
+// their saved values under v2 semantics, which produces a *correct* polar-wedge render
+// rather than v1's broken puckers — strictly an improvement, so no forced reset is needed.
+// The version marker is kept for future migrations that may need to target pre-v2 links.
+const LEGACY_V6_DEFAULTS: Partial<MeshState> = {};
 // v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
 // `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
 const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
@@ -421,6 +429,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     }
     if (payloadVersion < 6) {
       for (const [k, v] of Object.entries(LEGACY_V5_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 7) {
+      for (const [k, v] of Object.entries(LEGACY_V6_DEFAULTS)) {
         if (!(k in parsed)) {
           (result as Record<string, unknown>)[k] = v;
         }

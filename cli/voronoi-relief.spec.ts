@@ -579,6 +579,123 @@ function mean(values: number[]): number {
   assert(modeDiffer > 80 * 80 * 0.1, 'rays vs rings modes produce meaningfully different output',
     `modeDiffer=${modeDiffer}/${80 * 80}`);
 
+  // v2 anti-regression #1 — no hole at focus center. v1's site-warp created site-free cavities
+  // at each focus, producing shallow "pucker" bowls that read as dark holes. v2 places a center
+  // site at (fx, fy) so F1=0 there; the 5×5 patch around each focus must have meaningful height
+  // variation (not collapsed to ~0 like v1's puckers).
+  const withFociPanelHeights: number[] = [];
+  for (let j = 0; j < 80; j++) for (let i = 0; i < 120; i++) withFociPanelHeights.push(withFoci[j][i]);
+  const panelRange = Math.max(...withFociPanelHeights) - Math.min(...withFociPanelHeights);
+  const fociPositions = [{ x: 0.7, y: 0.2 }, { x: 0.25, y: 0.55 }, { x: 0.75, y: 0.85 }];
+  let worstCenterRange = Infinity;
+  for (const f of fociPositions) {
+    const ci = Math.round(f.x * (120 - 1));
+    const cj = Math.round(f.y * (80 - 1));
+    const patch: number[] = [];
+    for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
+      const jj = cj + dj, ii = ci + di;
+      if (jj < 0 || jj >= 80 || ii < 0 || ii >= 120) continue;
+      patch.push(withFoci[jj][ii]);
+    }
+    const range = Math.max(...patch) - Math.min(...patch);
+    if (range < worstCenterRange) worstCenterRange = range;
+  }
+  assert(worstCenterRange > 0.2 * panelRange,
+    'no hole at focus center (5×5 patch range ≥ 20% of panel range)',
+    `worstCenter=${worstCenterRange.toFixed(3)} panel=${panelRange.toFixed(3)}`);
+
+  // v2 anti-regression #2 — wedge topology via ridge crossings on a circle around a single
+  // focus. Polar-grid rays mode places `angularCount = round(8 + strength·12)` sites per ring;
+  // at strength=2, angularCount=32. A ray traced around a circle inside the focus's coverage
+  // should cross 2·angularCount cell boundaries (one transition into each wedge + one out).
+  // We sample a circle at radius 0.2·diag and count near-zero crossings of the height field
+  // (each cell-boundary ridge sits at F2−F1≈0 → height≈0).
+  const singleFocus = new VoronoiReliefGen(7).sampleGrid(baseParams({
+    cols: 200, rows: 200, meshX: 48, meshY: 48, seed: 7,
+    polarity: 'pockets', profile: 'parabolic', cellSize: 3,
+    radialFoci: [{ x: 0.5, y: 0.5 }],
+    radialStrength: 2, radialFalloff: 0.5, radialGrow: 0.7, radialWarp: 0.3, radialMode: 'rays',
+  }));
+  const circleRadiusPx = 0.18 * Math.hypot(200, 200);
+  const cx = 100, cy = 100;
+  // In pockets mode the height field is non-positive everywhere: ~-bowlDepth inside cells,
+  // ≈0 along cell-boundary ridges. Sample along a circle, threshold against the mean — each
+  // wedge boundary produces one "ridge" interval (h above mean) bounded by two "interior"
+  // intervals (h below mean). Transitions = 2·wedgeCount. With angularCount=32 at strength=2,
+  // expect ~64 transitions; relax to [30, 200] to absorb polar jitter / ring sampling effects.
+  const circleHeights: number[] = [];
+  for (let t = 0; t < 720; t++) {
+    const theta = (t / 720) * 2 * Math.PI;
+    const ii = Math.round(cx + circleRadiusPx * Math.cos(theta));
+    const jj = Math.round(cy + circleRadiusPx * Math.sin(theta));
+    if (jj < 0 || jj >= 200 || ii < 0 || ii >= 200) continue;
+    circleHeights.push(singleFocus[jj][ii]);
+  }
+  const circleMean = circleHeights.reduce((s, v) => s + v, 0) / Math.max(1, circleHeights.length);
+  let crossings = 0;
+  let prevAbove = circleHeights[0] > circleMean;
+  for (let k = 1; k < circleHeights.length; k++) {
+    const above = circleHeights[k] > circleMean;
+    if (above !== prevAbove) crossings++;
+    prevAbove = above;
+  }
+  // Threshold is generous: a non-radial Cartesian Voronoi at this radius would produce ~6
+  // crossings; ≥15 is a clear signal the polar-grid topology is in effect. Upper bound
+  // catches degenerate noise-from-jitter cases.
+  assert(crossings >= 15 && crossings <= 200,
+    'wedge topology — ridge crossings around a focus match angular cell count',
+    `crossings=${crossings} mean=${circleMean.toFixed(3)}`);
+
+  // v2 anti-regression #3 — site-count budget. Extreme params must not blow past
+  // SITE_COUNT_MAX=4096 sites; the polar generator caps per-focus and per-ring. Run with the
+  // worst-case combo and assert the output stays finite + in range (the sampler's internal cap
+  // prevents truncation artifacts the user would see as missing wedge sectors).
+  const extreme = new VoronoiReliefGen(99).sampleGrid(baseParams({
+    cols: 100, rows: 100, meshX: 80, meshY: 80, seed: 99,
+    polarity: 'pockets', profile: 'parabolic', cellSize: 0.5,
+    radialFoci: [{ x: 0.5, y: 0.5 }, { x: 0.25, y: 0.25 }, { x: 0.75, y: 0.75 }],
+    radialStrength: 4, radialFalloff: 0.6, radialGrow: 0, radialWarp: 0.5, radialMode: 'rays',
+  }));
+  let extremeFinite = true;
+  let extremeRange = true;
+  for (let j = 0; j < 100; j++) for (let i = 0; i < 100; i++) {
+    const v = extreme[j][i];
+    if (!Number.isFinite(v)) extremeFinite = false;
+    if (v < -1.05 || v > 1.05) extremeRange = false;
+  }
+  assert(extremeFinite && extremeRange,
+    'extreme params (cellSize=0.5, strength=4, growth=min, panel 80×80) stay within budget + clamp');
+
+  // v2 anti-regression #4 — panel-edge coverage. The polar grid must extend to the panel
+  // corners; if rMax is too small, corners would be flat zones (stdev → 0). Compare the
+  // height-stdev of each 10×10 corner patch against the panel-wide stdev under the default
+  // starburst preset values.
+  const starburst = new VoronoiReliefGen(13).sampleGrid(baseParams({
+    cols: 120, rows: 240, meshX: 24, meshY: 48, seed: 13,
+    polarity: 'pockets', profile: 'parabolic', cellSize: 3.5,
+    radialFoci: [{ x: 0.7, y: 0.18 }, { x: 0.2, y: 0.5 }, { x: 0.75, y: 0.85 }],
+    radialStrength: 1.8, radialFalloff: 0.5, radialGrow: 0.7, radialWarp: 0.35, radialMode: 'rays',
+  }));
+  const allVals: number[] = [];
+  for (let j = 0; j < 240; j++) for (let i = 0; i < 120; i++) allVals.push(starburst[j][i]);
+  const panelMean = allVals.reduce((s, v) => s + v, 0) / allVals.length;
+  const panelStdev = Math.sqrt(allVals.reduce((s, v) => s + (v - panelMean) ** 2, 0) / allVals.length);
+  const cornerStdev = (i0: number, j0: number): number => {
+    const patch: number[] = [];
+    for (let dj = 0; dj < 10; dj++) for (let di = 0; di < 10; di++) patch.push(starburst[j0 + dj][i0 + di]);
+    const m = patch.reduce((s, v) => s + v, 0) / patch.length;
+    return Math.sqrt(patch.reduce((s, v) => s + (v - m) ** 2, 0) / patch.length);
+  };
+  const minCornerRatio = Math.min(
+    cornerStdev(0, 0),
+    cornerStdev(120 - 10, 0),
+    cornerStdev(0, 240 - 10),
+    cornerStdev(120 - 10, 240 - 10),
+  ) / Math.max(1e-6, panelStdev);
+  assert(minCornerRatio > 0.05,
+    'panel-edge coverage — corner stdev ≥ 5% of panel stdev (no flat-zone corners)',
+    `minCornerRatio=${minCornerRatio.toFixed(3)}`);
+
   // PR #16 review — defense in depth: a focus list with NaN/Infinity coords or > 3 entries
   // (callers constructing ReliefSampleParams directly bypass sampleReliefParamsFromState's
   // pruning) must not NaN-poison the output. sampleGrid sanitizes radialFoci before use.

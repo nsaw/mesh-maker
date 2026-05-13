@@ -25,14 +25,29 @@
  * `sampleReliefParamsFromState` wires both `warpDistortion` and `warpFrequency` into that
  * path so the global warp sliders affect relief output.
  *
- * RADIAL FOCI ("starburst"): when `radialFoci` is non-empty, three coupled effects key off
- * a Gaussian distance field around each focus (σ = `radialFalloff` × panel diagonal):
- *   - per-pixel anisotropy (`pixelAnisoFrame`) rotates each cell's elongation axis toward the
- *     local radial direction and boosts the elongation amount by `radialStrength × blend`;
- *   - `generateSites` thins site density near foci by `radialGrow` (bigger cells there);
- *   - a post-Lloyd pass pushes sites outward from each focus by a fold-safe amount
- *     (`radialWarp`), bowing the ridge lines. `radialMode` picks rays / rings / spiral.
- * All radial branches are skipped when `radialFoci` is empty → byte-identical to before.
+ * RADIAL FOCI ("starburst") — v2: when `radialFoci` is non-empty, the entire Cartesian site
+ * generation is REPLACED by `generatePolarSites`. Each focus contributes a polar grid of sites
+ * (a center site at the focus plus concentric rings of `angularCount` sectors with `ringGrowth`
+ * radial spacing). Voronoi tessellation of polar sites naturally produces radial wedge cells —
+ * the geometry the reference photo shows. Where two foci's polar grids overlap, sites from
+ * both compete in `nearestTwo` and the Voronoi boundary falls on the perpendicular bisector,
+ * producing the long sweeping ridges that arc between centers (no explicit blending math
+ * needed — tessellation IS the blend). Lloyd is suppressed under foci because the centroid of
+ * a polar wedge is offset from the original polar position; relaxing would erode the
+ * wedge arrangement toward hex packing.
+ *
+ * v1's three mechanisms (metric anisotropy in `pixelAnisoFrame`, site-density cut in
+ * `generateSites`, post-Lloyd outward site-warp) all caused the v1 "pucker hole" failure:
+ * the outward warp vacated each focus center → site-sparse cavity → F1 large, F2−F1 small
+ * → shallow bowl reading as a dark hole. v2 removes all three and uses polar-grid placement
+ * exclusively. `pixelAnisoFrame` is reduced to just the flow-noise rotation (still useful
+ * for the non-foci `flowAnisotropy` feature).
+ *
+ * `radialMode`: 'rays' = standard polar grid (wedge cells, the main feature);
+ * 'rings' = transpose with few angular sectors, many radial rings (concentric annulus cells);
+ * 'spiral' = Vogel sunflower / golden-angle arrangement (swirled cells, artistic variant).
+ *
+ * All radial branches are skipped when `radialFoci` is empty → byte-identical to non-foci output.
  */
 import type {
   ReliefAttractorMode,
@@ -54,11 +69,15 @@ const WAVE_AMPLITUDE = 0.5;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
 // Spatial frequency of the flow-anisotropy noise field (per-pixel angle perturbation).
 const FLOW_NOISE_FREQUENCY = 0.18;
-// Post-Lloyd radial site-warp: per-focus displacement amplitude is capped at this fraction
-// of σ. The single-focus radial remap r' = r + A·e^{-r²/2σ²} is monotone (fold-free) iff
-// A < σ / e^{-1/2} ≈ 1.65σ; the per-pixel total displacement is additionally clamped to ≤ A,
-// so 0.5 leaves a comfortable margin even with up to 3 overlapping foci.
-const SITE_WARP_FOLD_SAFE_FRACTION = 0.5;
+// Polar-grid (radial-foci) hard caps. POLAR_MAX_RINGS prevents budget overflow at extreme
+// parameter combos (small cellSize + low ringGrowth + max angularCount could otherwise demand
+// > SITE_COUNT_MAX sites). 24 rings × 56 angular × 3 foci = 4032 ≤ SITE_COUNT_MAX = 4096.
+const POLAR_MAX_RINGS = 24;
+// Center-site per-cell radius hint: the (fx, fy) site at each focus uses this fraction of
+// r_inner as its radius. Avoids the v1 "hole-at-center" failure mode where the focus sits
+// inside an empty disc between the first ring of sites — without a center site, F1 stays
+// large at the focus and the bowl saturates flat.
+const POLAR_CENTER_RADIUS_FRACTION = 0.5;
 // Sampler output clamp. Positive constant; used with explicit `-` sign at carve sites
 // (e.g. void mode pushes h to `-OUTPUT_HEIGHT_CLAMP`). Naming clarifies the magnitude
 // vs. previous `OUTPUT_CLAMP` which was used asymmetrically and read confusingly.
@@ -165,9 +184,6 @@ function generateSites(
   p: ReliefSampleParams,
   rand: () => number,
   warpGen: SimplexNoiseGen | null,
-  fociPhys: ReadonlyArray<{ x: number; y: number }>,
-  sigma: number,
-  radialGrow: number,
 ): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
   // baseSpacing converts cellSize (avg cell diameter) to grid spacing for site placement.
@@ -198,22 +214,7 @@ function generateSites(
         p.attractorMode, u, v, p.attractorX, p.attractorY,
         p.attractorRadius, p.attractorFalloff,
       );
-      let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
-      // Radial-foci density cut — thin the site grid near each focus so cells there are larger
-      // (the reference's big sweeping wedges). fociWeight is the max Gaussian weight over foci;
-      // localDensity scales by 1 − radialGrow·fociWeight ∈ [1−radialGrow, 1]. Only decreases it,
-      // so the [0, LOCAL_DENSITY_MAX] bounds still hold.
-      if (radialGrow > 0 && fociPhys.length > 0) {
-        let wMax = 0;
-        const inv2sigma2 = 1 / (2 * sigma * sigma);
-        for (let k = 0; k < fociPhys.length; k++) {
-          const dx = cx - fociPhys[k].x;
-          const dy = cy - fociPhys[k].y;
-          const w = Math.exp(-(dx * dx + dy * dy) * inv2sigma2);
-          if (w > wMax) wMax = w;
-        }
-        localDensity *= 1 - radialGrow * wMax;
-      }
+      const localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
       // Stochastic acceptance: density 1 keeps all, density 2 doubles via extra in-cell sample.
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
       for (let k = 0; k < reps; k++) {
@@ -236,6 +237,99 @@ function generateSites(
           radius: 0,
         });
       }
+    }
+  }
+  return sites;
+}
+
+/** Polar-grid site generator for the radial-foci ("starburst") system. Each focus contributes
+ *  one center site at (fx, fy) plus concentric rings of `angularCount` sites with `ringGrowth`
+ *  radial spacing, optionally jittered by `polarJitter`. The Voronoi tessellation of these
+ *  sites produces radial wedge cells (rays mode) — the geometry the reference photo shows.
+ *  Out-of-panel sites are SKIPPED rather than clamped (clamping would stack multiple sites at
+ *  panel corners and create degenerate Voronoi geometry there). Per-focus site count is capped
+ *  at SITE_COUNT_MAX / fociCount and ring count at POLAR_MAX_RINGS so worst-case extreme params
+ *  can never blow the global budget. The post-Lloyd warp + per-pixel anisotropy from v1 are
+ *  GONE — polar-grid placement is the single mechanism that drives the radial visual. */
+function generatePolarSites(
+  p: ReliefSampleParams,
+  rand: () => number,
+  fociPhys: ReadonlyArray<{ x: number; y: number }>,
+  angularCount: number,
+  ringGrowth: number,
+  polarJitter: number,
+  rMax: number,
+  mode: ReliefRadialMode,
+): Site[] {
+  const sites: Site[] = [];
+  if (fociPhys.length === 0) return sites;
+  const maxSitesPerFocus = Math.floor(SITE_COUNT_MAX / fociPhys.length);
+  const rInner = Math.max(0.4, p.cellSize * 0.5);
+  const { meshX, meshY } = p;
+  // Effective angular count for 'rings' mode is small (the transpose — few angular sectors,
+  // tightly stacked radial rings). Effective growth is sqrt(growth) so rings stack tighter.
+  const isRings = mode === 'rings';
+  const effAngular = isRings ? Math.max(4, Math.round(angularCount * 0.25)) : angularCount;
+  const effGrowth = isRings ? Math.max(1.05, Math.sqrt(ringGrowth)) : ringGrowth;
+  const angularPitch = (2 * Math.PI) / Math.max(1, effAngular);
+  // Spiral mode uses Vogel sunflower: a single sequence of sites at (r_k, θ_k) with
+  // r_k = rInner·√(k·scaleFactor) and θ_k = k·goldenAngle. Total count is sized to roughly
+  // match the rays-mode coverage so visual density is comparable across modes.
+  const goldenAngle = 2 * Math.PI * (1 - 1 / 1.6180339887498949);
+
+  for (let f = 0; f < fociPhys.length; f++) {
+    const fx = fociPhys[f].x;
+    const fy = fociPhys[f].y;
+    let perFocusCount = 0;
+
+    // Center site — kills the v1 "hole at focus center" failure mode. With this site at (fx,fy),
+    // F1 = 0 exactly at the focus, F2 ≈ rInner, normDist ≈ 0.5 — a normal small bowl at the
+    // center. Without it, F1 = rInner and F2 − F1 ≈ tiny (next angular neighbor is right next
+    // to the first ring's nearest site), producing a shallow disc that reads as a "pucker hole".
+    sites.push({ x: fx, y: fy, radius: rInner * POLAR_CENTER_RADIUS_FRACTION });
+    perFocusCount++;
+
+    if (mode === 'spiral') {
+      // Vogel sunflower: smooth golden-angle spiral. Cell shape is hexagonal-ish (well-known
+      // result for sunflower seed packings), curving along golden-spiral curves — best-effort
+      // artistic variant, not the wedge-cell visual of rays mode.
+      // Total sample count: budget-bounded; spans the disc rMax with √k radial growth.
+      const totalCount = Math.min(maxSitesPerFocus - 1, effAngular * 16);
+      const radialScale = rMax / Math.sqrt(Math.max(1, totalCount));
+      for (let k = 1; k <= totalCount && perFocusCount < maxSitesPerFocus; k++) {
+        const r = radialScale * Math.sqrt(k);
+        if (r > rMax) break;
+        const theta = k * goldenAngle;
+        const jr = (rand() - 0.5) * polarJitter * radialScale * 0.5;
+        const jt = (rand() - 0.5) * polarJitter * goldenAngle * 0.5;
+        const rj = r + jr;
+        const tj = theta + jt;
+        const sx = fx + rj * Math.cos(tj);
+        const sy = fy + rj * Math.sin(tj);
+        if (sx < 0 || sx > meshX || sy < 0 || sy > meshY) continue;
+        sites.push({ x: sx, y: sy, radius: 0 });
+        perFocusCount++;
+      }
+      continue;
+    }
+
+    // rays / rings: concentric rings of `effAngular` sites each, radii growing geometrically.
+    let r = rInner;
+    for (let ringIdx = 0; ringIdx < POLAR_MAX_RINGS && r <= rMax && perFocusCount < maxSitesPerFocus; ringIdx++) {
+      const radialPitch = r * (effGrowth - 1) / effGrowth; // distance to next-in ring
+      for (let j = 0; j < effAngular && perFocusCount < maxSitesPerFocus; j++) {
+        const theta = j * angularPitch;
+        const jr = (rand() - 0.5) * polarJitter * radialPitch;
+        const jt = (rand() - 0.5) * polarJitter * angularPitch;
+        const rj = r + jr;
+        const tj = theta + jt;
+        const sx = fx + rj * Math.cos(tj);
+        const sy = fy + rj * Math.sin(tj);
+        if (sx < 0 || sx > meshX || sy < 0 || sy > meshY) continue;
+        sites.push({ x: sx, y: sy, radius: 0 });
+        perFocusCount++;
+      }
+      r *= effGrowth;
     }
   }
   return sites;
@@ -319,19 +413,12 @@ function nearestTwo(
   return { f1, f2, idx };
 }
 
-/** Per-pixel anisotropy frame for the Voronoi distance metric: base anisotropy angle, rotated
- *  by the flow-noise field, then (near a radial focus) rotated toward the local radial axis and
- *  amplified. Returns a unit direction (cosA, sinA) for `nearestTwo`, the per-pixel metric
- *  `scale`, and `blend ∈ [0,1]` — how strongly the radial system dominates here (also reused
- *  in Pass 2 as a depth-mask contribution). When `fociPhys` is empty the radial block is
- *  skipped entirely; when `flowGen` is null the flow rotation is skipped.
- *
- *  Anisotropy is an AXIS (mod π), not a vector — `nearestTwo` inflates the component along
- *  (cosA, sinA), which narrows the cell along that axis and widens it perpendicular. So cells
- *  elongate ⟂ to the fed angle: 'rays' (stretched along the radius) feeds θ_radial + 90°,
- *  'rings' feeds θ_radial, 'spiral' feeds θ_radial + 90° + 30°. The radial axis is flipped to
- *  the representative nearest the base axis before lerping so the vector blend can't hit the
- *  antipodal degeneracy. */
+/** Per-pixel anisotropy frame for the Voronoi distance metric. v2: just the base anisotropy
+ *  angle rotated by the flow-noise field — the v1 radial-foci branch is GONE (the radial visual
+ *  is now driven entirely by polar-grid site placement in `generatePolarSites`, not by an
+ *  anisotropic distance metric). Returns a unit direction (cosA, sinA) for `nearestTwo` plus
+ *  the per-pixel metric `scale`. When `flowGen` is null the flow rotation is skipped and the
+ *  helper is a pass-through. */
 function pixelAnisoFrame(
   x: number,
   y: number,
@@ -340,12 +427,7 @@ function pixelAnisoFrame(
   baseScale: number,
   flowGen: SimplexNoiseGen | null,
   flowAmt: number,
-  fociPhys: ReadonlyArray<{ x: number; y: number }>,
-  sigma: number,
-  radialStrength: number,
-  radialMode: ReliefRadialMode,
-  cellSize: number,
-): { cosA: number; sinA: number; scale: number; blend: number } {
+): { cosA: number; sinA: number; scale: number } {
   let cosA = baseCosA;
   let sinA = baseSinA;
   if (flowGen && flowAmt > 0) {
@@ -360,57 +442,7 @@ function pixelAnisoFrame(
     cosA = nc;
     sinA = ns;
   }
-  let scale = baseScale;
-  let blend = 0;
-  if (fociPhys.length > 0) {
-    // Weighted sum of unit vectors pointing AWAY from each focus. The resultant's direction is
-    // the local radial axis; |resultant| / Σw ∈ [0,1] is "coherence" (≈1 under a single focus,
-    // → 0 in the seam where opposing fans cancel). blend = maxWeight · coherence.
-    let vx = 0;
-    let vy = 0;
-    let wSum = 0;
-    let wMax = 0;
-    let nearest = Infinity;
-    const inv2sigma2 = 1 / (2 * sigma * sigma);
-    for (let k = 0; k < fociPhys.length; k++) {
-      const dx = x - fociPhys[k].x;
-      const dy = y - fociPhys[k].y;
-      const d2 = dx * dx + dy * dy;
-      const d = Math.sqrt(d2) || 1e-6;
-      const w = Math.exp(-d2 * inv2sigma2);
-      vx += (dx / d) * w;
-      vy += (dy / d) * w;
-      wSum += w;
-      if (w > wMax) wMax = w;
-      if (d < nearest) nearest = d;
-    }
-    if (wSum > 0) {
-      const coherence = Math.min(1, Math.hypot(vx, vy) / wSum);
-      blend = wMax * coherence;
-      // Calm disc at each focus center — the radial axis is undefined at the singularity, so
-      // fade blend to 0 there (one cell wide at most) to avoid a 1-px pinwheel.
-      const calmR = Math.min(0.5 * Math.max(0.2, cellSize), 0.08 * sigma);
-      if (calmR > 0 && nearest < calmR) blend *= smoothstep(0, calmR, nearest);
-      if (blend > 0) {
-        const thetaRadial = Math.atan2(vy, vx);
-        let elong: number;
-        if (radialMode === 'rings') elong = thetaRadial;
-        else if (radialMode === 'spiral') elong = thetaRadial + Math.PI / 2 + Math.PI / 6;
-        else elong = thetaRadial + Math.PI / 2; // 'rays'
-        let rc = Math.cos(elong);
-        let rs = Math.sin(elong);
-        // Flip the radial axis to the representative nearest the base axis (mod π).
-        if (cosA * rc + sinA * rs < 0) { rc = -rc; rs = -rs; }
-        const lx = cosA * (1 - blend) + rc * blend;
-        const ly = sinA * (1 - blend) + rs * blend;
-        const ll = Math.hypot(lx, ly) || 1e-6; // ≥ √0.5 once the axis is flipped — never degenerate
-        cosA = lx / ll;
-        sinA = ly / ll;
-        scale = baseScale + radialStrength * blend * ANISOTROPY_SCALE_MULTIPLIER;
-      }
-    }
-  }
-  return { cosA, sinA, scale, blend };
+  return { cosA, sinA, scale: baseScale };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -451,16 +483,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 47)
       : null;
 
-    // Radial-foci ("starburst") setup. radialFoci arrives normalized + already pruned to the
-    // active count by sampleReliefParamsFromState; convert to physical units once. sigmaRadial
-    // is the Gaussian influence radius shared by the per-pixel elongation blend (pixelAnisoFrame),
-    // the generateSites density cut, and the post-Lloyd site-warp. Defensive clamps mirror the
-    // rest of this file — params can originate from URLs / tests / future callers.
-    //
-    // Sanitize radialFoci defensively even though sampleReliefParamsFromState already prunes
-    // the count: callers constructing ReliefSampleParams directly (tests, future paths) bypass
-    // that pruning, and a single NaN/Infinity coordinate would NaN-poison every output pixel
-    // through pixelAnisoFrame. Filter non-finite, clamp [0,1], cap to 3 (the documented bound).
+    // Radial-foci ("starburst") setup — v2: polar-grid site placement REPLACES Cartesian site
+    // generation when radialFoci is non-empty. radialFoci arrives normalized; sanitize and
+    // convert to physical units. Sanitization is defense in depth even though state.ts already
+    // URL-clamps; callers constructing ReliefSampleParams directly (tests, future paths) bypass
+    // that. Filter non-finite, clamp [0,1], cap to 3 (the documented O(foci ≤ 3) bound).
     const radialFociPhys = p.radialFoci
       .filter(f => Number.isFinite(f.x) && Number.isFinite(f.y))
       .slice(0, 3)
@@ -468,16 +495,21 @@ export class VoronoiReliefGen implements ReliefGenerator {
         x: Math.max(0, Math.min(1, f.x)) * p.meshX,
         y: Math.max(0, Math.min(1, f.y)) * p.meshY,
       }));
-    const sigmaRadial = Math.max(
-      1e-3,
-      Math.max(0.02, Math.min(0.6, p.radialFalloff)) * Math.hypot(p.meshX, p.meshY),
-    );
-    const radialStrength = Math.max(0, Math.min(4, p.radialStrength));
-    const radialGrow = Math.max(0, Math.min(0.85, p.radialGrow));
-    const radialWarp = Math.max(0, Math.min(1, p.radialWarp));
-    const radialMode = p.radialMode;
+    // Map the existing relief* params onto polar-grid controls (semantics changed v1→v2 but
+    // key names preserved so v6 share-links round-trip):
+    //   reliefRadialStrength → angular sector count per ring (rays mode)
+    //   reliefRadialGrow → ring-to-ring radius growth ratio
+    //   reliefRadialWarp → polar (r, θ) jitter amount
+    //   reliefRadialFalloff → coverage radius rMax as a multiple of panel diagonal
+    const angularCount = Math.round(8 + Math.max(0, Math.min(4, p.radialStrength)) * 12);
+    const ringGrowth = 1.1 + Math.max(0, Math.min(1, p.radialGrow)) * 0.95;
+    const polarJitter = Math.max(0, Math.min(1, p.radialWarp));
+    const rMaxCoverage = (0.6 + Math.max(0.02, Math.min(0.6, p.radialFalloff)) * 0.6)
+      * Math.hypot(p.meshX, p.meshY);
 
-    const sites = generateSites(p, rand, warpGen, radialFociPhys, sigmaRadial, radialGrow);
+    const sites = radialFociPhys.length > 0
+      ? generatePolarSites(p, rand, radialFociPhys, angularCount, ringGrowth, polarJitter, rMaxCoverage, p.radialMode)
+      : generateSites(p, rand, warpGen);
     if (sites.length === 0) {
       // Defensive: empty cellgrid → flat field.
       const empty: number[][] = [];
@@ -487,41 +519,18 @@ export class VoronoiReliefGen implements ReliefGenerator {
 
     // Lloyd relaxation passes (default 1, max 2). Defensive clamp — STATE is the canonical
     // source, but params may originate from URLs, tests, or future callers. Hard-cap at 2
-    // to prevent a denial-of-service via a crafted share link.
-    const relaxIters = Math.max(0, Math.min(2, Math.floor(p.relaxIterations) || 0));
+    // to prevent a denial-of-service via a crafted share link. SUPPRESSED when radialFoci is
+    // active: the centroid of a polar wedge is offset from the original (r, θ) position, so a
+    // Lloyd iteration would erode the wedge arrangement toward hex packing — destroying the
+    // radial visual the polar grid was built to create. The `reliefRelaxIterations` slider
+    // stays visible in the UI but is silently inert under foci (consistent with how other
+    // mode-specific knobs interact across noise types).
+    const relaxIters = radialFociPhys.length > 0
+      ? 0
+      : Math.max(0, Math.min(2, Math.floor(p.relaxIterations) || 0));
     const lloydSamples = Math.min(LLOYD_SAMPLE_BUDGET_MAX, sites.length * LLOYD_SAMPLES_PER_SITE);
     for (let r = 0; r < relaxIters; r++) {
       lloydRelax(sites, p, lloydSamples);
-    }
-
-    // Post-Lloyd radial site-warp — push sites outward from each focus so the cell BOUNDARIES
-    // (the carved ridge lines) bow out of each focus, not just the cells. Done after Lloyd so
-    // relaxation can't un-bow it. Per-focus amplitude is capped fold-safe relative to σ, and the
-    // per-site total displacement is additionally clamped to ≤ amp so overlapping foci can't fold
-    // the cell field. Cost O(sites·foci) — negligible.
-    if (radialWarp > 0 && radialFociPhys.length > 0) {
-      const baseSpacing = Math.max(0.2, p.cellSize);
-      const amp = Math.min(radialWarp * baseSpacing, SITE_WARP_FOLD_SAFE_FRACTION * sigmaRadial);
-      if (amp > 0) {
-        const inv2sigma2 = 1 / (2 * sigmaRadial * sigmaRadial);
-        for (let i = 0; i < sites.length; i++) {
-          let dxSum = 0;
-          let dySum = 0;
-          for (let k = 0; k < radialFociPhys.length; k++) {
-            const dx = sites[i].x - radialFociPhys[k].x;
-            const dy = sites[i].y - radialFociPhys[k].y;
-            const d2 = dx * dx + dy * dy;
-            const d = Math.sqrt(d2) || 1e-6;
-            const w = Math.exp(-d2 * inv2sigma2);
-            dxSum += (dx / d) * w;
-            dySum += (dy / d) * w;
-          }
-          const dmag = Math.hypot(dxSum, dySum);
-          const k = dmag > 1 ? amp / dmag : amp; // clamp total displacement magnitude to ≤ amp
-          sites[i].x = Math.max(0, Math.min(p.meshX, sites[i].x + dxSum * k));
-          sites[i].y = Math.max(0, Math.min(p.meshY, sites[i].y + dySum * k));
-        }
-      }
     }
 
     const baseAnisotropy = Math.max(0, Math.min(2, p.anisotropy));
@@ -550,18 +559,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const radiusN = new Int32Array(sites.length);
     // Pass 1 MUST use the same per-pixel metric as Pass 2: the per-cell radius R = 2·meanF1 has
     // to be the *metric* radius so the Pass-2 normalization (normDist = (f2−f1)/(2R)) still hits
-    // ~1 at cell centers and ~0 at boundaries. Measuring F1 isotropically here would mis-scale
-    // bowls inside the elongated cells near the foci.
+    // ~1 at cell centers and ~0 at boundaries.
     for (let j = 0; j < rows; j++) {
       const v = j / Math.max(1, rows - 1);
       const y = v * p.meshY;
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
-        const frame = pixelAnisoFrame(
-          x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
-          radialFociPhys, sigmaRadial, radialStrength, radialMode, p.cellSize,
-        );
+        const frame = pixelAnisoFrame(x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt);
         const { f1, idx } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
         radiusSum[idx] += f1;
         radiusN[idx]++;
@@ -658,15 +663,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
-        // Per-pixel anisotropy frame: base angle → flow-noise rotation → radial-foci override.
-        // `radialBlend` (how strongly the radial system dominates here) also feeds the intensity
-        // mask below so foci zones respond to Intensity Strength.
-        const frame = pixelAnisoFrame(
-          x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
-          radialFociPhys, sigmaRadial, radialStrength, radialMode, p.cellSize,
-        );
+        // Per-pixel anisotropy frame: base angle → flow-noise rotation. (v2 dropped the radial-
+        // foci metric branch — the radial visual is now driven by polar-grid site placement in
+        // `generatePolarSites`, not by a per-pixel distance-metric rotation.)
+        const frame = pixelAnisoFrame(x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt);
         const { f1, f2 } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
-        const radialBlend = frame.blend;
         // Spatial attractor on intensity — relief amplitude varies with mask.
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -732,11 +733,8 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Polarity: pockets carve DOWN (negative h), domes raise UP (positive h).
         let h = polarity * bowlH;
 
-        // Intensity mask scales bowl depth — by the attractor mask OR the radial blend, so foci
-        // zones respond to Intensity Strength too. With attractorMode='none' (mask=1) this is a
-        // no-op; with a real attractor it means "intense near the attractor or near a focus".
-        const intensityFactor = (1 - intensityStrengthClamped)
-          + intensityStrengthClamped * Math.max(mask, radialBlend);
+        // Intensity mask scales bowl depth by attractor — preserves existing controls.
+        const intensityFactor = (1 - intensityStrengthClamped) + intensityStrengthClamped * mask;
 
         if (p.baseMode === 'wave') {
           // Wave base: low-frequency simplex that the cellular field transitions INTO.

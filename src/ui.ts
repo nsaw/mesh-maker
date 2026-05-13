@@ -329,7 +329,12 @@ function buildReliefSection(): HTMLElement {
     enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
     enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
     slider('reliefSeamDepth', 'Seam Depth', 0, 1, 0.05),
-    slider('reliefSeamWidth', 'Seam Width', 0.02, 0.6, 0.01),
+    // NB: `reliefSeamWidth` does NOT affect the visual mesh under the F2-F1 relief algorithm
+    // (see `voronoi-relief.ts`'s "seamWidth is no longer used" comment). It only drives the
+    // SBP V-carve toolpath width via `sbp-export.ts:189` (`seamWidthIn = reliefSeamWidth ·
+    // reliefCellSize · 0.5`). Label clarifies the slider's actual function so users don't tune
+    // it expecting a mesh effect.
+    slider('reliefSeamWidth', 'SBP V-carve Seam Width', 0.02, 0.6, 0.01),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
@@ -358,10 +363,10 @@ function buildReliefSection(): HTMLElement {
     slider('reliefRadialFocus2Y', 'Focus 2 Y', 0, 1, 0.01),
     slider('reliefRadialFocus3X', 'Focus 3 X', 0, 1, 0.01),
     slider('reliefRadialFocus3Y', 'Focus 3 Y', 0, 1, 0.01),
-    slider('reliefRadialStrength', 'Radial Strength', 0, 3, 0.05),
-    slider('reliefRadialFalloff', 'Radial Falloff', 0.05, 0.6, 0.01),
-    slider('reliefRadialGrow', 'Radial Cell Growth', 0, 0.7, 0.05),
-    slider('reliefRadialWarp', 'Radial Ridge Warp', 0, 1, 0.02),
+    slider('reliefRadialStrength', 'Rays per Focus', 0, 3, 0.05),
+    slider('reliefRadialFalloff', 'Radial Coverage', 0.05, 0.6, 0.01),
+    slider('reliefRadialGrow', 'Ring Growth', 0, 0.7, 0.05),
+    slider('reliefRadialWarp', 'Polar Jitter', 0, 1, 0.02),
     enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),

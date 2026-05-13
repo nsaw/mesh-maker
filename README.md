@@ -206,6 +206,8 @@ Each tool has cutting data for all three material profiles (General, MDF, Hardwo
 
 MESHCRAFT is also available as a Grasshopper node set for Rhino 7. All 16 noise algorithms, shaping controls, smoothing, and CNC presets — running natively inside Grasshopper with real-time mesh output.
 
+> **Note:** the **radial-foci ("starburst") system** in the Voronoi Relief mode is **web-only** at the moment. Selecting the `relief-starburst` preset in Grasshopper produces a plain Voronoi relief at the starburst base settings (correct degradation while the IronPython port is deferred); the `radial_*` fields aren't read by the GhPython sampler.
+
 <p align="center">
   <img src="grasshopper/assets/preview.jpg" alt="MeshCraft Grasshopper Definition" width="800">
 </p>
