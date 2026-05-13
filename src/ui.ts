@@ -12,7 +12,7 @@ const PRESET_GROUPS: [string, string[]][] = [
   ['Aggressive', ['deep-carve', 'hard-wave', 'turbulent-marble']],
   ['Ridge & Stone', ['sharp-ridges', 'eroded-stone', 'natural-ridge']],
   ['Cell & Directional', ['voronoi-cells', 'worley-cracks', 'brushed-metal']],
-  ['Relief', ['relief-vertical', 'relief-radial', 'relief-pockets']],
+  ['Relief', ['relief-vertical', 'relief-radial', 'relief-pockets', 'relief-starburst']],
 ];
 
 function formatPresetName(key: string): string {
@@ -127,6 +127,7 @@ function enumSelect(key: string, label: string, options: Array<[string, string]>
   sel.id = `sl_${key}`;
   sel.dataset.key = key;
   const current = String(STATE[key as keyof typeof STATE]);
+  sel.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? current);
   for (const [value, text] of options) {
     const opt = createElement('option') as HTMLOptionElement;
     opt.value = value;
@@ -314,6 +315,8 @@ function buildReliefSection(): HTMLElement {
   anisoLabel.textContent = 'Anisotropy';
   const attractorLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
   attractorLabel.textContent = 'Attractor';
+  const radialLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
+  radialLabel.textContent = 'Radial foci (starburst)';
   const baseLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
   baseLabel.textContent = 'Base field';
 
@@ -347,6 +350,19 @@ function buildReliefSection(): HTMLElement {
     slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
     slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
     slider('reliefFlowAnisotropy', 'Flow Anisotropy', 0, 1, 0.05),
+    radialLabel,
+    slider('reliefRadialFociCount', 'Radial Foci (0=off)', 0, 3, 1),
+    slider('reliefRadialFocus1X', 'Focus 1 X', 0, 1, 0.01),
+    slider('reliefRadialFocus1Y', 'Focus 1 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus2X', 'Focus 2 X', 0, 1, 0.01),
+    slider('reliefRadialFocus2Y', 'Focus 2 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus3X', 'Focus 3 X', 0, 1, 0.01),
+    slider('reliefRadialFocus3Y', 'Focus 3 Y', 0, 1, 0.01),
+    slider('reliefRadialStrength', 'Radial Strength', 0, 3, 0.05),
+    slider('reliefRadialFalloff', 'Radial Falloff', 0.05, 0.6, 0.01),
+    slider('reliefRadialGrow', 'Radial Cell Growth', 0, 0.7, 0.05),
+    slider('reliefRadialWarp', 'Radial Ridge Warp', 0, 1, 0.02),
+    enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
   ], false, 'noise-only');
@@ -533,6 +549,14 @@ function wireControls(): void {
         if (pill) pill.classList.remove('active');
       }
       debouncedGenerate(key);
+    });
+
+    // Double-click select to reset to default (mirrors the slider gesture).
+    sel.addEventListener('dblclick', () => {
+      const def = sel.dataset.default;
+      if (def === undefined) return;
+      sel.value = def;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
     });
   });
 

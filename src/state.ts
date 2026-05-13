@@ -1,5 +1,5 @@
 import type { SbpStats } from './sbp/types';
-import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile } from './types';
+import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 export interface MeshState {
   mode: 'noise' | 'depthmap' | 'blend';
@@ -52,6 +52,19 @@ export interface MeshState {
   reliefAttractorNoise: number;
   reliefAttractorNoiseFreq: number;
   reliefFlowAnisotropy: number;
+  // Voronoi-relief radial-foci ("starburst") params
+  reliefRadialFociCount: number;
+  reliefRadialFocus1X: number;
+  reliefRadialFocus1Y: number;
+  reliefRadialFocus2X: number;
+  reliefRadialFocus2Y: number;
+  reliefRadialFocus3X: number;
+  reliefRadialFocus3Y: number;
+  reliefRadialStrength: number;
+  reliefRadialFalloff: number;
+  reliefRadialGrow: number;
+  reliefRadialWarp: number;
+  reliefRadialMode: ReliefRadialMode;
   // Mesh params
   meshX: number;
   meshY: number;
@@ -138,6 +151,18 @@ export const DEFAULTS: MeshState = {
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
   reliefFlowAnisotropy: 0,
+  reliefRadialFociCount: 0,
+  reliefRadialFocus1X: 0.5,
+  reliefRadialFocus1Y: 0.25,
+  reliefRadialFocus2X: 0.25,
+  reliefRadialFocus2Y: 0.6,
+  reliefRadialFocus3X: 0.75,
+  reliefRadialFocus3Y: 0.8,
+  reliefRadialStrength: 1.5,
+  reliefRadialFalloff: 0.3,
+  reliefRadialGrow: 0.45,
+  reliefRadialWarp: 0.4,
+  reliefRadialMode: 'rays',
   meshX: 36,
   meshY: 24,
   resolution: 400,
@@ -192,6 +217,10 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefTransitionSoftness', 'reliefBaseMode',
   'reliefCellSizeGradient', 'reliefVoidStrength',
   'reliefAttractorNoise', 'reliefAttractorNoiseFreq', 'reliefFlowAnisotropy',
+  'reliefRadialFociCount', 'reliefRadialFocus1X', 'reliefRadialFocus1Y',
+  'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
+  'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
+  'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
@@ -199,7 +228,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 5;
+const CURRENT_PAYLOAD_VERSION = 6;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -238,6 +267,22 @@ const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
   reliefFlowAnisotropy: 0,
+};
+// v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
+// `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
+const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
+  reliefRadialFociCount: 0,
+  reliefRadialFocus1X: 0.5,
+  reliefRadialFocus1Y: 0.25,
+  reliefRadialFocus2X: 0.25,
+  reliefRadialFocus2Y: 0.6,
+  reliefRadialFocus3X: 0.75,
+  reliefRadialFocus3Y: 0.8,
+  reliefRadialStrength: 1.5,
+  reliefRadialFalloff: 0.3,
+  reliefRadialGrow: 0.45,
+  reliefRadialWarp: 0.4,
+  reliefRadialMode: 'rays',
 };
 
 export function serializeConfig(): string {
@@ -374,6 +419,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 6) {
+      for (const [k, v] of Object.entries(LEGACY_V5_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -403,8 +455,23 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       const v = integer ? Math.floor(n) : n;
       (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
     };
+    // Validate untrusted enum strings — drop anything not in the allowed set so it falls
+    // back to DEFAULTS instead of feeding a junk string into the sampler/UI.
+    const clampEnum = (key: keyof MeshState, allowed: readonly string[]): void => {
+      if (!allowed.includes(String(result[key]))) {
+        delete (result as Record<string, unknown>)[key];
+      }
+    };
+    if ('reliefPolarity' in result) clampEnum('reliefPolarity', ['domes', 'pockets']);
+    if ('reliefProfile' in result) clampEnum('reliefProfile', ['hemisphere', 'cosine', 'parabolic']);
+    if ('reliefAttractorMode' in result) clampEnum('reliefAttractorMode', ['none', 'vertical', 'horizontal', 'radial', 'point']);
+    if ('reliefBaseMode' in result) clampEnum('reliefBaseMode', ['flat', 'wave']);
+    if ('reliefRadialMode' in result) clampEnum('reliefRadialMode', ['rays', 'rings', 'spiral']);
     if ('reliefRelaxIterations' in result) clampField('reliefRelaxIterations', 0, 2, true);
     if ('reliefDensityStrength' in result)  clampField('reliefDensityStrength',  0, 2);
+    // anisotropy enters the metric scale `1 + anisotropy·1.5`; an unbounded value degenerates
+    // cells to points. Slider is [0, 1]; allow a little headroom and cap the rest.
+    if ('reliefAnisotropy' in result) clampField('reliefAnisotropy', 0, 2);
     // transitionSoftness drives an exponent for Math.pow(mask, ...) — a negative value
     // makes the exponent ≤ 0 and produces Infinity at mask=0, which the sampler's NaN
     // guard then zeroes, punching dead bands into the mesh. Slider range is [0, 1].
@@ -422,6 +489,14 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefAttractorNoise' in result) clampField('reliefAttractorNoise', 0, 1);
     if ('reliefAttractorNoiseFreq' in result) clampField('reliefAttractorNoiseFreq', 0.02, 0.5);
     if ('reliefFlowAnisotropy' in result) clampField('reliefFlowAnisotropy', 0, 1);
+    // Radial-foci ("starburst") params. reliefRadialFociCount bounds a small per-grid-cell
+    // loop; reliefRadialWarp is load-bearing for site-warp fold-safety (the sampler caps the
+    // per-focus displacement amplitude relative to σ assuming this stays in [0, 1]).
+    if ('reliefRadialFociCount' in result) clampField('reliefRadialFociCount', 0, 3, true);
+    if ('reliefRadialStrength' in result) clampField('reliefRadialStrength', 0, 3);
+    if ('reliefRadialFalloff' in result) clampField('reliefRadialFalloff', 0.05, 0.6);
+    if ('reliefRadialGrow' in result) clampField('reliefRadialGrow', 0, 0.7);
+    if ('reliefRadialWarp' in result) clampField('reliefRadialWarp', 0, 1);
     return result;
   } catch {
     return {};

@@ -40,6 +40,9 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
     cellSizeGradient: 0, voidStrength: 0,
     // Round-14: noise-modulated attractor + flow-field anisotropy.
     attractorNoise: 0, attractorNoiseFreq: 0.15, flowAnisotropy: 0,
+    // Round-16: radial-foci ("starburst"). Empty radialFoci ⇒ radial system off (matches
+    // pre-feature output); the scalar params below are inert until radialFoci is non-empty.
+    radialFoci: [], radialStrength: 1.5, radialFalloff: 0.3, radialGrow: 0.45, radialWarp: 0.4, radialMode: 'rays',
     ...overrides,
   };
 }
@@ -507,6 +510,74 @@ function mean(values: number[]): number {
   assert(outliers === 0,
     'no isolated outliers vs 5x5 neighborhood (z-score > 6)',
     `outliers=${outliers} worstZ=${worstZ.toFixed(2)}`);
+}
+
+// 18. Radial-foci ("starburst") system: empty foci ⇒ identical output to pre-feature; active
+// foci ⇒ output diverges significantly; outputs stay finite + within clamp; metric change does
+// not reintroduce catastrophic pixel-pair jumps along ridges (the C0/C1 continuity claim from
+// the doc comment is load-bearing for mesh smoothness).
+{
+  process.stdout.write('18. radial-foci system\n');
+  const noFoci = new VoronoiReliefGen(31).sampleGrid(baseParams({
+    cols: 120, rows: 80, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
+  }));
+  const withFoci = new VoronoiReliefGen(31).sampleGrid(baseParams({
+    cols: 120, rows: 80, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
+    radialFoci: [{ x: 0.7, y: 0.2 }, { x: 0.25, y: 0.55 }, { x: 0.75, y: 0.85 }],
+    radialStrength: 1.8, radialFalloff: 0.3, radialGrow: 0.45, radialWarp: 0.4, radialMode: 'rays',
+  }));
+  let differ = 0;
+  let allFinite = true;
+  let inRange = true;
+  for (let j = 0; j < 80; j++) {
+    for (let i = 0; i < 120; i++) {
+      const v = withFoci[j][i];
+      if (!Number.isFinite(v)) allFinite = false;
+      if (v < -1.05 || v > 1.05) inRange = false;
+      if (Math.abs(v - noFoci[j][i]) > 1e-6) differ++;
+    }
+  }
+  assert(allFinite, 'radial-foci output is finite everywhere');
+  assert(inRange, 'radial-foci output within [-1.05, 1.05]');
+  assert(differ > 120 * 80 * 0.3, 'radial-foci diverges from no-foci baseline (>30% of pixels)',
+    `differ=${differ}/${120 * 80}`);
+
+  // Catastrophic-jump guard near foci — the per-pixel metric must stay smooth across pixel
+  // boundaries. Mirrors test 16 but on the radial output (which exercises the per-pixel scale).
+  let bigJumps = 0;
+  for (let j = 0; j < 80; j++) {
+    for (let i = 1; i < 120; i++) {
+      if (Math.abs(withFoci[j][i] - withFoci[j][i - 1]) > 1.5) bigJumps++;
+    }
+  }
+  for (let j = 1; j < 80; j++) {
+    for (let i = 0; i < 120; i++) {
+      if (Math.abs(withFoci[j][i] - withFoci[j - 1][i]) > 1.5) bigJumps++;
+    }
+  }
+  assert(bigJumps === 0, 'no catastrophic pixel-pair jumps under radial-foci metric',
+    `bigJumps=${bigJumps}`);
+
+  // Rays vs rings: same foci, different mode ⇒ different output. (Sanity check that the mode
+  // enum routes through pixelAnisoFrame.)
+  const rays = new VoronoiReliefGen(31).sampleGrid(baseParams({
+    cols: 80, rows: 80, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
+    radialFoci: [{ x: 0.5, y: 0.5 }],
+    radialStrength: 2, radialFalloff: 0.3, radialGrow: 0, radialWarp: 0, radialMode: 'rays',
+  }));
+  const rings = new VoronoiReliefGen(31).sampleGrid(baseParams({
+    cols: 80, rows: 80, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
+    radialFoci: [{ x: 0.5, y: 0.5 }],
+    radialStrength: 2, radialFalloff: 0.3, radialGrow: 0, radialWarp: 0, radialMode: 'rings',
+  }));
+  let modeDiffer = 0;
+  for (let j = 0; j < 80; j++) {
+    for (let i = 0; i < 80; i++) {
+      if (Math.abs(rays[j][i] - rings[j][i]) > 1e-6) modeDiffer++;
+    }
+  }
+  assert(modeDiffer > 80 * 80 * 0.1, 'rays vs rings modes produce meaningfully different output',
+    `modeDiffer=${modeDiffer}/${80 * 80}`);
 }
 
 if (failures === 0) {

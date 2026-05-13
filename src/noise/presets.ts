@@ -40,10 +40,13 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:2.2,
     reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
     reliefCellSizeGradient:1.0, reliefVoidStrength:0.7,
-    // Explicit zeros so switching from relief-pockets (which sets these to non-zero) cleanly
-    // resets back to relief-vertical's designed appearance. Presets are key-only merges, so
-    // omitting a field means inheriting the previous preset's value.
+    // Explicit zeros so switching from relief-pockets / relief-starburst (which set these to
+    // non-zero) cleanly resets back to relief-vertical's designed appearance. Presets are
+    // key-only merges, so omitting a field means inheriting the previous preset's value.
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
+    reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
+    reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
+    reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:1.5, smoothIter:3, smoothStr:0.55 },
   'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
@@ -53,8 +56,11 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
     reliefCellSizeGradient:0.6, reliefVoidStrength:0,
     // Explicit zeros for the same reason as relief-vertical above — prevents stale state
-    // carry-over when switching from relief-pockets.
+    // carry-over when switching from relief-pockets / relief-starburst.
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
+    reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
+    reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
+    reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     // baseThickness explicit so the preset is deterministic when merged into state — without
     // this, applying relief-radial after another preset inherits the previous baseThickness.
     meshX:24, meshY:24, baseThickness:1.2, smoothIter:1, smoothStr:0.4 },
@@ -82,8 +88,28 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.7, reliefIntensityStrength:0.6, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
     reliefCellSizeGradient:1.5, reliefVoidStrength:0,
     reliefAttractorNoise:0.8, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.5,
+    reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
+    reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
+    reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     // F2-F1 produces a C1-smooth height field everywhere, so heavy mesh-level smoothing is
     // unnecessary. smoothIter:1 / smoothStr:0.3 just cleans triangle-orientation differences
     // between adjacent quad-grid cells.
+    meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
+  // relief-starburst — three explicit focal points warp the Voronoi field radially: cells near
+  // each focus shear into long slivers fanning outward, site density is thinned (bigger cells),
+  // and a fold-safe site-warp bows the ridge lines out of each focus. Foci 1/2/3 are placed
+  // top-right / mid-left / lower-right to mirror the carved-panel reference; drag them, or set
+  // reliefRadialFociCount:0 to fall back to a plain Voronoi relief.
+  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.3, contrast:1, sharpness:0,
+    warpFreq:0.08, warpCurl:0,
+    reliefCellSize:5, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
+    reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0, reliefAnisotropyAngle:0,
+    reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
+    reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    reliefCellSizeGradient:0, reliefVoidStrength:0,
+    reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
+    reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
+    reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
+    reliefRadialStrength:1.8, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
 };

@@ -13,6 +13,9 @@ export type ReliefPolarity = 'pockets' | 'domes';
 export type ReliefProfile = 'hemisphere' | 'cosine' | 'parabolic';
 export type ReliefAttractorMode = 'none' | 'vertical' | 'horizontal' | 'radial' | 'point';
 export type ReliefBaseMode = 'flat' | 'wave';
+/** Radial-foci elongation axis: 'rays' = cells stretched along the radius from each focus
+ *  (sunburst), 'rings' = stretched tangentially (concentric), 'spiral' = radius + ~30°. */
+export type ReliefRadialMode = 'rays' | 'rings' | 'spiral';
 
 export interface ReliefParams {
   cellSize: number;
@@ -59,6 +62,26 @@ export interface ReliefParams {
    *  1 = anisotropy direction varies wildly across the panel. Produces the
    *  organic, randomly-stretched-in-different-directions look. */
   flowAnisotropy: number;
+  /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
+   *  count by `sampleReliefParamsFromState`. Empty = the radial-foci system is off and the
+   *  sampler is byte-identical to pre-feature output. Around each focus, cell elongation
+   *  direction tracks the local radial direction, elongation amount falls off with distance,
+   *  site density is reduced (bigger cells), and sites are warped outward (bowed ridges). */
+  radialFoci: Array<{ x: number; y: number }>;
+  /** Extra anisotropy units added near a focus (on top of `anisotropy`), scaled by the
+   *  per-pixel radial blend ∈ [0,1]. Effective metric scale = 1 + (anisotropy + strength·blend)·k. */
+  radialStrength: number;
+  /** Radial influence radius σ as a fraction of the panel diagonal. Shared by the per-pixel
+   *  elongation blend, the `generateSites` density cut, and the post-Lloyd site-warp. */
+  radialFalloff: number;
+  /** Site-density cut near foci, in [0, ~0.7]: localDensity *= 1 − radialGrow·fociWeight,
+   *  where fociWeight ∈ [0,1] is the max Gaussian weight over all foci. Bigger ⇒ larger cells. */
+  radialGrow: number;
+  /** Radial site-warp amount in [0,1] — pushes sites outward from each focus (bowed ridges).
+   *  Applied post-Lloyd; per-focus displacement amplitude is capped fold-safe relative to σ. */
+  radialWarp: number;
+  /** Elongation axis relative to the local radial direction (rays / rings / spiral). */
+  radialMode: ReliefRadialMode;
 }
 
 export interface ReliefSampleParams extends ReliefParams {
