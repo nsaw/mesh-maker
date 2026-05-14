@@ -682,6 +682,43 @@ export class VoronoiReliefGen implements ReliefGenerator {
       : null;
 
     const sites = generateSites(p, rand, warpGen, flowSpline, sigmaRadial, radialGrow);
+    // v13: ADD polar sites at each control point (additive to Cartesian baseline). Cartesian
+    // sites + metric anisotropy alone produce slightly-elliptical cells that blur together at
+    // small cell sizes — not the discrete radial wedge slivers the reference shows. Placing
+    // actual sites in a polar arrangement around each control point produces wedge cells
+    // naturally. HEAVY jitter (0.85) + PRIME sector count (7) avoid v2's mandala/spirograph
+    // mechanical look. Log-radial ring spacing keeps the innermost ring tight against the
+    // focus center while outer rings spread out, matching the reference's "tight at the node,
+    // fans outward" pattern. Only run when foci are active.
+    if (controlPointsPhys.length > 0 && sigmaRadial > 0) {
+      const polarRings = 3;
+      const polarSectors = 7; // prime → no aligned-ring artifact across rings
+      const polarJitterAmt = 0.85;
+      const polarBaseR = Math.max(0.4, p.cellSize * 0.6);
+      const polarGrowth = 1.7;
+      for (let cpIdx = 0; cpIdx < controlPointsPhys.length; cpIdx++) {
+        const cp = controlPointsPhys[cpIdx];
+        const angleOffset = rand() * 2 * Math.PI; // randomize start angle per focus
+        for (let ring = 0; ring < polarRings; ring++) {
+          const r = polarBaseR * Math.pow(polarGrowth, ring);
+          const ringJitterR = r * (polarGrowth - 1) * 0.5;
+          for (let s = 0; s < polarSectors; s++) {
+            const thetaBase = angleOffset + (s / polarSectors) * 2 * Math.PI;
+            const thetaJ = thetaBase + (rand() - 0.5) * polarJitterAmt * (2 * Math.PI / polarSectors);
+            const rJ = r + (rand() - 0.5) * polarJitterAmt * ringJitterR;
+            const sx = cp.x + rJ * Math.cos(thetaJ);
+            const sy = cp.y + rJ * Math.sin(thetaJ);
+            // Skip out-of-bounds — don't clamp (would stack sites at panel corners and break
+            // Voronoi tessellation there).
+            if (sx < 0 || sx > p.meshX || sy < 0 || sy > p.meshY) continue;
+            if (sites.length >= SITE_COUNT_MAX) break;
+            sites.push({ x: sx, y: sy, radius: 0 });
+          }
+          if (sites.length >= SITE_COUNT_MAX) break;
+        }
+        if (sites.length >= SITE_COUNT_MAX) break;
+      }
+    }
     if (sites.length === 0) {
       // Defensive: empty cellgrid → flat field.
       const empty: number[][] = [];

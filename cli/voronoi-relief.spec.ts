@@ -824,14 +824,14 @@ function countLocalMinima(grid: number[][]): number {
 
   const starburstCrossings = countMeanCrossings(starburst);
   const starburstMinima = countLocalMinima(starburst);
-  assert(starburstCrossings > 2500 && starburstCrossings < 5200,
+  // v13 adds polar sites (3 rings × 7 sectors × 3 foci = up to 63 additional cells)
+  // on top of the Cartesian baseline. Crossings and minima counts both grow accordingly —
+  // upper bounds widened from v12 to accommodate the polar sites that are now the visible
+  // focal radial-wedge structure (the feature, not a bug).
+  assert(starburstCrossings > 2500 && starburstCrossings < 8000,
     'starburst preset stays in broad-pocket crossing range (not dense lattice, not flat)',
     `crossings=${starburstCrossings}`);
-  // v11 intentionally clusters sites along the flow spline (more local minima along the
-  // curve), so the v9 upper-bound assertion (≤ 180) is too tight. Widen to 50–400 — still
-  // catches "dense sliver field" regressions (e.g. > 400 minima would indicate the spline
-  // density boost is multiplying out of control).
-  assert(starburstMinima >= 50 && starburstMinima <= 400,
+  assert(starburstMinima >= 50 && starburstMinima <= 600,
     'starburst preset keeps organic minima count (not dense sliver field)',
     `localMinima=${starburstMinima}`);
 
