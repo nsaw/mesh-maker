@@ -342,15 +342,23 @@ function generateSites(
         p.attractorRadius, p.attractorFalloff,
       );
       let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
-      // v11 flow-spline density boost — make cells smaller (more sites) NEAR the spline so the
-      // "flowing course" reads as a band of tighter cells running through the panel. Gaussian
-      // on min-distance-to-spline-sample, σ from `radialFalloff`. This is a BOOST (never thins),
-      // capped at LOCAL_DENSITY_MAX. Replaces v9's "no foci density modulation" stance and
-      // v3's broken density boost (which used radial-from-3-points).
+      // v11.1 flow-spline density modulation — straight segments of the spline get tight,
+      // small cells (density BOOST); curvature peaks get LARGER, fewer cells (density CUT, but
+      // floored at ~0.2× baseline so we never produce a true cavity). This creates the
+      // reference's signature: focal NODE zones with expanded sweeping wedges between
+      // tighter "flow band" cells. Without this curvature-driven inversion, v11 produced
+      // tighter cells AT the nodes (the opposite of the desired focal expansion).
       if (flowBoost > 0 && flowSpline.length > 0) {
-        const { d2 } = nearestSplineSample(flowSpline, cx, cy);
+        const { idx, d2 } = nearestSplineSample(flowSpline, cx, cy);
         const w = Math.exp(-d2 / (2 * sigma * sigma));
-        localDensity = Math.min(LOCAL_DENSITY_MAX, localDensity * (1 + flowBoost * w));
+        const curv = flowSpline[idx].curvature;
+        // At curv=0 (straight segment): full boost — tighter band of small cells along the flow.
+        // At curv=1 (peak bend, i.e. a "node"): boost flips to a CUT down to ~0.2× baseline,
+        // letting Voronoi produce large expanded cells at the node. Smoothstep'd between.
+        const polarity = 1 - 2.2 * curv;          // +1 at straight → -1.2 at peak curvature
+        const localFactor = 1 + flowBoost * w * polarity;
+        const floored = Math.max(0.2, localFactor); // never thin below 0.2× baseline
+        localDensity = Math.min(LOCAL_DENSITY_MAX, localDensity * floored);
       }
       // Stochastic acceptance: density 1 keeps all, density 2 doubles via extra in-cell sample.
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
@@ -831,14 +839,17 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Cell-size gradient shrinks the effective radius where mask is high. R_field is
         // already continuous; we just scale it by continuous functions of mask/curvature.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        // v11 Curvature Expansion: at sharply-bending sections of the flow spline (the visible
-        // "node" zones in the reference panel), expand the radius field upward so pockets are
-        // wider and shallower — matching the reference's "sweeping wedge" foci. Modulated by
-        // radialBlend so off-spline pixels are unaffected. Replaces v9's `wMax`-driven version.
-        const focalExpand = 1 + radialGrow * radialBlend * flowCurvature * 0.9;
+        // v11.1 Curvature Expansion: at sharply-bending sections of the flow spline (the
+        // visible "node" zones in the reference panel), expand the radius field upward so
+        // pockets are wider — matching the reference's "sweeping wedge" foci. Multiplier
+        // bumped 0.9 → 2.5 in v11.1 because v11 was clamped at 2.4× via Math.min but rarely
+        // got close (peak achievable was 1 + radialGrow·1·1·0.9 = 2.08); v11.1 caps higher
+        // (3.5×) and the formula reaches it at curvature peaks, producing visibly dramatic
+        // node expansions.
+        const focalExpand = 1 + radialGrow * radialBlend * flowCurvature * 2.5;
         const R = Math.max(0.05, Rfield[j * cols + i]
           * Math.max(0.2, sizeShrink)
-          * Math.min(2.4, focalExpand));
+          * Math.min(3.5, focalExpand));
 
         // WORLEY F2-F1 DISTANCE-FIELD HEIGHT. Replaces the prior dome+seam composite which
         // produced piecewise gradients (dome falloff inside cell + seam carve at boundary)

@@ -117,6 +117,6 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12, reliefFlowAnisotropy:0,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
     reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
-    reliefRadialStrength:2.4, reliefRadialFalloff:0.18, reliefRadialGrow:1.2, reliefRadialWarp:0.4, reliefRadialMode:'rays',
+    reliefRadialStrength:3.0, reliefRadialFalloff:0.35, reliefRadialGrow:2.0, reliefRadialWarp:0.55, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
 };
