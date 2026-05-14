@@ -920,14 +920,15 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Cell-size gradient shrinks the effective radius where mask is high. R_field is
         // already continuous; we just scale it by continuous functions of mask/curvature.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        // v14.1 Curvature Expansion: dialed back from v11.1's 2.5× multiplier / 3.5× cap.
-        // User feedback: cells looked "blobby" globally — R-expansion was making bowls too
-        // shallow (normDist = distDiff/(2R) → small when R is bloated). v14.1: 1.2× multiplier,
-        // 1.8× cap. Foci still expand visibly but pockets reach deeper, ridges stay sharp.
-        const focalExpand = 1 + radialGrow * radialBlend * flowCurvature * 1.2;
+        // v14.2 Curvature Expansion: v14 used 2.5×/3.5× (blobby — too many cells saturated
+        // to OUTPUT_CLAMP); v14.1 used 1.2×/1.8× combined with higher seamDepth (worse — too
+        // many cells saturated for the OPPOSITE reason). v14.2 picks the middle ground:
+        // 1.7×/2.2× cap, with seamDepth restored to 0.6. Result: focal expansion visible but
+        // pockets keep their depth gradient (not flat-bottom saturation).
+        const focalExpand = 1 + radialGrow * radialBlend * flowCurvature * 1.7;
         const R = Math.max(0.05, Rfield[j * cols + i]
           * Math.max(0.2, sizeShrink)
-          * Math.min(1.8, focalExpand));
+          * Math.min(2.2, focalExpand));
 
         // WORLEY F2-F1 DISTANCE-FIELD HEIGHT. Replaces the prior dome+seam composite which
         // produced piecewise gradients (dome falloff inside cell + seam carve at boundary)
