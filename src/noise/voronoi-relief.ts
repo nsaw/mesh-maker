@@ -920,17 +920,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Cell-size gradient shrinks the effective radius where mask is high. R_field is
         // already continuous; we just scale it by continuous functions of mask/curvature.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        // v11.1 Curvature Expansion: at sharply-bending sections of the flow spline (the
-        // visible "node" zones in the reference panel), expand the radius field upward so
-        // pockets are wider — matching the reference's "sweeping wedge" foci. Multiplier
-        // bumped 0.9 → 2.5 in v11.1 because v11 was clamped at 2.4× via Math.min but rarely
-        // got close (peak achievable was 1 + radialGrow·1·1·0.9 = 2.08); v11.1 caps higher
-        // (3.5×) and the formula reaches it at curvature peaks, producing visibly dramatic
-        // node expansions.
-        const focalExpand = 1 + radialGrow * radialBlend * flowCurvature * 2.5;
+        // v14.1 Curvature Expansion: dialed back from v11.1's 2.5× multiplier / 3.5× cap.
+        // User feedback: cells looked "blobby" globally — R-expansion was making bowls too
+        // shallow (normDist = distDiff/(2R) → small when R is bloated). v14.1: 1.2× multiplier,
+        // 1.8× cap. Foci still expand visibly but pockets reach deeper, ridges stay sharp.
+        const focalExpand = 1 + radialGrow * radialBlend * flowCurvature * 1.2;
         const R = Math.max(0.05, Rfield[j * cols + i]
           * Math.max(0.2, sizeShrink)
-          * Math.min(3.5, focalExpand));
+          * Math.min(1.8, focalExpand));
 
         // WORLEY F2-F1 DISTANCE-FIELD HEIGHT. Replaces the prior dome+seam composite which
         // produced piecewise gradients (dome falloff inside cell + seam carve at boundary)
