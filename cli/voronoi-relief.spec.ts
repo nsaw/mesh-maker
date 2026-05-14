@@ -663,12 +663,14 @@ function countLocalMinima(grid: number[][]): number {
   // enum routes through pixelAnisoFrame.)
   const rays = new VoronoiReliefGen(31).sampleGrid(baseParams({
     cols: 80, rows: 80, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
-    radialFoci: [{ x: 0.5, y: 0.5 }],
+    // v11 flow spline requires ≥2 control points (Catmull-Rom needs an actual curve, not
+    // a degenerate point). Use 2 well-spaced points so the spline tangent is well-defined.
+    radialFoci: [{ x: 0.3, y: 0.3 }, { x: 0.7, y: 0.7 }],
     radialStrength: 2, radialFalloff: 0.3, radialGrow: 0, radialWarp: 0, radialMode: 'rays',
   }));
   const rings = new VoronoiReliefGen(31).sampleGrid(baseParams({
     cols: 80, rows: 80, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
-    radialFoci: [{ x: 0.5, y: 0.5 }],
+    radialFoci: [{ x: 0.3, y: 0.3 }, { x: 0.7, y: 0.7 }],
     radialStrength: 2, radialFalloff: 0.3, radialGrow: 0, radialWarp: 0, radialMode: 'rings',
   }));
   let modeDiffer = 0;
@@ -825,8 +827,12 @@ function countLocalMinima(grid: number[][]): number {
   assert(starburstCrossings > 2500 && starburstCrossings < 5200,
     'starburst preset stays in broad-pocket crossing range (not dense lattice, not flat)',
     `crossings=${starburstCrossings}`);
-  assert(starburstMinima >= 50 && starburstMinima <= 180,
-    'starburst preset keeps organic large-cell minima count (not dense sliver field)',
+  // v11 intentionally clusters sites along the flow spline (more local minima along the
+  // curve), so the v9 upper-bound assertion (≤ 180) is too tight. Widen to 50–400 — still
+  // catches "dense sliver field" regressions (e.g. > 400 minima would indicate the spline
+  // density boost is multiplying out of control).
+  assert(starburstMinima >= 50 && starburstMinima <= 400,
+    'starburst preset keeps organic minima count (not dense sliver field)',
     `localMinima=${starburstMinima}`);
 
   const fociOff = new VoronoiReliefGen(13).sampleGrid(starburstPresetParams({
@@ -837,8 +843,12 @@ function countLocalMinima(grid: number[][]): number {
     radialWarp: 0,
   }));
   const fociOffMinima = countLocalMinima(fociOff);
-  assert(starburstMinima <= fociOffMinima + 110,
-    'focal expansion does not increase feature count like a site-density boost',
+  // v11: the flow spline ADDS sites near the curve by design (this is the visible "course"),
+  // so the v9 assertion "with-foci minima ≈ no-foci minima" no longer applies. Instead
+  // verify the density boost is BOUNDED — minima count grows at most 5× vs the no-foci
+  // baseline (catches a runaway density boost from a bad future config).
+  assert(starburstMinima <= fociOffMinima * 5 + 50,
+    'flow-spline density boost is bounded (not a runaway feature count)',
     `withFoci=${starburstMinima} withoutFoci=${fociOffMinima}`);
   const focusMean = (grid: number[][], f: { x: number; y: number }): number => {
     let sum = 0;

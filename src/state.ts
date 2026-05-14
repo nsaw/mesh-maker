@@ -228,7 +228,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 9;
+const CURRENT_PAYLOAD_VERSION = 10;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -285,6 +285,11 @@ const LEGACY_V7_DEFAULTS: Partial<MeshState> = {};
 // site count, reliefRadialGrow expands the continuous radius/bowl field, and reliefRadialWarp
 // drives low-frequency focal irregularity instead of remaining inert.
 const LEGACY_V8_DEFAULTS: Partial<MeshState> = {};
+// v9→v10 reinterprets the 3 "Focus" control points as control points of a Catmull-Rom FLOW
+// SPLINE. Sites cluster along the curve; cells elongate along the tangent; cell radius
+// expands at curvature peaks. Existing share-links pass through unchanged — the same state
+// keys produce a flow-curve render instead of v9's invisible-foci render. Strict improvement.
+const LEGACY_V9_DEFAULTS: Partial<MeshState> = {};
 // v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
 // `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
 const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
@@ -459,6 +464,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     }
     if (payloadVersion < 9) {
       for (const [k, v] of Object.entries(LEGACY_V8_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 10) {
+      for (const [k, v] of Object.entries(LEGACY_V9_DEFAULTS)) {
         if (!(k in parsed)) {
           (result as Record<string, unknown>)[k] = v;
         }

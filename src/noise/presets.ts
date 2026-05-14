@@ -95,28 +95,28 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // unnecessary. smoothIter:1 / smoothStr:0.3 just cleans triangle-orientation differences
     // between adjacent quad-grid cells.
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
-  // relief-starburst — v10: v9 organic-focal-expansion architecture preserved; preset values
-  // surface the foci as visible flow nodes (v9 had them dialed below the visibility threshold).
-  // Creator's intent: "Voronoi structure, permeated by a flowing course that moves organically
-  // through geometry." The flowing course is wired through high reliefJitter + distortion +
-  // reliefFlowAnisotropy + reliefAttractorNoise + reliefCellSizeGradient + zero Lloyd; the
-  // three foci sit as nodes on that flow with focal cell expansion + focal irregularity.
-  // Slider semantics (v9 unchanged):
-  //   reliefRadialStrength → low-gain focal metric anisotropy (×0.35 internal multiplier)
-  //   reliefRadialFalloff  → Gaussian σ as fraction of panel diagonal
-  //   reliefRadialGrow     → focal cell expansion via continuous radius/bowl normalization
-  //   reliefRadialWarp     → focal irregularity noise (angle + influence modulation)
-  // Foci 1/2/3 at top-right / mid-left / lower-right mirror the carved-panel reference.
-  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
+  // relief-starburst — v11: the three "Focus" points become control points of a Catmull-Rom
+  // flow spline. Sites cluster along the curve, cells elongate along its tangent, R-field
+  // expands at curvature peaks. Implements the creator's description literally: "Voronoi
+  // structure, permeated by a flowing course that moves organically through geometry."
+  // Slider semantics (v11):
+  //   reliefRadialStrength → flow-tangent anisotropy strength (cells elongated along curve)
+  //   reliefRadialFalloff  → flow influence band σ as fraction of panel diagonal
+  //   reliefRadialGrow     → curvature-driven R-expansion (broadens pockets at spline bends)
+  //   reliefRadialWarp     → flow tangent irregularity noise
+  //   reliefRadialMode     → 'rays' (along flow) / 'rings' (perpendicular) / 'spiral' (+30°)
+  // Control points 1/2/3 at top-right / mid-left / lower-right form an S-curve through the
+  // panel, with curvature peaks at the visible "node" zones in the reference.
+  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
-    reliefCellSize:4.8, reliefJitter:0.92, reliefRelaxIterations:0, reliefPolarity:'pockets', reliefProfile:'parabolic',
-    reliefSeamDepth:0.58, reliefSeamWidth:0.15, reliefAnisotropy:0.18, reliefAnisotropyAngle:75,
+    reliefCellSize:5.5, reliefJitter:0.55, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
+    reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
     reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
-    reliefCellSizeGradient:0.95, reliefVoidStrength:0,
-    reliefAttractorNoise:0.65, reliefAttractorNoiseFreq:0.11, reliefFlowAnisotropy:0.45,
+    reliefCellSizeGradient:0.4, reliefVoidStrength:0,
+    reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12, reliefFlowAnisotropy:0,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
     reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
-    reliefRadialStrength:1.6, reliefRadialFalloff:0.28, reliefRadialGrow:0.85, reliefRadialWarp:0.7, reliefRadialMode:'rays',
+    reliefRadialStrength:2.4, reliefRadialFalloff:0.18, reliefRadialGrow:1.2, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
 };

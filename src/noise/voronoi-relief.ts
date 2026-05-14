@@ -25,10 +25,14 @@
  * `sampleReliefParamsFromState` wires both `warpDistortion` and `warpFrequency` into that
  * path so the global warp sliders affect relief output.
  *
- * RADIAL FOCI ("starburst") — v9: a Cartesian-jittered Voronoi (the organic baseline cell
- * layout) is shaped near each focus by three continuous-field levers. Foci never add/remove
- * sites: the v3 density boost produced the dense diagonal lattice regression, while the v2
- * polar grid produced mandalas.
+ * RADIAL FOCI ("starburst") — v11: the three "Focus" control points are reinterpreted as the
+ * 3 control points of a Catmull-Rom FLOW SPLINE. A single curve permeates the panel; sites
+ * cluster along it, cells elongate along its tangent, and cell-radius expands at curvature
+ * peaks (the visible "node" zones in the reference panel emerge as those peaks). Creator's
+ * description of the reference: "Voronoi structure, permeated by a flowing course that moves
+ * organically through geometry." v11 implements that literally — the foci aren't isolated
+ * radial centers (v1/v2/v3/v9 all failed in different ways trying to fake this), they're
+ * curvature peaks of one continuous flow.
  *
  *   1. Low-gain per-pixel anisotropy metric (`pixelAnisoFrame`'s radial branch). Cells are
  *      gently elongated along the local radial direction without turning the whole panel into
@@ -79,6 +83,10 @@ const RADIAL_ANISOTROPY_SCALE_MULTIPLIER = 0.35;
 // Spatial frequency of the flow-anisotropy noise field (per-pixel angle perturbation).
 const FLOW_NOISE_FREQUENCY = 0.18;
 const RADIAL_IRREGULARITY_NOISE_FREQUENCY = 0.075;
+// v11 flow-spline sample resolution. Catmull-Rom curve through the control points is sampled
+// at this many discrete (x, y, tangent, curvature) records. Pass 1.5 / Pass 2 do nearest-sample
+// lookups by linear scan — 200 samples × ~80K pixels = 16M ops per pass, well under budget.
+const FLOW_SPLINE_SAMPLE_COUNT = 200;
 // Sampler output clamp. Positive constant; used with explicit `-` sign at carve sites
 // (e.g. void mode pushes h to `-OUTPUT_HEIGHT_CLAMP`). Naming clarifies the magnitude
 // vs. previous `OUTPUT_CLAMP` which was used asymmetrically and read confusingly.
@@ -139,6 +147,121 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** v11 flow spline — a Catmull-Rom curve through N control points, sampled to a dense
+ *  point list with cached tangent + curvature at each sample. Used by `generateSites`
+ *  (density boost near the curve) and `pixelAnisoFrame` (per-pixel anisotropy axis aligned
+ *  to the local tangent). Replaces v9/v10's "Gaussian-around-N-isolated-foci" model with
+ *  "Gaussian-around-a-curve" model — the curve being the visible "flowing course" in the
+ *  reference panel. The 3 visible "foci" emerge as the curvature peaks of the spline. */
+interface FlowSplineSample {
+  x: number;
+  y: number;
+  tx: number; // unit tangent x
+  ty: number; // unit tangent y
+  curvature: number; // |curvature| at this sample, normalized to [0, 1] across the spline
+}
+
+function buildFlowSpline(
+  controlPoints: ReadonlyArray<{ x: number; y: number }>,
+  meshX: number,
+  meshY: number,
+): FlowSplineSample[] {
+  if (controlPoints.length < 2) return [];
+  // Map normalized [0,1]² control points to physical units.
+  const cps = controlPoints.map(c => ({ x: c.x * meshX, y: c.y * meshY }));
+  // Catmull-Rom needs ghost points before the first and after the last control point.
+  // Mirror the second point across the first (and similarly at the end) so the tangent
+  // direction at the endpoints is the chord direction toward the next point.
+  const augmented = [
+    { x: 2 * cps[0].x - cps[1].x, y: 2 * cps[0].y - cps[1].y },
+    ...cps,
+    { x: 2 * cps[cps.length - 1].x - cps[cps.length - 2].x,
+      y: 2 * cps[cps.length - 1].y - cps[cps.length - 2].y },
+  ];
+  const samples: FlowSplineSample[] = [];
+  const segmentCount = cps.length - 1;
+  const samplesPerSegment = Math.max(2, Math.floor(FLOW_SPLINE_SAMPLE_COUNT / segmentCount));
+  // Catmull-Rom basis (uniform parameterization). For each segment between cps[i] and
+  // cps[i+1], the curve is C(t) = 0.5 · [t^3 t^2 t 1] · M · [P_{i-1}, P_i, P_{i+1}, P_{i+2}]^T
+  // where M is the standard Catmull-Rom matrix.
+  for (let i = 0; i < segmentCount; i++) {
+    const p0 = augmented[i];
+    const p1 = augmented[i + 1];
+    const p2 = augmented[i + 2];
+    const p3 = augmented[i + 3];
+    for (let s = 0; s < samplesPerSegment; s++) {
+      const t = s / samplesPerSegment;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      // Position
+      const x = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t
+        + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2
+        + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+      const y = 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t
+        + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2
+        + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+      // First derivative (tangent direction, not yet normalized)
+      const dx = 0.5 * ((-p0.x + p2.x)
+        + 2 * (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t
+        + 3 * (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t2);
+      const dy = 0.5 * ((-p0.y + p2.y)
+        + 2 * (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t
+        + 3 * (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t2);
+      const speed = Math.hypot(dx, dy) || 1e-6;
+      const tx = dx / speed;
+      const ty = dy / speed;
+      // Second derivative (used for curvature κ = |x'y'' − y'x''| / |v|^3 in 2D)
+      const ddx = 0.5 * (2 * (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x)
+        + 6 * (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t);
+      const ddy = 0.5 * (2 * (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y)
+        + 6 * (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t);
+      const rawCurvature = Math.abs(dx * ddy - dy * ddx) / Math.max(1e-6, speed * speed * speed);
+      // Clamp to a reasonable range; we'll normalize across all samples below.
+      samples.push({ x, y, tx, ty, curvature: rawCurvature });
+    }
+  }
+  // Always include the final control point so the spline ends exactly at the last CP.
+  const last = cps[cps.length - 1];
+  const prev = cps[cps.length - 2];
+  const lx = last.x - prev.x;
+  const ly = last.y - prev.y;
+  const lspeed = Math.hypot(lx, ly) || 1e-6;
+  samples.push({ x: last.x, y: last.y, tx: lx / lspeed, ty: ly / lspeed, curvature: 0 });
+  // Normalize curvature to [0, 1] so the same `radialGrow` slider does the right thing
+  // regardless of panel size or how aggressively the user placed the control points.
+  let curvMax = 0;
+  for (const s of samples) if (s.curvature > curvMax) curvMax = s.curvature;
+  if (curvMax > 0) {
+    const invMax = 1 / curvMax;
+    for (const s of samples) s.curvature *= invMax;
+  }
+  // Clamp samples to panel bounds — control points placed outside panel are OK but their
+  // off-panel spline samples are useless to us. Don't filter them out (we'd lose tangent
+  // continuity); just leave them in. Pass 1 / 1.5 / Pass 2 will simply find non-panel pixels
+  // nearer to in-panel samples by distance anyway.
+  // Suppress unused-param lint if not referenced elsewhere in this body:
+  void meshX; void meshY;
+  return samples;
+}
+
+/** Nearest-sample lookup. Returns the sample index and the squared distance for the closest
+ *  spline sample to (x, y). Linear scan over ~200 samples is fast enough; if it ever becomes
+ *  hot, switch to a bucketed grid lookup. */
+function nearestSplineSample(
+  samples: ReadonlyArray<FlowSplineSample>,
+  x: number, y: number,
+): { idx: number; d2: number } {
+  let bestIdx = 0;
+  let bestD2 = Infinity;
+  for (let i = 0; i < samples.length; i++) {
+    const dx = x - samples[i].x;
+    const dy = y - samples[i].y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; bestIdx = i; }
+  }
+  return { idx: bestIdx, d2: bestD2 };
+}
+
 /** Compute the spatial-attractor mask in [0, 1] for a normalized (u, v) ∈ [0, 1]². */
 function attractorMask(
   mode: ReliefAttractorMode,
@@ -185,6 +308,9 @@ function generateSites(
   p: ReliefSampleParams,
   rand: () => number,
   warpGen: SimplexNoiseGen | null,
+  flowSpline: ReadonlyArray<FlowSplineSample>,
+  sigma: number,
+  flowBoost: number,
 ): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
   // baseSpacing converts cellSize (avg cell diameter) to grid spacing for site placement.
@@ -215,7 +341,17 @@ function generateSites(
         p.attractorMode, u, v, p.attractorX, p.attractorY,
         p.attractorRadius, p.attractorFalloff,
       );
-      const localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
+      let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
+      // v11 flow-spline density boost — make cells smaller (more sites) NEAR the spline so the
+      // "flowing course" reads as a band of tighter cells running through the panel. Gaussian
+      // on min-distance-to-spline-sample, σ from `radialFalloff`. This is a BOOST (never thins),
+      // capped at LOCAL_DENSITY_MAX. Replaces v9's "no foci density modulation" stance and
+      // v3's broken density boost (which used radial-from-3-points).
+      if (flowBoost > 0 && flowSpline.length > 0) {
+        const { d2 } = nearestSplineSample(flowSpline, cx, cy);
+        const w = Math.exp(-d2 / (2 * sigma * sigma));
+        localDensity = Math.min(LOCAL_DENSITY_MAX, localDensity * (1 + flowBoost * w));
+      }
       // Stochastic acceptance: density 1 keeps all, density 2 doubles via extra in-cell sample.
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
       for (let k = 0; k < reps; k++) {
@@ -355,12 +491,11 @@ function pixelAnisoFrame(
   flowAmt: number,
   radialIrregularityGen: SimplexNoiseGen | null,
   radialIrregularity: number,
-  fociPhys: ReadonlyArray<{ x: number; y: number }>,
+  flowSpline: ReadonlyArray<FlowSplineSample>,
   sigma: number,
   radialStrength: number,
   radialMode: ReliefRadialMode,
-  cellSize: number,
-): { cosA: number; sinA: number; scale: number; blend: number } {
+): { cosA: number; sinA: number; scale: number; blend: number; curvature: number } {
   let cosA = baseCosA;
   let sinA = baseSinA;
   if (flowGen && flowAmt > 0) {
@@ -377,69 +512,70 @@ function pixelAnisoFrame(
   }
   let scale = baseScale;
   let blend = 0;
-  if (fociPhys.length > 0) {
-    // Weighted sum of unit vectors pointing AWAY from each focus. The resultant's atan2 gives
-    // the local radial axis; |resultant|/Σw ∈ [0,1] ("coherence") drops where opposing fans
-    // cancel. blend = wMax · coherence — strong near a single focus, fading in seams between.
-    let vx = 0;
-    let vy = 0;
-    let wSum = 0;
-    let wMax = 0;
-    let nearest = Infinity;
+  let curvature = 0;
+  if (flowSpline.length > 0) {
+    // v11: anisotropy axis = tangent at the nearest spline sample (replaces v9/v10's
+    // away-from-nearest-focus direction). Blend strength falls off with distance from the
+    // spline via Gaussian σ. Curvature at the nearest sample is exported so Pass 2 can drive
+    // R-expansion at curve bends (the "node" zones in the reference panel).
+    const { idx, d2 } = nearestSplineSample(flowSpline, x, y);
+    const sample = flowSpline[idx];
     const inv2sigma2 = 1 / (2 * sigma * sigma);
-    for (let k = 0; k < fociPhys.length; k++) {
-      const dx = x - fociPhys[k].x;
-      const dy = y - fociPhys[k].y;
-      const d2 = dx * dx + dy * dy;
-      const d = Math.sqrt(d2) || 1e-6;
-      const w = Math.exp(-d2 * inv2sigma2);
-      vx += (dx / d) * w;
-      vy += (dy / d) * w;
-      wSum += w;
-      if (w > wMax) wMax = w;
-      if (d < nearest) nearest = d;
+    blend = Math.exp(-d2 * inv2sigma2);
+    curvature = sample.curvature;
+    let tx = sample.tx;
+    let ty = sample.ty;
+    // Per-pixel low-frequency noise breaks tangent uniformity so the flow looks organic.
+    if (radialIrregularityGen && radialIrregularity > 0) {
+      const angleNoise = radialIrregularityGen.noise(
+        x * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
+        y * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
+      );
+      const da = angleNoise * radialIrregularity * Math.PI * 0.35;
+      const c = Math.cos(da);
+      const s = Math.sin(da);
+      const nx = tx * c - ty * s;
+      const ny = tx * s + ty * c;
+      tx = nx; ty = ny;
+      const blendNoise = radialIrregularityGen.noise(
+        x * RADIAL_IRREGULARITY_NOISE_FREQUENCY + 41.3,
+        y * RADIAL_IRREGULARITY_NOISE_FREQUENCY - 19.7,
+      );
+      blend *= Math.max(0.45, 1 + blendNoise * radialIrregularity * 0.45);
+      if (blend > 1) blend = 1;
     }
-    if (wSum > 0) {
-      const coherence = Math.min(1, Math.hypot(vx, vy) / wSum);
-      blend = wMax * coherence;
-      // Calm-disc fade — the radial axis is undefined at the singularity exactly at a focus.
-      const calmR = Math.min(0.5 * Math.max(0.2, cellSize), 0.08 * sigma);
-      if (calmR > 0 && nearest < calmR) blend *= smoothstep(0, calmR, nearest);
-      if (blend > 0) {
-        let thetaRadial = Math.atan2(vy, vx);
-        if (radialIrregularityGen && radialIrregularity > 0) {
-          const angleNoise = radialIrregularityGen.noise(
-            x * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
-            y * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
-          );
-          const blendNoise = radialIrregularityGen.noise(
-            x * RADIAL_IRREGULARITY_NOISE_FREQUENCY + 41.3,
-            y * RADIAL_IRREGULARITY_NOISE_FREQUENCY - 19.7,
-          );
-          thetaRadial += angleNoise * radialIrregularity * Math.PI * 0.35;
-          blend *= Math.max(0.45, 1 + blendNoise * radialIrregularity * 0.45);
-          if (blend > 1) blend = 1;
-        }
-        let elong: number;
-        if (radialMode === 'rings') elong = thetaRadial;
-        else if (radialMode === 'spiral') elong = thetaRadial + Math.PI / 2 + Math.PI / 6;
-        else elong = thetaRadial + Math.PI / 2; // 'rays' — feed perpendicular, cells extend radial
-        let rc = Math.cos(elong);
-        let rs = Math.sin(elong);
-        // Flip the radial axis (mod π) to the representative nearest the base axis. After
-        // this, dot(base, radial) ≥ 0, so the lerped vector magnitude is ≥ √0.5 — no
-        // antipodal-cancellation degeneracy in the renormalize below.
-        if (cosA * rc + sinA * rs < 0) { rc = -rc; rs = -rs; }
-        const lx = cosA * (1 - blend) + rc * blend;
-        const ly = sinA * (1 - blend) + rs * blend;
-        const ll = Math.hypot(lx, ly) || 1e-6;
-        cosA = lx / ll;
-        sinA = ly / ll;
-        scale = baseScale + radialStrength * blend * RADIAL_ANISOTROPY_SCALE_MULTIPLIER;
+    if (blend > 0) {
+      // The unit tangent (tx, ty) IS the elongation axis for 'rays' mode (cells extend ALONG
+      // the flow). For 'rings' rotate 90° (cells extend perpendicular to flow). 'spiral' adds
+      // a 30° offset. Then feed `θ_elong + 90°` to `nearestTwo` (the metric inflates the fed
+      // axis, which narrows cells along it and widens them perpendicular — see two-site
+      // bisector derivation in the comment block above).
+      let ex = tx, ey = ty;
+      if (radialMode === 'rings') {
+        // perpendicular to tangent
+        ex = -ty; ey = tx;
+      } else if (radialMode === 'spiral') {
+        // tangent rotated +30°
+        const c = Math.cos(Math.PI / 6);
+        const s = Math.sin(Math.PI / 6);
+        ex = tx * c - ty * s;
+        ey = tx * s + ty * c;
       }
+      // Feed perpendicular to the elongation axis so cells extend ALONG (ex, ey).
+      let rc = -ey;
+      let rs = ex;
+      // Flip the axis (mod π) toward the base+flow direction so the vector lerp can't hit
+      // antipodal cancellation.
+      if (cosA * rc + sinA * rs < 0) { rc = -rc; rs = -rs; }
+      const lx = cosA * (1 - blend) + rc * blend;
+      const ly = sinA * (1 - blend) + rs * blend;
+      const ll = Math.hypot(lx, ly) || 1e-6;
+      cosA = lx / ll;
+      sinA = ly / ll;
+      scale = baseScale + radialStrength * blend * RADIAL_ANISOTROPY_SCALE_MULTIPLIER;
     }
   }
-  return { cosA, sinA, scale, blend };
+  return { cosA, sinA, scale, blend, curvature };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -487,27 +623,35 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // Sanitize radialFoci defensively even though state.ts URL-clamps already cover the share-
     // link path: callers constructing ReliefSampleParams directly (tests, future paths) bypass
     // sampleReliefParamsFromState's pruning. Filter non-finite, clamp [0,1], cap to 3.
-    const radialFociPhys = p.radialFoci
+    // v11 flow-spline setup. The three "foci" control points become control points of a
+    // Catmull-Rom spline; the curve permeates the panel and sites cluster along it. See
+    // the doc header at the top of this file for the rationale.
+    const radialFociNormalized = p.radialFoci
       .filter(f => Number.isFinite(f.x) && Number.isFinite(f.y))
       .slice(0, 3)
       .map(f => ({
-        x: Math.max(0, Math.min(1, f.x)) * p.meshX,
-        y: Math.max(0, Math.min(1, f.y)) * p.meshY,
+        x: Math.max(0, Math.min(1, f.x)),
+        y: Math.max(0, Math.min(1, f.y)),
       }));
+    // Spline requires ≥2 control points. With <2, no flow course; the radial system is off
+    // and the sampler is byte-identical to a non-radial Voronoi relief.
+    const flowSpline = radialFociNormalized.length >= 2
+      ? buildFlowSpline(radialFociNormalized, p.meshX, p.meshY)
+      : [];
     const sigmaRadial = Math.max(
       1e-3,
       Math.max(0.02, Math.min(0.6, p.radialFalloff)) * Math.hypot(p.meshX, p.meshY),
     );
     const radialStrength = Math.max(0, Math.min(4, p.radialStrength));
     const radialGrow = Math.max(0, Math.min(2, p.radialGrow));
-    const radialIrregularity = radialFociPhys.length > 0
+    const radialIrregularity = flowSpline.length > 0
       ? Math.max(0, Math.min(1, p.radialWarp))
       : 0;
     const radialIrregularityGen = radialIrregularity > 0
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61)
       : null;
 
-    const sites = generateSites(p, rand, warpGen);
+    const sites = generateSites(p, rand, warpGen, flowSpline, sigmaRadial, radialGrow);
     if (sites.length === 0) {
       // Defensive: empty cellgrid → flat field.
       const empty: number[][] = [];
@@ -560,7 +704,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const frame = pixelAnisoFrame(
           x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
           radialIrregularityGen, radialIrregularity,
-          radialFociPhys, sigmaRadial, radialStrength, p.radialMode, p.cellSize,
+          flowSpline, sigmaRadial, radialStrength, p.radialMode,
         );
         const { f1, idx } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
         radiusSum[idx] += f1;
@@ -658,16 +802,18 @@ export class VoronoiReliefGen implements ReliefGenerator {
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
-        // Per-pixel anisotropy frame: base angle → flow-noise rotation → radial-foci blend.
-        // The radial blend factor is also reused below to make the attractor's Intensity
-        // Strength control respond to foci proximity (max(mask, radialBlend)).
+        // Per-pixel anisotropy frame: base angle → flow-noise rotation → flow-spline tangent.
+        // v11 also exports the local spline curvature so cells expand at curvature peaks
+        // (the visible "node" zones in the reference panel are sharply-curved sections of
+        // the flow course, not isolated radial points).
         const frame = pixelAnisoFrame(
           x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
           radialIrregularityGen, radialIrregularity,
-          radialFociPhys, sigmaRadial, radialStrength, p.radialMode, p.cellSize,
+          flowSpline, sigmaRadial, radialStrength, p.radialMode,
         );
         const { f1, f2 } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
         const radialBlend = frame.blend;
+        const flowCurvature = frame.curvature;
         // Spatial attractor on intensity — relief amplitude varies with mask.
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -683,16 +829,16 @@ export class VoronoiReliefGen implements ReliefGenerator {
           if (mask < 0) mask = 0;
         }
         // Cell-size gradient shrinks the effective radius where mask is high. R_field is
-        // already continuous; we just scale it by continuous functions of mask/focus blend.
+        // already continuous; we just scale it by continuous functions of mask/curvature.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        // Focal Cell Expansion must expand the continuous radius field. The v9.0 formula used
-        // `1 - grow * blend`, which shrank R near foci and made the denominator smaller; visually
-        // that sharpened/deepened focus centers into pinched rosettes. Scaling R upward broadens
-        // the local bowl field without changing site count.
-        const focalExpand = 1 + radialGrow * radialBlend * 0.45;
+        // v11 Curvature Expansion: at sharply-bending sections of the flow spline (the visible
+        // "node" zones in the reference panel), expand the radius field upward so pockets are
+        // wider and shallower — matching the reference's "sweeping wedge" foci. Modulated by
+        // radialBlend so off-spline pixels are unaffected. Replaces v9's `wMax`-driven version.
+        const focalExpand = 1 + radialGrow * radialBlend * flowCurvature * 0.9;
         const R = Math.max(0.05, Rfield[j * cols + i]
           * Math.max(0.2, sizeShrink)
-          * Math.min(1.9, focalExpand));
+          * Math.min(2.4, focalExpand));
 
         // WORLEY F2-F1 DISTANCE-FIELD HEIGHT. Replaces the prior dome+seam composite which
         // produced piecewise gradients (dome falloff inside cell + seam carve at boundary)
