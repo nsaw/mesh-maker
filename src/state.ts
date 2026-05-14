@@ -228,7 +228,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 8;
+const CURRENT_PAYLOAD_VERSION = 9;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -277,15 +277,14 @@ const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
 // The version marker is kept for future migrations that may need to target pre-v2 links.
 const LEGACY_V6_DEFAULTS: Partial<MeshState> = {};
 // v7→v8 reverted from polar-grid placement (v2, produced mechanical mandala/spirograph
-// patterns) to Cartesian Voronoi with per-pixel metric anisotropy + density-boost near foci
-// (v3 = v1's idea minus the site-warp and density-cut that caused v1's puckers). State-key
-// surface unchanged; semantics revert to v1-style: reliefRadialStrength = anisotropy boost,
-// reliefRadialFalloff = Gaussian σ as fraction of diagonal, reliefRadialGrow = density boost
-// near foci (a BOOST, not a cut), reliefRadialWarp is unused (kept for backward compat).
-// v7 starburst links reinterpret their saved values under v3 semantics, which produces an
-// organic Voronoi with radial bias near foci rather than v2's mandala — again an improvement,
-// so no forced reset.
+// patterns) to Cartesian Voronoi with per-pixel metric anisotropy + density-boost near foci.
+// That v3 density boost later proved too dense and is migrated by the v9 conditional upgrade
+// below when saved links exactly match the known bad starburst parameter sets.
 const LEGACY_V7_DEFAULTS: Partial<MeshState> = {};
+// v8→v9 replaces radial density boost with organic focal expansion: foci no longer change
+// site count, reliefRadialGrow expands the continuous radius/bowl field, and reliefRadialWarp
+// drives low-frequency focal irregularity instead of remaining inert.
+const LEGACY_V8_DEFAULTS: Partial<MeshState> = {};
 // v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
 // `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
 const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
@@ -458,6 +457,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 9) {
+      for (const [k, v] of Object.entries(LEGACY_V8_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -487,6 +493,43 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       const v = integer ? Math.floor(n) : n;
       (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
     };
+    const approximately = (a: unknown, b: number): boolean => {
+      const n = toFiniteNumber(a);
+      return n !== null && Math.abs(n - b) < 1e-9;
+    };
+    const upgradeKnownStarburstDefaults = (): void => {
+      const fociCount = toFiniteNumber(result.reliefRadialFociCount);
+      if (payloadVersion >= 9 || fociCount === null || fociCount <= 0) return;
+      const matchesV7PolarDefaults =
+        approximately(result.reliefCellSize, 3.5)
+        && approximately(result.reliefRadialStrength, 1.8)
+        && approximately(result.reliefRadialFalloff, 0.5)
+        && approximately(result.reliefRadialGrow, 0.7)
+        && approximately(result.reliefRadialWarp, 0.35);
+      const matchesV8DenseDefaults =
+        approximately(result.reliefCellSize, 2.2)
+        && approximately(result.reliefRadialStrength, 1.6)
+        && approximately(result.reliefRadialFalloff, 0.4)
+        && approximately(result.reliefRadialGrow, 0.8)
+        && approximately(result.reliefRadialWarp, 0);
+      if (!matchesV7PolarDefaults && !matchesV8DenseDefaults) return;
+      (result as Record<string, unknown>).reliefCellSize = 4.8;
+      (result as Record<string, unknown>).reliefJitter = 0.92;
+      (result as Record<string, unknown>).reliefRelaxIterations = 0;
+      (result as Record<string, unknown>).distortion = 0.55;
+      (result as Record<string, unknown>).reliefSeamDepth = 0.58;
+      (result as Record<string, unknown>).reliefAnisotropy = 0.18;
+      (result as Record<string, unknown>).reliefAnisotropyAngle = 75;
+      (result as Record<string, unknown>).reliefCellSizeGradient = 0.95;
+      (result as Record<string, unknown>).reliefAttractorNoise = 0.65;
+      (result as Record<string, unknown>).reliefAttractorNoiseFreq = 0.11;
+      (result as Record<string, unknown>).reliefRadialStrength = 0.22;
+      (result as Record<string, unknown>).reliefRadialFalloff = 0.11;
+      (result as Record<string, unknown>).reliefRadialGrow = 0.55;
+      (result as Record<string, unknown>).reliefRadialWarp = 0.9;
+      (result as Record<string, unknown>).reliefFlowAnisotropy = 0.45;
+    };
+    upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
     // back to DEFAULTS instead of feeding a junk string into the sampler/UI.
     const clampEnum = (key: keyof MeshState, allowed: readonly string[]): void => {
@@ -521,9 +564,9 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefAttractorNoise' in result) clampField('reliefAttractorNoise', 0, 1);
     if ('reliefAttractorNoiseFreq' in result) clampField('reliefAttractorNoiseFreq', 0.02, 0.5);
     if ('reliefFlowAnisotropy' in result) clampField('reliefFlowAnisotropy', 0, 1);
-    // Radial-foci ("starburst") params. reliefRadialFociCount bounds a small per-grid-cell
-    // loop; reliefRadialWarp is load-bearing for site-warp fold-safety (the sampler caps the
-    // per-focus displacement amplitude relative to σ assuming this stays in [0, 1]).
+    // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
+    // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
+    // they cannot over-amplify the bowl normalization or angular irregularity.
     if ('reliefRadialFociCount' in result) clampField('reliefRadialFociCount', 0, 3, true);
     if ('reliefRadialStrength' in result) clampField('reliefRadialStrength', 0, 3);
     if ('reliefRadialFalloff' in result) clampField('reliefRadialFalloff', 0.05, 0.6);

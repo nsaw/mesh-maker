@@ -65,20 +65,20 @@ export interface ReliefParams {
   /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
    *  count by `sampleReliefParamsFromState`. Empty = the radial-foci system is off and the
    *  sampler is byte-identical to pre-feature output. Around each focus, cell elongation
-   *  direction tracks the local radial direction, elongation amount falls off with distance,
-   *  site density is reduced (bigger cells), and sites are warped outward (bowed ridges). */
+   *  direction tracks the local radial direction while continuous radius/intensity fields
+   *  create focal expansion without changing site density. */
   radialFoci: Array<{ x: number; y: number }>;
   /** Extra anisotropy units added near a focus (on top of `anisotropy`), scaled by the
    *  per-pixel radial blend ∈ [0,1]. Effective metric scale = 1 + (anisotropy + strength·blend)·k. */
   radialStrength: number;
   /** Radial influence radius σ as a fraction of the panel diagonal. Shared by the per-pixel
-   *  elongation blend, the `generateSites` density cut, and the post-Lloyd site-warp. */
+   *  elongation blend, focal expansion, and focal irregularity masks. */
   radialFalloff: number;
-  /** Site-density cut near foci, in [0, ~0.7]: localDensity *= 1 − radialGrow·fociWeight,
-   *  where fociWeight ∈ [0,1] is the max Gaussian weight over all foci. Bigger ⇒ larger cells. */
+  /** Focal cell expansion in [0, 2]. Bigger values broaden pocket interiors near foci by
+   *  expanding the continuous radius/bowl normalization; site count is unchanged. */
   radialGrow: number;
-  /** Radial site-warp amount in [0,1] — pushes sites outward from each focus (bowed ridges).
-   *  Applied post-Lloyd; per-focus displacement amplitude is capped fold-safe relative to σ. */
+  /** Focal irregularity in [0,1] — low-frequency angular and influence modulation that
+   *  breaks perfect rosette symmetry without moving sites. */
   radialWarp: number;
   /** Elongation axis relative to the local radial direction (rays / rings / spiral). */
   radialMode: ReliefRadialMode;

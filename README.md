@@ -206,7 +206,7 @@ Each tool has cutting data for all three material profiles (General, MDF, Hardwo
 
 MESHCRAFT is also available as a Grasshopper node set for Rhino 7. All 16 noise algorithms, shaping controls, smoothing, and CNC presets — running natively inside Grasshopper with real-time mesh output.
 
-> **Note:** the **radial-foci ("starburst") system** in the Voronoi Relief mode is **web-only** at the moment. Selecting the `relief-starburst` preset in Grasshopper produces a plain Voronoi relief at the starburst base settings (correct degradation while the IronPython port is deferred); the `radial_*` fields aren't read by the GhPython sampler.
+> **Note:** the **radial-foci ("starburst") system** in the Voronoi Relief mode is **web-only** at the moment. Selecting the `relief-starburst` preset in Grasshopper produces a plain Voronoi relief at the v9 starburst base settings (correct degradation while the IronPython port is deferred); the `radial_*` fields aren't read by the GhPython sampler.
 
 <p align="center">
   <img src="grasshopper/assets/preview.jpg" alt="MeshCraft Grasshopper Definition" width="800">
@@ -290,7 +290,7 @@ The **MeshCraft | Presets** component is placed on the canvas but **unwired by d
 2. Wire individual preset outputs to the matching inputs on the Noise, Shape, or Smooth components — this overrides the slider value for that parameter
 3. To return to manual control, disconnect the preset wire and the slider takes over again
 
-Available presets: Gentle Waves, Organic Terrain, Sharp Ridges, Voronoi Cells, Subtle Texture, Deep Carve, Sculptural, Hard Wave, Eroded Stone, Billowy Clouds, Turbulent Marble, Natural Ridge, Organic Swirl, Worley Cracks, Brushed Metal, Relief Vertical, Relief Radial, Relief Pockets
+Available presets: Gentle Waves, Organic Terrain, Sharp Ridges, Voronoi Cells, Subtle Texture, Deep Carve, Sculptural, Hard Wave, Eroded Stone, Billowy Clouds, Turbulent Marble, Natural Ridge, Organic Swirl, Worley Cracks, Brushed Metal, Relief Vertical, Relief Radial, Relief Pockets, Relief Starburst
 
 ### Exporting from Rhino
 

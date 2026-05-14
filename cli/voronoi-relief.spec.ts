@@ -12,6 +12,7 @@
  */
 
 import { VoronoiReliefGen } from '../src/noise/voronoi-relief';
+import { CNC_PRESETS } from '../src/noise/presets';
 import type { ReliefSampleParams } from '../src/types';
 
 let failures = 0;
@@ -47,6 +48,62 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
   };
 }
 
+function starburstPresetParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSampleParams {
+  const p = CNC_PRESETS['relief-starburst'];
+  const numberValue = (key: string): number => {
+    const v = p[key];
+    if (typeof v !== 'number') throw new Error(`relief-starburst.${key} must be numeric`);
+    return v;
+  };
+  const stringValue = (key: string): string => {
+    const v = p[key];
+    if (typeof v !== 'string') throw new Error(`relief-starburst.${key} must be string`);
+    return v;
+  };
+  return baseParams({
+    cols: 120,
+    rows: 240,
+    meshX: numberValue('meshX'),
+    meshY: numberValue('meshY'),
+    cellSize: numberValue('reliefCellSize'),
+    jitter: numberValue('reliefJitter'),
+    relaxIterations: numberValue('reliefRelaxIterations'),
+    polarity: stringValue('reliefPolarity') as ReliefSampleParams['polarity'],
+    profile: stringValue('reliefProfile') as ReliefSampleParams['profile'],
+    seamDepth: numberValue('reliefSeamDepth'),
+    seamWidth: numberValue('reliefSeamWidth'),
+    anisotropy: numberValue('reliefAnisotropy'),
+    anisotropyAngle: numberValue('reliefAnisotropyAngle'),
+    attractorMode: stringValue('reliefAttractorMode') as ReliefSampleParams['attractorMode'],
+    attractorX: numberValue('reliefAttractorX'),
+    attractorY: numberValue('reliefAttractorY'),
+    attractorRadius: numberValue('reliefAttractorRadius'),
+    attractorFalloff: numberValue('reliefAttractorFalloff'),
+    densityStrength: numberValue('reliefDensityStrength'),
+    intensityStrength: numberValue('reliefIntensityStrength'),
+    transitionSoftness: numberValue('reliefTransitionSoftness'),
+    baseMode: stringValue('reliefBaseMode') as ReliefSampleParams['baseMode'],
+    warpDistortion: numberValue('distortion'),
+    warpFrequency: numberValue('warpFreq'),
+    cellSizeGradient: numberValue('reliefCellSizeGradient'),
+    voidStrength: numberValue('reliefVoidStrength'),
+    attractorNoise: numberValue('reliefAttractorNoise'),
+    attractorNoiseFreq: numberValue('reliefAttractorNoiseFreq'),
+    flowAnisotropy: numberValue('reliefFlowAnisotropy'),
+    radialFoci: [
+      { x: numberValue('reliefRadialFocus1X'), y: numberValue('reliefRadialFocus1Y') },
+      { x: numberValue('reliefRadialFocus2X'), y: numberValue('reliefRadialFocus2Y') },
+      { x: numberValue('reliefRadialFocus3X'), y: numberValue('reliefRadialFocus3Y') },
+    ].slice(0, Math.floor(numberValue('reliefRadialFociCount'))),
+    radialStrength: numberValue('reliefRadialStrength'),
+    radialFalloff: numberValue('reliefRadialFalloff'),
+    radialGrow: numberValue('reliefRadialGrow'),
+    radialWarp: numberValue('reliefRadialWarp'),
+    radialMode: stringValue('reliefRadialMode') as ReliefSampleParams['radialMode'],
+    ...overrides,
+  });
+}
+
 function flatten(grid: number[][]): number[] {
   const out: number[] = [];
   for (const row of grid) for (const v of row) out.push(v);
@@ -57,6 +114,50 @@ function mean(values: number[]): number {
   let s = 0;
   for (const v of values) s += v;
   return s / values.length;
+}
+
+function stdev(values: number[]): number {
+  const m = mean(values);
+  let s = 0;
+  for (const v of values) s += (v - m) ** 2;
+  return Math.sqrt(s / values.length);
+}
+
+function countMeanCrossings(grid: number[][]): number {
+  const m = mean(flatten(grid));
+  let crossings = 0;
+  for (let j = 0; j < grid.length; j++) {
+    let prev = grid[j][0] > m;
+    for (let i = 1; i < grid[j].length; i++) {
+      const cur = grid[j][i] > m;
+      if (cur !== prev) crossings++;
+      prev = cur;
+    }
+  }
+  for (let i = 0; i < grid[0].length; i++) {
+    let prev = grid[0][i] > m;
+    for (let j = 1; j < grid.length; j++) {
+      const cur = grid[j][i] > m;
+      if (cur !== prev) crossings++;
+      prev = cur;
+    }
+  }
+  return crossings;
+}
+
+function countLocalMinima(grid: number[][]): number {
+  let minima = 0;
+  for (let j = 1; j < grid.length - 1; j++) {
+    for (let i = 1; i < grid[j].length - 1; i++) {
+      const v = grid[j][i];
+      const local = (grid[j - 1][i] + grid[j + 1][i] + grid[j][i - 1] + grid[j][i + 1]) / 4;
+      if (v < local - 0.03 && v < grid[j - 1][i] && v < grid[j + 1][i]
+        && v < grid[j][i - 1] && v < grid[j][i + 1]) {
+        minima++;
+      }
+    }
+  }
+  return minima;
 }
 
 // 1. Determinism
@@ -614,7 +715,7 @@ function mean(values: number[]): number {
     cols: 200, rows: 200, meshX: 48, meshY: 48, seed: 7,
     polarity: 'pockets', profile: 'parabolic', cellSize: 2,
     radialFoci: [{ x: 0.5, y: 0.5 }],
-    radialStrength: 2, radialFalloff: 0.4, radialGrow: 0.8, radialWarp: 0, radialMode: 'rays',
+    radialStrength: 2, radialFalloff: 0.4, radialGrow: 0.8, radialWarp: 0.55, radialMode: 'rays',
   }));
   const countCrossings = (radiusPx: number): number => {
     const cxC = 100, cyC = 100;
@@ -636,6 +737,31 @@ function mean(values: number[]): number {
     }
     return cr;
   };
+  const angularGapCv = (radiusPx: number): number => {
+    const cxC = 100, cyC = 100;
+    const heights: number[] = [];
+    for (let t = 0; t < 720; t++) {
+      const theta = (t / 720) * 2 * Math.PI;
+      const ii = Math.round(cxC + radiusPx * Math.cos(theta));
+      const jj = Math.round(cyC + radiusPx * Math.sin(theta));
+      if (jj < 0 || jj >= 200 || ii < 0 || ii >= 200) continue;
+      heights.push(singleFocus[jj][ii]);
+    }
+    const m = mean(heights);
+    const angles: number[] = [];
+    let prev = heights[0] > m;
+    for (let k = 1; k < heights.length; k++) {
+      const cur = heights[k] > m;
+      if (cur !== prev) angles.push((k / heights.length) * 2 * Math.PI);
+      prev = cur;
+    }
+    const gaps: number[] = [];
+    for (let k = 0; k < angles.length; k++) {
+      const next = k === angles.length - 1 ? angles[0] + 2 * Math.PI : angles[k + 1];
+      gaps.push(next - angles[k]);
+    }
+    return gaps.length > 1 ? stdev(gaps) / mean(gaps) : 0;
+  };
   const inner = countCrossings(0.12 * Math.hypot(200, 200));
   const outer = countCrossings(0.30 * Math.hypot(200, 200));
   // v2 mandala would give inner ≈ outer (within ~20%) because the polar grid has constant
@@ -646,11 +772,14 @@ function mean(values: number[]): number {
   assert(Math.abs(ratio - 1) >= 0.3 || (inner === 0 && outer === 0),
     'organic Voronoi (not mandala): crossing counts at different radii differ ≥ 30%',
     `inner=${inner} outer=${outer} ratio=${ratio.toFixed(2)}`);
+  const gapCv = angularGapCv(0.18 * Math.hypot(200, 200));
+  assert(gapCv > 0.35,
+    'organic Voronoi (not mandala): angular sector widths vary strongly',
+    `gapCv=${gapCv.toFixed(2)}`);
 
-  // v2 anti-regression #3 — site-count budget. Extreme params must not blow past
-  // SITE_COUNT_MAX=4096 sites; the polar generator caps per-focus and per-ring. Run with the
-  // worst-case combo and assert the output stays finite + in range (the sampler's internal cap
-  // prevents truncation artifacts the user would see as missing wedge sectors).
+  // Site-count budget. Extreme params must not blow past SITE_COUNT_MAX=4096 sites. Run with
+  // the worst-case combo and assert the output stays finite + in range; the sampler's internal
+  // cap prevents browser freezes or truncation artifacts.
   const extreme = new VoronoiReliefGen(99).sampleGrid(baseParams({
     cols: 100, rows: 100, meshX: 80, meshY: 80, seed: 99,
     polarity: 'pockets', profile: 'parabolic', cellSize: 0.5,
@@ -667,16 +796,10 @@ function mean(values: number[]): number {
   assert(extremeFinite && extremeRange,
     'extreme params (cellSize=0.5, strength=4, growth=min, panel 80×80) stay within budget + clamp');
 
-  // v2 anti-regression #4 — panel-edge coverage. The polar grid must extend to the panel
-  // corners; if rMax is too small, corners would be flat zones (stdev → 0). Compare the
-  // height-stdev of each 10×10 corner patch against the panel-wide stdev under the default
-  // starburst preset values.
-  const starburst = new VoronoiReliefGen(13).sampleGrid(baseParams({
-    cols: 120, rows: 240, meshX: 24, meshY: 48, seed: 13,
-    polarity: 'pockets', profile: 'parabolic', cellSize: 3.5,
-    radialFoci: [{ x: 0.7, y: 0.18 }, { x: 0.2, y: 0.5 }, { x: 0.75, y: 0.85 }],
-    radialStrength: 1.8, radialFalloff: 0.5, radialGrow: 0.7, radialWarp: 0.35, radialMode: 'rays',
-  }));
+  // Panel-edge coverage. The focal field must not collapse the preset into isolated center
+  // effects with dead corners. Compare the height-stdev of each 10×10 corner patch against
+  // the panel-wide stdev under the default starburst preset values.
+  const starburst = new VoronoiReliefGen(13).sampleGrid(starburstPresetParams({ seed: 13 }));
   const allVals: number[] = [];
   for (let j = 0; j < 240; j++) for (let i = 0; i < 120; i++) allVals.push(starburst[j][i]);
   const panelMean = allVals.reduce((s, v) => s + v, 0) / allVals.length;
@@ -696,6 +819,47 @@ function mean(values: number[]): number {
   assert(minCornerRatio > 0.05,
     'panel-edge coverage — corner stdev ≥ 5% of panel stdev (no flat-zone corners)',
     `minCornerRatio=${minCornerRatio.toFixed(3)}`);
+
+  const starburstCrossings = countMeanCrossings(starburst);
+  const starburstMinima = countLocalMinima(starburst);
+  assert(starburstCrossings > 2500 && starburstCrossings < 5200,
+    'starburst preset stays in broad-pocket crossing range (not dense lattice, not flat)',
+    `crossings=${starburstCrossings}`);
+  assert(starburstMinima >= 50 && starburstMinima <= 180,
+    'starburst preset keeps organic large-cell minima count (not dense sliver field)',
+    `localMinima=${starburstMinima}`);
+
+  const fociOff = new VoronoiReliefGen(13).sampleGrid(starburstPresetParams({
+    seed: 13,
+    radialFoci: [],
+    radialStrength: 0,
+    radialGrow: 0,
+    radialWarp: 0,
+  }));
+  const fociOffMinima = countLocalMinima(fociOff);
+  assert(starburstMinima <= fociOffMinima + 110,
+    'focal expansion does not increase feature count like a site-density boost',
+    `withFoci=${starburstMinima} withoutFoci=${fociOffMinima}`);
+  const focusMean = (grid: number[][], f: { x: number; y: number }): number => {
+    let sum = 0;
+    let n = 0;
+    const cx = f.x * (grid[0].length - 1);
+    const cy = f.y * (grid.length - 1);
+    for (let j = 0; j < grid.length; j++) {
+      for (let i = 0; i < grid[j].length; i++) {
+        if (Math.hypot(i - cx, j - cy) < 30) {
+          sum += grid[j][i];
+          n++;
+        }
+      }
+    }
+    return sum / Math.max(1, n);
+  };
+  const presetFoci = [{ x: 0.7, y: 0.18 }, { x: 0.2, y: 0.5 }, { x: 0.75, y: 0.85 }];
+  const depthDelta = mean(presetFoci.map((f) => focusMean(fociOff, f) - focusMean(starburst, f)));
+  assert(depthDelta < -0.02,
+    'focal expansion broadens focus regions by expanding the radius field, not by over-deepening them',
+    `depthDelta=${depthDelta.toFixed(3)}`);
 
   // PR #16 review — defense in depth: a focus list with NaN/Infinity coords or > 3 entries
   // (callers constructing ReliefSampleParams directly bypass sampleReliefParamsFromState's

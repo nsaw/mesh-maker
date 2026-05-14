@@ -25,29 +25,29 @@
  * `sampleReliefParamsFromState` wires both `warpDistortion` and `warpFrequency` into that
  * path so the global warp sliders affect relief output.
  *
- * RADIAL FOCI ("starburst") — v3: a Cartesian-jittered Voronoi (the v0 baseline cell layout)
- * is shaped near each focus by TWO independent levers, both operating on a per-pixel Gaussian
- * influence field around each focus (σ = `radialFalloff` × panel diagonal):
+ * RADIAL FOCI ("starburst") — v9: a Cartesian-jittered Voronoi (the organic baseline cell
+ * layout) is shaped near each focus by three continuous-field levers. Foci never add/remove
+ * sites: the v3 density boost produced the dense diagonal lattice regression, while the v2
+ * polar grid produced mandalas.
  *
- *   1. Per-pixel anisotropy metric (`pixelAnisoFrame`'s radial branch). Cells are elongated
- *      along the local RADIAL direction (rays mode) by an amount that smoothly fades from
- *      strong-near-focus to zero-far-away via `blend = wMax · coherence`. The site set is
- *      unchanged — only the distance metric used by `nearestTwo` is rotated per pixel. This
- *      keeps the cell arrangement organic (Cartesian Voronoi) but biases cell long-axes
- *      radially. The metric inflates the component ALONG `(cosA, sinA)`, which extends cells
- *      PERPENDICULAR to that direction (confirmed with concrete two-site bisector math) —
- *      so 'rays' (radial elongation) feeds `θ_radial + 90°`.
+ *   1. Low-gain per-pixel anisotropy metric (`pixelAnisoFrame`'s radial branch). Cells are
+ *      gently elongated along the local radial direction without turning the whole panel into
+ *      slivers. The site set is unchanged — only the distance metric used by `nearestTwo` is
+ *      rotated per pixel. The metric inflates the component ALONG `(cosA, sinA)`, which extends
+ *      cells PERPENDICULAR to that direction, so 'rays' feeds `θ_radial + 90°`.
  *
- *   2. Site-density boost near foci (`generateSites`'s radial term). `localDensity *= 1 +
- *      radialGrow · fociWeight`, capped against `LOCAL_DENSITY_MAX`. More sites → smaller
- *      cells near foci, matching the reference's "tighter cells at the focus, coarser
- *      cells far away." This is a density BOOST, not a cut — never thins to zero, so the
- *      v1 site-sparse cavity (pucker hole) cannot reappear.
+ *   2. Focal cell expansion (`radialGrow`) scales the continuous radius field R(x,y) upward,
+ *      widening the normalization radius near foci without increasing site count. This creates
+ *      geometric expansion while preserving large organic pockets.
+ *
+ *   3. Focal irregularity (`radialWarp`) adds low-frequency angular + influence modulation so
+ *      foci read as carved organic expansions instead of perfect rosettes.
  *
  * NOT used (deliberately, all caused or contributed to v1/v2 visual failures):
  *   - Post-Lloyd radial site-warp (v1's outward push). It vacated the focus center, creating
  *     the "pucker hole" + crack artifacts.
- *   - Site-density CUT (v1). It produced site-sparse cavities at high `radialGrow`.
+ *   - Site-density CUT/BOOST near foci (v1/v3). Cuts produced cavities; boosts produced the
+ *     dense-lattice regression.
  *   - Polar-grid site placement (v2). It produced mechanically perfect concentric rings —
  *     mathematically inevitable for polar coordinates, but visually a mandala/spirograph,
  *     not the reference's organic Voronoi.
@@ -75,8 +75,10 @@ const WAVE_GEN_SEED_OFFSET = 17;
 const WAVE_NOISE_FREQUENCY = 0.1;
 const WAVE_AMPLITUDE = 0.5;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
+const RADIAL_ANISOTROPY_SCALE_MULTIPLIER = 0.35;
 // Spatial frequency of the flow-anisotropy noise field (per-pixel angle perturbation).
 const FLOW_NOISE_FREQUENCY = 0.18;
+const RADIAL_IRREGULARITY_NOISE_FREQUENCY = 0.075;
 // Sampler output clamp. Positive constant; used with explicit `-` sign at carve sites
 // (e.g. void mode pushes h to `-OUTPUT_HEIGHT_CLAMP`). Naming clarifies the magnitude
 // vs. previous `OUTPUT_CLAMP` which was used asymmetrically and read confusingly.
@@ -183,9 +185,6 @@ function generateSites(
   p: ReliefSampleParams,
   rand: () => number,
   warpGen: SimplexNoiseGen | null,
-  fociPhys: ReadonlyArray<{ x: number; y: number }>,
-  sigma: number,
-  radialGrow: number,
 ): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
   // baseSpacing converts cellSize (avg cell diameter) to grid spacing for site placement.
@@ -216,24 +215,7 @@ function generateSites(
         p.attractorMode, u, v, p.attractorX, p.attractorY,
         p.attractorRadius, p.attractorFalloff,
       );
-      let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
-      // Radial-foci density BOOST — make cells smaller (more sites) near each focus so the
-      // reference's "tighter cells at focus, coarser away" gradient emerges. Critically a
-      // BOOST not a CUT: max boost ≤ radialGrow at the exact focus position; sites are
-      // never thinned to zero, so v1's site-sparse "pucker hole" cavity cannot reappear.
-      // fociWeight = max Gaussian weight across all foci; the LOCAL_DENSITY_MAX clamp below
-      // covers the result in case densityStrength was already high.
-      if (radialGrow > 0 && fociPhys.length > 0) {
-        let wMax = 0;
-        const inv2sigma2 = 1 / (2 * sigma * sigma);
-        for (let k = 0; k < fociPhys.length; k++) {
-          const dx = cx - fociPhys[k].x;
-          const dy = cy - fociPhys[k].y;
-          const w = Math.exp(-(dx * dx + dy * dy) * inv2sigma2);
-          if (w > wMax) wMax = w;
-        }
-        localDensity = Math.min(LOCAL_DENSITY_MAX, localDensity * (1 + radialGrow * wMax));
-      }
+      const localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
       // Stochastic acceptance: density 1 keeps all, density 2 doubles via extra in-cell sample.
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
       for (let k = 0; k < reps; k++) {
@@ -339,10 +321,11 @@ function nearestTwo(
   return { f1, f2, idx };
 }
 
-/** Per-pixel anisotropy frame for the Voronoi distance metric. v3 rebuilt: base anisotropy
- *  angle, rotated by the flow-noise field, then (near a radial focus) rotated toward the
- *  local radial axis and amplified. Returns a unit direction (cosA, sinA) for `nearestTwo`,
- *  the per-pixel metric `scale`, and `blend ∈ [0,1]` — how strongly the radial system dominates.
+/** Per-pixel anisotropy frame for the Voronoi distance metric. Base anisotropy angle is rotated
+ *  by the flow-noise field, then (near a radial focus) gently rotated toward the local radial
+ *  axis with optional low-frequency irregularity. Returns a unit direction (cosA, sinA) for
+ *  `nearestTwo`, the per-pixel metric `scale`, and `blend ∈ [0,1]` — how strongly the radial
+ *  system contributes at this pixel.
  *
  *  SIGN CONVENTION (load-bearing — derived from the two-site bisector test):
  *    `nearestTwo` inflates the component of `(dx,dy)` ALONG `(cosA, sinA)` by `anisotropyScale`.
@@ -370,6 +353,8 @@ function pixelAnisoFrame(
   baseScale: number,
   flowGen: SimplexNoiseGen | null,
   flowAmt: number,
+  radialIrregularityGen: SimplexNoiseGen | null,
+  radialIrregularity: number,
   fociPhys: ReadonlyArray<{ x: number; y: number }>,
   sigma: number,
   radialStrength: number,
@@ -421,7 +406,20 @@ function pixelAnisoFrame(
       const calmR = Math.min(0.5 * Math.max(0.2, cellSize), 0.08 * sigma);
       if (calmR > 0 && nearest < calmR) blend *= smoothstep(0, calmR, nearest);
       if (blend > 0) {
-        const thetaRadial = Math.atan2(vy, vx);
+        let thetaRadial = Math.atan2(vy, vx);
+        if (radialIrregularityGen && radialIrregularity > 0) {
+          const angleNoise = radialIrregularityGen.noise(
+            x * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
+            y * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
+          );
+          const blendNoise = radialIrregularityGen.noise(
+            x * RADIAL_IRREGULARITY_NOISE_FREQUENCY + 41.3,
+            y * RADIAL_IRREGULARITY_NOISE_FREQUENCY - 19.7,
+          );
+          thetaRadial += angleNoise * radialIrregularity * Math.PI * 0.35;
+          blend *= Math.max(0.45, 1 + blendNoise * radialIrregularity * 0.45);
+          if (blend > 1) blend = 1;
+        }
         let elong: number;
         if (radialMode === 'rings') elong = thetaRadial;
         else if (radialMode === 'spiral') elong = thetaRadial + Math.PI / 2 + Math.PI / 6;
@@ -437,7 +435,7 @@ function pixelAnisoFrame(
         const ll = Math.hypot(lx, ly) || 1e-6;
         cosA = lx / ll;
         sinA = ly / ll;
-        scale = baseScale + radialStrength * blend * ANISOTROPY_SCALE_MULTIPLIER;
+        scale = baseScale + radialStrength * blend * RADIAL_ANISOTROPY_SCALE_MULTIPLIER;
       }
     }
   }
@@ -481,12 +479,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const flowGen = p.flowAnisotropy > 0
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 47)
       : null;
-
-    // Radial-foci ("starburst") setup — v3: Cartesian-jittered site placement is RETAINED;
-    // the foci shape the field via (a) per-pixel metric anisotropy in pixelAnisoFrame and
-    // (b) site-density boost in generateSites. Both fade smoothly with Gaussian distance from
-    // each focus (σ = radialFalloff × panel diagonal). No site-warp, no density cut, no polar
-    // placement — those were v1/v2 failure modes.
+    // Radial-foci ("starburst") setup — v9: Cartesian-jittered site placement is retained;
+    // foci shape the field via low-gain per-pixel metric anisotropy, continuous radius-field
+    // expansion, and low-frequency irregularity. No site-warp, no radial density cut/boost,
+    // no polar placement — those were the v1/v2/v3 failure modes.
     //
     // Sanitize radialFoci defensively even though state.ts URL-clamps already cover the share-
     // link path: callers constructing ReliefSampleParams directly (tests, future paths) bypass
@@ -504,8 +500,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
     );
     const radialStrength = Math.max(0, Math.min(4, p.radialStrength));
     const radialGrow = Math.max(0, Math.min(2, p.radialGrow));
+    const radialIrregularity = radialFociPhys.length > 0
+      ? Math.max(0, Math.min(1, p.radialWarp))
+      : 0;
+    const radialIrregularityGen = radialIrregularity > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61)
+      : null;
 
-    const sites = generateSites(p, rand, warpGen, radialFociPhys, sigmaRadial, radialGrow);
+    const sites = generateSites(p, rand, warpGen);
     if (sites.length === 0) {
       // Defensive: empty cellgrid → flat field.
       const empty: number[][] = [];
@@ -557,6 +559,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const x = u * p.meshX;
         const frame = pixelAnisoFrame(
           x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
+          radialIrregularityGen, radialIrregularity,
           radialFociPhys, sigmaRadial, radialStrength, p.radialMode, p.cellSize,
         );
         const { f1, idx } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
@@ -660,6 +663,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Strength control respond to foci proximity (max(mask, radialBlend)).
         const frame = pixelAnisoFrame(
           x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
+          radialIrregularityGen, radialIrregularity,
           radialFociPhys, sigmaRadial, radialStrength, p.radialMode, p.cellSize,
         );
         const { f1, f2 } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
@@ -679,9 +683,16 @@ export class VoronoiReliefGen implements ReliefGenerator {
           if (mask < 0) mask = 0;
         }
         // Cell-size gradient shrinks the effective radius where mask is high. R_field is
-        // already continuous; we just scale it by a continuous function of mask.
+        // already continuous; we just scale it by continuous functions of mask/focus blend.
         const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        const R = Math.max(0.05, Rfield[j * cols + i] * Math.max(0.2, sizeShrink));
+        // Focal Cell Expansion must expand the continuous radius field. The v9.0 formula used
+        // `1 - grow * blend`, which shrank R near foci and made the denominator smaller; visually
+        // that sharpened/deepened focus centers into pinched rosettes. Scaling R upward broadens
+        // the local bowl field without changing site count.
+        const focalExpand = 1 + radialGrow * radialBlend * 0.45;
+        const R = Math.max(0.05, Rfield[j * cols + i]
+          * Math.max(0.2, sizeShrink)
+          * Math.min(1.9, focalExpand));
 
         // WORLEY F2-F1 DISTANCE-FIELD HEIGHT. Replaces the prior dome+seam composite which
         // produced piecewise gradients (dome falloff inside cell + seam carve at boundary)
