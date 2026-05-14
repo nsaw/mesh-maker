@@ -39,7 +39,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // sit at the top and the cellular/spike zone hangs toward the bottom edge.
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:2.2,
     reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
-    reliefCellSizeGradient:1.0, reliefVoidStrength:0.7, reliefInvertProfile:0,
+    reliefCellSizeGradient:1.0, reliefVoidStrength:0.7, reliefInvertProfile:0, reliefSeamSharpness:0,
     // Explicit zeros so switching from relief-pockets / relief-starburst (which set these to
     // non-zero) cleanly resets back to relief-vertical's designed appearance. Presets are
     // key-only merges, so omitting a field means inheriting the previous preset's value.
@@ -54,7 +54,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefSeamDepth:0.6, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     reliefAttractorMode:'radial', reliefAttractorX:0.5, reliefAttractorY:0.4, reliefAttractorRadius:0.6, reliefAttractorFalloff:1.2,
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
-    reliefCellSizeGradient:0.6, reliefVoidStrength:0, reliefInvertProfile:0,
+    reliefCellSizeGradient:0.6, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
     // Explicit zeros for the same reason as relief-vertical above — prevents stale state
     // carry-over when switching from relief-pockets / relief-starburst.
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
@@ -86,7 +86,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.6,
     reliefDensityStrength:1.7, reliefIntensityStrength:0.6, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
-    reliefCellSizeGradient:1.5, reliefVoidStrength:0, reliefInvertProfile:0,
+    reliefCellSizeGradient:1.5, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
     reliefAttractorNoise:0.8, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.5,
     reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
     reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
@@ -113,10 +113,10 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
     reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
-    reliefCellSizeGradient:0.4, reliefVoidStrength:0, reliefInvertProfile:1,
+    reliefCellSizeGradient:0.4, reliefVoidStrength:0, reliefInvertProfile:1, reliefSeamSharpness:0.7,
     reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12, reliefFlowAnisotropy:0,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
     reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
     reliefRadialStrength:3.0, reliefRadialFalloff:0.4, reliefRadialGrow:1.3, reliefRadialWarp:0.55, reliefRadialMode:'rays',
-    meshX:12, meshY:36, baseThickness:2.0, smoothIter:1, smoothStr:0.2 },
+    meshX:12, meshY:36, baseThickness:2.0, smoothIter:3, smoothStr:0.45 },
 };

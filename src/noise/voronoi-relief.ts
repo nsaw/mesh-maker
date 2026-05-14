@@ -973,6 +973,16 @@ export class VoronoiReliefGen implements ReliefGenerator {
           // 'parabolic' — quadratic. dh/dt = 2t = 0 at t=0 (smooth boundary), 2 at t=1.
           bowlH = bowlT * bowlT;
         }
+        // v15.1 seam sharpness — blend bowlH toward a linear ramp `bowlT` so the cell-boundary
+        // slope dh/dt rises from 0 (smooth round-bottom gutter, the profile's natural shape)
+        // toward 1 (knife-edge V-groove). At sharpness=0 the profile is unchanged; at
+        // sharpness=1 the bowl becomes a perfect linear cone. Polygon aliasing in the rendered
+        // mesh is expected at high sharpness — that's the nature of V-grooves and acceptable
+        // for the CNC use case (V-bit toolpaths carve to that exact knife-edge shape).
+        if (p.seamSharpness > 0) {
+          const sharp = Math.max(0, Math.min(1, p.seamSharpness));
+          bowlH = (1 - sharp) * bowlH + sharp * bowlT;
+        }
         // v15 invertProfile: flip the bowl. Standard mapping carves the cell INTERIOR
         // (large distDiff at cell center → large bowlH → deep h at center). Inverted mapping
         // carves the cell BOUNDARY (small distDiff at boundary → 1−bowlH → deep h at seam),
@@ -1055,6 +1065,7 @@ export function sampleReliefParamsFromState(
     reliefCellSizeGradient: number;
     reliefVoidStrength: number;
     reliefInvertProfile: number;
+    reliefSeamSharpness: number;
     reliefAttractorNoise: number;
     reliefAttractorNoiseFreq: number;
     reliefFlowAnisotropy: number;
@@ -1109,6 +1120,7 @@ export function sampleReliefParamsFromState(
     cellSizeGradient: s.reliefCellSizeGradient,
     voidStrength: s.reliefVoidStrength,
     invertProfile: s.reliefInvertProfile,
+    seamSharpness: s.reliefSeamSharpness,
     attractorNoise: s.reliefAttractorNoise,
     attractorNoiseFreq: s.reliefAttractorNoiseFreq,
     flowAnisotropy: s.reliefFlowAnisotropy,

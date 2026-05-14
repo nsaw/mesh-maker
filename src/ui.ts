@@ -339,6 +339,11 @@ function buildReliefSection(): HTMLElement {
     // cell BOUNDARIES are carved (matches the reference panel's "domed floors" signature).
     // When 0 (default), standard pocket carving (interior sunk, boundary at surface).
     slider('reliefInvertProfile', 'Domed Floors (0/1)', 0, 1, 1),
+    // v15.1: 0 = smooth round-bottom gutter at cell boundary; 1 = knife-edge V-groove.
+    // Linear blend of the profile curve toward a `bowlT` ramp. High values produce real
+    // V-grooves but the rendered mesh will show polygon aliasing along seam ridges — fine
+    // for CNC V-bit carving paths.
+    slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),

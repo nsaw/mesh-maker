@@ -38,7 +38,7 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
     transitionSoftness: 0.3, baseMode: 'flat',
     // New fields (round-12): warp pipeline integration + cell-size gradient + void mode.
     warpDistortion: 0, warpFrequency: 0.1,
-    cellSizeGradient: 0, voidStrength: 0, invertProfile: 0,
+    cellSizeGradient: 0, voidStrength: 0, invertProfile: 0, seamSharpness: 0,
     // Round-14: noise-modulated attractor + flow-field anisotropy.
     attractorNoise: 0, attractorNoiseFreq: 0.15, flowAnisotropy: 0,
     // Round-16: radial-foci ("starburst"). Empty radialFoci ⇒ radial system off (matches
@@ -88,6 +88,7 @@ function starburstPresetParams(overrides: Partial<ReliefSampleParams> = {}): Rel
     cellSizeGradient: numberValue('reliefCellSizeGradient'),
     voidStrength: numberValue('reliefVoidStrength'),
     invertProfile: typeof p.reliefInvertProfile === 'number' ? p.reliefInvertProfile : 0,
+    seamSharpness: typeof p.reliefSeamSharpness === 'number' ? p.reliefSeamSharpness : 0,
     attractorNoise: numberValue('reliefAttractorNoise'),
     attractorNoiseFreq: numberValue('reliefAttractorNoiseFreq'),
     flowAnisotropy: numberValue('reliefFlowAnisotropy'),
@@ -836,7 +837,9 @@ function countLocalMinima(grid: number[][]): number {
   // INTERIORS at the surface (domed floors). Boundary-vertex count is much lower than
   // cell-center pixel count — minima count drops accordingly. Loosen lower bound 50 → 5
   // to accommodate the inverted geometry while still catching empty/flat regression.
-  assert(starburstMinima >= 5 && starburstMinima <= 600,
+  // v15.1: high seamSharpness creates a more textured height field around the V-grooves,
+  // raising local-minima count further. Bound widened 600 → 1200 to accommodate.
+  assert(starburstMinima >= 5 && starburstMinima <= 1200,
     'starburst preset keeps organic minima count (not dense sliver field)',
     `localMinima=${starburstMinima}`);
 

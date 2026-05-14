@@ -57,6 +57,12 @@ export interface ReliefParams {
    *  the reference panel's "domed floors with carved valleys between" signature. Boolean
    *  semantics expressed as 0/1 to keep the existing slider UI binding simple. */
   invertProfile: number;
+  /** Seam V-groove sharpness in [0, 1]. 0 = smooth profile (dh/dt = 0 at the cell boundary
+   *  → round-bottom gutter); 1 = linear ramp (dh/dt = 1 at the boundary → knife-edge V-groove).
+   *  Linearly blends `bowlH` between the chosen profile curve and a linear ramp `bowlT`. The
+   *  rendered mesh can show polygon aliasing at high sharpness — unavoidable for true V-grooves
+   *  and acceptable for CNC V-bit carving paths. */
+  seamSharpness: number;
   /** Patches the otherwise-smooth attractor mask with a 2D noise field — produces
    *  patchy, random-looking INTENSITY variation in the cellular zone (cell HEIGHTS
    *  and SHAPES vary; cell COUNT/DENSITY stays a smooth gradient driven by the
