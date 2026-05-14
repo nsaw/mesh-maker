@@ -49,6 +49,7 @@ export interface MeshState {
   reliefBaseMode: ReliefBaseMode;
   reliefCellSizeGradient: number;
   reliefVoidStrength: number;
+  reliefInvertProfile: number;
   reliefAttractorNoise: number;
   reliefAttractorNoiseFreq: number;
   reliefFlowAnisotropy: number;
@@ -148,6 +149,7 @@ export const DEFAULTS: MeshState = {
   reliefBaseMode: 'flat',
   reliefCellSizeGradient: 0,
   reliefVoidStrength: 0,
+  reliefInvertProfile: 0,
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
   reliefFlowAnisotropy: 0,
@@ -215,7 +217,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
   'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
   'reliefTransitionSoftness', 'reliefBaseMode',
-  'reliefCellSizeGradient', 'reliefVoidStrength',
+  'reliefCellSizeGradient', 'reliefVoidStrength', 'reliefInvertProfile',
   'reliefAttractorNoise', 'reliefAttractorNoiseFreq', 'reliefFlowAnisotropy',
   'reliefRadialFociCount', 'reliefRadialFocus1X', 'reliefRadialFocus1Y',
   'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
@@ -573,6 +575,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // voidStrength gates the "cut-through" mode — values above 1 are meaningless (already
     // saturates), and below 0 disables it; clamp to slider range.
     if ('reliefVoidStrength' in result) clampField('reliefVoidStrength', 0, 1);
+    if ('reliefInvertProfile' in result) clampField('reliefInvertProfile', 0, 1, true);
     if ('reliefAttractorNoise' in result) clampField('reliefAttractorNoise', 0, 1);
     if ('reliefAttractorNoiseFreq' in result) clampField('reliefAttractorNoiseFreq', 0.02, 0.5);
     if ('reliefFlowAnisotropy' in result) clampField('reliefFlowAnisotropy', 0, 1);

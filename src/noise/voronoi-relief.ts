@@ -973,6 +973,18 @@ export class VoronoiReliefGen implements ReliefGenerator {
           // 'parabolic' — quadratic. dh/dt = 2t = 0 at t=0 (smooth boundary), 2 at t=1.
           bowlH = bowlT * bowlT;
         }
+        // v15 invertProfile: flip the bowl. Standard mapping carves the cell INTERIOR
+        // (large distDiff at cell center → large bowlH → deep h at center). Inverted mapping
+        // carves the cell BOUNDARY (small distDiff at boundary → 1−bowlH → deep h at seam),
+        // with cell interiors sitting at the original surface with a dome-shaped rise from
+        // the carved seam to the cell center. Matches the reference's "domed floors with
+        // carved valleys between" signature. dh/dt continuity at t=0 (rim) is preserved
+        // because all existing profiles have dh/dt(t=0) = 0; inverting that just negates the
+        // sign of the derivative, still zero at the rim. The slight slope at t=1 (cell
+        // center) becomes a soft apex on each domed floor — visible in the reference too.
+        if (p.invertProfile > 0.5) {
+          bowlH = 1 - bowlH;
+        }
         // Polarity: pockets carve DOWN (negative h), domes raise UP (positive h).
         let h = polarity * bowlH;
 
@@ -1042,6 +1054,7 @@ export function sampleReliefParamsFromState(
     reliefBaseMode: ReliefBaseMode;
     reliefCellSizeGradient: number;
     reliefVoidStrength: number;
+    reliefInvertProfile: number;
     reliefAttractorNoise: number;
     reliefAttractorNoiseFreq: number;
     reliefFlowAnisotropy: number;
@@ -1095,6 +1108,7 @@ export function sampleReliefParamsFromState(
     warpFrequency: s.warpFreq,
     cellSizeGradient: s.reliefCellSizeGradient,
     voidStrength: s.reliefVoidStrength,
+    invertProfile: s.reliefInvertProfile,
     attractorNoise: s.reliefAttractorNoise,
     attractorNoiseFreq: s.reliefAttractorNoiseFreq,
     flowAnisotropy: s.reliefFlowAnisotropy,

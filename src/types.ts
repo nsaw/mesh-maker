@@ -49,6 +49,14 @@ export interface ReliefParams {
    *  CNC normalizer drops to z=0). Produces the spike-finger zone seen in lafabrica
    *  panels where cells become disconnected protrusions. */
   voidStrength: number;
+  /** When true, the bowl profile is inverted: `bowlH := 1 − bowlH`. The Worley F2-F1 field
+   *  gives distDiff ≈ 0 at cell boundaries and large at cell centers. Without inversion, the
+   *  height field is carved INSIDE the cells (pockets) or raised AT the cells (domes). With
+   *  inversion, the carving moves to the cell BOUNDARIES — cell INTERIORS sit at the
+   *  original surface with a dome-shaped rise from the carved seam to the center. Matches
+   *  the reference panel's "domed floors with carved valleys between" signature. Boolean
+   *  semantics expressed as 0/1 to keep the existing slider UI binding simple. */
+  invertProfile: number;
   /** Patches the otherwise-smooth attractor mask with a 2D noise field — produces
    *  patchy, random-looking INTENSITY variation in the cellular zone (cell HEIGHTS
    *  and SHAPES vary; cell COUNT/DENSITY stays a smooth gradient driven by the

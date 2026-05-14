@@ -335,6 +335,10 @@ function buildReliefSection(): HTMLElement {
     // reliefCellSize · 0.5`). Label clarifies the slider's actual function so users don't tune
     // it expecting a mesh effect.
     slider('reliefSeamWidth', 'SBP V-carve Seam Width', 0.02, 0.6, 0.01),
+    // v15: 0/1 toggle. When 1, cell INTERIORS sit at the surface with a domed rise and the
+    // cell BOUNDARIES are carved (matches the reference panel's "domed floors" signature).
+    // When 0 (default), standard pocket carving (interior sunk, boundary at surface).
+    slider('reliefInvertProfile', 'Domed Floors (0/1)', 0, 1, 1),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
