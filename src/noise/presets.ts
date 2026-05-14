@@ -107,9 +107,9 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   //   reliefRadialMode     → 'rays' (along flow) / 'rings' (perpendicular) / 'spiral' (+30°)
   // Control points 1/2/3 at top-right / mid-left / lower-right form an S-curve through the
   // panel, with curvature peaks at the visible "node" zones in the reference.
-  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:4.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
+  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.75, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
-    reliefCellSize:5.5, reliefJitter:0.55, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
+    reliefCellSize:3, reliefJitter:0.55, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
     reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
     reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
@@ -117,6 +117,6 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12, reliefFlowAnisotropy:0,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
     reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
-    reliefRadialStrength:3.0, reliefRadialFalloff:0.35, reliefRadialGrow:2.0, reliefRadialWarp:0.55, reliefRadialMode:'rays',
-    meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
+    reliefRadialStrength:3.0, reliefRadialFalloff:0.4, reliefRadialGrow:2.0, reliefRadialWarp:0.55, reliefRadialMode:'rays',
+    meshX:12, meshY:36, baseThickness:2.0, smoothIter:1, smoothStr:0.3 },
 };

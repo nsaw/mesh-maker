@@ -79,7 +79,7 @@ const WAVE_GEN_SEED_OFFSET = 17;
 const WAVE_NOISE_FREQUENCY = 0.1;
 const WAVE_AMPLITUDE = 0.5;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
-const RADIAL_ANISOTROPY_SCALE_MULTIPLIER = 0.35;
+const RADIAL_ANISOTROPY_SCALE_MULTIPLIER = 1.1;
 // Spatial frequency of the flow-anisotropy noise field (per-pixel angle perturbation).
 const FLOW_NOISE_FREQUENCY = 0.18;
 const RADIAL_IRREGULARITY_NOISE_FREQUENCY = 0.075;
@@ -500,9 +500,11 @@ function pixelAnisoFrame(
   radialIrregularityGen: SimplexNoiseGen | null,
   radialIrregularity: number,
   flowSpline: ReadonlyArray<FlowSplineSample>,
+  controlPointsPhys: ReadonlyArray<{ x: number; y: number }>,
   sigma: number,
   radialStrength: number,
   radialMode: ReliefRadialMode,
+  cellSize: number,
 ): { cosA: number; sinA: number; scale: number; blend: number; curvature: number } {
   let cosA = baseCosA;
   let sinA = baseSinA;
@@ -521,66 +523,79 @@ function pixelAnisoFrame(
   let scale = baseScale;
   let blend = 0;
   let curvature = 0;
+  // Curvature lookup from the flow spline (drives R-expansion at the node zones in Pass 2).
+  // This is independent of the anisotropy direction calculation below — the spline gives
+  // us curvature, but DIRECTION comes from the control points (v12 fix: user explicitly
+  // wants "lateral radial warp" — cells radiating OUTWARD from each focal node, not flowing
+  // along the spline tangent).
   if (flowSpline.length > 0) {
-    // v11: anisotropy axis = tangent at the nearest spline sample (replaces v9/v10's
-    // away-from-nearest-focus direction). Blend strength falls off with distance from the
-    // spline via Gaussian σ. Curvature at the nearest sample is exported so Pass 2 can drive
-    // R-expansion at curve bends (the "node" zones in the reference panel).
-    const { idx, d2 } = nearestSplineSample(flowSpline, x, y);
-    const sample = flowSpline[idx];
+    const { idx } = nearestSplineSample(flowSpline, x, y);
+    curvature = flowSpline[idx].curvature;
+  }
+  if (controlPointsPhys.length > 0) {
+    // v12: anisotropy axis = weighted sum of unit vectors pointing AWAY from each control
+    // point (the v9 "lateral radial warp" mechanism, restored). The resultant's atan2 gives
+    // the local radial axis; |resultant|/Σw ∈ [0,1] ("coherence") drops where opposing
+    // away-vectors cancel. blend = wMax · coherence — strong near a single focus, fading
+    // in seams between. This produces cells that radiate OUTWARD from each node, which is
+    // what the user means by "lateral radial warp" (v11's spline-tangent direction made
+    // cells flow along the curve instead — wrong direction for the reference).
+    let vx = 0;
+    let vy = 0;
+    let wSum = 0;
+    let wMax = 0;
+    let nearest = Infinity;
     const inv2sigma2 = 1 / (2 * sigma * sigma);
-    blend = Math.exp(-d2 * inv2sigma2);
-    curvature = sample.curvature;
-    let tx = sample.tx;
-    let ty = sample.ty;
-    // Per-pixel low-frequency noise breaks tangent uniformity so the flow looks organic.
-    if (radialIrregularityGen && radialIrregularity > 0) {
-      const angleNoise = radialIrregularityGen.noise(
-        x * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
-        y * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
-      );
-      const da = angleNoise * radialIrregularity * Math.PI * 0.35;
-      const c = Math.cos(da);
-      const s = Math.sin(da);
-      const nx = tx * c - ty * s;
-      const ny = tx * s + ty * c;
-      tx = nx; ty = ny;
-      const blendNoise = radialIrregularityGen.noise(
-        x * RADIAL_IRREGULARITY_NOISE_FREQUENCY + 41.3,
-        y * RADIAL_IRREGULARITY_NOISE_FREQUENCY - 19.7,
-      );
-      blend *= Math.max(0.45, 1 + blendNoise * radialIrregularity * 0.45);
-      if (blend > 1) blend = 1;
+    for (let k = 0; k < controlPointsPhys.length; k++) {
+      const dx = x - controlPointsPhys[k].x;
+      const dy = y - controlPointsPhys[k].y;
+      const d2 = dx * dx + dy * dy;
+      const d = Math.sqrt(d2) || 1e-6;
+      const w = Math.exp(-d2 * inv2sigma2);
+      vx += (dx / d) * w;
+      vy += (dy / d) * w;
+      wSum += w;
+      if (w > wMax) wMax = w;
+      if (d < nearest) nearest = d;
     }
-    if (blend > 0) {
-      // The unit tangent (tx, ty) IS the elongation axis for 'rays' mode (cells extend ALONG
-      // the flow). For 'rings' rotate 90° (cells extend perpendicular to flow). 'spiral' adds
-      // a 30° offset. Then feed `θ_elong + 90°` to `nearestTwo` (the metric inflates the fed
-      // axis, which narrows cells along it and widens them perpendicular — see two-site
-      // bisector derivation in the comment block above).
-      let ex = tx, ey = ty;
-      if (radialMode === 'rings') {
-        // perpendicular to tangent
-        ex = -ty; ey = tx;
-      } else if (radialMode === 'spiral') {
-        // tangent rotated +30°
-        const c = Math.cos(Math.PI / 6);
-        const s = Math.sin(Math.PI / 6);
-        ex = tx * c - ty * s;
-        ey = tx * s + ty * c;
+    if (wSum > 0) {
+      const coherence = Math.min(1, Math.hypot(vx, vy) / wSum);
+      blend = wMax * coherence;
+      // Calm-disc fade at the singularity exactly on a control point.
+      const calmR = Math.min(0.5 * Math.max(0.2, cellSize), 0.08 * sigma);
+      if (calmR > 0 && nearest < calmR) blend *= smoothstep(0, calmR, nearest);
+      if (blend > 0) {
+        let thetaRadial = Math.atan2(vy, vx);
+        // Per-pixel low-freq noise breaks rosette symmetry so foci look organic, not mandala.
+        if (radialIrregularityGen && radialIrregularity > 0) {
+          const angleNoise = radialIrregularityGen.noise(
+            x * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
+            y * RADIAL_IRREGULARITY_NOISE_FREQUENCY,
+          );
+          const blendNoise = radialIrregularityGen.noise(
+            x * RADIAL_IRREGULARITY_NOISE_FREQUENCY + 41.3,
+            y * RADIAL_IRREGULARITY_NOISE_FREQUENCY - 19.7,
+          );
+          thetaRadial += angleNoise * radialIrregularity * Math.PI * 0.35;
+          blend *= Math.max(0.45, 1 + blendNoise * radialIrregularity * 0.45);
+          if (blend > 1) blend = 1;
+        }
+        let elong: number;
+        if (radialMode === 'rings') elong = thetaRadial;
+        else if (radialMode === 'spiral') elong = thetaRadial + Math.PI / 2 + Math.PI / 6;
+        else elong = thetaRadial + Math.PI / 2; // 'rays' — feed ⟂ to radial so cells extend radial
+        let rc = Math.cos(elong);
+        let rs = Math.sin(elong);
+        // Flip the radial axis (mod π) toward the base+flow axis so the vector lerp can't
+        // hit antipodal cancellation.
+        if (cosA * rc + sinA * rs < 0) { rc = -rc; rs = -rs; }
+        const lx = cosA * (1 - blend) + rc * blend;
+        const ly = sinA * (1 - blend) + rs * blend;
+        const ll = Math.hypot(lx, ly) || 1e-6;
+        cosA = lx / ll;
+        sinA = ly / ll;
+        scale = baseScale + radialStrength * blend * RADIAL_ANISOTROPY_SCALE_MULTIPLIER;
       }
-      // Feed perpendicular to the elongation axis so cells extend ALONG (ex, ey).
-      let rc = -ey;
-      let rs = ex;
-      // Flip the axis (mod π) toward the base+flow direction so the vector lerp can't hit
-      // antipodal cancellation.
-      if (cosA * rc + sinA * rs < 0) { rc = -rc; rs = -rs; }
-      const lx = cosA * (1 - blend) + rc * blend;
-      const ly = sinA * (1 - blend) + rs * blend;
-      const ll = Math.hypot(lx, ly) || 1e-6;
-      cosA = lx / ll;
-      sinA = ly / ll;
-      scale = baseScale + radialStrength * blend * RADIAL_ANISOTROPY_SCALE_MULTIPLIER;
     }
   }
   return { cosA, sinA, scale, blend, curvature };
@@ -646,6 +661,13 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const flowSpline = radialFociNormalized.length >= 2
       ? buildFlowSpline(radialFociNormalized, p.meshX, p.meshY)
       : [];
+    // Control points in physical units — used for the v12 lateral radial warp (cells
+    // radiate outward from each focal node). The flow spline drives density modulation
+    // and curvature R-expansion; the control points drive anisotropy DIRECTION.
+    const controlPointsPhys = radialFociNormalized.map(f => ({
+      x: f.x * p.meshX,
+      y: f.y * p.meshY,
+    }));
     const sigmaRadial = Math.max(
       1e-3,
       Math.max(0.02, Math.min(0.6, p.radialFalloff)) * Math.hypot(p.meshX, p.meshY),
@@ -712,7 +734,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const frame = pixelAnisoFrame(
           x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
           radialIrregularityGen, radialIrregularity,
-          flowSpline, sigmaRadial, radialStrength, p.radialMode,
+          flowSpline, controlPointsPhys, sigmaRadial, radialStrength, p.radialMode, p.cellSize,
         );
         const { f1, idx } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
         radiusSum[idx] += f1;
@@ -817,7 +839,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const frame = pixelAnisoFrame(
           x, y, baseCosA, baseSinA, baseScale, flowGen, flowAnisotropyAmt,
           radialIrregularityGen, radialIrregularity,
-          flowSpline, sigmaRadial, radialStrength, p.radialMode,
+          flowSpline, controlPointsPhys, sigmaRadial, radialStrength, p.radialMode, p.cellSize,
         );
         const { f1, f2 } = nearestTwo(sites, x, y, frame.cosA, frame.sinA, frame.scale);
         const radialBlend = frame.blend;
