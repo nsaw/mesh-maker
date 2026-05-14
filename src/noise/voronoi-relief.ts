@@ -309,6 +309,7 @@ function generateSites(
   rand: () => number,
   warpGen: SimplexNoiseGen | null,
   flowSpline: ReadonlyArray<FlowSplineSample>,
+  controlPointsPhys: ReadonlyArray<{ x: number; y: number }>,
   sigma: number,
   flowBoost: number,
 ): Site[] {
@@ -342,24 +343,41 @@ function generateSites(
         p.attractorRadius, p.attractorFalloff,
       );
       let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
-      // v11.1 flow-spline density modulation — straight segments of the spline get tight,
-      // small cells (density BOOST); curvature peaks get LARGER, fewer cells (density CUT, but
-      // floored at ~0.2× baseline so we never produce a true cavity). This creates the
-      // reference's signature: focal NODE zones with expanded sweeping wedges between
-      // tighter "flow band" cells. Without this curvature-driven inversion, v11 produced
-      // tighter cells AT the nodes (the opposite of the desired focal expansion).
+      // v14: control-point-proximity density CUT. v13 still left enough Cartesian sites
+      // inside the focal zones to clutter the polar wedge geometry; the user reported the
+      // result as "blurry" — cells are visible but not the discrete long slivers in the
+      // reference. v14 aggressively cuts Cartesian density within ~0.5σ of any control
+      // point so the polar sites (added separately in sampleGrid) own that zone visually.
+      // Outside the focal zones, the v11.1 curvature-modulated boost still runs so the
+      // flow course between nodes still reads.
+      if (controlPointsPhys.length > 0) {
+        let minD2 = Infinity;
+        for (let k = 0; k < controlPointsPhys.length; k++) {
+          const dx = cx - controlPointsPhys[k].x;
+          const dy = cy - controlPointsPhys[k].y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < minD2) minD2 = d2;
+        }
+        // Tight Gaussian on control-point proximity (half the spline σ). At minD2=0 (right
+        // on a CP), w_cp = 1 → cut to 0.15× baseline. At distance σ_cp = sigma·0.5,
+        // w_cp ≈ 0.135 → cut is much milder. Floors at 0.15× so we never thin to zero.
+        const sigmaCp = sigma * 0.5;
+        const wCp = Math.exp(-minD2 / (2 * sigmaCp * sigmaCp));
+        const cpCut = Math.max(0.15, 1 - 0.85 * wCp);
+        localDensity *= cpCut;
+      }
+      // v11.1 flow-spline density modulation (only applies where the CP cut hasn't already
+      // dominated — i.e., on straight segments away from any CP).
       if (flowBoost > 0 && flowSpline.length > 0) {
         const { idx, d2 } = nearestSplineSample(flowSpline, cx, cy);
         const w = Math.exp(-d2 / (2 * sigma * sigma));
         const curv = flowSpline[idx].curvature;
-        // At curv=0 (straight segment): full boost — tighter band of small cells along the flow.
-        // At curv=1 (peak bend, i.e. a "node"): boost flips to a CUT down to ~0.2× baseline,
-        // letting Voronoi produce large expanded cells at the node. Smoothstep'd between.
-        const polarity = 1 - 2.2 * curv;          // +1 at straight → -1.2 at peak curvature
+        const polarity = 1 - 2.2 * curv;
         const localFactor = 1 + flowBoost * w * polarity;
-        const floored = Math.max(0.2, localFactor); // never thin below 0.2× baseline
+        const floored = Math.max(0.2, localFactor);
         localDensity = Math.min(LOCAL_DENSITY_MAX, localDensity * floored);
       }
+      localDensity = Math.min(LOCAL_DENSITY_MAX, Math.max(0.1, localDensity));
       // Stochastic acceptance: density 1 keeps all, density 2 doubles via extra in-cell sample.
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
       for (let k = 0; k < reps; k++) {
@@ -681,7 +699,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61)
       : null;
 
-    const sites = generateSites(p, rand, warpGen, flowSpline, sigmaRadial, radialGrow);
+    const sites = generateSites(p, rand, warpGen, flowSpline, controlPointsPhys, sigmaRadial, radialGrow);
     // v13: ADD polar sites at each control point (additive to Cartesian baseline). Cartesian
     // sites + metric anisotropy alone produce slightly-elliptical cells that blur together at
     // small cell sizes — not the discrete radial wedge slivers the reference shows. Placing
@@ -691,25 +709,29 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // focus center while outer rings spread out, matching the reference's "tight at the node,
     // fans outward" pattern. Only run when foci are active.
     if (controlPointsPhys.length > 0 && sigmaRadial > 0) {
-      const polarRings = 3;
-      const polarSectors = 7; // prime → no aligned-ring artifact across rings
+      // v14 polar layout: 3 rings with DECAYING sector count (7 inner / 5 mid / 3 outer).
+      // The inner ring's 7 sectors produce small angular wedges near each focus center;
+      // the 3 outer-ring sectors produce HUGE 120°-wide wedge cells that extend outward
+      // toward the panel edges — matching the reference's "long sweeping wedges" pattern.
+      // Without the decay, outer rings have the same angular pitch as inner rings, producing
+      // many small outer cells instead of fewer big ones.
+      const polarRingSectors = [7, 5, 3];
       const polarJitterAmt = 0.85;
-      const polarBaseR = Math.max(0.4, p.cellSize * 0.6);
-      const polarGrowth = 1.7;
+      const polarBaseR = Math.max(0.4, p.cellSize * 0.55);
+      const polarGrowth = 1.85;
       for (let cpIdx = 0; cpIdx < controlPointsPhys.length; cpIdx++) {
         const cp = controlPointsPhys[cpIdx];
-        const angleOffset = rand() * 2 * Math.PI; // randomize start angle per focus
-        for (let ring = 0; ring < polarRings; ring++) {
+        const angleOffset = rand() * 2 * Math.PI;
+        for (let ring = 0; ring < polarRingSectors.length; ring++) {
           const r = polarBaseR * Math.pow(polarGrowth, ring);
           const ringJitterR = r * (polarGrowth - 1) * 0.5;
-          for (let s = 0; s < polarSectors; s++) {
-            const thetaBase = angleOffset + (s / polarSectors) * 2 * Math.PI;
-            const thetaJ = thetaBase + (rand() - 0.5) * polarJitterAmt * (2 * Math.PI / polarSectors);
+          const sectors = polarRingSectors[ring];
+          for (let s = 0; s < sectors; s++) {
+            const thetaBase = angleOffset + (s / sectors) * 2 * Math.PI;
+            const thetaJ = thetaBase + (rand() - 0.5) * polarJitterAmt * (2 * Math.PI / sectors);
             const rJ = r + (rand() - 0.5) * polarJitterAmt * ringJitterR;
             const sx = cp.x + rJ * Math.cos(thetaJ);
             const sy = cp.y + rJ * Math.sin(thetaJ);
-            // Skip out-of-bounds — don't clamp (would stack sites at panel corners and break
-            // Voronoi tessellation there).
             if (sx < 0 || sx > p.meshX || sy < 0 || sy > p.meshY) continue;
             if (sites.length >= SITE_COUNT_MAX) break;
             sites.push({ x: sx, y: sy, radius: 0 });
