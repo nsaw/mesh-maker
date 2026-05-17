@@ -25,14 +25,41 @@
  * `sampleReliefParamsFromState` wires both `warpDistortion` and `warpFrequency` into that
  * path so the global warp sliders affect relief output.
  *
- * RADIAL FOCI ("starburst") — v11: the three "Focus" control points are reinterpreted as the
- * 3 control points of a Catmull-Rom FLOW SPLINE. A single curve permeates the panel; sites
- * cluster along it, cells elongate along its tangent, and cell-radius expands at curvature
- * peaks (the visible "node" zones in the reference panel emerge as those peaks). Creator's
- * description of the reference: "Voronoi structure, permeated by a flowing course that moves
- * organically through geometry." v11 implements that literally — the foci aren't isolated
- * radial centers (v1/v2/v3/v9 all failed in different ways trying to fake this), they're
- * curvature peaks of one continuous flow.
+ * RADIAL FOCI ("starburst") — v15: the three "Focus" control points drive THREE coupled
+ * mechanisms (each independently tunable). The control points are also fitted with a
+ * Catmull-Rom FLOW SPLINE used for curvature-driven Pass-2 R-expansion. The architecture has
+ * iterated through many failure modes; the current shape is:
+ *
+ *   1. Polar wedge sites added at each control point (lines ~707–760 in sampleGrid). 3 rings,
+ *      decaying angular sector count (7/5/3), heavy jitter (0.85), prime-number sectors,
+ *      randomized start angle per focus — these break v2's "mandala/spirograph" symmetry while
+ *      producing the discrete radial wedge cells the reference shows. Combined with the
+ *      Cartesian baseline via concatenation (not replacement).
+ *
+ *   2. Cartesian density CUT near each control point (in generateSites): localDensity falls
+ *      to ~0.15× baseline within ~0.5σ of any control point. This clears the focal zone of
+ *      small Cartesian clutter so the polar wedge sites own the visual.
+ *
+ *   3. Per-pixel anisotropy DIRECTION = weighted unit vectors AWAY from each control point
+ *      (in pixelAnisoFrame). Cells elongate radially OUTWARD from each focus. Mode 'rays'
+ *      feeds θ_radial + 90° (so cells extend along the radial axis); 'rings' feeds θ_radial
+ *      (tangential elongation); 'spiral' feeds θ_radial + 90° + 30° (radial + offset).
+ *      Low-frequency noise breaks rosette symmetry (reliefRadialWarp / "Flow Wobble").
+ *
+ * The FLOW SPLINE (Catmull-Rom through the control points) drives one additional effect:
+ * Pass-2 R-expansion at spline-curvature peaks. The visible "node" zones in the reference
+ * are sharply-curved sections of the curve through the foci — sites cluster, cells expand
+ * radially. With only 1 control point, no spline can be built; a fallback uses constant
+ * curvature 0.5 so single-focus mode still gets some R-expansion (otherwise the slider
+ * would be silently inert).
+ *
+ * Creator's description of the reference: "Voronoi structure, permeated by a flowing course
+ * that moves organically through geometry."
+ *
+ * Also: reliefInvertProfile (0/1) flips the bowl curve `bowlH := 1 − bowlH` so the carving
+ * moves from cell interior to cell BOUNDARY (domed floors + carved valleys). reliefSeam-
+ * Sharpness (0–1) blends bowlH toward a linear ramp so the gutter at the seam transitions
+ * from a smooth round bottom to a knife-edge V-groove. Both apply BEFORE polarity multiply.
  *
  *   1. Low-gain per-pixel anisotropy metric (`pixelAnisoFrame`'s radial branch). Cells are
  *      gently elongated along the local radial direction without turning the whole panel into
@@ -549,6 +576,13 @@ function pixelAnisoFrame(
   if (flowSpline.length > 0) {
     const { idx } = nearestSplineSample(flowSpline, x, y);
     curvature = flowSpline[idx].curvature;
+  } else if (controlPointsPhys.length > 0) {
+    // v15.2 fallback: with a single control point we can't build a spline (Catmull-Rom needs
+    // ≥ 2 points), but we still want the Pass-2 curvature R-expansion slider to do something.
+    // Constant 0.5 keeps the slider linear-effective: focalExpand = 1 + grow · blend · 0.5 · k
+    // (peak when blend = 1, right at the focus). Without this fallback the slider would be
+    // silently inert in 1-focus mode.
+    curvature = 0.5;
   }
   if (controlPointsPhys.length > 0) {
     // v12: anisotropy axis = weighted sum of unit vectors pointing AWAY from each control
@@ -692,7 +726,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
     );
     const radialStrength = Math.max(0, Math.min(4, p.radialStrength));
     const radialGrow = Math.max(0, Math.min(2, p.radialGrow));
-    const radialIrregularity = flowSpline.length > 0
+    // v15.2: enable wobble whenever ANY control point is active (was previously gated on
+    // the spline being non-empty, which silently disabled the slider in 1-focus mode).
+    const radialIrregularity = controlPointsPhys.length > 0
       ? Math.max(0, Math.min(1, p.radialWarp))
       : 0;
     const radialIrregularityGen = radialIrregularity > 0
@@ -757,8 +793,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
       lloydRelax(sites, p, lloydSamples);
     }
 
-    const baseAnisotropy = Math.max(0, Math.min(2, p.anisotropy));
-    const aAngle = p.anisotropyAngle * Math.PI / 180;
+    // NaN guards: crafted URL params or direct ReliefSampleParams construction can pass
+    // non-finite values. Without these guards, baseScale / baseCosA become NaN and propagate
+    // through nearestTwo to f1/f2, collapsing the entire output to NaN.
+    const baseAnisotropy = Number.isFinite(p.anisotropy)
+      ? Math.max(0, Math.min(2, p.anisotropy))
+      : 0;
+    const safeAnisotropyAngle = Number.isFinite(p.anisotropyAngle) ? p.anisotropyAngle : 0;
+    const aAngle = safeAnisotropyAngle * Math.PI / 180;
     const baseCosA = Math.cos(aAngle);
     const baseSinA = Math.sin(aAngle);
     // The metric scale inflates the component ALONG (baseCosA, baseSinA), which narrows the cell

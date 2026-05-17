@@ -232,7 +232,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 10;
+const CURRENT_PAYLOAD_VERSION = 11;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -294,6 +294,12 @@ const LEGACY_V8_DEFAULTS: Partial<MeshState> = {};
 // expands at curvature peaks. Existing share-links pass through unchanged — the same state
 // keys produce a flow-curve render instead of v9's invisible-foci render. Strict improvement.
 const LEGACY_V9_DEFAULTS: Partial<MeshState> = {};
+// v10→v11 added reliefInvertProfile (domed-floor toggle) and reliefSeamSharpness (V-groove
+// sharpness). Existing v10 share-links don't carry these keys; legacy non-starburst presets
+// should keep their original smooth-pocket look (invert=0, sharpness=0), so empty defaults
+// here are correct. The known-starburst migration below specifically rewrites v10 starburst
+// links to include the new field values so saved starburst links match the current preset.
+const LEGACY_V10_DEFAULTS: Partial<MeshState> = {};
 // v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
 // `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
 const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
@@ -480,6 +486,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 11) {
+      for (const [k, v] of Object.entries(LEGACY_V10_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -514,8 +527,15 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       return n !== null && Math.abs(n - b) < 1e-9;
     };
     const upgradeKnownStarburstDefaults = (): void => {
+      // Migrate any pre-v11 starburst-preset share-link to the CURRENT (v15.1) preset values,
+      // so users opening older saved links see the latest starburst rendering rather than a
+      // mix of stale param values reinterpreted under the v15 sampler. The migration runs on
+      // payloadVersion < CURRENT_PAYLOAD_VERSION (11) and detects the known starburst signatures
+      // produced by each prior shipped version. Non-starburst links (fociCount = 0) pass through
+      // untouched. Links with custom/manually-tuned values that don't match any known signature
+      // ALSO pass through untouched — their author tuned them deliberately.
       const fociCount = toFiniteNumber(result.reliefRadialFociCount);
-      if (payloadVersion >= 9 || fociCount === null || fociCount <= 0) return;
+      if (payloadVersion >= CURRENT_PAYLOAD_VERSION || fociCount === null || fociCount <= 0) return;
       const matchesV7PolarDefaults =
         approximately(result.reliefCellSize, 3.5)
         && approximately(result.reliefRadialStrength, 1.8)
@@ -528,22 +548,62 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         && approximately(result.reliefRadialFalloff, 0.4)
         && approximately(result.reliefRadialGrow, 0.8)
         && approximately(result.reliefRadialWarp, 0);
-      if (!matchesV7PolarDefaults && !matchesV8DenseDefaults) return;
-      (result as Record<string, unknown>).reliefCellSize = 4.8;
-      (result as Record<string, unknown>).reliefJitter = 0.92;
-      (result as Record<string, unknown>).reliefRelaxIterations = 0;
-      (result as Record<string, unknown>).distortion = 0.55;
-      (result as Record<string, unknown>).reliefSeamDepth = 0.58;
-      (result as Record<string, unknown>).reliefAnisotropy = 0.18;
-      (result as Record<string, unknown>).reliefAnisotropyAngle = 75;
-      (result as Record<string, unknown>).reliefCellSizeGradient = 0.95;
-      (result as Record<string, unknown>).reliefAttractorNoise = 0.65;
-      (result as Record<string, unknown>).reliefAttractorNoiseFreq = 0.11;
-      (result as Record<string, unknown>).reliefRadialStrength = 0.22;
-      (result as Record<string, unknown>).reliefRadialFalloff = 0.11;
-      (result as Record<string, unknown>).reliefRadialGrow = 0.55;
-      (result as Record<string, unknown>).reliefRadialWarp = 0.9;
-      (result as Record<string, unknown>).reliefFlowAnisotropy = 0.45;
+      const matchesV9OrganicFlowDefaults =
+        approximately(result.reliefCellSize, 4.8)
+        && approximately(result.reliefRadialStrength, 0.22)
+        && approximately(result.reliefRadialFalloff, 0.11)
+        && approximately(result.reliefRadialGrow, 0.55)
+        && approximately(result.reliefRadialWarp, 0.9);
+      const matchesV10SplineDefaults =
+        approximately(result.reliefCellSize, 5.5)
+        && approximately(result.reliefRadialStrength, 2.4)
+        && approximately(result.reliefRadialFalloff, 0.18)
+        && approximately(result.reliefRadialGrow, 1.2)
+        && approximately(result.reliefRadialWarp, 0.4);
+      const matchesV10TunedDefaults =
+        approximately(result.reliefCellSize, 4)
+        && approximately(result.reliefRadialStrength, 3.0)
+        && approximately(result.reliefRadialFalloff, 0.4)
+        && approximately(result.reliefRadialGrow, 2.0)
+        && approximately(result.reliefRadialWarp, 0.55);
+      const matchesV15MidDefaults =
+        approximately(result.reliefCellSize, 4)
+        && approximately(result.reliefRadialStrength, 3.0)
+        && approximately(result.reliefRadialFalloff, 0.4)
+        && approximately(result.reliefRadialGrow, 1.3)
+        && approximately(result.reliefRadialWarp, 0.55);
+      const matchesAnyStarburst = matchesV7PolarDefaults
+        || matchesV8DenseDefaults
+        || matchesV9OrganicFlowDefaults
+        || matchesV10SplineDefaults
+        || matchesV10TunedDefaults
+        || matchesV15MidDefaults;
+      if (!matchesAnyStarburst) return;
+      // Write the CURRENT (v15.1) relief-starburst preset values verbatim. Keep this list in
+      // sync with `src/noise/presets.ts:relief-starburst` whenever the preset is retuned —
+      // the parity test in `cli/voronoi-relief.spec.ts` does not check this, so the source of
+      // truth for the migration is the preset file's actual numbers.
+      (result as Record<string, unknown>).reliefCellSize = 4;
+      (result as Record<string, unknown>).reliefJitter = 0.55;
+      (result as Record<string, unknown>).reliefRelaxIterations = 1;
+      (result as Record<string, unknown>).distortion = 0.25;
+      (result as Record<string, unknown>).reliefSeamDepth = 0.6;
+      (result as Record<string, unknown>).reliefAnisotropy = 0;
+      (result as Record<string, unknown>).reliefAnisotropyAngle = 0;
+      (result as Record<string, unknown>).reliefCellSizeGradient = 0.4;
+      (result as Record<string, unknown>).reliefAttractorNoise = 0.2;
+      (result as Record<string, unknown>).reliefAttractorNoiseFreq = 0.12;
+      (result as Record<string, unknown>).reliefFlowAnisotropy = 0;
+      (result as Record<string, unknown>).reliefRadialStrength = 3.0;
+      (result as Record<string, unknown>).reliefRadialFalloff = 0.4;
+      (result as Record<string, unknown>).reliefRadialGrow = 1.3;
+      (result as Record<string, unknown>).reliefRadialWarp = 0.55;
+      (result as Record<string, unknown>).reliefRadialMode = 'rays';
+      // v15 additions — these keys did NOT exist in pre-v11 payloads, so they will be absent
+      // from old share-links and need to be written explicitly to reproduce the current
+      // starburst look (domed floors + V-groove seams).
+      (result as Record<string, unknown>).reliefInvertProfile = 1;
+      (result as Record<string, unknown>).reliefSeamSharpness = 0.7;
     };
     upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
