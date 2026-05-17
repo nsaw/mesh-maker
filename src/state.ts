@@ -1,5 +1,5 @@
 import type { SbpStats } from './sbp/types';
-import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile } from './types';
+import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 export interface MeshState {
   mode: 'noise' | 'depthmap' | 'blend';
@@ -49,9 +49,24 @@ export interface MeshState {
   reliefBaseMode: ReliefBaseMode;
   reliefCellSizeGradient: number;
   reliefVoidStrength: number;
+  reliefInvertProfile: number;
+  reliefSeamSharpness: number;
   reliefAttractorNoise: number;
   reliefAttractorNoiseFreq: number;
   reliefFlowAnisotropy: number;
+  // Voronoi-relief radial-foci ("starburst") params
+  reliefRadialFociCount: number;
+  reliefRadialFocus1X: number;
+  reliefRadialFocus1Y: number;
+  reliefRadialFocus2X: number;
+  reliefRadialFocus2Y: number;
+  reliefRadialFocus3X: number;
+  reliefRadialFocus3Y: number;
+  reliefRadialStrength: number;
+  reliefRadialFalloff: number;
+  reliefRadialGrow: number;
+  reliefRadialWarp: number;
+  reliefRadialMode: ReliefRadialMode;
   // Mesh params
   meshX: number;
   meshY: number;
@@ -135,9 +150,23 @@ export const DEFAULTS: MeshState = {
   reliefBaseMode: 'flat',
   reliefCellSizeGradient: 0,
   reliefVoidStrength: 0,
+  reliefInvertProfile: 0,
+  reliefSeamSharpness: 0,
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
   reliefFlowAnisotropy: 0,
+  reliefRadialFociCount: 0,
+  reliefRadialFocus1X: 0.5,
+  reliefRadialFocus1Y: 0.25,
+  reliefRadialFocus2X: 0.25,
+  reliefRadialFocus2Y: 0.6,
+  reliefRadialFocus3X: 0.75,
+  reliefRadialFocus3Y: 0.8,
+  reliefRadialStrength: 1.5,
+  reliefRadialFalloff: 0.3,
+  reliefRadialGrow: 0.45,
+  reliefRadialWarp: 0.4,
+  reliefRadialMode: 'rays',
   meshX: 36,
   meshY: 24,
   resolution: 400,
@@ -190,8 +219,12 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
   'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
   'reliefTransitionSoftness', 'reliefBaseMode',
-  'reliefCellSizeGradient', 'reliefVoidStrength',
+  'reliefCellSizeGradient', 'reliefVoidStrength', 'reliefInvertProfile', 'reliefSeamSharpness',
   'reliefAttractorNoise', 'reliefAttractorNoiseFreq', 'reliefFlowAnisotropy',
+  'reliefRadialFociCount', 'reliefRadialFocus1X', 'reliefRadialFocus1Y',
+  'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
+  'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
+  'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
@@ -199,7 +232,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 5;
+const CURRENT_PAYLOAD_VERSION = 11;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -238,6 +271,50 @@ const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
   reliefFlowAnisotropy: 0,
+};
+// v6→v7 reworked the radial-foci ("starburst") system from metric-anisotropy + site-warp
+// (v1, PR #16, produced "pucker hole" artifacts) to polar-grid site placement (v2). The
+// state-key surface is unchanged but the semantics of strength/falloff/grow/warp are
+// reinterpreted under v2. Empty defaults: v6 starburst links pass through and reinterpret
+// their saved values under v2 semantics, which produces a *correct* polar-wedge render
+// rather than v1's broken puckers — strictly an improvement, so no forced reset is needed.
+// The version marker is kept for future migrations that may need to target pre-v2 links.
+const LEGACY_V6_DEFAULTS: Partial<MeshState> = {};
+// v7→v8 reverted from polar-grid placement (v2, produced mechanical mandala/spirograph
+// patterns) to Cartesian Voronoi with per-pixel metric anisotropy + density-boost near foci.
+// That v3 density boost later proved too dense and is migrated by the v9 conditional upgrade
+// below when saved links exactly match the known bad starburst parameter sets.
+const LEGACY_V7_DEFAULTS: Partial<MeshState> = {};
+// v8→v9 replaces radial density boost with organic focal expansion: foci no longer change
+// site count, reliefRadialGrow expands the continuous radius/bowl field, and reliefRadialWarp
+// drives low-frequency focal irregularity instead of remaining inert.
+const LEGACY_V8_DEFAULTS: Partial<MeshState> = {};
+// v9→v10 reinterprets the 3 "Focus" control points as control points of a Catmull-Rom FLOW
+// SPLINE. Sites cluster along the curve; cells elongate along the tangent; cell radius
+// expands at curvature peaks. Existing share-links pass through unchanged — the same state
+// keys produce a flow-curve render instead of v9's invisible-foci render. Strict improvement.
+const LEGACY_V9_DEFAULTS: Partial<MeshState> = {};
+// v10→v11 added reliefInvertProfile (domed-floor toggle) and reliefSeamSharpness (V-groove
+// sharpness). Existing v10 share-links don't carry these keys; legacy non-starburst presets
+// should keep their original smooth-pocket look (invert=0, sharpness=0), so empty defaults
+// here are correct. The known-starburst migration below specifically rewrites v10 starburst
+// links to include the new field values so saved starburst links match the current preset.
+const LEGACY_V10_DEFAULTS: Partial<MeshState> = {};
+// v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
+// `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
+const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
+  reliefRadialFociCount: 0,
+  reliefRadialFocus1X: 0.5,
+  reliefRadialFocus1Y: 0.25,
+  reliefRadialFocus2X: 0.25,
+  reliefRadialFocus2Y: 0.6,
+  reliefRadialFocus3X: 0.75,
+  reliefRadialFocus3Y: 0.8,
+  reliefRadialStrength: 1.5,
+  reliefRadialFalloff: 0.3,
+  reliefRadialGrow: 0.45,
+  reliefRadialWarp: 0.4,
+  reliefRadialMode: 'rays',
 };
 
 export function serializeConfig(): string {
@@ -374,6 +451,48 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 6) {
+      for (const [k, v] of Object.entries(LEGACY_V5_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 7) {
+      for (const [k, v] of Object.entries(LEGACY_V6_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 8) {
+      for (const [k, v] of Object.entries(LEGACY_V7_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 9) {
+      for (const [k, v] of Object.entries(LEGACY_V8_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 10) {
+      for (const [k, v] of Object.entries(LEGACY_V9_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+    if (payloadVersion < 11) {
+      for (const [k, v] of Object.entries(LEGACY_V10_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -403,8 +522,107 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       const v = integer ? Math.floor(n) : n;
       (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
     };
+    const approximately = (a: unknown, b: number): boolean => {
+      const n = toFiniteNumber(a);
+      return n !== null && Math.abs(n - b) < 1e-9;
+    };
+    const upgradeKnownStarburstDefaults = (): void => {
+      // Migrate any pre-v11 starburst-preset share-link to the CURRENT (v15.1) preset values,
+      // so users opening older saved links see the latest starburst rendering rather than a
+      // mix of stale param values reinterpreted under the v15 sampler. The migration runs on
+      // payloadVersion < CURRENT_PAYLOAD_VERSION (11) and detects the known starburst signatures
+      // produced by each prior shipped version. Non-starburst links (fociCount = 0) pass through
+      // untouched. Links with custom/manually-tuned values that don't match any known signature
+      // ALSO pass through untouched — their author tuned them deliberately.
+      const fociCount = toFiniteNumber(result.reliefRadialFociCount);
+      if (payloadVersion >= CURRENT_PAYLOAD_VERSION || fociCount === null || fociCount <= 0) return;
+      const matchesV7PolarDefaults =
+        approximately(result.reliefCellSize, 3.5)
+        && approximately(result.reliefRadialStrength, 1.8)
+        && approximately(result.reliefRadialFalloff, 0.5)
+        && approximately(result.reliefRadialGrow, 0.7)
+        && approximately(result.reliefRadialWarp, 0.35);
+      const matchesV8DenseDefaults =
+        approximately(result.reliefCellSize, 2.2)
+        && approximately(result.reliefRadialStrength, 1.6)
+        && approximately(result.reliefRadialFalloff, 0.4)
+        && approximately(result.reliefRadialGrow, 0.8)
+        && approximately(result.reliefRadialWarp, 0);
+      const matchesV9OrganicFlowDefaults =
+        approximately(result.reliefCellSize, 4.8)
+        && approximately(result.reliefRadialStrength, 0.22)
+        && approximately(result.reliefRadialFalloff, 0.11)
+        && approximately(result.reliefRadialGrow, 0.55)
+        && approximately(result.reliefRadialWarp, 0.9);
+      const matchesV10SplineDefaults =
+        approximately(result.reliefCellSize, 5.5)
+        && approximately(result.reliefRadialStrength, 2.4)
+        && approximately(result.reliefRadialFalloff, 0.18)
+        && approximately(result.reliefRadialGrow, 1.2)
+        && approximately(result.reliefRadialWarp, 0.4);
+      const matchesV10TunedDefaults =
+        approximately(result.reliefCellSize, 4)
+        && approximately(result.reliefRadialStrength, 3.0)
+        && approximately(result.reliefRadialFalloff, 0.4)
+        && approximately(result.reliefRadialGrow, 2.0)
+        && approximately(result.reliefRadialWarp, 0.55);
+      const matchesV15MidDefaults =
+        approximately(result.reliefCellSize, 4)
+        && approximately(result.reliefRadialStrength, 3.0)
+        && approximately(result.reliefRadialFalloff, 0.4)
+        && approximately(result.reliefRadialGrow, 1.3)
+        && approximately(result.reliefRadialWarp, 0.55);
+      const matchesAnyStarburst = matchesV7PolarDefaults
+        || matchesV8DenseDefaults
+        || matchesV9OrganicFlowDefaults
+        || matchesV10SplineDefaults
+        || matchesV10TunedDefaults
+        || matchesV15MidDefaults;
+      if (!matchesAnyStarburst) return;
+      // Write the CURRENT (v15.1) relief-starburst preset values verbatim. Keep this list in
+      // sync with `src/noise/presets.ts:relief-starburst` whenever the preset is retuned —
+      // the parity test in `cli/voronoi-relief.spec.ts` does not check this, so the source of
+      // truth for the migration is the preset file's actual numbers.
+      (result as Record<string, unknown>).reliefCellSize = 4;
+      (result as Record<string, unknown>).reliefJitter = 0.55;
+      (result as Record<string, unknown>).reliefRelaxIterations = 1;
+      (result as Record<string, unknown>).distortion = 0.25;
+      (result as Record<string, unknown>).reliefSeamDepth = 0.6;
+      (result as Record<string, unknown>).reliefAnisotropy = 0;
+      (result as Record<string, unknown>).reliefAnisotropyAngle = 0;
+      (result as Record<string, unknown>).reliefCellSizeGradient = 0.4;
+      (result as Record<string, unknown>).reliefAttractorNoise = 0.2;
+      (result as Record<string, unknown>).reliefAttractorNoiseFreq = 0.12;
+      (result as Record<string, unknown>).reliefFlowAnisotropy = 0;
+      (result as Record<string, unknown>).reliefRadialStrength = 3.0;
+      (result as Record<string, unknown>).reliefRadialFalloff = 0.4;
+      (result as Record<string, unknown>).reliefRadialGrow = 1.3;
+      (result as Record<string, unknown>).reliefRadialWarp = 0.55;
+      (result as Record<string, unknown>).reliefRadialMode = 'rays';
+      // v15 additions — these keys did NOT exist in pre-v11 payloads, so they will be absent
+      // from old share-links and need to be written explicitly to reproduce the current
+      // starburst look (domed floors + V-groove seams).
+      (result as Record<string, unknown>).reliefInvertProfile = 1;
+      (result as Record<string, unknown>).reliefSeamSharpness = 0.7;
+    };
+    upgradeKnownStarburstDefaults();
+    // Validate untrusted enum strings — drop anything not in the allowed set so it falls
+    // back to DEFAULTS instead of feeding a junk string into the sampler/UI.
+    const clampEnum = (key: keyof MeshState, allowed: readonly string[]): void => {
+      if (!allowed.includes(String(result[key]))) {
+        delete (result as Record<string, unknown>)[key];
+      }
+    };
+    if ('reliefPolarity' in result) clampEnum('reliefPolarity', ['domes', 'pockets']);
+    if ('reliefProfile' in result) clampEnum('reliefProfile', ['hemisphere', 'cosine', 'parabolic']);
+    if ('reliefAttractorMode' in result) clampEnum('reliefAttractorMode', ['none', 'vertical', 'horizontal', 'radial', 'point']);
+    if ('reliefBaseMode' in result) clampEnum('reliefBaseMode', ['flat', 'wave']);
+    if ('reliefRadialMode' in result) clampEnum('reliefRadialMode', ['rays', 'rings', 'spiral']);
     if ('reliefRelaxIterations' in result) clampField('reliefRelaxIterations', 0, 2, true);
     if ('reliefDensityStrength' in result)  clampField('reliefDensityStrength',  0, 2);
+    // anisotropy enters the metric scale `1 + anisotropy·1.5`; an unbounded value degenerates
+    // cells to points. Slider is [0, 1]; allow a little headroom and cap the rest.
+    if ('reliefAnisotropy' in result) clampField('reliefAnisotropy', 0, 2);
     // transitionSoftness drives an exponent for Math.pow(mask, ...) — a negative value
     // makes the exponent ≤ 0 and produces Infinity at mask=0, which the sampler's NaN
     // guard then zeroes, punching dead bands into the mesh. Slider range is [0, 1].
@@ -419,9 +637,31 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // voidStrength gates the "cut-through" mode — values above 1 are meaningless (already
     // saturates), and below 0 disables it; clamp to slider range.
     if ('reliefVoidStrength' in result) clampField('reliefVoidStrength', 0, 1);
+    if ('reliefInvertProfile' in result) clampField('reliefInvertProfile', 0, 1, true);
+    if ('reliefSeamSharpness' in result) clampField('reliefSeamSharpness', 0, 1);
     if ('reliefAttractorNoise' in result) clampField('reliefAttractorNoise', 0, 1);
     if ('reliefAttractorNoiseFreq' in result) clampField('reliefAttractorNoiseFreq', 0.02, 0.5);
     if ('reliefFlowAnisotropy' in result) clampField('reliefFlowAnisotropy', 0, 1);
+    // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
+    // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
+    // they cannot over-amplify the bowl normalization or angular irregularity.
+    if ('reliefRadialFociCount' in result) clampField('reliefRadialFociCount', 0, 3, true);
+    if ('reliefRadialStrength' in result) clampField('reliefRadialStrength', 0, 3);
+    if ('reliefRadialFalloff' in result) clampField('reliefRadialFalloff', 0.05, 0.6);
+    if ('reliefRadialGrow' in result) clampField('reliefRadialGrow', 0, 2);
+    if ('reliefRadialWarp' in result) clampField('reliefRadialWarp', 0, 1);
+    // Focus coordinates are normalized [0, 1] panel coords. Clamping here is load-bearing:
+    // a crafted payload could pair a positive reliefRadialFociCount with NaN/Infinity in a
+    // focus X/Y, which would propagate through sampleReliefParamsFromState → radialFoci →
+    // the sampler's per-pixel metric and either zero the site count (flat render) or NaN-poison
+    // every output pixel. Clamping to [0, 1] (with non-finite values dropped by toFiniteNumber)
+    // closes that path before the value reaches STATE.
+    if ('reliefRadialFocus1X' in result) clampField('reliefRadialFocus1X', 0, 1);
+    if ('reliefRadialFocus1Y' in result) clampField('reliefRadialFocus1Y', 0, 1);
+    if ('reliefRadialFocus2X' in result) clampField('reliefRadialFocus2X', 0, 1);
+    if ('reliefRadialFocus2Y' in result) clampField('reliefRadialFocus2Y', 0, 1);
+    if ('reliefRadialFocus3X' in result) clampField('reliefRadialFocus3X', 0, 1);
+    if ('reliefRadialFocus3Y' in result) clampField('reliefRadialFocus3Y', 0, 1);
     return result;
   } catch {
     return {};

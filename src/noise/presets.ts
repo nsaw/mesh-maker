@@ -32,18 +32,21 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // domain warp on Voronoi sites so the grid flows organically rather than tessellating.
   'relief-vertical': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
-    reliefCellSize:1.6, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'hemisphere',
+    reliefCellSize:1.6, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'parabolic',
     reliefSeamDepth:0.95, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     // attractorY:0 anchors the dense+void zone to the BOTTOM of the panel (viewport bottom
     // with default camera) — matches the lafabrica reference orientation where smooth waves
     // sit at the top and the cellular/spike zone hangs toward the bottom edge.
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:2.2,
     reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
-    reliefCellSizeGradient:1.0, reliefVoidStrength:0.7,
-    // Explicit zeros so switching from relief-pockets (which sets these to non-zero) cleanly
-    // resets back to relief-vertical's designed appearance. Presets are key-only merges, so
-    // omitting a field means inheriting the previous preset's value.
+    reliefCellSizeGradient:1.0, reliefVoidStrength:0.7, reliefInvertProfile:0, reliefSeamSharpness:0,
+    // Explicit zeros so switching from relief-pockets / relief-starburst (which set these to
+    // non-zero) cleanly resets back to relief-vertical's designed appearance. Presets are
+    // key-only merges, so omitting a field means inheriting the previous preset's value.
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
+    reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
+    reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
+    reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:1.5, smoothIter:3, smoothStr:0.55 },
   'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
@@ -51,10 +54,13 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefSeamDepth:0.6, reliefSeamWidth:0.14, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     reliefAttractorMode:'radial', reliefAttractorX:0.5, reliefAttractorY:0.4, reliefAttractorRadius:0.6, reliefAttractorFalloff:1.2,
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
-    reliefCellSizeGradient:0.6, reliefVoidStrength:0,
+    reliefCellSizeGradient:0.6, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
     // Explicit zeros for the same reason as relief-vertical above — prevents stale state
-    // carry-over when switching from relief-pockets.
+    // carry-over when switching from relief-pockets / relief-starburst.
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15, reliefFlowAnisotropy:0,
+    reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
+    reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
+    reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     // baseThickness explicit so the preset is deterministic when merged into state — without
     // this, applying relief-radial after another preset inherits the previous baseThickness.
     meshX:24, meshY:24, baseThickness:1.2, smoothIter:1, smoothStr:0.4 },
@@ -72,16 +78,45 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // causes the spike artifacts the prior algorithm produced. Targeting the lafabrica
     // reference (image #18): cells span large to small, deep pockets, organic flow,
     // dramatic patchiness in cell size.
-    reliefCellSize:5.5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'hemisphere',
-    // Slightly wider seam (0.13) gives more pixels of smoothstep transition in small-cell
-    // zones, eliminating the dotted-wall aliasing that appeared at cellSizeGradient=2.0.
-    reliefSeamDepth:0.26, reliefSeamWidth:0.13, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
+    reliefCellSize:5.5, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
+    // F2-F1 algorithm: seamDepth = saturation point. Lower = bowls saturate sooner (more
+    // uniform depth across cells). Higher = only biggest cells reach full depth, smaller
+    // cells stay shallow. 0.6 gives the lafabrica look — big cells reach near-clamp,
+    // small cells are visible but not saturated. seamWidth is unused under F2-F1.
+    reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0.30, reliefAnisotropyAngle:75,
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.6,
-    // densityStrength 1.7 + cellSizeGradient 1.5 gives strong gradient without shrinking R
-    // below the pixel-floor safety margin. The lafabrica reference has dramatic but NOT
-    // extreme variation — small cells at the bottom are still resolved features, not noise.
-    reliefDensityStrength:1.7, reliefIntensityStrength:0.55, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
-    reliefCellSizeGradient:1.5, reliefVoidStrength:0,
+    reliefDensityStrength:1.7, reliefIntensityStrength:0.6, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    reliefCellSizeGradient:1.5, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
     reliefAttractorNoise:0.8, reliefAttractorNoiseFreq:0.13, reliefFlowAnisotropy:0.5,
-    meshX:24, meshY:48, baseThickness:5.2, smoothIter:2, smoothStr:0.5 },
+    reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
+    reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
+    reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
+    // F2-F1 produces a C1-smooth height field everywhere, so heavy mesh-level smoothing is
+    // unnecessary. smoothIter:1 / smoothStr:0.3 just cleans triangle-orientation differences
+    // between adjacent quad-grid cells.
+    meshX:24, meshY:48, baseThickness:5.2, smoothIter:1, smoothStr:0.3 },
+  // relief-starburst — v11: the three "Focus" points become control points of a Catmull-Rom
+  // flow spline. Sites cluster along the curve, cells elongate along its tangent, R-field
+  // expands at curvature peaks. Implements the creator's description literally: "Voronoi
+  // structure, permeated by a flowing course that moves organically through geometry."
+  // Slider semantics (v11):
+  //   reliefRadialStrength → flow-tangent anisotropy strength (cells elongated along curve)
+  //   reliefRadialFalloff  → flow influence band σ as fraction of panel diagonal
+  //   reliefRadialGrow     → curvature-driven R-expansion (broadens pockets at spline bends)
+  //   reliefRadialWarp     → flow tangent irregularity noise
+  //   reliefRadialMode     → 'rays' (along flow) / 'rings' (perpendicular) / 'spiral' (+30°)
+  // Control points 1/2/3 at top-right / mid-left / lower-right form an S-curve through the
+  // panel, with curvature peaks at the visible "node" zones in the reference.
+  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.75, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
+    warpFreq:0.08, warpCurl:0,
+    reliefCellSize:4, reliefJitter:0.55, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'parabolic',
+    reliefSeamDepth:0.6, reliefSeamWidth:0.15, reliefAnisotropy:0, reliefAnisotropyAngle:0,
+    reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
+    reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'flat',
+    reliefCellSizeGradient:0.4, reliefVoidStrength:0, reliefInvertProfile:1, reliefSeamSharpness:0.7,
+    reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12, reliefFlowAnisotropy:0,
+    reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
+    reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
+    reliefRadialStrength:3.0, reliefRadialFalloff:0.4, reliefRadialGrow:1.3, reliefRadialWarp:0.55, reliefRadialMode:'rays',
+    meshX:12, meshY:36, baseThickness:2.0, smoothIter:3, smoothStr:0.45 },
 };

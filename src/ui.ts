@@ -12,7 +12,7 @@ const PRESET_GROUPS: [string, string[]][] = [
   ['Aggressive', ['deep-carve', 'hard-wave', 'turbulent-marble']],
   ['Ridge & Stone', ['sharp-ridges', 'eroded-stone', 'natural-ridge']],
   ['Cell & Directional', ['voronoi-cells', 'worley-cracks', 'brushed-metal']],
-  ['Relief', ['relief-vertical', 'relief-radial', 'relief-pockets']],
+  ['Relief', ['relief-vertical', 'relief-radial', 'relief-pockets', 'relief-starburst']],
 ];
 
 function formatPresetName(key: string): string {
@@ -127,6 +127,7 @@ function enumSelect(key: string, label: string, options: Array<[string, string]>
   sel.id = `sl_${key}`;
   sel.dataset.key = key;
   const current = String(STATE[key as keyof typeof STATE]);
+  sel.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? current);
   for (const [value, text] of options) {
     const opt = createElement('option') as HTMLOptionElement;
     opt.value = value;
@@ -314,6 +315,8 @@ function buildReliefSection(): HTMLElement {
   anisoLabel.textContent = 'Anisotropy';
   const attractorLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
   attractorLabel.textContent = 'Attractor';
+  const radialLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
+  radialLabel.textContent = 'Radial foci (starburst)';
   const baseLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
   baseLabel.textContent = 'Base field';
 
@@ -326,7 +329,21 @@ function buildReliefSection(): HTMLElement {
     enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
     enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
     slider('reliefSeamDepth', 'Seam Depth', 0, 1, 0.05),
-    slider('reliefSeamWidth', 'Seam Width', 0.02, 0.6, 0.01),
+    // NB: `reliefSeamWidth` does NOT affect the visual mesh under the F2-F1 relief algorithm
+    // (see `voronoi-relief.ts`'s "seamWidth is no longer used" comment). It only drives the
+    // SBP V-carve toolpath width via `sbp-export.ts:189` (`seamWidthIn = reliefSeamWidth ·
+    // reliefCellSize · 0.5`). Label clarifies the slider's actual function so users don't tune
+    // it expecting a mesh effect.
+    slider('reliefSeamWidth', 'SBP V-carve Seam Width', 0.02, 0.6, 0.01),
+    // v15: 0/1 toggle. When 1, cell INTERIORS sit at the surface with a domed rise and the
+    // cell BOUNDARIES are carved (matches the reference panel's "domed floors" signature).
+    // When 0 (default), standard pocket carving (interior sunk, boundary at surface).
+    slider('reliefInvertProfile', 'Domed Floors (0/1)', 0, 1, 1),
+    // v15.1: 0 = smooth round-bottom gutter at cell boundary; 1 = knife-edge V-groove.
+    // Linear blend of the profile curve toward a `bowlT` ramp. High values produce real
+    // V-grooves but the rendered mesh will show polygon aliasing along seam ridges — fine
+    // for CNC V-bit carving paths.
+    slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
@@ -347,6 +364,19 @@ function buildReliefSection(): HTMLElement {
     slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
     slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
     slider('reliefFlowAnisotropy', 'Flow Anisotropy', 0, 1, 0.05),
+    radialLabel,
+    slider('reliefRadialFociCount', 'Flow Course (0=off)', 0, 3, 1),
+    slider('reliefRadialFocus1X', 'Flow Point 1 X', 0, 1, 0.01),
+    slider('reliefRadialFocus1Y', 'Flow Point 1 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus2X', 'Flow Point 2 X', 0, 1, 0.01),
+    slider('reliefRadialFocus2Y', 'Flow Point 2 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus3X', 'Flow Point 3 X', 0, 1, 0.01),
+    slider('reliefRadialFocus3Y', 'Flow Point 3 Y', 0, 1, 0.01),
+    slider('reliefRadialStrength', 'Flow Tangent Strength', 0, 3, 0.05),
+    slider('reliefRadialFalloff', 'Flow Width', 0.05, 0.6, 0.01),
+    slider('reliefRadialGrow', 'Curvature Expansion', 0, 2, 0.05),
+    slider('reliefRadialWarp', 'Flow Wobble', 0, 1, 0.02),
+    enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
   ], false, 'noise-only');
@@ -533,6 +563,14 @@ function wireControls(): void {
         if (pill) pill.classList.remove('active');
       }
       debouncedGenerate(key);
+    });
+
+    // Double-click select to reset to default (mirrors the slider gesture).
+    sel.addEventListener('dblclick', () => {
+      const def = sel.dataset.default;
+      if (def === undefined) return;
+      sel.value = def;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
     });
   });
 

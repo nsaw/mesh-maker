@@ -13,6 +13,9 @@ export type ReliefPolarity = 'pockets' | 'domes';
 export type ReliefProfile = 'hemisphere' | 'cosine' | 'parabolic';
 export type ReliefAttractorMode = 'none' | 'vertical' | 'horizontal' | 'radial' | 'point';
 export type ReliefBaseMode = 'flat' | 'wave';
+/** Radial-foci elongation axis: 'rays' = cells stretched along the radius from each focus
+ *  (sunburst), 'rings' = stretched tangentially (concentric), 'spiral' = radius + ~30°. */
+export type ReliefRadialMode = 'rays' | 'rings' | 'spiral';
 
 export interface ReliefParams {
   cellSize: number;
@@ -46,6 +49,20 @@ export interface ReliefParams {
    *  CNC normalizer drops to z=0). Produces the spike-finger zone seen in lafabrica
    *  panels where cells become disconnected protrusions. */
   voidStrength: number;
+  /** When true, the bowl profile is inverted: `bowlH := 1 − bowlH`. The Worley F2-F1 field
+   *  gives distDiff ≈ 0 at cell boundaries and large at cell centers. Without inversion, the
+   *  height field is carved INSIDE the cells (pockets) or raised AT the cells (domes). With
+   *  inversion, the carving moves to the cell BOUNDARIES — cell INTERIORS sit at the
+   *  original surface with a dome-shaped rise from the carved seam to the center. Matches
+   *  the reference panel's "domed floors with carved valleys between" signature. Boolean
+   *  semantics expressed as 0/1 to keep the existing slider UI binding simple. */
+  invertProfile: number;
+  /** Seam V-groove sharpness in [0, 1]. 0 = smooth profile (dh/dt = 0 at the cell boundary
+   *  → round-bottom gutter); 1 = linear ramp (dh/dt = 1 at the boundary → knife-edge V-groove).
+   *  Linearly blends `bowlH` between the chosen profile curve and a linear ramp `bowlT`. The
+   *  rendered mesh can show polygon aliasing at high sharpness — unavoidable for true V-grooves
+   *  and acceptable for CNC V-bit carving paths. */
+  seamSharpness: number;
   /** Patches the otherwise-smooth attractor mask with a 2D noise field — produces
    *  patchy, random-looking INTENSITY variation in the cellular zone (cell HEIGHTS
    *  and SHAPES vary; cell COUNT/DENSITY stays a smooth gradient driven by the
@@ -59,6 +76,26 @@ export interface ReliefParams {
    *  1 = anisotropy direction varies wildly across the panel. Produces the
    *  organic, randomly-stretched-in-different-directions look. */
   flowAnisotropy: number;
+  /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
+   *  count by `sampleReliefParamsFromState`. Empty = the radial-foci system is off and the
+   *  sampler is byte-identical to pre-feature output. Around each focus, cell elongation
+   *  direction tracks the local radial direction while continuous radius/intensity fields
+   *  create focal expansion without changing site density. */
+  radialFoci: Array<{ x: number; y: number }>;
+  /** Extra anisotropy units added near a focus (on top of `anisotropy`), scaled by the
+   *  per-pixel radial blend ∈ [0,1]. Effective metric scale = 1 + (anisotropy + strength·blend)·k. */
+  radialStrength: number;
+  /** Radial influence radius σ as a fraction of the panel diagonal. Shared by the per-pixel
+   *  elongation blend, focal expansion, and focal irregularity masks. */
+  radialFalloff: number;
+  /** Focal cell expansion in [0, 2]. Bigger values broaden pocket interiors near foci by
+   *  expanding the continuous radius/bowl normalization; site count is unchanged. */
+  radialGrow: number;
+  /** Focal irregularity in [0,1] — low-frequency angular and influence modulation that
+   *  breaks perfect rosette symmetry without moving sites. */
+  radialWarp: number;
+  /** Elongation axis relative to the local radial direction (rays / rings / spiral). */
+  radialMode: ReliefRadialMode;
 }
 
 export interface ReliefSampleParams extends ReliefParams {
