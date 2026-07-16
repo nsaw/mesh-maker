@@ -4,6 +4,8 @@ import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ } from './sbp-export';
 import { updateExportControls } from './toolbar';
+import { estimateDepth } from './depth-estimate';
+import { showToast } from './toast';
 
 
 const PRESET_GROUPS: [string, string[]][] = [
@@ -441,8 +443,18 @@ function buildDepthMapSection(): HTMLElement {
   input.accept = 'image/*';
   uploadZone.append(uploadText, input);
 
+  // AI depth estimation — converts the current photo into a real depth map (photos feed
+  // luminance into the height field otherwise: marble highlights read as peaks). Lazy
+  // model download on first use; on failure the luminance path stays untouched.
+  const aiBtn = createElement('button', 'btn btn-sm', 'AI DEPTH FROM PHOTO') as HTMLButtonElement;
+  aiBtn.id = 'aiDepthBtn';
+  aiBtn.style.width = '100%';
+  aiBtn.style.marginTop = '6px';
+  aiBtn.addEventListener('click', () => { void runDepthEstimation(aiBtn); });
+
   return buildSection('Depth Map', [
     uploadZone,
+    aiBtn,
     // Drape (BLEND mode): 'blend' is repurposed as fabric tension — 0 hugs the form,
     // 1 bridges concavities via the morphological-close envelope (src/drape.ts).
     slider('blend', 'Fabric Tension (0=hug, 1=bridge)', 0, 1, 0.01),
@@ -742,6 +754,40 @@ export function fitMeshToAspect(imgW: number, imgH: number): void {
   STATE.resolution = 256;
   STATE.depthMapAR = ar;
   STATE.aspectLocked = true;
+}
+
+/** Run monocular depth estimation on the current depth-map image and swap the result in
+ *  (same state pattern as loadDepthMap). Failures leave state untouched — the luminance
+ *  path keeps working offline or when the model can't load. */
+async function runDepthEstimation(btn: HTMLButtonElement): Promise<void> {
+  if (!STATE.depthMap) {
+    showToast('Upload or select an image first');
+    return;
+  }
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'ESTIMATING…';
+  showToast('Loading depth model — first use downloads ~25-50MB', 4000);
+  try {
+    const depthImg = await estimateDepth(STATE.depthMap);
+    STATE.depthMap = depthImg;
+    STATE.depthMapName = STATE.depthMapName.replace(/ \(AI depth\)$/, '') + ' (AI depth)';
+    fitMeshToAspect(depthImg.width, depthImg.height);
+    const zone = document.getElementById('uploadZone');
+    if (zone) {
+      zone.classList.add('has-image');
+      zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
+    }
+    buildSidebar();
+    generateMesh();
+    showToast('Depth map estimated');
+  } catch (err) {
+    const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
+    showToast(`Depth estimation unavailable — using image luminance${reason}`, 4500);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 }
 
 export function loadDepthMap(file: File): void {
