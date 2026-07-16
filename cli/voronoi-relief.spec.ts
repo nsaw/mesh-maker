@@ -863,6 +863,60 @@ function countLocalMinima(grid: number[][]): number {
   assert(modeDiffer > 80 * 80 * 0.1, 'rays vs rings modes produce meaningfully different output',
     `modeDiffer=${modeDiffer}/${80 * 80}`);
 
+  // Direction SEMANTICS (v16.2 regression guard for the inverted-warp bug): in 'rays'
+  // mode, petal cells are radially elongated, so boundary crossings per unit length along
+  // radial spokes must be LOWER than along a circular arc; 'rings' must be the reverse.
+  // Uses a single centered focus on a square panel (measured design values: rays 7.7 vs
+  // 14.5 per 100px, rings 8.6 vs 5.0).
+  const directionGrid = (mode: 'rays' | 'rings'): number[][] =>
+    new VoronoiReliefGen(7).sampleGrid(baseParams({
+      cols: 200, rows: 200, meshX: 30, meshY: 30, seed: 7,
+      polarity: 'pockets', profile: 'parabolic', seamDepth: 1.0, cellSize: 2,
+      radialFoci: [{ x: 0.5, y: 0.5 }],
+      radialStrength: 2.5, radialFalloff: 0.25, radialGrow: 0, radialWarp: 0, radialMode: mode,
+    }));
+  const crossRates = (grid: number[][]): { spoke: number; arc: number } => {
+    const cCenter = 99.5;
+    const sigmaPx = 0.25 * Math.hypot(200, 200);
+    const crossOf = (pts: Array<[number, number]>): number => {
+      const vals = pts.map(([x, y]) => grid[Math.round(y)][Math.round(x)]);
+      const m = mean(vals);
+      let cr = 0;
+      for (let k = 1; k < vals.length; k++) if ((vals[k] > m) !== (vals[k - 1] > m)) cr++;
+      return cr;
+    };
+    let spoke = 0;
+    for (let k = 0; k < 8; k++) {
+      const th = (k / 8) * 2 * Math.PI + 0.19;
+      const pts: Array<[number, number]> = [];
+      for (let t = 0; t <= 200; t++) {
+        const r = sigmaPx * (0.25 + 0.75 * t / 200);
+        const x = cCenter + r * Math.cos(th);
+        const y = cCenter + r * Math.sin(th);
+        if (x >= 0 && x < 200 && y >= 0 && y < 200) pts.push([x, y]);
+      }
+      spoke += crossOf(pts);
+    }
+    const spokeRate = spoke / (8 * 0.75 * sigmaPx);
+    const arcPts: Array<[number, number]> = [];
+    for (let t = 0; t <= 720; t++) {
+      const th = (t / 720) * 2 * Math.PI;
+      const x = cCenter + 0.6 * sigmaPx * Math.cos(th);
+      const y = cCenter + 0.6 * sigmaPx * Math.sin(th);
+      if (x >= 0 && x < 200 && y >= 0 && y < 200) arcPts.push([x, y]);
+    }
+    const arcRate = crossOf(arcPts) / (2 * Math.PI * 0.6 * sigmaPx);
+    return { spoke: spokeRate, arc: arcRate };
+  };
+  const raysRates = crossRates(directionGrid('rays'));
+  const ringsRates = crossRates(directionGrid('rings'));
+  assert(raysRates.spoke < raysRates.arc,
+    'rays mode: cells radially elongated (spoke crossing rate < arc crossing rate)',
+    `spoke=${(raysRates.spoke * 100).toFixed(1)} arc=${(raysRates.arc * 100).toFixed(1)} per 100px`);
+  assert(ringsRates.spoke > ringsRates.arc,
+    'rings mode: cells tangentially elongated (spoke crossing rate > arc crossing rate)',
+    `spoke=${(ringsRates.spoke * 100).toFixed(1)} arc=${(ringsRates.arc * 100).toFixed(1)} per 100px`);
+
   // v3 anti-regression — no v1-style "pucker hole" or v2-style "drain hole" at focus center.
   // Failure signatures: v1 puckers had the focus-center pixel saturated to the OUTPUT_HEIGHT_
   // CLAMP (the most-negative value) because of the site-warp cavity; v2's polar-grid center

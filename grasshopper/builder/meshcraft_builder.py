@@ -499,17 +499,15 @@ class VoronoiReliefNoise(object):
     RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5
     # Output clamp magnitude. Used with explicit negative sign at carve sites.
     OUTPUT_HEIGHT_CLAMP = 1.05
-    # v16 unified space-warp constants — mirror src/noise/voronoi-relief.ts exactly.
+    # v16 flow-warp + v16.2 polar-lattice constants — mirror src/noise/voronoi-relief.ts.
     FLOW_WARP_AMPLITUDE_CELLS = 0.9
-    RADIAL_PUSH_RAYS = 0.35
-    RADIAL_PULL_RINGS = 0.25
-    RADIAL_SWIRL_SPIRAL = 0.3
-    RADIAL_DISPLACEMENT_CLAMP_SIGMA = 0.5
-    RADIAL_WOBBLE_NOISE_FREQUENCY = 0.075
+    POLAR_ZONE_SIGMAS = 1.0
+    POLAR_TANGENTIAL_PITCH_CELLS = 0.85
+    POLAR_EXCLUSION_FRACTION = 0.9
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
-    def _gen_sites(self, p, density_gen):
+    def _gen_sites(self, p, density_gen, exclusion_foci, exclusion_r):
         # v16: sites live on the unwarped jittered grid and are NEVER displaced — cell flow
         # comes entirely from warping the query points (see _make_warp). Density is modulated
         # by the attractor mask and a low-frequency noise field (giant-vs-small patches).
@@ -542,71 +540,81 @@ class VoronoiReliefNoise(object):
                     if len(sites) >= self.SITE_COUNT_MAX: break
                     jx = (self._rand() - 0.5) * p['jitter'] * sx
                     jy = (self._rand() - 0.5) * p['jitter'] * sy
-                    sites.append([
-                        max(0.0, min(p['mesh_x'], cx + jx)),
-                        max(0.0, min(p['mesh_y'], cy + jy)),
-                        0.0  # radius (set after Pass 1)
-                    ])
+                    px = max(0.0, min(p['mesh_x'], cx + jx))
+                    py = max(0.0, min(p['mesh_y'], cy + jy))
+                    # v16.2: polar lattices own the focal zones — Cartesian sites inside
+                    # an exclusion disc would shred the petal structure.
+                    if exclusion_r > 0.0:
+                        excluded = False
+                        for f in range(len(exclusion_foci)):
+                            dx = px - exclusion_foci[f][0]
+                            dy = py - exclusion_foci[f][1]
+                            if dx * dx + dy * dy < exclusion_r * exclusion_r:
+                                excluded = True
+                                break
+                        if excluded:
+                            continue
+                    sites.append([px, py, 0.0])
         return sites
-    def _make_warp(self, p, seed, foci_phys, sigma_radial, radial_strength, radial_warp_amt, radial_mode):
-        # The unified space-warp W: flow warp (global distortion/warpFreq sliders) composed
-        # with per-focus radial displacement (the starburst). W is a single smooth position
-        # map, so the resulting partition is the preimage of a true Voronoi partition —
-        # cells stretch and flow but ownership boundaries stay clean curves (the old
-        # per-pixel metric rotation compared distances in different frames at adjacent
-        # pixels and tore cell ownership). Returns None when no warp is active.
-        flow_amp = max(0.0, p.get('warp_distortion', 0.0)) * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS
+    def _make_warp(self, p, seed, warp_distortion):
+        # Flow warp W (global distortion/warpFreq sliders). Returns None when inactive.
+        # Sites are NEVER passed through W — only query points are. (v16.2: the starburst
+        # no longer lives here — see _gen_polar_sites.)
+        flow_amp = warp_distortion * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS
         flow_freq = max(0.02, p.get('warp_frequency', 0.1))
-        flow_gen = SimplexNoise(seed + 17 + 13) if flow_amp > 0 else None
-        wobble_gen = SimplexNoise(seed + 17 + 61) if (radial_warp_amt > 0 and len(foci_phys) > 0) else None
-        has_radial = len(foci_phys) > 0 and radial_strength > 0
-        if flow_gen is None and not has_radial:
+        if flow_amp <= 0:
             return None
-        calm_r = 0.4 * max(0.2, p['cell_size'])
-        disp_clamp = self.RADIAL_DISPLACEMENT_CLAMP_SIGMA * sigma_radial
-        inv2s2 = 1.0 / (2.0 * sigma_radial * sigma_radial)
-        smoothstep = self._smoothstep
+        flow_gen = SimplexNoise(seed + 17 + 13)
         def warp(x, y):
-            qx = x; qy = y
-            if flow_gen is not None:
-                qx += flow_gen.noise(x * flow_freq, y * flow_freq) * flow_amp
-                qy += flow_gen.noise(x * flow_freq + 31.7, y * flow_freq + 17.3) * flow_amp
-            if has_radial:
-                for k in range(len(foci_phys)):
-                    dx = qx - foci_phys[k][0]
-                    dy = qy - foci_phys[k][1]
-                    r = math.sqrt(dx * dx + dy * dy)
-                    if r < 1e-9: continue
-                    g = math.exp(-(r * r) * inv2s2)
-                    # Calm disc — fade the displacement to 0 at the focus center so the
-                    # map stays smooth through the radial-direction singularity.
-                    g *= smoothstep(0.0, calm_r, r)
-                    if g < 1e-4: continue
-                    if radial_mode == 'rings':
-                        # Radial compression toward the focus — tangential elongation.
-                        s = radial_strength * g * self.RADIAL_PULL_RINGS * smoothstep(0.0, sigma_radial, r)
-                        disp_x = -dx * s; disp_y = -dy * s
-                    else:
-                        # 'rays' (and the radial part of 'spiral'): push-out — radial elongation.
-                        s = radial_strength * g * self.RADIAL_PUSH_RAYS
-                        disp_x = dx * s; disp_y = dy * s
-                        if radial_mode == 'spiral':
-                            t = radial_strength * g * self.RADIAL_SWIRL_SPIRAL * sigma_radial / max(r, 1e-6)
-                            disp_x += -dy * t; disp_y += dx * t
-                    if wobble_gen is not None:
-                        ang = wobble_gen.noise(x * self.RADIAL_WOBBLE_NOISE_FREQUENCY,
-                                               y * self.RADIAL_WOBBLE_NOISE_FREQUENCY) * radial_warp_amt * math.pi * 0.35
-                        c = math.cos(ang); s2 = math.sin(ang)
-                        rx = disp_x * c - disp_y * s2
-                        ry = disp_x * s2 + disp_y * c
-                        disp_x = rx; disp_y = ry
-                    mag = math.sqrt(disp_x * disp_x + disp_y * disp_y)
-                    if mag > disp_clamp:
-                        scale = disp_clamp / mag
-                        disp_x *= scale; disp_y *= scale
-                    qx += disp_x; qy += disp_y
+            qx = x + flow_gen.noise(x * flow_freq, y * flow_freq) * flow_amp
+            qy = y + flow_gen.noise(x * flow_freq + 31.7, y * flow_freq + 17.3) * flow_amp
             return qx, qy
         return warp
+    def _gen_polar_sites(self, foci_phys, zone_r, cell_size, radial_strength, radial_grow, jitter_amt, mode, mesh_x, mesh_y, sites):
+        # Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus
+        # jittered concentric rings whose RADIAL gap is (1 + radialStrength) x the
+        # tangential pitch — the Voronoi cells of that lattice are radially elongated
+        # petals fanning out of the node. 'rings' swaps the pitches (tangential arcs);
+        # 'spiral' advances each ring by the golden angle. Mirrors the TS sampler.
+        pitch_t = max(0.3, cell_size * self.POLAR_TANGENTIAL_PITCH_CELLS
+                      * (1.0 + 0.5 * max(0.0, min(2.0, radial_grow))))
+        elong = 1.0 + max(0.0, min(4.0, radial_strength))
+        margin = max(0.2, cell_size)
+        for k in range(len(foci_phys)):
+            if len(sites) >= self.SITE_COUNT_MAX: break
+            cpx = foci_phys[k][0]; cpy = foci_phys[k][1]
+            sites.append([
+                max(0.0, min(mesh_x, cpx + (self._rand() - 0.5) * 0.2 * pitch_t)),
+                max(0.0, min(mesh_y, cpy + (self._rand() - 0.5) * 0.2 * pitch_t)),
+                0.0])
+            base_theta = self._rand() * 2.0 * math.pi
+            r = pitch_t * 0.75
+            ring = 0
+            while r < zone_r and len(sites) < self.SITE_COUNT_MAX:
+                if mode == 'rings':
+                    gap = pitch_t * 0.8
+                    pitch = pitch_t * elong
+                else:
+                    gap = pitch_t * elong * (1.0 + 0.1 * ring)
+                    pitch = pitch_t
+                r_mid = r + gap * 0.5
+                sectors = max(4, int(round((2.0 * math.pi * r_mid) / pitch)))
+                spiral_off = ring * 0.381966 * 2.0 * math.pi if mode == 'spiral' else 0.0
+                for si in range(sectors):
+                    if len(sites) >= self.SITE_COUNT_MAX: break
+                    th = (base_theta + spiral_off + ((si + 0.5) / float(sectors)) * 2.0 * math.pi
+                          + (self._rand() - 0.5) * jitter_amt * (2.0 * math.pi / sectors))
+                    rr = r_mid + (self._rand() - 0.5) * jitter_amt * gap * 0.7
+                    sx0 = cpx + rr * math.cos(th)
+                    sy0 = cpy + rr * math.sin(th)
+                    if sx0 < -margin or sx0 > mesh_x + margin or sy0 < -margin or sy0 > mesh_y + margin:
+                        continue
+                    sites.append([
+                        max(0.0, min(mesh_x, sx0)),
+                        max(0.0, min(mesh_y, sy0)),
+                        0.0])
+                r += gap
+                ring += 1
     def _nearest_two(self, sites, x, y, cosA, sinA, aniso_scale):
         # CONSTANT anisotropic metric (v16 removed per-pixel rotation — a constant frame
         # cannot tear ownership). Rotate into stretched frame, scale x', take hypot.
@@ -630,7 +638,7 @@ class VoronoiReliefNoise(object):
             i = i // base
             f /= base
         return result
-    def _lloyd_relax(self, sites, p, samples, warp_fn):
+    def _lloyd_relax(self, sites, p, samples, warp_fn, pinned_from):
         # One Lloyd pass — move each site toward the centroid of its assigned low-discrepancy
         # samples. Samples are warped through W so relaxation happens in the same space the
         # distance queries use.
@@ -648,7 +656,8 @@ class VoronoiReliefNoise(object):
                 if d < best_d:
                     best_d = d; best_idx = i
             sumX[best_idx] += x; sumY[best_idx] += y; counts[best_idx] += 1
-        for i in range(n):
+        move_limit = min(n, max(0, pinned_from))
+        for i in range(move_limit):
             if counts[i] > 0:
                 sites[i][0] = sumX[i] / counts[i]
                 sites[i][1] = sumY[i] / counts[i]
@@ -679,16 +688,32 @@ class VoronoiReliefNoise(object):
         radial_grow = max(0.0, min(2.0, p.get('radial_grow', 0.45)))
         radial_warp_amt = max(0.0, min(1.0, p.get('radial_warp', 0.4))) if foci_phys else 0.0
         radial_mode = str(p.get('radial_mode', 'rays'))
-        warp_fn = self._make_warp(p, seed, foci_phys, sigma_radial, radial_strength, radial_warp_amt, radial_mode)
-        sites = self._gen_sites(p, density_noise_gen)
+        # Sanitize distortion ONCE — sizes both the warp amplitude and the Rfield padding.
+        wd_raw = p.get('warp_distortion', 0.0)
+        if wd_raw != wd_raw or wd_raw == float('inf') or wd_raw == float('-inf'):
+            wd_raw = 0.0
+        warp_distortion = max(0.0, min(2.0, wd_raw))
+        warp_fn = self._make_warp(p, seed, warp_distortion)
+        # v16.2 starburst: polar lattices own a disc of radius zone_r around each focus.
+        starburst_active = len(foci_phys) > 0 and radial_strength > 0.0
+        zone_r = self.POLAR_ZONE_SIGMAS * sigma_radial if starburst_active else 0.0
+        sites = self._gen_sites(p, density_noise_gen,
+                                foci_phys if starburst_active else [],
+                                zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0)
+        cartesian_count = len(sites)
+        if starburst_active:
+            self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
+                                  radial_grow, radial_warp_amt, radial_mode,
+                                  p['mesh_x'], p['mesh_y'], sites)
         if not sites:
             return [0.0] * (p['cols'] * p['rows'])
-        # Lloyd relaxation passes — clamped 0..2.
+        # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
+        # erase their deliberate radial elongation).
         relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
         if relax_iter > 0:
             lloyd_samples = min(8192, len(sites) * 64)
             for _ in range(relax_iter):
-                self._lloyd_relax(sites, p, lloyd_samples, warp_fn)
+                self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
         # NaN guards on the constant metric frame — mirrors the TS sampler's defensive
         # clamps (crafted params or unwired pins can pass non-finite values).
         aniso_raw = p['anisotropy']
@@ -743,9 +768,8 @@ class VoronoiReliefNoise(object):
         sigma_r2 = sigma_r * sigma_r
         cutoff_r = sigma_r * self.RADIUS_FIELD_CUTOFF_SIGMAS
         cutoff_r2 = cutoff_r * cutoff_r
-        pad = max(0.0, p.get('warp_distortion', 0.0)) * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS
-        if foci_phys:
-            pad += self.RADIAL_DISPLACEMENT_CLAMP_SIGMA * sigma_radial * len(foci_phys)
+        # v16.2: only the flow warp displaces query points (starburst is a site layout).
+        pad = warp_distortion * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS
         dom_x0 = -pad; dom_y0 = -pad
         dom_w = p['mesh_x'] + 2.0 * pad
         dom_h = p['mesh_y'] + 2.0 * pad
@@ -1155,7 +1179,7 @@ PRESETS = {
     # sampler (noise_gen.py implements the same space-warp as the web); this preset mirrors
     # the TS relief-starburst verbatim including the foci. Keep both in sync.
     'relief-starburst':{'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.35, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':12, 'mesh_y':36, 'smooth_iter':2, 'smooth_str':0.4,
-                        'relief_cell_size':2.5, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.3, 'relief_seam_width':0.15, 'relief_wall_width':0.1, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1.0, 'relief_density_strength':0.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.45, 'relief_base_freq':0.06, 'relief_pillow':0.6, 'relief_pillow_coverage':0.55, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0.0, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.12, 'relief_density_noise':0.6, 'relief_density_noise_freq':0.08, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':2.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.2, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'relief_warp_freq':0.07},
+                        'relief_cell_size':1.8, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.25, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1.0, 'relief_density_strength':0.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.45, 'relief_base_freq':0.06, 'relief_pillow':0.6, 'relief_pillow_coverage':0.55, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0.0, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.12, 'relief_density_noise':0.2, 'relief_density_noise_freq':0.08, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':1.2, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.3, 'relief_radial_warp':0.5, 'relief_radial_mode':'rays', 'relief_warp_freq':0.07},
 }
 
 p = PRESETS.get(str(preset), PRESETS['gentle-waves'])

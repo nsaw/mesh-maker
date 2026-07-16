@@ -18,14 +18,17 @@
  *      around every cell boundary before the bowl profile starts, giving walls finite
  *      width instead of knife-edge ridge lines (the F2-F1 field's natural boundary).
  *
- *   3. UNIFIED SPACE-WARP W(x, y). All distance queries (Pass 1, Lloyd samples, radius
- *      field, Pass 2) are evaluated at W(q) rather than q, where W composes a smooth flow
- *      warp (global distortion/warpFreq sliders) with per-focus radial displacement (the
- *      "starburst"). Because W is a single smooth position map, the resulting partition is
- *      the preimage of a true Voronoi partition — cells stretch and flow but ownership
- *      boundaries stay clean curves. The old per-pixel metric rotation compared distances
- *      in different frames at adjacent pixels and tore cell ownership (measured: 0.70 max
- *      adjacent-pixel height jump vs 0.28 for the warp at equal strength).
+ *   3. FLOW WARP W(x, y) + POLAR STARBURST LATTICES. All distance queries (Pass 1, Lloyd
+ *      samples, radius field, Pass 2) are evaluated at W(q), a smooth flow warp driven by
+ *      the global distortion/warpFreq sliders — cells stretch and flow but ownership
+ *      boundaries stay clean curves (the old per-pixel metric rotation tore ownership;
+ *      measured 0.70 max adjacent-pixel jump vs 0.28). The STARBURST (v16.2) is a SITE
+ *      LAYOUT, not a warp: jittered polar ring lattices around each focus whose radial
+ *      gap is (1 + radialStrength) × the tangential pitch produce radially elongated
+ *      petal cells (direction-verified: boundary-crossing rate along spokes ≈ half the
+ *      rate along arcs in 'rays' mode). A radial displacement warp CANNOT produce petals:
+ *      any Gaussian-localized radial displacement compresses radially somewhere in its
+ *      falloff annulus, rendering tangential ring bands — measured on both signs.
  *
  * Site density is additionally modulated by low-frequency noise (reliefDensityNoise) so
  * giant and small cells coexist — the reference's patchy multi-scale cell sizes.
@@ -65,15 +68,16 @@ const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
 // full-slider warp moves sites' apparent positions by roughly one cell — strong visible
 // flow without folding the domain (the warp field gradient stays well below 1/amplitude).
 const FLOW_WARP_AMPLITUDE_CELLS = 0.9;
-// Per-focus radial displacement gains (fraction of the local radius vector / of σ).
-const RADIAL_PUSH_RAYS = 0.35;
-const RADIAL_PULL_RINGS = 0.25;
-const RADIAL_SWIRL_SPIRAL = 0.3;
-// Per-focus displacement clamp in σ units — keeps the radial remap monotone (fold-free)
-// even with overlapping foci (same bound the v15 site-warp used).
-const RADIAL_DISPLACEMENT_CLAMP_SIGMA = 0.5;
-// Wobble noise frequency for the radial displacement direction (breaks rosette symmetry).
-const RADIAL_WOBBLE_NOISE_FREQUENCY = 0.075;
+// Starburst polar-lattice geometry (v16.2). The focal "explosion" is a SITE LAYOUT, not a
+// warp: jittered polar rings around each focus whose radial gap is `1 + radialStrength`
+// times the tangential pitch — Voronoi cells of such a lattice are radially elongated
+// petals/wedges. (v16.0 tried a radial displacement warp; measured result: ANY Gaussian-
+// localized radial displacement produces tangential ring bands at the falloff annulus —
+// both modes rendered as concentric webs. Site placement is the honest mechanism.)
+const POLAR_ZONE_SIGMAS = 1.0;
+const POLAR_TANGENTIAL_PITCH_CELLS = 0.85;
+// Cartesian sites are excluded slightly inside the polar zone so the lattice owns it.
+const POLAR_EXCLUSION_FRACTION = 0.9;
 // Density-noise gain: at reliefDensityNoise = 1.5 (clamp max) local density swings by
 // ±2.4× before the [0.1, LOCAL_DENSITY_MAX] clamp — enough for giant-vs-small patches.
 const DENSITY_NOISE_GAIN = 1.6;
@@ -163,94 +167,89 @@ function attractorMask(
   return Math.pow(smoothstep(r * 0.5, r, d), shapedFalloff);
 }
 
-/** The unified space-warp W. Composes the flow warp (global distortion/warpFreq sliders)
- *  with per-focus radial displacement. Returns null when no warp is active so callers can
- *  take the identity fast path. Sites are NEVER passed through W — only query points are,
- *  which makes real-space cells the preimages of clean warped-space Voronoi cells. */
+/** The flow warp W (global distortion/warpFreq sliders). Returns null when inactive so
+ *  callers can take the identity fast path. Sites are NEVER passed through W — only query
+ *  points are, which makes real-space cells the preimages of clean warped-space Voronoi
+ *  cells. (v16.2: the starburst no longer lives here — see generatePolarSites.) */
 function makeWarpFn(
   p: ReliefSampleParams,
   seed: number,
-  fociPhys: ReadonlyArray<{ x: number; y: number }>,
-  sigmaRadial: number,
-  radialStrength: number,
-  radialWarpAmt: number,
-  radialMode: ReliefRadialMode,
   warpDistortion: number,
 ): ((x: number, y: number) => [number, number]) | null {
   const flowAmp = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS;
   const flowFreq = Math.max(0.02, p.warpFrequency);
-  const flowGen = flowAmp > 0 ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13) : null;
-  const wobbleGen = radialWarpAmt > 0 && fociPhys.length > 0
-    ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61)
-    : null;
-  const hasRadial = fociPhys.length > 0 && radialStrength > 0;
-  if (!flowGen && !hasRadial) return null;
-  const calmR = 0.4 * Math.max(0.2, p.cellSize);
-  const dispClamp = RADIAL_DISPLACEMENT_CLAMP_SIGMA * sigmaRadial;
-  const inv2sigma2 = 1 / (2 * sigmaRadial * sigmaRadial);
-  return (x: number, y: number): [number, number] => {
-    let qx = x;
-    let qy = y;
-    if (flowGen) {
-      qx += flowGen.noise(x * flowFreq, y * flowFreq) * flowAmp;
-      qy += flowGen.noise(x * flowFreq + 31.7, y * flowFreq + 17.3) * flowAmp;
-    }
-    if (hasRadial) {
-      for (let k = 0; k < fociPhys.length; k++) {
-        const dx = qx - fociPhys[k].x;
-        const dy = qy - fociPhys[k].y;
-        const r = Math.hypot(dx, dy);
-        if (r < 1e-9) continue;
-        let g = Math.exp(-(r * r) * inv2sigma2);
-        // Calm disc — fade the displacement to 0 at the focus center so the map stays
-        // smooth through the singularity of the radial direction.
-        g *= smoothstep(0, calmR, r);
-        if (g < 1e-4) continue;
-        let dispX: number;
-        let dispY: number;
-        if (radialMode === 'rings') {
-          // Radial compression toward the focus → cells elongate tangentially.
-          const s = radialStrength * g * RADIAL_PULL_RINGS * smoothstep(0, sigmaRadial, r);
-          dispX = -dx * s;
-          dispY = -dy * s;
-        } else {
-          // 'rays' (and the radial part of 'spiral'): push-out → cells elongate radially.
-          const s = radialStrength * g * RADIAL_PUSH_RAYS;
-          dispX = dx * s;
-          dispY = dy * s;
-          if (radialMode === 'spiral') {
-            const t = radialStrength * g * RADIAL_SWIRL_SPIRAL * sigmaRadial / r;
-            dispX += -dy * t;
-            dispY += dx * t;
-          }
-        }
-        // Wobble — rotate the displacement by low-frequency noise so foci read as organic
-        // carved expansions rather than perfect rosettes.
-        if (wobbleGen) {
-          const ang = wobbleGen.noise(
-            x * RADIAL_WOBBLE_NOISE_FREQUENCY,
-            y * RADIAL_WOBBLE_NOISE_FREQUENCY,
-          ) * radialWarpAmt * Math.PI * 0.35;
-          const c = Math.cos(ang);
-          const s2 = Math.sin(ang);
-          const rx = dispX * c - dispY * s2;
-          const ry = dispX * s2 + dispY * c;
-          dispX = rx;
-          dispY = ry;
-        }
-        // Fold-free clamp on the per-focus displacement magnitude.
-        const mag = Math.hypot(dispX, dispY);
-        if (mag > dispClamp) {
-          const scale = dispClamp / mag;
-          dispX *= scale;
-          dispY *= scale;
-        }
-        qx += dispX;
-        qy += dispY;
+  if (flowAmp <= 0) return null;
+  const flowGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13);
+  return (x: number, y: number): [number, number] => [
+    x + flowGen.noise(x * flowFreq, y * flowFreq) * flowAmp,
+    y + flowGen.noise(x * flowFreq + 31.7, y * flowFreq + 17.3) * flowAmp,
+  ];
+}
+
+/** Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus jittered
+ *  concentric rings whose RADIAL gap is `(1 + radialStrength)` × the tangential pitch —
+ *  the Voronoi cells of that lattice are radially elongated petals fanning out of the
+ *  node, exactly the reference's wedge structure. 'rings' swaps the two pitches
+ *  (tangential arcs); 'spiral' advances each ring by the golden angle so sectors join
+ *  into spiral arms. jitterAmt (the Starburst Wobble slider) breaks mandala regularity;
+ *  radialGrow scales the whole lattice pitch (bigger focal cells). Petal length grows
+ *  with ring index, matching the reference's outward-lengthening fans. */
+function generatePolarSites(
+  fociPhys: ReadonlyArray<{ x: number; y: number }>,
+  zoneR: number,
+  cellSize: number,
+  radialStrength: number,
+  radialGrow: number,
+  jitterAmt: number,
+  mode: ReliefRadialMode,
+  rand: () => number,
+  meshX: number,
+  meshY: number,
+  sites: Site[],
+): void {
+  const pitchT = Math.max(0.3, cellSize * POLAR_TANGENTIAL_PITCH_CELLS
+    * (1 + 0.5 * Math.max(0, Math.min(2, radialGrow))));
+  const elong = 1 + Math.max(0, Math.min(4, radialStrength));
+  const margin = Math.max(0.2, cellSize);
+  for (let k = 0; k < fociPhys.length; k++) {
+    if (sites.length >= SITE_COUNT_MAX) break;
+    const cp = fociPhys[k];
+    // Nucleus site — the small calm cell at the node the reference shows.
+    sites.push({
+      x: Math.max(0, Math.min(meshX, cp.x + (rand() - 0.5) * 0.2 * pitchT)),
+      y: Math.max(0, Math.min(meshY, cp.y + (rand() - 0.5) * 0.2 * pitchT)),
+      radius: 0,
+    });
+    const baseTheta = rand() * 2 * Math.PI;
+    let r = pitchT * 0.75;
+    let ring = 0;
+    while (r < zoneR && sites.length < SITE_COUNT_MAX) {
+      const gap = mode === 'rings'
+        ? pitchT * 0.8
+        : pitchT * elong * (1 + 0.1 * ring);
+      const pitch = mode === 'rings' ? pitchT * elong : pitchT;
+      const rMid = r + gap * 0.5;
+      const sectors = Math.max(4, Math.round((2 * Math.PI * rMid) / pitch));
+      const spiralOff = mode === 'spiral' ? ring * 0.381966 * 2 * Math.PI : 0;
+      for (let s = 0; s < sectors; s++) {
+        if (sites.length >= SITE_COUNT_MAX) break;
+        const th = baseTheta + spiralOff + ((s + 0.5) / sectors) * 2 * Math.PI
+          + (rand() - 0.5) * jitterAmt * (2 * Math.PI / sectors);
+        const rr = rMid + (rand() - 0.5) * jitterAmt * gap * 0.7;
+        const sx0 = cp.x + rr * Math.cos(th);
+        const sy0 = cp.y + rr * Math.sin(th);
+        // Skip sites far off-panel; clamp near-edge ones (border cells stay sane).
+        if (sx0 < -margin || sx0 > meshX + margin || sy0 < -margin || sy0 > meshY + margin) continue;
+        sites.push({
+          x: Math.max(0, Math.min(meshX, sx0)),
+          y: Math.max(0, Math.min(meshY, sy0)),
+          radius: 0,
+        });
       }
+      r += gap;
+      ring++;
     }
-    return [qx, qy];
-  };
+  }
 }
 
 /** Generate a roughly-uniform jittered grid of sites, density modulated by the attractor
@@ -261,6 +260,8 @@ function generateSites(
   p: ReliefSampleParams,
   rand: () => number,
   densityGen: SimplexNoiseGen | null,
+  exclusionFoci: ReadonlyArray<{ x: number; y: number }>,
+  exclusionR: number,
 ): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
   const baseSpacing = Math.max(0.2, cellSize);
@@ -270,6 +271,7 @@ function generateSites(
   const sy = meshY / ny;
   const densityNoiseAmt = Math.max(0, Math.min(1.5, p.densityNoise));
   const densityNoiseFreq = Math.max(0.02, Math.min(0.3, p.densityNoiseFreq));
+  const exclusionR2 = exclusionR * exclusionR;
 
   const sites: Site[] = [];
   outer: for (let j = 0; j < ny; j++) {
@@ -295,11 +297,20 @@ function generateSites(
         if (sites.length >= SITE_COUNT_MAX) break outer;
         const jx = (rand() - 0.5) * jitter * sx;
         const jy = (rand() - 0.5) * jitter * sy;
-        sites.push({
-          x: Math.max(0, Math.min(meshX, cx + jx)),
-          y: Math.max(0, Math.min(meshY, cy + jy)),
-          radius: 0,
-        });
+        const px = Math.max(0, Math.min(meshX, cx + jx));
+        const py = Math.max(0, Math.min(meshY, cy + jy));
+        // v16.2: the polar lattices own the focal zones — Cartesian sites inside an
+        // exclusion disc would double the density there and shred the petal structure.
+        if (exclusionR > 0) {
+          let excluded = false;
+          for (let f = 0; f < exclusionFoci.length; f++) {
+            const dx = px - exclusionFoci[f].x;
+            const dy = py - exclusionFoci[f].y;
+            if (dx * dx + dy * dy < exclusionR2) { excluded = true; break; }
+          }
+          if (excluded) continue;
+        }
+        sites.push({ x: px, y: py, radius: 0 });
       }
     }
   }
@@ -308,12 +319,15 @@ function generateSites(
 
 /** One pass of Lloyd relaxation — moves each site toward the centroid of its assigned
  *  samples. Samples are warped through W so relaxation happens in the same space the
- *  distance queries use. */
+ *  distance queries use. Sites at index ≥ pinnedFrom (the polar starburst lattices) are
+ *  NOT moved: centroidal relaxation homogenizes cells toward isotropy, which would erase
+ *  exactly the radial elongation the lattices exist to produce. */
 function lloydRelax(
   sites: Site[],
   p: ReliefSampleParams,
   samples: number,
   warpFn: ((x: number, y: number) => [number, number]) | null,
+  pinnedFrom: number,
 ): void {
   const { meshX, meshY } = p;
   const sumX = new Float64Array(sites.length);
@@ -337,7 +351,8 @@ function lloydRelax(
     sumY[bestIdx] += y;
     counts[bestIdx]++;
   }
-  for (let i = 0; i < sites.length; i++) {
+  const moveLimit = Math.min(sites.length, Math.max(0, pinnedFrom));
+  for (let i = 0; i < moveLimit; i++) {
     if (counts[i] > 0) {
       sites[i].x = sumX[i] / counts[i];
       sites[i].y = sumY[i] / counts[i];
@@ -446,9 +461,24 @@ export class VoronoiReliefGen implements ReliefGenerator {
       ? Math.max(0, Math.min(2, p.warpDistortion))
       : 0;
 
-    const warpFn = makeWarpFn(p, seed, fociPhys, sigmaRadial, radialStrength, radialWarpAmt, p.radialMode, warpDistortion);
+    const warpFn = makeWarpFn(p, seed, warpDistortion);
 
-    const sites = generateSites(p, rand, densityNoiseGen);
+    // v16.2 starburst: polar site lattices own a disc of radius zoneR around each focus;
+    // Cartesian sites are excluded slightly inside it so the petal structure stays clean.
+    const starburstActive = fociPhys.length > 0 && radialStrength > 0;
+    const zoneR = starburstActive ? POLAR_ZONE_SIGMAS * sigmaRadial : 0;
+    const sites = generateSites(
+      p, rand, densityNoiseGen,
+      starburstActive ? fociPhys : [],
+      starburstActive ? zoneR * POLAR_EXCLUSION_FRACTION : 0,
+    );
+    const cartesianCount = sites.length;
+    if (starburstActive) {
+      generatePolarSites(
+        fociPhys, zoneR, Math.max(0.2, p.cellSize), radialStrength, radialGrow,
+        radialWarpAmt, p.radialMode, rand, p.meshX, p.meshY, sites,
+      );
+    }
     if (sites.length === 0) {
       const empty: number[][] = [];
       for (let j = 0; j < p.rows; j++) empty.push(new Array(p.cols).fill(0));
@@ -456,10 +486,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
     }
 
     // Lloyd relaxation passes (default 1, max 2). Hard-cap defends against crafted links.
+    // Polar lattice sites (index ≥ cartesianCount) are pinned — relaxation would erase
+    // their deliberate radial elongation.
     const relaxIters = Math.max(0, Math.min(2, Math.floor(p.relaxIterations) || 0));
     const lloydSamples = Math.min(LLOYD_SAMPLE_BUDGET_MAX, sites.length * LLOYD_SAMPLES_PER_SITE);
     for (let r = 0; r < relaxIters; r++) {
-      lloydRelax(sites, p, lloydSamples, warpFn);
+      lloydRelax(sites, p, lloydSamples, warpFn, cartesianCount);
     }
 
     // NaN guards on the constant metric frame (crafted params / direct construction).
@@ -534,8 +566,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const sigmaR2 = sigmaR * sigmaR;
     const cutoffR = sigmaR * RADIUS_FIELD_CUTOFF_SIGMAS;
     const cutoffR2 = cutoffR * cutoffR;
-    const pad = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS
-      + (fociPhys.length > 0 ? RADIAL_DISPLACEMENT_CLAMP_SIGMA * sigmaRadial * fociPhys.length : 0);
+    // v16.2: only the flow warp displaces query points now (the starburst is a site
+    // layout), so the padding needs only the flow amplitude.
+    const pad = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS;
     const domX0 = -pad;
     const domY0 = -pad;
     const domW = p.meshX + 2 * pad;

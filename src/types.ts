@@ -96,24 +96,25 @@ export interface ReliefParams {
   pillowCoverage: number;
   /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
    *  count by `sampleReliefParamsFromState`. Empty = the starburst system is off and the
-   *  sampler is byte-identical to non-foci output. v16: each focus contributes a radial
-   *  displacement term to the unified space-warp W — cells elongate/compress around the
-   *  focus because the Voronoi is evaluated in warped coordinates, not because the metric
-   *  rotates per pixel (the old mechanism, which tore cell ownership). */
+   *  sampler is byte-identical to non-foci output. v16.2: each focus seeds a jittered
+   *  POLAR SITE LATTICE (nucleus + concentric rings) whose Voronoi cells are radially
+   *  elongated petals — a site layout, not a warp or metric trick, so cell boundaries
+   *  stay clean curves. */
   radialFoci: Array<{ x: number; y: number }>;
-  /** Strength of the per-focus radial displacement inside the space-warp. */
+  /** Petal elongation: the lattice's radial ring gap is (1 + radialStrength) × the
+   *  tangential pitch, so 1.2 ≈ 2.2:1 petal aspect. */
   radialStrength: number;
-  /** Radial influence radius σ as a fraction of the panel diagonal. Shared by the warp
-   *  displacement and the focal expansion mask. */
+  /** Focal zone radius σ as a fraction of the panel diagonal — the polar lattice owns a
+   *  disc of ~σ around each focus (Cartesian sites are excluded slightly inside it). */
   radialFalloff: number;
-  /** Focal cell expansion in [0, 2]. Bigger values broaden pocket interiors near foci by
-   *  expanding the continuous radius/bowl normalization; site count is unchanged. */
+  /** Focal cell scale in [0, 2]: widens the lattice pitch (bigger petals) and expands the
+   *  continuous radius/bowl normalization near foci. */
   radialGrow: number;
-  /** Focal irregularity in [0,1] — low-frequency perturbation of the radial displacement
-   *  direction so foci read as organic expansions, not perfect rosettes. */
+  /** Lattice jitter in [0,1] — randomizes ring radii and sector angles so foci read as
+   *  organic fans, not mandalas. */
   radialWarp: number;
-  /** Warp shape at each focus: 'rays' = radial push-out (radial elongation), 'rings' =
-   *  radial compression (tangential elongation), 'spiral' = rays + tangential swirl. */
+  /** Lattice arrangement: 'rays' = radially elongated petals, 'rings' = tangential arcs,
+   *  'spiral' = petals with golden-angle ring offsets joining into spiral arms. */
   radialMode: ReliefRadialMode;
 }
 
