@@ -4,11 +4,16 @@
  *
  * 18 numbered test blocks covering: determinism, finiteness + range bounds, polarity
  * inversion sign-symmetry, density-attractor mode effect, dome profile peak/decay
- * sanity, wave base mode + transitionSoftness semantics, Lloyd relaxation effect,
- * warp displacement, warp frequency, void mode (production + cuts deeper than no-void),
- * cell-size gradient, vertical attractor anchor direction, attractor patchiness, flow
- * anisotropy, asymmetric output range guard at production seamDepth, catastrophic-jump
- * guard, and isolated-outlier guard via 5x5 z-score + absolute deviation.
+ * sanity, v16 base superposition + wall band + transitionSoftness semantics, Lloyd
+ * relaxation effect, warp displacement, warp frequency, void mode, cell-size gradient,
+ * vertical attractor anchor direction, attractor patchiness, warp continuity + density
+ * noise, output range guard at production seamDepth, catastrophic-jump guard,
+ * isolated-outlier guard via 5x5 z-score, and the space-warp starburst system.
+ *
+ * Thresholds in blocks 7 (ridge variance) and 7c (wall-band fraction) come from the
+ * 2026-07-15 investigation's numerical simulation (240×160 grid, 96 sites): ridge
+ * variance ≈ 0.07 at baseAmplitude 1; wall-band pixel fraction ≈ 0.88 at wallWidth 0.3
+ * vs ≈ 0.25 at wallWidth 0.
  */
 
 import { VoronoiReliefGen } from '../src/noise/voronoi-relief';
@@ -39,8 +44,10 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
     // New fields (round-12): warp pipeline integration + cell-size gradient + void mode.
     warpDistortion: 0, warpFrequency: 0.1,
     cellSizeGradient: 0, voidStrength: 0, invertProfile: 0, seamSharpness: 0,
-    // Round-14: noise-modulated attractor + flow-field anisotropy.
-    attractorNoise: 0, attractorNoiseFreq: 0.15, flowAnisotropy: 0,
+    // Round-14: noise-modulated attractor.
+    attractorNoise: 0, attractorNoiseFreq: 0.15,
+    // v16: base superposition, wall band, patchy site density.
+    baseAmplitude: 0, baseFrequency: 0.1, wallWidth: 0, densityNoise: 0, densityNoiseFreq: 0.08,
     // Round-16: radial-foci ("starburst"). Empty radialFoci ⇒ radial system off (matches
     // pre-feature output); the scalar params below are inert until radialFoci is non-empty.
     radialFoci: [], radialStrength: 1.5, radialFalloff: 0.3, radialGrow: 0.45, radialWarp: 0.4, radialMode: 'rays',
@@ -91,7 +98,11 @@ function starburstPresetParams(overrides: Partial<ReliefSampleParams> = {}): Rel
     seamSharpness: typeof p.reliefSeamSharpness === 'number' ? p.reliefSeamSharpness : 0,
     attractorNoise: numberValue('reliefAttractorNoise'),
     attractorNoiseFreq: numberValue('reliefAttractorNoiseFreq'),
-    flowAnisotropy: numberValue('reliefFlowAnisotropy'),
+    baseAmplitude: numberValue('reliefBaseAmplitude'),
+    baseFrequency: numberValue('reliefBaseFrequency'),
+    wallWidth: numberValue('reliefWallWidth'),
+    densityNoise: numberValue('reliefDensityNoise'),
+    densityNoiseFreq: numberValue('reliefDensityNoiseFreq'),
     radialFoci: [
       { x: numberValue('reliefRadialFocus1X'), y: numberValue('reliefRadialFocus1Y') },
       { x: numberValue('reliefRadialFocus2X'), y: numberValue('reliefRadialFocus2Y') },
@@ -255,35 +266,89 @@ function countLocalMinima(grid: number[][]): number {
   }
 }
 
-// 7. Wave base mode: with vertical attractor + wave, the bottom (cell zone) must reach
-//    deeper troughs than the top (wave zone). With pockets polarity (the production case)
-//    cells carve DOWN below the wave-only envelope.
+// 7. Base superposition (v16). Cells are carved INTO the base wave — the base is never
+//    attenuated where cells are active. Three assertions: (a) with a vertical attractor,
+//    the cell zone carves below the base-only envelope; (b) the pure-base zone stays inside
+//    the base amplitude; (c) ridge tops UNDULATE — the base shows through at wall pixels.
 {
-  process.stdout.write('7. wave base mode + transitionSoftness\n');
-  // Use parabolic profile + higher resolution: the new hemisphere formula
-  // (1 - sqrt(1-t²)) is slow to grow, and the previous 60×80 grid couldn't
-  // resolve cell centers cleanly enough to saturate bowls. Production rarely
-  // hits this — relief-pockets uses 400×800 with cellSize=5.5 — but the spec
-  // needs enough resolution to actually reach the saturation clamp.
+  process.stdout.write('7. base superposition\n');
   const wave = new VoronoiReliefGen(13).sampleGrid(baseParams({
     cols: 120, rows: 160, meshX: 24, meshY: 32, seed: 13,
-    baseMode: 'wave', attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
+    baseMode: 'wave', baseAmplitude: 0.5, baseFrequency: 0.1,
+    attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     intensityStrength: 1, transitionSoftness: 1,
     seamDepth: 0.4, seamWidth: 0.15, cellSize: 1.5, polarity: 'pockets',
     profile: 'parabolic',
   }));
-  const flatTop = flatten(wave.slice(0, 32));   // top 20% — pure wave zone
-  const flatBot = flatten(wave.slice(128));     // bottom 20% — pure cell zone
+  const flatTop = flatten(wave.slice(0, 32));   // top 20% — pure base zone (mask ≈ 0)
+  const flatBot = flatten(wave.slice(128));     // bottom 20% — full cell zone
   const minTop = Math.min(...flatTop);
   const minBot = Math.min(...flatBot);
-  // Wave alone bounded to ±0.5 (WAVE_AMPLITUDE); cells with seamDepth=0.9 reach the
-  // saturation clamp (-1.0). minBot should easily clear -0.5.
   assert(minBot < -0.5,
-    'wave-mode bottom reaches deep cell troughs (< -0.5)',
+    'cell zone carves below the base-only envelope (< -0.5)',
     `minBot=${minBot.toFixed(4)}`);
   assert(minTop > -0.55,
-    'wave-mode top stays in wave envelope (> -0.55)',
+    'pure-base zone stays inside the base amplitude (> -0.55)',
     `minTop=${minTop.toFixed(4)}`);
+
+  // (c) Ridge undulation — the load-bearing v16 property. Same seed with baseAmplitude 0
+  // (flat) identifies wall pixels (|h| < 0.02: cell boundaries sit at exactly 0 under
+  // flat base). The wave run's heights AT THOSE PIXELS equal the base field there
+  // (superposition adds the identical bowl term), so their variance is the base's
+  // variance — measured ≈ 0.07 in the design simulation; assert > 0.01.
+  const flatRun = new VoronoiReliefGen(29).sampleGrid(baseParams({
+    cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 29, cellSize: 3,
+    baseMode: 'flat', polarity: 'pockets', wallWidth: 0.15,
+  }));
+  const waveRun = new VoronoiReliefGen(29).sampleGrid(baseParams({
+    cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 29, cellSize: 3,
+    baseMode: 'wave', baseAmplitude: 1, baseFrequency: 0.1, polarity: 'pockets', wallWidth: 0.15,
+  }));
+  const ridgeHeights: number[] = [];
+  for (let j = 0; j < 120; j++) {
+    for (let i = 0; i < 160; i++) {
+      if (Math.abs(flatRun[j][i]) < 0.02) ridgeHeights.push(waveRun[j][i]);
+    }
+  }
+  const ridgeVar = stdev(ridgeHeights) ** 2;
+  assert(ridgeHeights.length > 500 && ridgeVar > 0.01,
+    'ridge tops undulate under superposition (wall-pixel variance > 0.01)',
+    `n=${ridgeHeights.length} var=${ridgeVar.toFixed(4)}`);
+
+  // (d) baseAmplitude 0 in wave mode is byte-identical to flat mode (same seed).
+  const waveZero = new VoronoiReliefGen(29).sampleGrid(baseParams({
+    cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 29, cellSize: 3,
+    baseMode: 'wave', baseAmplitude: 0, baseFrequency: 0.1, polarity: 'pockets', wallWidth: 0.15,
+  }));
+  let identical = true;
+  for (let j = 0; j < 120 && identical; j++) {
+    for (let i = 0; i < 160; i++) {
+      if (Math.abs(waveZero[j][i] - flatRun[j][i]) > 1e-12) { identical = false; break; }
+    }
+  }
+  assert(identical, 'wave mode with baseAmplitude 0 equals flat mode byte-identically');
+}
+
+// 7c. Wall band (v16). wallWidth holds a band of the normalized cell distance at base
+//     level around every boundary. Measured response: wallFrac(0.3) ≈ 0.88 vs
+//     wallFrac(0) ≈ 0.25 — assert a ≥ 0.25 separation.
+{
+  process.stdout.write('7c. wall band\n');
+  const wallFrac = (wallWidth: number): number => {
+    const grid = new VoronoiReliefGen(29).sampleGrid(baseParams({
+      cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 29, cellSize: 3,
+      baseMode: 'flat', polarity: 'pockets', wallWidth,
+    }));
+    let inBand = 0;
+    let total = 0;
+    for (const row of grid) for (const v of row) { total++; if (Math.abs(v) < 0.02) inBand++; }
+    return inBand / total;
+  };
+  const f0 = wallFrac(0);
+  const f03 = wallFrac(0.3);
+  assert(f03 > f0 + 0.25,
+    'wallWidth 0.3 floors ≥ 25 points more of the panel than wallWidth 0',
+    `f0=${(f0 * 100).toFixed(1)}% f03=${(f03 * 100).toFixed(1)}%`);
 }
 
 // 7b. transitionSoftness semantic — softness=0 → sharper cells take-over (more low-mask
@@ -486,22 +551,76 @@ function countLocalMinima(grid: number[][]): number {
     `differing=${differing}/${a.length}`);
 }
 
-// 14. Flow anisotropy — per-pixel angle deviation. Same seed/aniso/angle, only flow differs.
+// 14. Warp continuity (v16). The flow warp replaced the per-pixel metric rotation (which
+//     tore cell ownership — measured 0.70 max adjacent-pixel jump vs 0.28 for the warp).
+//     A strong warp must change the output materially AND stay free of catastrophic jumps.
 {
-  process.stdout.write('14. flow anisotropy\n');
-  const uniform = new VoronoiReliefGen(41).sampleGrid(baseParams({
-    seed: 41, anisotropy: 0.6, anisotropyAngle: 30, flowAnisotropy: 0,
+  process.stdout.write('14. warp continuity\n');
+  const unwarped = new VoronoiReliefGen(41).sampleGrid(baseParams({
+    cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 41, cellSize: 3,
+    polarity: 'pockets', warpDistortion: 0,
   }));
-  const flowing = new VoronoiReliefGen(41).sampleGrid(baseParams({
-    seed: 41, anisotropy: 0.6, anisotropyAngle: 30, flowAnisotropy: 1,
+  const warped = new VoronoiReliefGen(41).sampleGrid(baseParams({
+    cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 41, cellSize: 3,
+    polarity: 'pockets', warpDistortion: 0.8, warpFrequency: 0.1,
   }));
   let differing = 0;
-  const a = flatten(uniform);
-  const b = flatten(flowing);
-  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 0.01) differing++;
-  assert(differing > a.length * 0.15,
-    'flowAnisotropy curves the stretch direction across the panel (>15% differ)',
-    `differing=${differing}/${a.length}`);
+  for (let j = 0; j < 120; j++) {
+    for (let i = 0; i < 160; i++) {
+      if (Math.abs(warped[j][i] - unwarped[j][i]) > 0.01) differing++;
+    }
+  }
+  assert(differing > 160 * 120 * 0.15,
+    'strong warp changes >15% of pixels vs unwarped baseline',
+    `differing=${differing}/${160 * 120}`);
+  let bigJumps = 0;
+  let worst = 0;
+  for (let j = 0; j < 120; j++) {
+    for (let i = 1; i < 160; i++) {
+      const d = Math.abs(warped[j][i] - warped[j][i - 1]);
+      if (d > worst) worst = d;
+      if (d > 1.5) bigJumps++;
+    }
+  }
+  for (let j = 1; j < 120; j++) {
+    for (let i = 0; i < 160; i++) {
+      const d = Math.abs(warped[j][i] - warped[j - 1][i]);
+      if (d > worst) worst = d;
+      if (d > 1.5) bigJumps++;
+    }
+  }
+  assert(bigJumps === 0,
+    'warped output has zero catastrophic pixel-pair jumps (no ownership tearing)',
+    `bigJumps=${bigJumps} worst=${worst.toFixed(3)}`);
+}
+
+// 14b. Density noise (v16). Patchy site density must change the output materially while
+//      staying finite and range-bounded.
+{
+  process.stdout.write('14b. density noise\n');
+  const uniform = new VoronoiReliefGen(43).sampleGrid(baseParams({
+    cols: 120, rows: 80, meshX: 36, meshY: 24, seed: 43, cellSize: 2.5,
+    polarity: 'pockets', densityNoise: 0,
+  }));
+  const patchy = new VoronoiReliefGen(43).sampleGrid(baseParams({
+    cols: 120, rows: 80, meshX: 36, meshY: 24, seed: 43, cellSize: 2.5,
+    polarity: 'pockets', densityNoise: 1.2, densityNoiseFreq: 0.06,
+  }));
+  let differing = 0;
+  let allFinite = true;
+  let inRange = true;
+  for (let j = 0; j < 80; j++) {
+    for (let i = 0; i < 120; i++) {
+      const v = patchy[j][i];
+      if (!Number.isFinite(v)) allFinite = false;
+      if (v < -1.05 || v > 1.05) inRange = false;
+      if (Math.abs(v - uniform[j][i]) > 0.01) differing++;
+    }
+  }
+  assert(allFinite && inRange, 'density-noise output finite and within clamp');
+  assert(differing > 120 * 80 * 0.1,
+    'densityNoise 1.2 changes >10% of pixels vs uniform baseline',
+    `differing=${differing}/${120 * 80}`);
 }
 
 // 15. Output range for Worley F2-F1 algorithm. With pockets polarity, the height is
@@ -662,11 +781,9 @@ function countLocalMinima(grid: number[][]): number {
     `bigJumps=${bigJumps}`);
 
   // Rays vs rings: same foci, different mode ⇒ different output. (Sanity check that the mode
-  // enum routes through pixelAnisoFrame.)
+  // enum routes through the space-warp's per-focus displacement branch.)
   const rays = new VoronoiReliefGen(31).sampleGrid(baseParams({
     cols: 80, rows: 80, seed: 31, polarity: 'pockets', profile: 'parabolic', cellSize: 3,
-    // v11 flow spline requires ≥2 control points (Catmull-Rom needs an actual curve, not
-    // a degenerate point). Use 2 well-spaced points so the spline tangent is well-defined.
     radialFoci: [{ x: 0.3, y: 0.3 }, { x: 0.7, y: 0.7 }],
     radialStrength: 2, radialFalloff: 0.3, radialGrow: 0, radialWarp: 0, radialMode: 'rays',
   }));
@@ -766,16 +883,17 @@ function countLocalMinima(grid: number[][]): number {
     }
     return gaps.length > 1 ? stdev(gaps) / mean(gaps) : 0;
   };
+  // NOTE (v16): the old crossing-ratio assertion (counts scale with circumference) is gone
+  // by design — 'rays' mode radially STRETCHES cells around the focus, so a stretched cell
+  // spans a wide radial range and both circles cut similar numbers of angular boundaries.
+  // Equal counts at two radii is the feature working, not a mandala. The mandala's actual
+  // signature is REGULAR angular spacing, which the gap-CV assertion below catches: a polar
+  // grid gives near-constant sector widths (CV → 0), organic jittered Voronoi gives CV ≫ 0.
   const inner = countCrossings(0.12 * Math.hypot(200, 200));
   const outer = countCrossings(0.30 * Math.hypot(200, 200));
-  // v2 mandala would give inner ≈ outer (within ~20%) because the polar grid has constant
-  // angularCount across rings. v3 organic Voronoi has Cartesian site spacing → ring-crossing
-  // count scales with circle circumference (≈ ratio of radii = 0.30/0.12 = 2.5). Test that
-  // outer/inner differs from 1.0 by ≥ 30% — confirms NON-mandala geometry.
-  const ratio = inner > 0 ? outer / inner : 0;
-  assert(Math.abs(ratio - 1) >= 0.3 || (inner === 0 && outer === 0),
-    'organic Voronoi (not mandala): crossing counts at different radii differ ≥ 30%',
-    `inner=${inner} outer=${outer} ratio=${ratio.toFixed(2)}`);
+  assert(inner > 4 && outer > 4,
+    'single-focus field has cell structure at both test radii (not flat)',
+    `inner=${inner} outer=${outer}`);
   const gapCv = angularGapCv(0.18 * Math.hypot(200, 200));
   assert(gapCv > 0.35,
     'organic Voronoi (not mandala): angular sector widths vary strongly',
@@ -801,8 +919,9 @@ function countLocalMinima(grid: number[][]): number {
     'extreme params (cellSize=0.5, strength=4, growth=min, panel 80×80) stay within budget + clamp');
 
   // Panel-edge coverage. The focal field must not collapse the preset into isolated center
-  // effects with dead corners. Compare the height-stdev of each 10×10 corner patch against
-  // the panel-wide stdev under the default starburst preset values.
+  // effects with dead corners. Compare the height-stdev of each 20×20 corner patch against
+  // the panel-wide stdev. (v16: patch enlarged from 10×10 — at cellSize 4 on this grid a
+  // 10×10 patch is ~1"×1.5" and can legitimately sit entirely on one smooth wall.)
   const starburst = new VoronoiReliefGen(13).sampleGrid(starburstPresetParams({ seed: 13 }));
   const allVals: number[] = [];
   for (let j = 0; j < 240; j++) for (let i = 0; i < 120; i++) allVals.push(starburst[j][i]);
@@ -810,15 +929,15 @@ function countLocalMinima(grid: number[][]): number {
   const panelStdev = Math.sqrt(allVals.reduce((s, v) => s + (v - panelMean) ** 2, 0) / allVals.length);
   const cornerStdev = (i0: number, j0: number): number => {
     const patch: number[] = [];
-    for (let dj = 0; dj < 10; dj++) for (let di = 0; di < 10; di++) patch.push(starburst[j0 + dj][i0 + di]);
+    for (let dj = 0; dj < 20; dj++) for (let di = 0; di < 20; di++) patch.push(starburst[j0 + dj][i0 + di]);
     const m = patch.reduce((s, v) => s + v, 0) / patch.length;
     return Math.sqrt(patch.reduce((s, v) => s + (v - m) ** 2, 0) / patch.length);
   };
   const minCornerRatio = Math.min(
     cornerStdev(0, 0),
-    cornerStdev(120 - 10, 0),
-    cornerStdev(0, 240 - 10),
-    cornerStdev(120 - 10, 240 - 10),
+    cornerStdev(120 - 20, 0),
+    cornerStdev(0, 240 - 20),
+    cornerStdev(120 - 20, 240 - 20),
   ) / Math.max(1e-6, panelStdev);
   assert(minCornerRatio > 0.05,
     'panel-edge coverage — corner stdev ≥ 5% of panel stdev (no flat-zone corners)',
@@ -826,19 +945,12 @@ function countLocalMinima(grid: number[][]): number {
 
   const starburstCrossings = countMeanCrossings(starburst);
   const starburstMinima = countLocalMinima(starburst);
-  // v13 adds polar sites (3 rings × 7 sectors × 3 foci = up to 63 additional cells)
-  // on top of the Cartesian baseline. Crossings and minima counts both grow accordingly —
-  // upper bounds widened from v12 to accommodate the polar sites that are now the visible
-  // focal radial-wedge structure (the feature, not a bug).
-  assert(starburstCrossings > 2500 && starburstCrossings < 8000,
+  // v16 preset: cellSize 4 on a 120×240 grid with a wave base — broad organic pockets.
+  // Bounds bracket the measured value generously; they exist to catch a dense-lattice or
+  // flat-panel regression, not to pin the exact texture.
+  assert(starburstCrossings > 500 && starburstCrossings < 8000,
     'starburst preset stays in broad-pocket crossing range (not dense lattice, not flat)',
     `crossings=${starburstCrossings}`);
-  // v15 invertProfile=1 puts the cell BOUNDARIES at the minima (carved seams) and cell
-  // INTERIORS at the surface (domed floors). Boundary-vertex count is much lower than
-  // cell-center pixel count — minima count drops accordingly. Loosen lower bound 50 → 5
-  // to accommodate the inverted geometry while still catching empty/flat regression.
-  // v15.1: high seamSharpness creates a more textured height field around the V-grooves,
-  // raising local-minima count further. Bound widened 600 → 1200 to accommodate.
   assert(starburstMinima >= 5 && starburstMinima <= 1200,
     'starburst preset keeps organic minima count (not dense sliver field)',
     `localMinima=${starburstMinima}`);
@@ -851,12 +963,11 @@ function countLocalMinima(grid: number[][]): number {
     radialWarp: 0,
   }));
   const fociOffMinima = countLocalMinima(fociOff);
-  // v11: the flow spline ADDS sites near the curve by design (this is the visible "course"),
-  // so the v9 assertion "with-foci minima ≈ no-foci minima" no longer applies. Instead
-  // verify the density boost is BOUNDED — minima count grows at most 5× vs the no-foci
-  // baseline (catches a runaway density boost from a bad future config).
+  // v16: foci add NO sites at all (the warp only moves query points), so the feature count
+  // must stay comparable to the no-foci baseline. Bound is generous to tolerate cells that
+  // split or merge as their boundaries warp.
   assert(starburstMinima <= fociOffMinima * 5 + 50,
-    'flow-spline density boost is bounded (not a runaway feature count)',
+    'starburst warp does not create a runaway feature count',
     `withFoci=${starburstMinima} withoutFoci=${fociOffMinima}`);
   const focusMean = (grid: number[][], f: { x: number; y: number }): number => {
     let sum = 0;
