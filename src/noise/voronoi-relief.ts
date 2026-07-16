@@ -122,6 +122,14 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Deterministic per-cell hash in [0, 1) from the owning site index — drives which cells
+ *  get pillowed floors and how strongly, stable across renders for the same seed. */
+function cellHash01(idx: number, seed: number): number {
+  let h = (Math.imul(idx + 1, 374761393) + Math.imul(seed | 0, 668265263)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
 /** Compute the spatial-attractor mask in [0, 1] for a normalized (u, v) ∈ [0, 1]². */
 function attractorMask(
   mode: ReliefAttractorMode,
@@ -572,6 +580,16 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const attractorNoiseFreq = Math.max(0.02, Math.min(0.5, p.attractorNoiseFreq));
     const intensityStrengthClamped = Math.max(0, Math.min(1, p.intensityStrength));
     const inv2sigma2Radial = 1 / (2 * sigmaRadial * sigmaRadial);
+    // v16.1 pillow params. The pillow ramps on the UNCAPPED bowl saturation ratio
+    // (bowlTRaw = tw/seamDepth): 1.0 = the floor just saturated, 1.6 = deep interior.
+    // Anchoring on this ratio (not on normDist toward 1) matters — the measured normDist
+    // distribution is concentrated low, so ramps anchored near 1 never fire.
+    const pillowAmt = Number.isFinite(p.pillow) ? Math.max(0, Math.min(1, p.pillow)) : 0;
+    const pillowCoverage = Number.isFinite(p.pillowCoverage)
+      ? Math.max(0, Math.min(1, p.pillowCoverage))
+      : 0.6;
+    const PILLOW_RAMP_START = 1.0;
+    const PILLOW_RAMP_END = 1.6;
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
@@ -584,7 +602,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const pixIdx = j * cols + i;
         const qx = wxArr[pixIdx];
         const qy = wyArr[pixIdx];
-        const { f1, f2 } = nearestTwo(sites, qx, qy, cosA, sinA, metricScale);
+        const { f1, f2, idx: ownerIdx } = nearestTwo(sites, qx, qy, cosA, sinA, metricScale);
         // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -622,8 +640,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Wall band: hold [0, wallFrac] at base level, remap the rest to [0, 1].
         const tw = Math.max(0, (normDist - wallFrac) / Math.max(0.05, 1 - wallFrac));
         // seamDepth = saturation point: lower → bowls saturate sooner (uniform depth),
-        // higher → only the biggest cells reach full depth.
-        let bowlT = tw / Math.max(0.05, p.seamDepth);
+        // higher → only the biggest cells reach full depth. The uncapped ratio feeds the
+        // pillow ramp below.
+        const bowlTRaw = tw / Math.max(0.05, p.seamDepth);
+        let bowlT = bowlTRaw;
         if (bowlT > 1) bowlT = 1;
         // Profile shapes the bowl falloff curve. All profiles have dh/dt = 0 at t=0 so the
         // wall-to-bowl transition is crease-free.
@@ -641,6 +661,19 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (p.seamSharpness > 0) {
           const sharp = Math.max(0, Math.min(1, p.seamSharpness));
           bowlH = (1 - sharp) * bowlH + sharp * bowlT;
+        }
+        // v16.1 pillowed floors: past the saturation point the floor rises back toward the
+        // cell center — the reference's double-curvature pockets. Per-cell hash gates which
+        // cells pillow (coverage) and varies the mound height so the panel mixes pillowed
+        // and plain pockets. Capped at 65% of the depth so mounds never poke above walls.
+        if (pillowAmt > 0 && bowlTRaw > PILLOW_RAMP_START) {
+          const gate = cellHash01(ownerIdx, seed);
+          if (gate < pillowCoverage) {
+            const amtVar = 0.6 + 0.4 * cellHash01(ownerIdx, seed + 7);
+            const pillowT = smoothstep(PILLOW_RAMP_START, PILLOW_RAMP_END, bowlTRaw);
+            bowlH -= pillowAmt * amtVar * 0.65 * pillowT;
+            if (bowlH < 0) bowlH = 0;
+          }
         }
         // invertProfile: carve the boundary instead of the interior (domed floors).
         if (p.invertProfile > 0.5) {
@@ -717,6 +750,8 @@ export function sampleReliefParamsFromState(
     reliefWallWidth: number;
     reliefDensityNoise: number;
     reliefDensityNoiseFreq: number;
+    reliefPillow: number;
+    reliefPillowCoverage: number;
     reliefRadialFociCount: number;
     reliefRadialFocus1X: number;
     reliefRadialFocus1Y: number;
@@ -775,6 +810,8 @@ export function sampleReliefParamsFromState(
     wallWidth: s.reliefWallWidth,
     densityNoise: s.reliefDensityNoise,
     densityNoiseFreq: s.reliefDensityNoiseFreq,
+    pillow: s.reliefPillow,
+    pillowCoverage: s.reliefPillowCoverage,
     radialFoci,
     radialStrength: s.reliefRadialStrength,
     radialFalloff: s.reliefRadialFalloff,

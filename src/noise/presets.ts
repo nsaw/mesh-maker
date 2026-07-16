@@ -43,6 +43,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.8, reliefIntensityStrength:1, reliefTransitionSoftness:0.45, reliefBaseMode:'wave',
     reliefBaseAmplitude:0.5, reliefBaseFrequency:0.1,
     reliefCellSizeGradient:1.0, reliefVoidStrength:0.7, reliefInvertProfile:0, reliefSeamSharpness:0,
+    reliefPillow:0, reliefPillowCoverage:0.6,
     // Explicit zeros so switching from relief-pockets / relief-starburst (which set these to
     // non-zero) cleanly resets back to relief-vertical's designed appearance. Presets are
     // key-only merges, so omitting a field means inheriting the previous preset's value.
@@ -60,6 +61,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
     reliefBaseAmplitude:0, reliefBaseFrequency:0.1,
     reliefCellSizeGradient:0.6, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
+    reliefPillow:0, reliefPillowCoverage:0.6,
     // Explicit zeros for the same reason as relief-vertical above — prevents stale state
     // carry-over when switching from relief-pockets / relief-starburst.
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15,
@@ -87,6 +89,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:1.2, reliefIntensityStrength:0.9, reliefTransitionSoftness:0.35, reliefBaseMode:'wave',
     reliefBaseAmplitude:0.7, reliefBaseFrequency:0.05,
     reliefCellSizeGradient:0.8, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
+    reliefPillow:0.55, reliefPillowCoverage:0.6,
     reliefAttractorNoise:0.5, reliefAttractorNoiseFreq:0.1,
     reliefDensityNoise:0.9, reliefDensityNoiseFreq:0.06,
     reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
@@ -112,6 +115,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'wave',
     reliefBaseAmplitude:0.45, reliefBaseFrequency:0.06,
     reliefCellSizeGradient:0.4, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
+    reliefPillow:0.4, reliefPillowCoverage:0.5,
     reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12,
     reliefDensityNoise:0.6, reliefDensityNoiseFreq:0.08,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,

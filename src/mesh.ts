@@ -186,44 +186,66 @@ export function generateDepthMapMesh(): void {
   const cutDepth = Math.min(dmHeightScale, bt);
 
   if (STATE.mode === 'blend') {
-    // DRAPE compositor — fabric membrane over the depth-map form (see src/drape.ts).
-    // Replaces the old noise/DM crossfade, which could only produce "form + additive
-    // speckle" (the depth map was a hard floor under a noise lerp):
-    //   1. envelope: morphological closing of the form — tension bridging over concavities
-    //   2. base: lerp(form, envelope, tension) + fabric thickness — the membrane
-    //   3. folds: contour-following creases, damped where the membrane is steep (taut)
-    //   4. no-penetration: h = max(membrane, form)
-    const dmVerts = sampleDepthMapGrid(imgData, depthMap.width, depthMap.height, cols, rows);
-    const smoothedDM = dmSmoothing > 0 ? weightedSmooth(dmVerts, rows, cols, dmSmoothing, 0.6) : dmVerts;
-    const [dmMin, dmMax] = gridMinMax(smoothedDM, rows, cols);
+    // DRAPE compositor — fabric membrane INTERACTING with the depth-map form (src/drape.ts).
+    // The fabric is not "heights added on top": the under-form's fine detail transmits
+    // through the cloth wherever the membrane is in CONTACT with it, and disappears where
+    // the fabric bridges. The image's full resolution is the hard gate — the fine channel
+    // is never pre-blurred (dmSmoothing shapes only the low-frequency form used for the
+    // envelope/membrane).
+    //   dmFine    : full-detail form (bilinear sample, no smoothing)
+    //   dmForm    : low-frequency form (dmSmoothing) — envelope + membrane skeleton
+    //   envelope  : morphological closing of dmForm — tension bridging over concavities
+    //   membrane  : lerp(dmForm, envelope, tension) + fabric thickness
+    //   contact   : 1 where the membrane touches the form, 0 where it bridges
+    //   h = membrane + detail·conform·contact + folds·foldDepth·taut·(slack-weighted)
+    //   no-penetration: h = max(h, dmFine)
+    const dmFine = sampleDepthMapGrid(imgData, depthMap.width, depthMap.height, cols, rows);
+    // Normalize the fine channel first; the form channel is smoothed FROM the normalized
+    // fine channel so detail = fine − form is consistent.
+    const [dmMin, dmMax] = gridMinMax(dmFine, rows, cols);
     const dmRange = dmMax - dmMin || 1;
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++)
-        smoothedDM[j][i] = (smoothedDM[j][i] - dmMin) / dmRange;
+        dmFine[j][i] = (dmFine[j][i] - dmMin) / dmRange;
+    const dmForm = dmSmoothing > 0 ? weightedSmooth(dmFine, rows, cols, dmSmoothing, 0.6) : dmFine;
 
     const tension = Math.max(0, Math.min(1, blend));
+    const conform = Math.max(0, Math.min(1, STATE.drapeConform));
     // Bridge radius scales with tension: 0 → the membrane hugs the form; 1 → the fabric
     // spans concavities up to ~12% of the panel width.
     const bridgeRadius = Math.round(tension * 0.12 * cols);
-    const envelope = closeGrid(smoothedDM, rows, cols, bridgeRadius);
+    const envelope = closeGrid(dmForm, rows, cols, bridgeRadius);
     const thicknessNorm = cutDepth > 0 ? drapeThickness / cutDepth : 0;
-    const base: number[][] = [];
+    const membrane: number[][] = [];
+    const contact: number[][] = [];
     for (let j = 0; j < rows; j++) {
-      base[j] = [];
+      membrane[j] = [];
+      contact[j] = [];
       for (let i = 0; i < cols; i++) {
-        base[j][i] = smoothedDM[j][i] * (1 - tension) + envelope[j][i] * tension + thicknessNorm;
+        membrane[j][i] = dmForm[j][i] * (1 - tension) + envelope[j][i] * tension + thicknessNorm;
+        // Gap between the membrane and the form (thickness excluded): 0 = resting on the
+        // form (fine detail shows through), > ~5% of the height range = fully bridged.
+        const gap = tension * (envelope[j][i] - dmForm[j][i]);
+        const t = Math.max(0, Math.min(1, (gap - 0.005) / 0.045));
+        contact[j][i] = 1 - t * t * (3 - 2 * t);
       }
     }
 
-    const folds = contourFolds(base, rows, cols, drapeFoldScale, drapeFoldWarp, seed);
-    const taut = slopeMask(base, rows, cols);
+    const folds = contourFolds(membrane, rows, cols, drapeFoldScale, drapeFoldWarp, seed);
+    const taut = slopeMask(membrane, rows, cols);
     const draped: number[][] = [];
     for (let j = 0; j < rows; j++) {
       draped[j] = [];
       for (let i = 0; i < cols; i++) {
-        const h = base[j][i] + folds[j][i] * drapeFoldDepth * taut[j][i];
+        const detail = dmFine[j][i] - dmForm[j][i];
+        // Folds concentrate in slack/bridged zones; cloth pressed against the form is
+        // taut and carries fewer wrinkles.
+        const slack = 0.35 + 0.65 * (1 - contact[j][i]);
+        const h = membrane[j][i]
+          + detail * conform * contact[j][i]
+          + folds[j][i] * drapeFoldDepth * taut[j][i] * slack;
         // No-penetration: the fabric can sag between supports but never enter the form.
-        draped[j][i] = Math.max(0, Math.min(1, Math.max(h, smoothedDM[j][i])));
+        draped[j][i] = Math.max(0, Math.min(1, Math.max(h, dmFine[j][i])));
       }
     }
 

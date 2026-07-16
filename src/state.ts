@@ -64,6 +64,12 @@ export interface MeshState {
   // and small cells coexist (the lafabrica multi-scale look).
   reliefDensityNoise: number;
   reliefDensityNoiseFreq: number;
+  // v16.1 pillowed floors: past the bowl's saturation point the floor rises back into a
+  // soft central mound (the reference's double-curvature pockets). Applied per cell via a
+  // seeded hash so only a fraction of cells (pillowCoverage) get pillows — the reference
+  // mixes pillowed and plain pockets.
+  reliefPillow: number;
+  reliefPillowCoverage: number;
   // Voronoi-relief radial-foci ("starburst") params
   reliefRadialFociCount: number;
   reliefRadialFocus1X: number;
@@ -97,6 +103,9 @@ export interface MeshState {
   drapeFoldDepth: number;
   drapeFoldWarp: number;
   drapeThickness: number;
+  /** How much of the underlying form's fine detail transmits through the fabric where the
+   *  membrane is in contact (0 = thick felt, 1 = wet silk). */
+  drapeConform: number;
   depthMapAR: number | null;
   aspectLocked: boolean;
   // View
@@ -175,6 +184,8 @@ export const DEFAULTS: MeshState = {
   reliefWallWidth: 0,
   reliefDensityNoise: 0,
   reliefDensityNoiseFreq: 0.08,
+  reliefPillow: 0,
+  reliefPillowCoverage: 0.6,
   reliefRadialFociCount: 0,
   reliefRadialFocus1X: 0.5,
   reliefRadialFocus1Y: 0.25,
@@ -203,6 +214,7 @@ export const DEFAULTS: MeshState = {
   drapeFoldDepth: 0.12,
   drapeFoldWarp: 0.35,
   drapeThickness: 0.03,
+  drapeConform: 0.7,
   depthMapAR: null,
   aspectLocked: false,
   orbit: 235,
@@ -247,13 +259,14 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefAttractorNoise', 'reliefAttractorNoiseFreq',
   'reliefBaseAmplitude', 'reliefBaseFrequency', 'reliefWallWidth',
   'reliefDensityNoise', 'reliefDensityNoiseFreq',
+  'reliefPillow', 'reliefPillowCoverage',
   'reliefRadialFociCount', 'reliefRadialFocus1X', 'reliefRadialFocus1Y',
   'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
   'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
   'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing',
-  'drapeFoldScale', 'drapeFoldDepth', 'drapeFoldWarp', 'drapeThickness', 'watertight',
+  'drapeFoldScale', 'drapeFoldDepth', 'drapeFoldWarp', 'drapeThickness', 'drapeConform', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
 ];
 
@@ -656,6 +669,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       (result as Record<string, unknown>).reliefWallWidth = 0.1;
       (result as Record<string, unknown>).reliefDensityNoise = 0.6;
       (result as Record<string, unknown>).reliefDensityNoiseFreq = 0.08;
+      (result as Record<string, unknown>).reliefPillow = 0.4;
+      (result as Record<string, unknown>).reliefPillowCoverage = 0.5;
     };
     upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
@@ -702,12 +717,15 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefWallWidth' in result) clampField('reliefWallWidth', 0, 0.5);
     if ('reliefDensityNoise' in result) clampField('reliefDensityNoise', 0, 1.5);
     if ('reliefDensityNoiseFreq' in result) clampField('reliefDensityNoiseFreq', 0.02, 0.3);
+    if ('reliefPillow' in result) clampField('reliefPillow', 0, 1);
+    if ('reliefPillowCoverage' in result) clampField('reliefPillowCoverage', 0, 1);
     // Drape (BLEND mode) fold controls — foldScale drives a per-pixel sin() phase and
     // foldDepth a bounded additive term; clamps prevent cosmetic blowouts from crafted links.
     if ('drapeFoldScale' in result) clampField('drapeFoldScale', 2, 40);
     if ('drapeFoldDepth' in result) clampField('drapeFoldDepth', 0, 0.5);
     if ('drapeFoldWarp' in result) clampField('drapeFoldWarp', 0, 1);
     if ('drapeThickness' in result) clampField('drapeThickness', 0, 0.2);
+    if ('drapeConform' in result) clampField('drapeConform', 0, 1);
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
     // they cannot over-amplify the bowl normalization or angular irregularity.

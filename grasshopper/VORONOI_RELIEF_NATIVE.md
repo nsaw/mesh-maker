@@ -37,7 +37,7 @@ just consume the new z-values.
    | `mesh_x`, `mesh_y` | float    | item   |
    | `resolution`, `relax_iter`, `seed` | int | item |
    | `cell_size`, `jitter`, `attractor_radius`, `density_strength`, `depth`, `seam_sharpness` | float | item |
-   | `base_amp`, `base_freq`, `wall_width`, `density_noise`, `density_noise_freq` | float | item |
+   | `base_amp`, `base_freq`, `wall_width`, `density_noise`, `density_noise_freq`, `pillow`, `pillow_coverage` | float | item |
    | `attractor_pt`    | Point3d   | item   |
    | `profile`, `polarity` | str   | item   |
 
@@ -104,6 +104,8 @@ On `MeshCraft | Shape`:
 | `wall_width`      | 0.0              | 0..0.9 fraction of normalized ridge distance held at base level — finite wall width. Small values (0.08-0.15) are already strong. |
 | `density_noise`   | 0.0              | 0..1.5 patchy cell-size noise (giant cells next to small ones). |
 | `density_noise_freq` | 0.08          | Patch spatial frequency (lower = larger patches). |
+| `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). |
+| `pillow_coverage` | 0.6              | Fraction of cells that get pillows (seeded per-cell hash) — the reference mixes pillowed and plain pockets. |
 
 ## Outputs reference
 
@@ -164,6 +166,7 @@ deltas; only port if the inner loop is actually the bottleneck.
 - [ ] `base_amp = 0.7` → ridge tops visibly undulate; `base_amp = 0` → V1 flat-base look.
 - [ ] `wall_width = 0.12` → walls read as finite flat-ish bands, not knife edges.
 - [ ] `density_noise = 0.9` → giant cells next to small-cell patches.
+- [ ] `pillow = 0.55` → some pocket floors rise into central mounds (double curvature); `pillow_coverage` varies how many.
 - [ ] `cells` output NON-EMPTY → keyword Voronoi call works on this machine (empty ⇒ fallback ran; height field still valid — inspect the ghcomp call).
 - [ ] Connect attractor near top of panel → cells visibly smaller/denser near
       attractor, larger toward bottom.

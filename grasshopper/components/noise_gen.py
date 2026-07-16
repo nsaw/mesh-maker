@@ -65,6 +65,8 @@ relief_base_freq           = _relief_default('relief_base_freq',           0.1)
 relief_wall_width          = _relief_default('relief_wall_width',          0.0)
 relief_density_noise       = _relief_default('relief_density_noise',       0.0)
 relief_density_noise_freq  = _relief_default('relief_density_noise_freq',  0.08)
+relief_pillow              = _relief_default('relief_pillow',              0.0)
+relief_pillow_coverage     = _relief_default('relief_pillow_coverage',     0.6)
 relief_radial_foci_count   = _relief_default('relief_radial_foci_count',   0)
 relief_radial_focus1_x     = _relief_default('relief_radial_focus1_x',     0.5)
 relief_radial_focus1_y     = _relief_default('relief_radial_focus1_y',     0.25)
@@ -395,6 +397,12 @@ class VoronoiReliefNoise(object):
         if t < 0.0: t = 0.0
         elif t > 1.0: t = 1.0
         return t * t * (3.0 - 2.0 * t)
+    def _cell_hash01(self, idx, seed):
+        # Deterministic per-cell hash in [0, 1) from the owning site index — drives which
+        # cells get pillowed floors. Mirrors cellHash01 in the TS sampler.
+        h = (((idx + 1) * 374761393) + ((seed & 0xffffffff) * 668265263)) & 0xffffffff
+        h = ((h ^ (h >> 13)) * 1274126177) & 0xffffffff
+        return float((h ^ (h >> 16)) & 0xffffffff) / 4294967296.0
     def _attractor_mask(self, mode, u, v, ax, ay, radius, falloff):
         if mode == 'none': return 1.0
         if mode == 'vertical':
@@ -709,6 +717,10 @@ class VoronoiReliefNoise(object):
         intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
         seam_sharp = max(0.0, min(1.0, p.get('seam_sharpness', 0.0)))
         invert_profile = p.get('invert_profile', 0.0)
+        # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
+        # 1.6 = deep interior); anchoring on normDist toward 1 never fires (measured).
+        pillow_amt = max(0.0, min(1.0, p.get('pillow', 0.0)))
+        pillow_coverage = max(0.0, min(1.0, p.get('pillow_coverage', 0.6)))
         inv2s2_radial = 1.0 / (2.0 * sigma_radial * sigma_radial)
         out = [0.0] * (cols * rows)
         for j in range(rows):
@@ -743,7 +755,8 @@ class VoronoiReliefNoise(object):
                 dist_diff = f2 - f1
                 norm_dist = min(1.0, dist_diff / (2.0 * R))
                 tw = max(0.0, (norm_dist - wall_frac) / max(0.05, 1.0 - wall_frac))
-                bowl_t = tw / max(0.05, p['seam_depth'])
+                bowl_t_raw = tw / max(0.05, p['seam_depth'])
+                bowl_t = bowl_t_raw
                 if bowl_t > 1.0: bowl_t = 1.0
                 # All profiles MUST have dh/dt = 0 at t=0 (boundary). Otherwise the height
                 # drops from 0 with non-zero slope and mesh triangulation produces knife-edge
@@ -757,6 +770,16 @@ class VoronoiReliefNoise(object):
                 # Seam sharpness — blend toward a linear ramp for V-groove gutters.
                 if seam_sharp > 0.0:
                     bowl_h = (1.0 - seam_sharp) * bowl_h + seam_sharp * bowl_t
+                # v16.1 pillowed floors: past saturation the floor rises back toward the
+                # cell center (double-curvature pockets). Per-cell hash gates coverage and
+                # varies mound height. Capped at 65% of depth so mounds stay inside pockets.
+                if pillow_amt > 0.0 and bowl_t_raw > 1.0:
+                    gate = self._cell_hash01(idx, seed)
+                    if gate < pillow_coverage:
+                        amt_var = 0.6 + 0.4 * self._cell_hash01(idx, seed + 7)
+                        pillow_t = self._smoothstep(1.0, 1.6, bowl_t_raw)
+                        bowl_h -= pillow_amt * amt_var * 0.65 * pillow_t
+                        if bowl_h < 0.0: bowl_h = 0.0
                 # invertProfile: carve the boundary instead of the interior (domed floors).
                 if invert_profile > 0.5:
                     bowl_h = 1.0 - bowl_h
@@ -848,6 +871,8 @@ if is_relief:
         'wall_width': float(relief_wall_width),
         'density_noise': float(relief_density_noise),
         'density_noise_freq': float(relief_density_noise_freq),
+        'pillow': float(relief_pillow),
+        'pillow_coverage': float(relief_pillow_coverage),
         'radial_foci': [
             [float(relief_radial_focus1_x), float(relief_radial_focus1_y)],
             [float(relief_radial_focus2_x), float(relief_radial_focus2_y)],

@@ -95,6 +95,8 @@ if base_freq          is None: base_freq          = 0.05
 if wall_width         is None: wall_width         = 0.0
 if density_noise      is None: density_noise      = 0.0
 if density_noise_freq is None: density_noise_freq = 0.08
+if pillow             is None: pillow             = 0.0
+if pillow_coverage    is None: pillow_coverage    = 0.6
 
 mesh_x             = float(mesh_x)
 mesh_y             = float(mesh_y)
@@ -114,6 +116,8 @@ base_freq          = max(0.005, min(2.0, float(base_freq)))
 wall_width         = max(0.0, min(0.9, float(wall_width)))
 density_noise      = max(0.0, min(1.5, float(density_noise)))
 density_noise_freq = max(0.005, min(2.0, float(density_noise_freq)))
+pillow             = max(0.0, min(1.0, float(pillow)))
+pillow_coverage    = max(0.0, min(1.0, float(pillow_coverage)))
 
 # Grid dimensions: longer axis gets `resolution`, shorter axis scales to keep
 # square pixels.
@@ -133,6 +137,12 @@ def _vn_hash(ix, iy, s):
     h = (h * 1274126177) & 0xffffffff
     h = (h ^ (h >> 16)) & 0xffffffff
     return (h / 4294967295.0) * 2.0 - 1.0
+
+def _cell_hash01(idx, s):
+    # Deterministic per-cell hash in [0, 1) from the owning site index (pillow gating).
+    h = (((idx + 1) * 374761393) + ((s & 0xffffffff) * 668265263)) & 0xffffffff
+    h = ((h ^ (h >> 13)) * 1274126177) & 0xffffffff
+    return float((h ^ (h >> 16)) & 0xffffffff) / 4294967295.0
 
 def vnoise(x, y, s):
     ix = int(math.floor(x)); iy = int(math.floor(y))
@@ -336,6 +346,7 @@ for j in xrange(g_rows):
         px = i * dx_pix
         best1 = 1.0e30
         best2 = 1.0e30
+        owner = 0
         for k in xrange(n_sites):
             dx = sx[k] - px
             dy = sy[k] - py
@@ -343,20 +354,34 @@ for j in xrange(g_rows):
             if d2v < best1:
                 best2 = best1
                 best1 = d2v
+                owner = k
             elif d2v < best2:
                 best2 = d2v
         d1 = math.sqrt(best1)
         d2 = math.sqrt(best2)
         d_seam = d2 - d1
         # v16 per-cell depth: normalize by the LOCAL radius so dense patches
-        # read proportionally shallower (V1 used the global cell_size).
-        t = d_seam / max(0.05, local_min_dist(px, py))
-        if t > 1.0: t = 1.0
-        elif t < 0.0: t = 0.0
+        # read proportionally shallower (V1 used the global cell_size). t_raw is
+        # kept UNCAPPED so the pillow ramp can fire past saturation.
+        t_raw = d_seam / max(0.05, local_min_dist(px, py))
+        if t_raw < 0.0: t_raw = 0.0
         # v16 wall band: hold [0, wall_width] at base level, remap the rest.
-        tw = (t - wall_width) * inv_wall_span
+        tw_raw = (t_raw - wall_width) * inv_wall_span
+        tw = tw_raw
         if tw < 0.0: tw = 0.0
+        elif tw > 1.0: tw = 1.0
         v = profile_fn(tw)
+        # v16.1 pillowed floors: past saturation (tw_raw > 1) the floor rises back into a
+        # soft central mound. Per-cell hash gates coverage; mound height varies per cell.
+        if pillow > 0.0 and tw_raw > 1.0:
+            if _cell_hash01(owner, seed) < pillow_coverage:
+                amt_var = 0.6 + 0.4 * _cell_hash01(owner, seed + 7)
+                pt = tw_raw
+                if pt > 1.6: pt = 1.6
+                pt = (pt - 1.0) / 0.6
+                pt = pt * pt * (3.0 - 2.0 * pt)
+                v -= pillow * amt_var * 0.65 * pt
+                if v < 0.0: v = 0.0
         # v16 base superposition: ridge tops follow the wave (z_cell = 1 at
         # ridge for pockets), then the whole field renormalizes to [0,1].
         base = base_amp * vnoise(px * base_freq, py * base_freq, seed + 99)

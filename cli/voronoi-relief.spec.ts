@@ -48,6 +48,8 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
     attractorNoise: 0, attractorNoiseFreq: 0.15,
     // v16: base superposition, wall band, patchy site density.
     baseAmplitude: 0, baseFrequency: 0.1, wallWidth: 0, densityNoise: 0, densityNoiseFreq: 0.08,
+    // v16.1: pillowed floors.
+    pillow: 0, pillowCoverage: 0.6,
     // Round-16: radial-foci ("starburst"). Empty radialFoci ⇒ radial system off (matches
     // pre-feature output); the scalar params below are inert until radialFoci is non-empty.
     radialFoci: [], radialStrength: 1.5, radialFalloff: 0.3, radialGrow: 0.45, radialWarp: 0.4, radialMode: 'rays',
@@ -103,6 +105,8 @@ function starburstPresetParams(overrides: Partial<ReliefSampleParams> = {}): Rel
     wallWidth: numberValue('reliefWallWidth'),
     densityNoise: numberValue('reliefDensityNoise'),
     densityNoiseFreq: numberValue('reliefDensityNoiseFreq'),
+    pillow: numberValue('reliefPillow'),
+    pillowCoverage: numberValue('reliefPillowCoverage'),
     radialFoci: [
       { x: numberValue('reliefRadialFocus1X'), y: numberValue('reliefRadialFocus1Y') },
       { x: numberValue('reliefRadialFocus2X'), y: numberValue('reliefRadialFocus2Y') },
@@ -592,6 +596,52 @@ function countLocalMinima(grid: number[][]): number {
   assert(bigJumps === 0,
     'warped output has zero catastrophic pixel-pair jumps (no ownership tearing)',
     `bigJumps=${bigJumps} worst=${worst.toFixed(3)}`);
+}
+
+// 7d. Pillowed floors (v16.1). With pillow on, saturated pocket floors rise back toward
+//     the cell centers — the deepest pixels get SHALLOWER while walls stay put; with
+//     coverage 0 the pillow is inert (byte-identical output).
+{
+  process.stdout.write('7d. pillowed floors\n');
+  const mk = (pillow: number, pillowCoverage: number): number[][] =>
+    new VoronoiReliefGen(29).sampleGrid(baseParams({
+      cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 29, cellSize: 3,
+      baseMode: 'flat', polarity: 'pockets', wallWidth: 0.12, seamDepth: 0.35,
+      profile: 'cosine', pillow, pillowCoverage,
+    }));
+  const plain = mk(0, 1);
+  const pillowed = mk(1, 1);
+  const zero = mk(1, 0);
+  // Metric: pixels lifted off the plain baseline (mounds rising from saturated floors).
+  // Measured in the design run: 2112 affected pixels, max lift 0.637 on this fixture.
+  const liftStats = (grid: number[][]): { count: number; maxLift: number } => {
+    let count = 0;
+    let maxLift = 0;
+    for (let j = 0; j < 120; j++) {
+      for (let i = 0; i < 160; i++) {
+        const d = grid[j][i] - plain[j][i];
+        if (d > 0.005) count++;
+        if (d > maxLift) maxLift = d;
+      }
+    }
+    return { count, maxLift };
+  };
+  const full = liftStats(pillowed);
+  assert(full.count > 500 && full.maxLift > 0.3,
+    'pillow lifts a substantial floor area with real mound height',
+    `count=${full.count} maxLift=${full.maxLift.toFixed(3)}`);
+  let identical = true;
+  for (let j = 0; j < 120 && identical; j++) {
+    for (let i = 0; i < 160; i++) {
+      if (zero[j][i] !== plain[j][i]) { identical = false; break; }
+    }
+  }
+  assert(identical, 'pillowCoverage 0 is byte-identical to pillow off');
+  // Partial coverage: some cells pillow, some do not — affected area strictly between.
+  const half = liftStats(mk(1, 0.5));
+  assert(half.count > 50 && half.count < full.count,
+    'coverage 0.5 pillows some cells but fewer than full coverage',
+    `half=${half.count} full=${full.count}`);
 }
 
 // 14b. Density noise (v16). Patchy site density must change the output materially while

@@ -88,6 +88,12 @@ export interface ReliefParams {
   densityNoise: number;
   /** Spatial frequency of the density noise field. Lower = larger patches. */
   densityNoiseFreq: number;
+  /** v16.1 pillowed floors: past the bowl's saturation point the floor rises back into a
+   *  soft central mound (double-curvature pockets). 0 = plain saturated floors. */
+  pillow: number;
+  /** Fraction of cells that receive a pillow (seeded per-cell hash) — the reference mixes
+   *  pillowed and plain pockets. */
+  pillowCoverage: number;
   /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
    *  count by `sampleReliefParamsFromState`. Empty = the starburst system is off and the
    *  sampler is byte-identical to non-foci output. v16: each focus contributes a radial

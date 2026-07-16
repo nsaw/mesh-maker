@@ -351,6 +351,10 @@ function buildReliefSection(): HTMLElement {
     // V-grooves but the rendered mesh will show polygon aliasing along seam ridges — fine
     // for CNC V-bit carving paths.
     slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
+    // v16.1: double-curvature pocket floors — past the bowl's saturation point the floor
+    // rises into a soft central mound. Coverage gates which cells pillow (per-cell hash).
+    slider('reliefPillow', 'Pillowed Floors', 0, 1, 0.05),
+    slider('reliefPillowCoverage', 'Pillow Coverage', 0, 1, 0.05),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
@@ -462,6 +466,7 @@ function buildDepthMapSection(): HTMLElement {
     slider('drapeFoldDepth', 'Fold Depth', 0, 0.5, 0.01),
     slider('drapeFoldWarp', 'Fold Irregularity', 0, 1, 0.05),
     slider('drapeThickness', 'Fabric Thickness (in)', 0, 0.2, 0.005),
+    slider('drapeConform', 'Detail Transmission (0=felt, 1=silk)', 0, 1, 0.05),
     slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05),
     slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01),
     slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1),
@@ -751,7 +756,9 @@ export function fitMeshToAspect(imgW: number, imgH: number): void {
     STATE.meshY = 24;
     STATE.meshX = Math.max(1, Math.round(24 * ar));
   }
-  STATE.resolution = 256;
+  // Full grid resolution — image resolution is the hard gate for depth-map/drape quality;
+  // 256 visibly quantized fine features that the drape's contact-detail channel needs.
+  STATE.resolution = 400;
   STATE.depthMapAR = ar;
   STATE.aspectLocked = true;
 }
