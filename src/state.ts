@@ -629,20 +629,20 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       // sync with `src/noise/presets.ts:relief-starburst` whenever the preset is retuned —
       // the parity test in `cli/voronoi-relief.spec.ts` does not check this, so the source of
       // truth for the migration is the preset file's actual numbers.
-      (result as Record<string, unknown>).reliefCellSize = 4;
+      (result as Record<string, unknown>).reliefCellSize = 2.5;
       (result as Record<string, unknown>).reliefJitter = 0.55;
       (result as Record<string, unknown>).reliefRelaxIterations = 1;
       (result as Record<string, unknown>).distortion = 0.35;
       (result as Record<string, unknown>).warpFreq = 0.07;
-      (result as Record<string, unknown>).reliefSeamDepth = 0.6;
+      (result as Record<string, unknown>).reliefSeamDepth = 0.3;
       (result as Record<string, unknown>).reliefAnisotropy = 0;
       (result as Record<string, unknown>).reliefAnisotropyAngle = 0;
       (result as Record<string, unknown>).reliefCellSizeGradient = 0.4;
       (result as Record<string, unknown>).reliefAttractorNoise = 0.2;
       (result as Record<string, unknown>).reliefAttractorNoiseFreq = 0.12;
-      (result as Record<string, unknown>).reliefRadialStrength = 1.5;
+      (result as Record<string, unknown>).reliefRadialStrength = 2.5;
       (result as Record<string, unknown>).reliefRadialFalloff = 0.3;
-      (result as Record<string, unknown>).reliefRadialGrow = 0.6;
+      (result as Record<string, unknown>).reliefRadialGrow = 0.2;
       (result as Record<string, unknown>).reliefRadialWarp = 0.4;
       (result as Record<string, unknown>).reliefRadialMode = 'rays';
       // v16 additions — these keys did NOT exist in pre-v12 payloads, so they will be absent
@@ -651,10 +651,10 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       (result as Record<string, unknown>).reliefInvertProfile = 0;
       (result as Record<string, unknown>).reliefSeamSharpness = 0;
       (result as Record<string, unknown>).reliefBaseMode = 'wave';
-      (result as Record<string, unknown>).reliefBaseAmplitude = 0.4;
+      (result as Record<string, unknown>).reliefBaseAmplitude = 0.45;
       (result as Record<string, unknown>).reliefBaseFrequency = 0.06;
       (result as Record<string, unknown>).reliefWallWidth = 0.1;
-      (result as Record<string, unknown>).reliefDensityNoise = 0.5;
+      (result as Record<string, unknown>).reliefDensityNoise = 0.6;
       (result as Record<string, unknown>).reliefDensityNoiseFreq = 0.08;
     };
     upgradeKnownStarburstDefaults();
