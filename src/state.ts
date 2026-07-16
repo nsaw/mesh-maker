@@ -53,7 +53,17 @@ export interface MeshState {
   reliefSeamSharpness: number;
   reliefAttractorNoise: number;
   reliefAttractorNoiseFreq: number;
-  reliefFlowAnisotropy: number;
+  // v16 base-surface superposition: independent smooth wave the cells are carved INTO.
+  // Ridge tops follow this surface instead of a flat reference plane.
+  reliefBaseAmplitude: number;
+  reliefBaseFrequency: number;
+  // v16 wall band: fraction of the normalized cell distance held at base level around
+  // every cell boundary — gives ridges finite width instead of knife-edge lines.
+  reliefWallWidth: number;
+  // v16 patchy site density: low-frequency noise multiplying local site density so giant
+  // and small cells coexist (the lafabrica multi-scale look).
+  reliefDensityNoise: number;
+  reliefDensityNoiseFreq: number;
   // Voronoi-relief radial-foci ("starburst") params
   reliefRadialFociCount: number;
   reliefRadialFocus1X: number;
@@ -77,10 +87,16 @@ export interface MeshState {
   // Depth map
   depthMap: HTMLImageElement | null;
   depthMapName: string;
+  /** Fabric tension for BLEND (drape) mode: 0 = membrane hugs the form, 1 = bridges concavities. */
   blend: number;
   dmHeightScale: number;
   dmOffset: number;
   dmSmoothing: number;
+  // Drape (BLEND mode) fold controls
+  drapeFoldScale: number;
+  drapeFoldDepth: number;
+  drapeFoldWarp: number;
+  drapeThickness: number;
   depthMapAR: number | null;
   aspectLocked: boolean;
   // View
@@ -154,7 +170,11 @@ export const DEFAULTS: MeshState = {
   reliefSeamSharpness: 0,
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
-  reliefFlowAnisotropy: 0,
+  reliefBaseAmplitude: 0,
+  reliefBaseFrequency: 0.1,
+  reliefWallWidth: 0,
+  reliefDensityNoise: 0,
+  reliefDensityNoiseFreq: 0.08,
   reliefRadialFociCount: 0,
   reliefRadialFocus1X: 0.5,
   reliefRadialFocus1Y: 0.25,
@@ -179,6 +199,10 @@ export const DEFAULTS: MeshState = {
   dmHeightScale: 1.0,
   dmOffset: -0.08,
   dmSmoothing: 7,
+  drapeFoldScale: 12,
+  drapeFoldDepth: 0.12,
+  drapeFoldWarp: 0.35,
+  drapeThickness: 0.03,
   depthMapAR: null,
   aspectLocked: false,
   orbit: 235,
@@ -220,19 +244,22 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
   'reliefTransitionSoftness', 'reliefBaseMode',
   'reliefCellSizeGradient', 'reliefVoidStrength', 'reliefInvertProfile', 'reliefSeamSharpness',
-  'reliefAttractorNoise', 'reliefAttractorNoiseFreq', 'reliefFlowAnisotropy',
+  'reliefAttractorNoise', 'reliefAttractorNoiseFreq',
+  'reliefBaseAmplitude', 'reliefBaseFrequency', 'reliefWallWidth',
+  'reliefDensityNoise', 'reliefDensityNoiseFreq',
   'reliefRadialFociCount', 'reliefRadialFocus1X', 'reliefRadialFocus1Y',
   'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
   'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
   'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
-  'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'watertight',
+  'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing',
+  'drapeFoldScale', 'drapeFoldDepth', 'drapeFoldWarp', 'drapeThickness', 'watertight',
   'viewMode', 'activePreset', 'activeProfile',
 ];
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 11;
+const CURRENT_PAYLOAD_VERSION = 12;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -267,10 +294,11 @@ const LEGACY_V3_DEFAULTS: Partial<MeshState> = {
   reliefVoidStrength: 0,
 };
 // v4→v5 added noise-modulated attractor + flow-anisotropy. Old links never set them.
+// (reliefFlowAnisotropy was removed in v12 — the key vanished from MeshState, so it is no
+// longer written here; old payloads carrying it are silently ignored by the apply loop.)
 const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
-  reliefFlowAnisotropy: 0,
 };
 // v6→v7 reworked the radial-foci ("starburst") system from metric-anisotropy + site-warp
 // (v1, PR #16, produced "pucker hole" artifacts) to polar-grid site placement (v2). The
@@ -300,6 +328,11 @@ const LEGACY_V9_DEFAULTS: Partial<MeshState> = {};
 // here are correct. The known-starburst migration below specifically rewrites v10 starburst
 // links to include the new field values so saved starburst links match the current preset.
 const LEGACY_V10_DEFAULTS: Partial<MeshState> = {};
+// v11→v12 is the v16 sampler restructure: base-surface superposition replaces the wave
+// crossfade, wall band + density noise added, per-pixel flow anisotropy removed, starburst
+// internals replaced by a unified space-warp. Old links never carry the new keys; the
+// conditional below (not this table) maps old wave-mode links onto the superposition model.
+const LEGACY_V11_DEFAULTS: Partial<MeshState> = {};
 // v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
 // `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
 const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
@@ -493,6 +526,19 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 12) {
+      for (const [k, v] of Object.entries(LEGACY_V11_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+      // Pre-v12 'wave' relief links relied on the crossfade base (fixed amplitude 0.5).
+      // Under the v16 superposition model the closest render uses reliefBaseAmplitude 0.5;
+      // links that never set baseMode (or set 'flat') keep the 0 default.
+      if (parsed.reliefBaseMode === 'wave' && !('reliefBaseAmplitude' in parsed)) {
+        (result as Record<string, unknown>).reliefBaseAmplitude = 0.5;
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -579,31 +625,37 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         || matchesV10TunedDefaults
         || matchesV15MidDefaults;
       if (!matchesAnyStarburst) return;
-      // Write the CURRENT (v15.1) relief-starburst preset values verbatim. Keep this list in
+      // Write the CURRENT (v16) relief-starburst preset values verbatim. Keep this list in
       // sync with `src/noise/presets.ts:relief-starburst` whenever the preset is retuned —
       // the parity test in `cli/voronoi-relief.spec.ts` does not check this, so the source of
       // truth for the migration is the preset file's actual numbers.
       (result as Record<string, unknown>).reliefCellSize = 4;
       (result as Record<string, unknown>).reliefJitter = 0.55;
       (result as Record<string, unknown>).reliefRelaxIterations = 1;
-      (result as Record<string, unknown>).distortion = 0.25;
+      (result as Record<string, unknown>).distortion = 0.35;
+      (result as Record<string, unknown>).warpFreq = 0.07;
       (result as Record<string, unknown>).reliefSeamDepth = 0.6;
       (result as Record<string, unknown>).reliefAnisotropy = 0;
       (result as Record<string, unknown>).reliefAnisotropyAngle = 0;
       (result as Record<string, unknown>).reliefCellSizeGradient = 0.4;
       (result as Record<string, unknown>).reliefAttractorNoise = 0.2;
       (result as Record<string, unknown>).reliefAttractorNoiseFreq = 0.12;
-      (result as Record<string, unknown>).reliefFlowAnisotropy = 0;
-      (result as Record<string, unknown>).reliefRadialStrength = 3.0;
-      (result as Record<string, unknown>).reliefRadialFalloff = 0.4;
-      (result as Record<string, unknown>).reliefRadialGrow = 1.3;
-      (result as Record<string, unknown>).reliefRadialWarp = 0.55;
+      (result as Record<string, unknown>).reliefRadialStrength = 1.5;
+      (result as Record<string, unknown>).reliefRadialFalloff = 0.3;
+      (result as Record<string, unknown>).reliefRadialGrow = 0.6;
+      (result as Record<string, unknown>).reliefRadialWarp = 0.4;
       (result as Record<string, unknown>).reliefRadialMode = 'rays';
-      // v15 additions — these keys did NOT exist in pre-v11 payloads, so they will be absent
+      // v16 additions — these keys did NOT exist in pre-v12 payloads, so they will be absent
       // from old share-links and need to be written explicitly to reproduce the current
-      // starburst look (domed floors + V-groove seams).
-      (result as Record<string, unknown>).reliefInvertProfile = 1;
-      (result as Record<string, unknown>).reliefSeamSharpness = 0.7;
+      // starburst look (wave base + wall band + patchy density; profile upright, no V-groove).
+      (result as Record<string, unknown>).reliefInvertProfile = 0;
+      (result as Record<string, unknown>).reliefSeamSharpness = 0;
+      (result as Record<string, unknown>).reliefBaseMode = 'wave';
+      (result as Record<string, unknown>).reliefBaseAmplitude = 0.4;
+      (result as Record<string, unknown>).reliefBaseFrequency = 0.06;
+      (result as Record<string, unknown>).reliefWallWidth = 0.1;
+      (result as Record<string, unknown>).reliefDensityNoise = 0.5;
+      (result as Record<string, unknown>).reliefDensityNoiseFreq = 0.08;
     };
     upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
@@ -641,7 +693,21 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefSeamSharpness' in result) clampField('reliefSeamSharpness', 0, 1);
     if ('reliefAttractorNoise' in result) clampField('reliefAttractorNoise', 0, 1);
     if ('reliefAttractorNoiseFreq' in result) clampField('reliefAttractorNoiseFreq', 0.02, 0.5);
-    if ('reliefFlowAnisotropy' in result) clampField('reliefFlowAnisotropy', 0, 1);
+    // v16 base/wall/density keys. baseAmplitude adds directly to the output height (clamped
+    // downstream), wallWidth divides into the bowl remap (0.9 hard cap in the sampler), and
+    // densityNoise multiplies site density (bounded by LOCAL_DENSITY_MAX) — clamps here keep
+    // crafted links inside slider semantics.
+    if ('reliefBaseAmplitude' in result) clampField('reliefBaseAmplitude', 0, 2);
+    if ('reliefBaseFrequency' in result) clampField('reliefBaseFrequency', 0.02, 0.3);
+    if ('reliefWallWidth' in result) clampField('reliefWallWidth', 0, 0.5);
+    if ('reliefDensityNoise' in result) clampField('reliefDensityNoise', 0, 1.5);
+    if ('reliefDensityNoiseFreq' in result) clampField('reliefDensityNoiseFreq', 0.02, 0.3);
+    // Drape (BLEND mode) fold controls — foldScale drives a per-pixel sin() phase and
+    // foldDepth a bounded additive term; clamps prevent cosmetic blowouts from crafted links.
+    if ('drapeFoldScale' in result) clampField('drapeFoldScale', 2, 40);
+    if ('drapeFoldDepth' in result) clampField('drapeFoldDepth', 0, 0.5);
+    if ('drapeFoldWarp' in result) clampField('drapeFoldWarp', 0, 1);
+    if ('drapeThickness' in result) clampField('drapeThickness', 0, 0.2);
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
     // they cannot over-amplify the bowl normalization or angular irregularity.

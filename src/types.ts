@@ -71,30 +71,43 @@ export interface ReliefParams {
   attractorNoise: number;
   /** Spatial frequency of the attractor noise field. Lower = larger blobs. */
   attractorNoiseFreq: number;
-  /** Per-pixel deviation of the anisotropy angle from the global `anisotropyAngle`,
-   *  driven by a flow-noise field. 0 = uniform global angle (current behavior),
-   *  1 = anisotropy direction varies wildly across the panel. Produces the
-   *  organic, randomly-stretched-in-different-directions look. */
-  flowAnisotropy: number;
+  /** v16 base-surface superposition amplitude. The cellular carve is ADDED to a smooth
+   *  low-frequency wave field of this amplitude, so ridge tops follow an undulating
+   *  surface instead of a flat reference plane. 0 = flat base (with baseMode 'flat',
+   *  the base term is forced to 0 regardless). */
+  baseAmplitude: number;
+  /** Spatial frequency of the base wave field (independent of the warp frequency). */
+  baseFrequency: number;
+  /** Fraction of the normalized cell distance held at base level around every cell
+   *  boundary — walls get finite width instead of knife-edge ridge lines. The bowl
+   *  profile is remapped to the remaining (1 − wallWidth) band. */
+  wallWidth: number;
+  /** Low-frequency multiplicative noise on local site density. 0 = uniform jittered
+   *  grid; higher values produce patchy multi-scale cell sizes (giant cells next to
+   *  small ones — the lafabrica signature). */
+  densityNoise: number;
+  /** Spatial frequency of the density noise field. Lower = larger patches. */
+  densityNoiseFreq: number;
   /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
-   *  count by `sampleReliefParamsFromState`. Empty = the radial-foci system is off and the
-   *  sampler is byte-identical to pre-feature output. Around each focus, cell elongation
-   *  direction tracks the local radial direction while continuous radius/intensity fields
-   *  create focal expansion without changing site density. */
+   *  count by `sampleReliefParamsFromState`. Empty = the starburst system is off and the
+   *  sampler is byte-identical to non-foci output. v16: each focus contributes a radial
+   *  displacement term to the unified space-warp W — cells elongate/compress around the
+   *  focus because the Voronoi is evaluated in warped coordinates, not because the metric
+   *  rotates per pixel (the old mechanism, which tore cell ownership). */
   radialFoci: Array<{ x: number; y: number }>;
-  /** Extra anisotropy units added near a focus (on top of `anisotropy`), scaled by the
-   *  per-pixel radial blend ∈ [0,1]. Effective metric scale = 1 + (anisotropy + strength·blend)·k. */
+  /** Strength of the per-focus radial displacement inside the space-warp. */
   radialStrength: number;
-  /** Radial influence radius σ as a fraction of the panel diagonal. Shared by the per-pixel
-   *  elongation blend, focal expansion, and focal irregularity masks. */
+  /** Radial influence radius σ as a fraction of the panel diagonal. Shared by the warp
+   *  displacement and the focal expansion mask. */
   radialFalloff: number;
   /** Focal cell expansion in [0, 2]. Bigger values broaden pocket interiors near foci by
    *  expanding the continuous radius/bowl normalization; site count is unchanged. */
   radialGrow: number;
-  /** Focal irregularity in [0,1] — low-frequency angular and influence modulation that
-   *  breaks perfect rosette symmetry without moving sites. */
+  /** Focal irregularity in [0,1] — low-frequency perturbation of the radial displacement
+   *  direction so foci read as organic expansions, not perfect rosettes. */
   radialWarp: number;
-  /** Elongation axis relative to the local radial direction (rays / rings / spiral). */
+  /** Warp shape at each focus: 'rays' = radial push-out (radial elongation), 'rings' =
+   *  radial compression (tangential elongation), 'spiral' = rays + tangential swirl. */
   radialMode: ReliefRadialMode;
 }
 
