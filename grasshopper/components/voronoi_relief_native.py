@@ -359,10 +359,10 @@ z_arr = [0.0] * total
 sx = [s.X for s in sites]
 sy = [s.Y for s in sites]
 
-# v18 per-cell INRADIUS. The per-cell maximum of the boundary distance
-# d_b = (d2-d1)/2 is exactly half the distance from the site to its nearest
-# neighboring site (triangle inequality; the max is attained at the site), so
-# the closed form replaces the sampled pre-pass the web sampler uses. O(n^2)
+# v18 per-cell INRADIUS proxy: half the distance from the site to its nearest
+# neighboring site — the exact boundary distance evaluated AT the site. The true
+# cell maximum (at the incenter) can slightly exceed this when the incenter is
+# off-site; the small underestimate only makes floors marginally larger. O(n^2)
 # on a few hundred sites is negligible next to the pixel loop.
 inradius = [cell_size * 0.5] * n_sites
 for k in xrange(n_sites):
@@ -375,6 +375,17 @@ for k in xrange(n_sites):
         if dd < best: best = dd
     if best < 1.0e30:
         inradius[k] = math.sqrt(best) * 0.5
+
+# v17 size-depth coupling: bigger cells carve somewhat deeper. The per-cell inradius
+# doubles as the size proxy; normalize against the median so the multiplier is scale-free.
+sorted_inr = sorted(inradius)
+median_inr = max(0.05, sorted_inr[n_sites // 2])
+size_mul_cell = [0.0] * n_sites
+for k in xrange(n_sites):
+    sm = math.sqrt(inradius[k] / median_inr)
+    if sm < 0.8: sm = 0.8
+    elif sm > 1.2: sm = 1.2
+    size_mul_cell[k] = sm
 
 wall_noise_freq = 0.45 / max(0.2, cell_size)
 crest_freq = 0.25 / max(0.2, cell_size)
@@ -389,29 +400,49 @@ for j in xrange(g_rows):
         best2 = 1.0e30
         best3 = 1.0e30
         owner = 0
+        owner2 = -1
+        owner3 = -1
         for k in xrange(n_sites):
             dx = sx[k] - px
             dy = sy[k] - py
             d2v = dx * dx + dy * dy
             if d2v < best1:
                 best3 = best2
+                owner3 = owner2
                 best2 = best1
+                owner2 = owner
                 best1 = d2v
                 owner = k
             elif d2v < best2:
                 best3 = best2
+                owner3 = owner2
                 best2 = d2v
+                owner2 = k
             elif d2v < best3:
                 best3 = d2v
+                owner3 = k
+        if best2 >= 1.0e30: owner2 = -1
+        if best3 >= 1.0e30: owner3 = -1
         d1 = math.sqrt(best1)
-        d2 = math.sqrt(best2)
-        d3 = math.sqrt(best3)
-        # v18 BOUNDARY-DISTANCE CONSTRUCTION. d_b = (d2-d1)/2 is the true distance
-        # to the SHARED Voronoi boundary — its level sets are inset polygons of the
-        # cell, so floors keep polygonal ancestry. The wall extent w is normalized
-        # per cell against the inradius: every interior point is crest, wall, or
-        # floor — no neutral gaps, and shrinking floors WIDENS walls.
-        db = (d2 - d1) * 0.5
+        d3 = math.sqrt(best3) if best3 < 1.0e30 else 1.0e15
+        # v18 BOUNDARY-DISTANCE CONSTRUCTION. d_b is the EXACT distance to the shared
+        # Voronoi boundary: the bisector distance (dk^2 - d1^2)/(2*|sk - s1|), minimized
+        # over the two nearest competitors (the third catches corner regions). Its level
+        # sets are true inset polygons of the cell, so floors keep polygonal ancestry.
+        # The wall extent w is normalized per cell against the inradius: every interior
+        # point is crest, wall, or floor — no neutral gaps, and shrinking floors WIDENS
+        # walls. Squared distances feed the formula directly (dk^2 - d1^2 = best_k - best1).
+        db = mesh_x + mesh_y
+        if owner2 >= 0:
+            dxs = sx[owner2] - sx[owner]
+            dys = sy[owner2] - sy[owner]
+            dcand = (best2 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
+            if dcand < db: db = dcand
+        if owner3 >= 0:
+            dxs = sx[owner3] - sx[owner]
+            dys = sy[owner3] - sy[owner]
+            dcand = (best3 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
+            if dcand < db: db = dcand
         inr = inradius[owner]
         if inr < 0.01: inr = 0.01
         # Scale-free junction proximity: (d3-d1)/(d3+d1) -> 0 at three-way corners.
@@ -420,7 +451,9 @@ for j in xrange(g_rows):
         if jn_s < 0.0: jn_s = 0.0
         elif jn_s > 1.0: jn_s = 1.0
         jn_s = jn_s * jn_s * (3.0 - 2.0 * jn_s)
-        # Ridge crest band: a small physical plateau on the shared boundary.
+        # Ridge crest band: a physical plateau on the shared boundary. The plateau
+        # width SWINGS along each edge with the wall-noise field (chunky-to-thin
+        # ridges) and widens toward junctions.
         crest_w = wall_width * max(0.2, cell_size) * 0.5
         # Wall extent = seam_depth fraction of the remaining inradius, varied per
         # cell (asymmetric neighbors), along each edge (noise), at junctions (wider).
@@ -431,12 +464,13 @@ for j in xrange(g_rows):
         if wall_width > 0.0:
             wn = vnoise(px * wall_noise_freq, py * wall_noise_freq, seed + 83)
             wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
+            crest_w *= max(0.15, 1.0 + 1.2 * wn + 1.2 * jn_s)
         w = seam_depth * max(0.02, inr - crest_w) * wall_scale
         if w < 0.02: w = 0.02
         tw_raw = (db - crest_w) / w
         if tw_raw < 0.0: tw_raw = 0.0
         # Smooth floor saturation (C1 fillet) instead of a hard clamp.
-        FILLET_BAND = 0.18
+        FILLET_BAND = 0.1
         if tw_raw >= 1.0 + FILLET_BAND:
             tw = 1.0
         elif tw_raw <= 1.0 - FILLET_BAND:
@@ -457,8 +491,10 @@ for j in xrange(g_rows):
                 pt = pt * pt * (3.0 - 2.0 * pt)
                 v -= pillow * amt_var * 0.65 * pt
                 if v < 0.0: v = 0.0
-        # v17 depth tiers + SPATIAL suppression (clusters of cells melt into masses).
-        cell_depth_mul = 1.0
+        # v17 depth composition: size coupling (bigger cells carve deeper, per-cell
+        # inradius vs median) + depth tiers + SPATIAL suppression (clusters of cells
+        # melt into masses).
+        cell_depth_mul = size_mul_cell[owner]
         if depth_variation > 0.0:
             h_depth = _cell_hash01(owner, seed + 13)
             tier = 0.55 if h_depth < 0.35 else 1.0

@@ -569,11 +569,10 @@ function countLocalMinima(grid: number[][]): number {
 // 14. Warp continuity. The flow warp replaced the per-pixel metric rotation (which tore
 //     cell ownership). A strong warp must change the output materially AND stay free of
 //     tearing jumps. The fixture uses a NON-saturating gentle profile (parabolic,
-//     seamDepth 1) so legitimate bowl slopes stay small (v17 u-coordinate: measured worst
-//     0.465/pixel) and the 0.55 threshold discriminates the torn-metric regression
-//     (0.7–1.0 ownership discontinuities). Saturating profiles at production seamDepth
-//     legitimately exceed this at grid pitch and cannot discriminate — do not "tighten"
-//     this test by switching the fixture back.
+//     seamDepth 1) so legitimate bowl slopes stay small, and the assertion is RELATIVE:
+//     the warped worst adjacent-pixel jump must stay within 2.4× the unwarped baseline's
+//     (torn-metric regressions measured ≈3.5×). Absolute thresholds churned with every
+//     legitimate profile change — do not reintroduce one.
 {
   process.stdout.write('14. warp continuity\n');
   const unwarped = new VoronoiReliefGen(41).sampleGrid(baseParams({
@@ -660,6 +659,29 @@ function countLocalMinima(grid: number[][]): number {
   assert(deepest < -0.95,
     'smooth saturation still reaches full floor depth',
     `deepest=${deepest.toFixed(3)}`);
+  // Fillet CONTINUITY: a hard min(bowlT, 1) clamp would also reach full depth, but it
+  // concentrates the entire wall slope into one pixel at floor entry. Within the floor
+  // band (bottom 15% of the height range) the discrete curvature |Δslope| must stay well
+  // below the panel's max wall slope (measured with the C1 fillet: ratio 0.152; a hard
+  // clamp puts the full slope drop in one pixel → ratio near 1).
+  let maxSlope = 0;
+  let maxCurvFloor = 0;
+  const floorLo = Math.min(...flatten(plain));
+  const floorHi = floorLo + 0.15 * (Math.max(...flatten(plain)) - floorLo);
+  for (let j = 0; j < 120; j++) {
+    for (let i = 1; i < 159; i++) {
+      const s1 = plain[j][i] - plain[j][i - 1];
+      const s2 = plain[j][i + 1] - plain[j][i];
+      if (Math.abs(s1) > maxSlope) maxSlope = Math.abs(s1);
+      if (plain[j][i - 1] <= floorHi && plain[j][i] <= floorHi && plain[j][i + 1] <= floorHi) {
+        const c = Math.abs(s2 - s1);
+        if (c > maxCurvFloor) maxCurvFloor = c;
+      }
+    }
+  }
+  assert(maxCurvFloor < 0.4 * maxSlope,
+    'floor-to-wall transition is C1 (no hard-clamp kink at floor entry)',
+    `maxCurvFloor=${maxCurvFloor.toFixed(4)} maxSlope=${maxSlope.toFixed(4)} ratio=${(maxCurvFloor / maxSlope).toFixed(3)}`);
 }
 
 // 14b. Density noise (v16). Patchy site density must change the output materially while
@@ -870,10 +892,11 @@ function countLocalMinima(grid: number[][]): number {
     `modeDiffer=${modeDiffer}/${80 * 80}`);
 
   // Direction SEMANTICS (v16.2 regression guard for the inverted-warp bug): in 'rays'
-  // mode, petal cells are radially elongated, so boundary crossings per unit length along
-  // radial spokes must be LOWER than along a circular arc; 'rings' must be the reverse.
-  // Uses a single centered focus on a square panel (measured design values: rays 7.7 vs
-  // 14.5 per 100px, rings 8.6 vs 5.0).
+  // mode, petal pockets are radially elongated; in 'rings' mode, tangentially. Measured
+  // directly on the deep-pixel structure (v18.1: the exact boundary distance makes ring
+  // gaps uniform crest and petal axes uniform trough, so path-mean crossing counts no
+  // longer discriminate): a deep pixel stepped RADIALLY should stay deep more often than
+  // one stepped TANGENTIALLY when pockets stretch along rays, and vice versa for rings.
   const directionGrid = (mode: 'rays' | 'rings'): number[][] =>
     new VoronoiReliefGen(7).sampleGrid(baseParams({
       cols: 200, rows: 200, meshX: 30, meshY: 30, seed: 7,
@@ -881,47 +904,61 @@ function countLocalMinima(grid: number[][]): number {
       radialFoci: [{ x: 0.5, y: 0.5 }],
       radialStrength: 2.5, radialFalloff: 0.25, radialGrow: 0, radialWarp: 0, radialMode: mode,
     }));
-  const crossRates = (grid: number[][]): { spoke: number; arc: number } => {
+  const deepStay = (grid: number[][]): { radial: number; tangential: number } => {
     const cCenter = 99.5;
     const sigmaPx = 0.25 * Math.hypot(200, 200);
-    const crossOf = (pts: Array<[number, number]>): number => {
-      const vals = pts.map(([x, y]) => grid[Math.round(y)][Math.round(x)]);
-      const m = mean(vals);
-      let cr = 0;
-      for (let k = 1; k < vals.length; k++) if ((vals[k] > m) !== (vals[k - 1] > m)) cr++;
-      return cr;
-    };
-    let spoke = 0;
-    for (let k = 0; k < 8; k++) {
-      const th = (k / 8) * 2 * Math.PI + 0.19;
-      const pts: Array<[number, number]> = [];
-      for (let t = 0; t <= 200; t++) {
-        const r = sigmaPx * (0.25 + 0.75 * t / 200);
-        const x = cCenter + r * Math.cos(th);
-        const y = cCenter + r * Math.sin(th);
-        if (x >= 0 && x < 200 && y >= 0 && y < 200) pts.push([x, y]);
+    // Deep threshold from the annulus band's own distribution.
+    const band: number[] = [];
+    for (let j = 0; j < 200; j++) {
+      for (let i = 0; i < 200; i++) {
+        const r = Math.hypot(i - cCenter, j - cCenter);
+        if (r >= 0.3 * sigmaPx && r <= 0.9 * sigmaPx) band.push(grid[j][i]);
       }
-      spoke += crossOf(pts);
     }
-    const spokeRate = spoke / (8 * 0.75 * sigmaPx);
-    const arcPts: Array<[number, number]> = [];
-    for (let t = 0; t <= 720; t++) {
-      const th = (t / 720) * 2 * Math.PI;
-      const x = cCenter + 0.6 * sigmaPx * Math.cos(th);
-      const y = cCenter + 0.6 * sigmaPx * Math.sin(th);
-      if (x >= 0 && x < 200 && y >= 0 && y < 200) arcPts.push([x, y]);
+    const lo = Math.min(...band);
+    const hi = Math.max(...band);
+    const deepT = lo + 0.5 * (hi - lo);
+    // Step ≈ half a cell: the ± probes survive only along a pocket's LONG axis (deep
+    // kernels are thin inset polygons — a few px across, tens of px long). Measured at
+    // these params: rays radial=0.051/tangential=0.000, rings 0.000/0.013.
+    const step = 6;
+    let radialStay = 0;
+    let tangentialStay = 0;
+    let deepCount = 0;
+    const at = (x: number, y: number): number => {
+      const xi = Math.round(x);
+      const yi = Math.round(y);
+      if (xi < 0 || xi >= 200 || yi < 0 || yi >= 200) return hi;
+      return grid[yi][xi];
+    };
+    for (let j = 0; j < 200; j++) {
+      for (let i = 0; i < 200; i++) {
+        const dx = i - cCenter;
+        const dy = j - cCenter;
+        const r = Math.hypot(dx, dy);
+        if (r < 0.3 * sigmaPx || r > 0.9 * sigmaPx) continue;
+        if (grid[j][i] > deepT) continue;
+        deepCount++;
+        const ux = dx / r;
+        const uy = dy / r;
+        if (at(i + ux * step, j + uy * step) <= deepT
+          && at(i - ux * step, j - uy * step) <= deepT) radialStay++;
+        if (at(i - uy * step, j + ux * step) <= deepT
+          && at(i + uy * step, j - ux * step) <= deepT) tangentialStay++;
+      }
     }
-    const arcRate = crossOf(arcPts) / (2 * Math.PI * 0.6 * sigmaPx);
-    return { spoke: spokeRate, arc: arcRate };
+    const n = Math.max(1, deepCount);
+    return { radial: radialStay / n, tangential: tangentialStay / n };
   };
-  const raysRates = crossRates(directionGrid('rays'));
-  const ringsRates = crossRates(directionGrid('rings'));
-  assert(raysRates.spoke < raysRates.arc,
-    'rays mode: cells radially elongated (spoke crossing rate < arc crossing rate)',
-    `spoke=${(raysRates.spoke * 100).toFixed(1)} arc=${(raysRates.arc * 100).toFixed(1)} per 100px`);
-  assert(ringsRates.spoke > ringsRates.arc,
-    'rings mode: cells tangentially elongated (spoke crossing rate > arc crossing rate)',
-    `spoke=${(ringsRates.spoke * 100).toFixed(1)} arc=${(ringsRates.arc * 100).toFixed(1)} per 100px`);
+  const raysStay = deepStay(directionGrid('rays'));
+  const ringsStay = deepStay(directionGrid('rings'));
+  assert(raysStay.radial > ringsStay.radial + 0.02 && ringsStay.tangential > raysStay.tangential + 0.005,
+    'rays pockets stretch radially, rings pockets tangentially (deep-stay rates swap)',
+    `rays r=${raysStay.radial.toFixed(3)}/t=${raysStay.tangential.toFixed(3)} `
+    + `rings r=${ringsStay.radial.toFixed(3)}/t=${ringsStay.tangential.toFixed(3)}`);
+  assert(raysStay.radial > raysStay.tangential + 0.02,
+    'rays mode: deep pixels persist farther along spokes than along arcs',
+    `radial=${raysStay.radial.toFixed(3)} tangential=${raysStay.tangential.toFixed(3)}`);
 
   // v3 anti-regression — no v1-style "pucker hole" or v2-style "drain hole" at focus center.
   // Failure signatures: v1 puckers had the focus-center pixel saturated to the OUTPUT_HEIGHT_
@@ -933,25 +970,34 @@ function countLocalMinima(grid: number[][]): number {
   // depth — a deep focus pocket is design, not the v1 "pucker hole". The actual defect
   // signature is a hole WITHOUT a formed wall: assert the focus pixel's neighborhood
   // climbs well above it (walls rise around a well-formed pocket).
+  // The wall must ENCLOSE the focus, not merely have one nearby peak: sample the 17×17
+  // neighborhood in 8 angular sectors and require the wall rise in (nearly) every sector,
+  // so a malformed pocket with a single adjacent ridge cannot pass. Radius 8 ≈ 2.4" —
+  // wide enough to reach past the nucleus petal walls at this grid pitch (measured
+  // sector rises 0.70–1.05; at radius 6 some sectors sit entirely inside the pocket).
   const fociPositions = [{ x: 0.7, y: 0.2 }, { x: 0.25, y: 0.55 }, { x: 0.75, y: 0.85 }];
-  let worstWallRise = Infinity;
+  let worstEnclosure = Infinity;
   for (const f of fociPositions) {
     const ci = Math.round(f.x * (120 - 1));
     const cj = Math.round(f.y * (80 - 1));
     const center = withFoci[cj][ci];
-    let nbMax = -Infinity;
-    for (let dj = -6; dj <= 6; dj++) {
-      for (let di = -6; di <= 6; di++) {
+    const sectorMax = new Array<number>(8).fill(-Infinity);
+    for (let dj = -8; dj <= 8; dj++) {
+      for (let di = -8; di <= 8; di++) {
+        if (di === 0 && dj === 0) continue;
         const jj = Math.min(79, Math.max(0, cj + dj));
         const ii = Math.min(119, Math.max(0, ci + di));
-        if (withFoci[jj][ii] > nbMax) nbMax = withFoci[jj][ii];
+        const sector = Math.floor(((Math.atan2(dj, di) + Math.PI) / (2 * Math.PI)) * 8) % 8;
+        if (withFoci[jj][ii] > sectorMax[sector]) sectorMax[sector] = withFoci[jj][ii];
       }
     }
-    worstWallRise = Math.min(worstWallRise, nbMax - center);
+    // 7th-of-8 sector rise (one sector may legitimately open into a neighboring pocket).
+    const rises = sectorMax.map((v) => v - center).sort((a, b) => a - b);
+    worstEnclosure = Math.min(worstEnclosure, rises[1]);
   }
-  assert(worstWallRise > 0.15,
-    'focus pockets are well-formed (walls rise ≥ 0.15 around each focus pixel)',
-    `worstWallRise=${worstWallRise.toFixed(3)}`);
+  assert(worstEnclosure > 0.15,
+    'focus pockets are ENCLOSED (wall rises ≥ 0.15 in ≥7 of 8 sectors around each focus)',
+    `worstEnclosure=${worstEnclosure.toFixed(3)}`);
 
   // Single-focus fixture for the anti-mandala checks below.
   const singleFocus = new VoronoiReliefGen(7).sampleGrid(baseParams({

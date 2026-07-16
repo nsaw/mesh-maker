@@ -100,6 +100,10 @@ const LOCAL_DENSITY_MAX = 4;
 const CREST_VARIATION_GAIN = 0.4;
 const SUPPRESSION_STRENGTH = 0.65;
 const JUNCTION_LIFT_GAIN = 0.18;
+// Crest plateau width modulation along each edge: 1 ± this per unit of wall noise
+// (clamped at 0.15× so ridges thin to threads but never vanish). Drives the reference's
+// chunky-to-thin ridge swings — visible ridge MASS varies, not just the wall slope run.
+const RIDGE_WIDTH_SWING = 1.2;
 const SIZE_DEPTH_MIN = 0.8;
 const SIZE_DEPTH_MAX = 1.2;
 
@@ -181,7 +185,8 @@ function makeWarpFn(
   warpDistortion: number,
 ): ((x: number, y: number) => [number, number]) | null {
   const flowAmp = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS;
-  const flowFreq = Math.max(0.02, p.warpFrequency);
+  // Finite fallback before the clamp — Math.max propagates NaN into every warped query.
+  const flowFreq = Math.max(0.02, Number.isFinite(p.warpFrequency) ? p.warpFrequency : 0.1);
   if (flowAmp <= 0) return null;
   const flowGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13);
   return (x: number, y: number): [number, number] => [
@@ -398,11 +403,13 @@ function nearestThree(
   cosA: number,
   sinA: number,
   anisotropyScale: number,
-): { f1: number; f2: number; f3: number; idx: number } {
+): { f1: number; f2: number; f3: number; idx: number; idx2: number; idx3: number } {
   let f1 = Infinity;
   let f2 = Infinity;
   let f3 = Infinity;
   let idx = 0;
+  let idx2 = -1;
+  let idx3 = -1;
   const isotropic = anisotropyScale <= 1.0001;
   for (let i = 0; i < sites.length; i++) {
     const dx = x - sites[i].x;
@@ -415,11 +422,14 @@ function nearestThree(
       const yr = -dx * sinA + dy * cosA;
       d = Math.hypot(xr * anisotropyScale, yr);
     }
-    if (d < f1) { f3 = f2; f2 = f1; f1 = d; idx = i; }
-    else if (d < f2) { f3 = f2; f2 = d; }
-    else if (d < f3) { f3 = d; }
+    if (d < f1) { f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i; }
+    else if (d < f2) { f3 = f2; idx3 = idx2; f2 = d; idx2 = i; }
+    else if (d < f3) { f3 = d; idx3 = i; }
   }
-  return { f1, f2, f3, idx };
+  // idx2 seeds as the initial idx placeholder when only one site exists — normalize.
+  if (!Number.isFinite(f2)) idx2 = -1;
+  if (!Number.isFinite(f3)) idx3 = -1;
+  return { f1, f2, f3, idx, idx2, idx3 };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -463,13 +473,23 @@ export class VoronoiReliefGen implements ReliefGenerator {
       x: f.x * p.meshX,
       y: f.y * p.meshY,
     }));
+    // Finite fallbacks BEFORE clamping — Math.min/Math.max propagate NaN, so a direct
+    // caller (tests, future paths) could otherwise poison sigma, the polar lattice, or
+    // focal expansion through any of these scalars.
+    const radialFalloffSafe = Number.isFinite(p.radialFalloff) ? p.radialFalloff : 0.3;
     const sigmaRadial = Math.max(
       1e-3,
-      Math.max(0.02, Math.min(0.6, p.radialFalloff)) * Math.hypot(p.meshX, p.meshY),
+      Math.max(0.02, Math.min(0.6, radialFalloffSafe)) * Math.hypot(p.meshX, p.meshY),
     );
-    const radialStrength = Math.max(0, Math.min(4, p.radialStrength));
-    const radialGrow = Math.max(0, Math.min(2, p.radialGrow));
-    const radialWarpAmt = fociPhys.length > 0 ? Math.max(0, Math.min(1, p.radialWarp)) : 0;
+    const radialStrength = Number.isFinite(p.radialStrength)
+      ? Math.max(0, Math.min(4, p.radialStrength))
+      : 0;
+    const radialGrow = Number.isFinite(p.radialGrow)
+      ? Math.max(0, Math.min(2, p.radialGrow))
+      : 0;
+    const radialWarpAmt = fociPhys.length > 0 && Number.isFinite(p.radialWarp)
+      ? Math.max(0, Math.min(1, p.radialWarp))
+      : 0;
     // Sanitize distortion ONCE and reuse everywhere it sizes work: the warp amplitude and
     // the radius-field padding below. state.ts clamps URL payloads, but params constructed
     // directly (tests, future callers) bypass that path — a huge finite value here would
@@ -482,19 +502,31 @@ export class VoronoiReliefGen implements ReliefGenerator {
 
     // v16.2 starburst: polar site lattices own a disc of radius zoneR around each focus;
     // Cartesian sites are excluded slightly inside it so the petal structure stays clean.
-    const starburstActive = fociPhys.length > 0 && radialStrength > 0;
+    // Foci are the sole enable — at radialStrength 0 the lattice pitch is 1:1 (no
+    // elongation) but the focal organization remains, per the ReliefParams contract
+    // ("Empty = the starburst system is off").
+    const starburstActive = fociPhys.length > 0;
     const zoneR = starburstActive ? POLAR_ZONE_SIGMAS * sigmaRadial : 0;
     const sites = generateSites(
       p, rand, densityNoiseGen,
       starburstActive ? fociPhys : [],
       starburstActive ? zoneR * POLAR_EXCLUSION_FRACTION : 0,
     );
-    const cartesianCount = sites.length;
+    let cartesianCount = sites.length;
     if (starburstActive) {
+      // Polar sites must survive the global cap — if Cartesian generation already
+      // consumed SITE_COUNT_MAX, the exclusion discs would otherwise become empty
+      // craters. Generate into a scratch array, then trim the Cartesian TAIL to
+      // reserve capacity (Cartesian-first ordering is what pinnedFrom relies on).
+      const polar: Site[] = [];
       generatePolarSites(
         fociPhys, zoneR, Math.max(0.2, p.cellSize), radialStrength, radialGrow,
-        radialWarpAmt, p.radialMode, rand, p.meshX, p.meshY, sites,
+        radialWarpAmt, p.radialMode, rand, p.meshX, p.meshY, polar,
       );
+      const budget = Math.max(0, SITE_COUNT_MAX - polar.length);
+      if (sites.length > budget) sites.length = budget;
+      cartesianCount = sites.length;
+      for (const s of polar) sites.push(s);
     }
     if (sites.length === 0) {
       const empty: number[][] = [];
@@ -562,20 +594,51 @@ export class VoronoiReliefGen implements ReliefGenerator {
       }
     }
 
+    // Exact boundary distance. (F2−F1)/2 is exact only on the two-site axis — its level
+    // sets are hyperbolae that curve around the site. The true distance from a query to
+    // the shared Voronoi boundary is the bisector distance (Fk² − F1²)/(2·|sk − s1|),
+    // minimized over the two nearest competitors (the third catches corner regions where
+    // the constraining bisector is not the F2 site's). Its level sets are TRUE inset
+    // polygons of the cell — the critique's floor geometry. Measured in the same
+    // (an)isotropic metric as the F-distances; capped at the panel diagonal so degenerate
+    // one-site panels stay finite.
+    const dbCap = p.meshX + p.meshY;
+    const siteDist = (a: number, b: number): number => {
+      const dx = sites[a].x - sites[b].x;
+      const dy = sites[a].y - sites[b].y;
+      if (metricScale <= 1.0001) return Math.hypot(dx, dy);
+      const xr = dx * cosA + dy * sinA;
+      const yr = -dx * sinA + dy * cosA;
+      return Math.hypot(xr * metricScale, yr);
+    };
+    const boundaryDist = (
+      f1: number, f2: number, f3: number, owner: number, i2: number, i3: number,
+    ): number => {
+      let db = dbCap;
+      if (i2 >= 0 && Number.isFinite(f2)) {
+        const d = (f2 * f2 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i2)));
+        if (d < db) db = d;
+      }
+      if (i3 >= 0 && Number.isFinite(f3)) {
+        const d = (f3 * f3 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i3)));
+        if (d < db) db = d;
+      }
+      return db;
+    };
+
     // Pass 1: accumulate per-site mean F1 (in the warped metric — the same one Pass 2
     // normalizes with, so normDist still hits ~1 at cell centers).
     const radiusSum = new Float64Array(sites.length);
     const radiusN = new Int32Array(sites.length);
-    // v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell.
-    // d_b = (F2−F1)/2 is the true Euclidean distance to the Voronoi boundary, so its
-    // per-cell maximum is the inradius that normalizes the wall extent (the critique's
-    // "inset must be normalized per cell and locally capped").
+    // v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell —
+    // the normalizer for the wall extent (the critique's "inset must be normalized per
+    // cell and locally capped").
     const inradius = new Float64Array(sites.length);
     for (let idx = 0; idx < rows * cols; idx++) {
-      const { f1, f2, idx: siteIdx } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
+      const { f1, f2, f3, idx: siteIdx, idx2, idx3 } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
-      const db = (f2 - f1) * 0.5;
+      const db = boundaryDist(f1, f2, f3, siteIdx, idx2, idx3);
       if (db > inradius[siteIdx]) inradius[siteIdx] = db;
     }
     for (let k = 0; k < sites.length; k++) {
@@ -624,9 +687,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const suppressFreq = 0.16 / Math.max(0.2, p.cellSize);
     const seamDepthBase = Math.max(0.05, p.seamDepth);
     // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
-    // so floors meet walls through a rounded transition (spec: "tighter-radius fillet",
-    // "floor-to-wall transition is generally softened").
-    const FILLET_BAND = 0.18;
+    // so floors meet walls through a rounded transition. Kept tight (spec: "tighter-radius
+    // fillet") — the reference's floors read flat and its walls rise decisively; a wide
+    // band reads as soft dunes instead of carved cavities.
+    const FILLET_BAND = 0.1;
     // v16.1 pillow params. The pillow ramps on the UNCAPPED bowl saturation ratio
     // (bowlTRaw = tw/seamDepth): 1.0 = the floor just saturated, 1.4 = deep interior.
     // Anchoring on this ratio (not on normDist toward 1) matters — the measured normDist
@@ -649,7 +713,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const pixIdx = j * cols + i;
         const qx = wxArr[pixIdx];
         const qy = wyArr[pixIdx];
-        const { f1, f2, f3, idx: ownerIdx } = nearestThree(sites, qx, qy, cosA, sinA, metricScale);
+        const { f1, f2, f3, idx: ownerIdx, idx2, idx3 } = nearestThree(sites, qx, qy, cosA, sinA, metricScale);
         // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -671,20 +735,26 @@ export class VoronoiReliefGen implements ReliefGenerator {
           if (g > gMax) gMax = g;
         }
         // v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
-        // d_b = (F2−F1)/2 is the true distance to the SHARED Voronoi boundary — its level
-        // sets are inset polygons of the cell, so the floor keeps polygonal ancestry.
-        // The wall extent w is normalized per cell against the measured inradius, so the
-        // wall spans the FULL territory from the shared boundary to the inset floor:
-        // every interior point is crest, wall, or floor — no finite falloff radius, no
-        // abandoned neutral surface, and shrinking floors WIDENS walls instead of
-        // retreating the cavity mouth. q = d_b/w: 0 at the boundary, 1 at the floor edge.
-        const db = (f2 - f1) * 0.5;
+        // d_b is the exact distance to the SHARED Voronoi boundary (see boundaryDist) —
+        // its level sets are true inset polygons of the cell, so the floor keeps
+        // polygonal ancestry. The wall extent w is normalized per cell against the
+        // measured inradius, so the wall spans the FULL territory from the shared
+        // boundary to the inset floor: every interior point is crest, wall, or floor —
+        // no finite falloff radius, no abandoned neutral surface, and shrinking floors
+        // WIDENS walls instead of retreating the cavity mouth. q = d_b/w: 0 at the
+        // boundary, 1 at the floor edge.
+        const db = boundaryDist(f1, f2, f3, ownerIdx, idx2, idx3);
         const inr = Math.max(0.01, inradius[ownerIdx]);
         // Scale-free junction proximity: (F3−F1)/(F3+F1) → 0 exactly at three-way corners.
-        const jn = 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1));
+        // With fewer than three sites there is no junction anywhere — jn stays 0.
+        const jn = Number.isFinite(f3)
+          ? 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1))
+          : 0;
         const jnS = smoothstep(0.65, 0.98, jn);
-        // Ridge crest band: a small physical plateau on the shared boundary.
-        const crestW = wallFrac * Math.max(0.2, p.cellSize) * 0.5;
+        // Ridge crest band: a physical plateau on the shared boundary. The plateau width
+        // SWINGS along each edge with the wall-noise field (chunky-to-thin ridges — the
+        // reference's most distinctive wall trait) and widens toward junctions.
+        let crestW = wallFrac * Math.max(0.2, p.cellSize) * 0.5;
         // Wall extent = seamDepth fraction of the remaining inradius, varied per cell
         // (asymmetric neighbors), along each edge (noise), and at junctions (widening).
         // Capped so most cells keep a floor; noise/junction excursions may consume it
@@ -697,6 +767,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (wallNoiseGen) {
           const wn = wallNoiseGen.noise(x * wallNoiseFreq, y * wallNoiseFreq);
           wallScale *= Math.max(0.3, 1 + 0.6 * wn + 1.1 * jnS);
+          crestW *= Math.max(0.15, 1 + RIDGE_WIDTH_SWING * wn + 1.2 * jnS);
         }
         if (cellSizeGradient > 0) {
           wallScale *= 1 + cellSizeGradient * mask * 0.6;
@@ -788,13 +859,15 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (crestVariation > 0 && crestGen) {
           const ridgeMask = Math.pow(1 - bowlH, 1.5);
           h += crestVariation * CREST_VARIATION_GAIN
-            * crestGen.noise(x * crestFreq, y * crestFreq) * ridgeMask;
+            * crestGen.noise(x * crestFreq, y * crestFreq) * ridgeMask * cellWeight;
         }
         // v17 junction lift: tighter gate, lower gain — junctions read as tense nodes and
         // saddles, not swollen domes (critique: "junctions bulge; reference junctions pull,
         // pinch, split, and saddle").
+        // Both cell-derived additions are gated by cellWeight so relief cannot reappear
+        // where the attractor has faded the cell system out.
         if (junctionLift > 0) {
-          h += junctionLift * JUNCTION_LIFT_GAIN * jnS * (1 - bowlH);
+          h += junctionLift * JUNCTION_LIFT_GAIN * jnS * (1 - bowlH) * cellWeight;
         }
 
         // Void mode pushes h toward the negative clamp where mask + bowl depth are high —
