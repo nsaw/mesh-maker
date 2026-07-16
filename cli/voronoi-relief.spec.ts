@@ -929,34 +929,31 @@ function countLocalMinima(grid: number[][]): number {
   // site had the same saturation through a different mechanism. v3 organic Voronoi keeps the
   // focus center as a normal cell pixel — its value is well off the global min. Assert the
   // focus-center pixel sits above the bottom 5% quantile of the panel.
-  const withFociPanelHeights: number[] = [];
-  for (let j = 0; j < 80; j++) for (let i = 0; i < 120; i++) withFociPanelHeights.push(withFoci[j][i]);
-  const sorted = [...withFociPanelHeights].sort((a, b) => a - b);
-  // v17: the u-coordinate lets small nucleus cells carve legitimately deep, so the old
-  // bottom-5%-quantile bound is too strict. The v1/v2 bug signature was the focus pixel
-  // SATURATING to the output clamp — assert a margin above the global minimum instead.
-  const bottom5pct = sorted[0] + 0.1;
+  // v18: per-inradius normalization means tiny nucleus cells legitimately carve to full
+  // depth — a deep focus pocket is design, not the v1 "pucker hole". The actual defect
+  // signature is a hole WITHOUT a formed wall: assert the focus pixel's neighborhood
+  // climbs well above it (walls rise around a well-formed pocket).
   const fociPositions = [{ x: 0.7, y: 0.2 }, { x: 0.25, y: 0.55 }, { x: 0.75, y: 0.85 }];
-  let worstFocusValue = -Infinity;
+  let worstWallRise = Infinity;
   for (const f of fociPositions) {
     const ci = Math.round(f.x * (120 - 1));
     const cj = Math.round(f.y * (80 - 1));
-    const v = withFoci[cj][ci];
-    if (v < worstFocusValue || worstFocusValue === -Infinity) worstFocusValue = v;
+    const center = withFoci[cj][ci];
+    let nbMax = -Infinity;
+    for (let dj = -6; dj <= 6; dj++) {
+      for (let di = -6; di <= 6; di++) {
+        const jj = Math.min(79, Math.max(0, cj + dj));
+        const ii = Math.min(119, Math.max(0, ci + di));
+        if (withFoci[jj][ii] > nbMax) nbMax = withFoci[jj][ii];
+      }
+    }
+    worstWallRise = Math.min(worstWallRise, nbMax - center);
   }
-  // Anti-pucker: worstFocusValue must be ≥ bottom-5%-quantile (not in the saturated tail).
-  assert(worstFocusValue >= bottom5pct,
-    'no v1/v2 hole at focus center (focus pixel above bottom-5% height quantile)',
-    `worstFocus=${worstFocusValue.toFixed(3)} bottom5pct=${bottom5pct.toFixed(3)}`);
+  assert(worstWallRise > 0.15,
+    'focus pockets are well-formed (walls rise ≥ 0.15 around each focus pixel)',
+    `worstWallRise=${worstWallRise.toFixed(3)}`);
 
-  // v3 anti-regression — no mandala/spirograph patterning around a focus. v2's polar-grid
-  // mechanism produced mechanically perfect concentric ring structure (mandala): the radial
-  // power spectrum was dominated by a single angular frequency (= angularCount per ring).
-  // v3's Cartesian-jittered Voronoi with metric anisotropy produces an organic, irregular
-  // cell layout — the cell sizes seen along two concentric circles at different radii should
-  // be DIFFERENT (Cartesian sites are not on a polar grid), unlike v2 where both circles
-  // would see the same N wedges. Compare ridge-crossing counts at two radii — v2 would have
-  // count(r1) ≈ count(r2) ≈ 2·angularCount; v3 will have meaningfully different counts.
+  // Single-focus fixture for the anti-mandala checks below.
   const singleFocus = new VoronoiReliefGen(7).sampleGrid(baseParams({
     cols: 200, rows: 200, meshX: 48, meshY: 48, seed: 7,
     polarity: 'pockets', profile: 'parabolic', cellSize: 2,
@@ -973,7 +970,7 @@ function countLocalMinima(grid: number[][]): number {
       if (jj < 0 || jj >= 200 || ii < 0 || ii >= 200) continue;
       heights.push(singleFocus[jj][ii]);
     }
-    const m = heights.reduce((s, v) => s + v, 0) / Math.max(1, heights.length);
+    const m = heights.reduce((sAcc, v) => sAcc + v, 0) / Math.max(1, heights.length);
     let cr = 0;
     let prev = heights[0] > m;
     for (let k = 1; k < heights.length; k++) {
@@ -1008,6 +1005,7 @@ function countLocalMinima(grid: number[][]): number {
     }
     return gaps.length > 1 ? stdev(gaps) / mean(gaps) : 0;
   };
+
   // NOTE (v16): the old crossing-ratio assertion (counts scale with circumference) is gone
   // by design — 'rays' mode radially STRETCHES cells around the focus, so a stretched cell
   // spans a wide radial range and both circles cut similar numbers of angular boundaries.

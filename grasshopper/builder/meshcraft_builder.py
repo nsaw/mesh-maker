@@ -496,16 +496,16 @@ class VoronoiReliefNoise(object):
     LOCAL_DENSITY_MAX = 4.0
     # Output clamp magnitude. Used with explicit negative sign at carve sites.
     OUTPUT_HEIGHT_CLAMP = 1.05
-    # v16 flow-warp + v16.2 polar-lattice + v17 excavation constants — mirror the TS sampler.
+    # v16 flow-warp + v16.2 polar-lattice + v18 boundary-distance constants — mirror the TS sampler.
     FLOW_WARP_AMPLITUDE_CELLS = 0.9
     POLAR_ZONE_SIGMAS = 1.0
     POLAR_TANGENTIAL_PITCH_CELLS = 0.85
     POLAR_EXCLUSION_FRACTION = 0.9
     CREST_VARIATION_GAIN = 0.4
-    SUPPRESSION_STRENGTH = 0.92
+    SUPPRESSION_STRENGTH = 0.65
     JUNCTION_LIFT_GAIN = 0.18
-    SIZE_DEPTH_MIN = 0.65
-    SIZE_DEPTH_MAX = 1.25
+    SIZE_DEPTH_MIN = 0.8
+    SIZE_DEPTH_MAX = 1.2
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
@@ -761,12 +761,18 @@ class VoronoiReliefNoise(object):
                     wx_arr[idx0] = x; wy_arr[idx0] = y
         # Pass 1: accumulate mean F1 per site to derive per-cell radius (in the warped
         # metric — the same one Pass 2 normalizes with).
+        # v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell.
+        # d_b = (F2−F1)/2 is the true Euclidean distance to the Voronoi boundary, so its
+        # per-cell maximum is the inradius that normalizes the wall extent.
         n_sites = len(sites)
         radius_sum = [0.0] * n_sites
         radius_n = [0] * n_sites
+        inradius = [0.0] * n_sites
         for idx0 in range(rows * cols):
             f1, f2, f3, idx = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
             radius_sum[idx] += f1; radius_n[idx] += 1
+            db = (f2 - f1) * 0.5
+            if db > inradius[idx]: inradius[idx] = db
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
         # v17 size-depth coupling normalizes against the MEDIAN actual cell radius.
@@ -824,28 +830,36 @@ class VoronoiReliefNoise(object):
                     dx = x - foci_phys[k][0]; dy = y - foci_phys[k][1]
                     g = math.exp(-(dx * dx + dy * dy) * inv2s2_radial)
                     if g > g_max: g_max = g
-                # v17 EXACT CELL COORDINATE: u = (F2-F1)/(F2+F1) — identically 0 at every
-                # boundary, 1 at every site. Walls can consume most of the span (seamDepth
-                # ~0.7) and floors become small terminal regions — excavation grammar.
-                norm_dist = (f2 - f1) / max(1e-9, f2 + f1)
-                if cell_size_grad > 0.0:
-                    norm_dist = min(1.0, norm_dist * (1.0 + cell_size_grad * mask * 0.6))
-                if radial_grow > 0.0 and g_max > 0.0:
-                    norm_dist = norm_dist / min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
+                # v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
+                # d_b = (F2−F1)/2 is the true distance to the SHARED Voronoi boundary — its
+                # level sets are inset polygons of the cell, so the floor keeps polygonal
+                # ancestry. The wall extent w is normalized per cell against the measured
+                # inradius, so the wall spans the FULL territory from the shared boundary to
+                # the inset floor: every interior point is crest, wall, or floor — no finite
+                # falloff radius, no abandoned neutral surface. q = d_b/w: 0 at the boundary,
+                # 1 at the floor edge.
+                db = (f2 - f1) * 0.5
+                inr = max(0.01, inradius[idx])
                 # Scale-free junction proximity: (F3-F1)/(F3+F1) -> 0 at three-way corners.
                 jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1))
                 jn_s = self._smoothstep(0.65, 0.98, jn)
-                wall_frac_local = wall_frac
-                if wall_noise_gen is not None and wall_frac > 0:
-                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
-                    wall_frac_local = min(0.9, wall_frac * max(0.15, 1.0 + 0.8 * wn + 1.4 * jn_s))
-                tw = max(0.0, (norm_dist - wall_frac_local) / max(0.05, 1.0 - wall_frac_local))
-                # v16.3 asymmetric walls: per-cell seamDepth jitter.
-                seam_depth_local = seam_depth_base
+                # Ridge crest band: a small physical plateau on the shared boundary.
+                crest_w = wall_frac * max(0.2, p['cell_size']) * 0.5
+                # Wall extent = seamDepth fraction of the remaining inradius, varied per cell
+                # (asymmetric neighbors), along each edge (noise), and at junctions (widening).
+                wall_scale = 1.0
                 if depth_variation > 0.0:
                     h_seam = self._cell_hash01(idx, seed + 29)
-                    seam_depth_local = max(0.05, seam_depth_base * (1.0 + (h_seam - 0.5) * 0.8 * depth_variation))
-                bowl_t_raw = tw / seam_depth_local
+                    wall_scale *= 1.0 + (h_seam - 0.5) * 0.8 * depth_variation
+                if wall_noise_gen is not None:
+                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
+                    wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
+                if cell_size_grad > 0.0:
+                    wall_scale *= 1.0 + cell_size_grad * mask * 0.6
+                if radial_grow > 0.0 and g_max > 0.0:
+                    wall_scale /= min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
+                w = max(0.02, seam_depth_base * max(0.02, inr - crest_w) * wall_scale)
+                bowl_t_raw = max(0.0, (db - crest_w) / w)
                 # Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp.
                 if bowl_t_raw >= 1.0 + FILLET_BAND:
                     bowl_t = 1.0
@@ -1193,12 +1207,12 @@ PRESETS = {
     # relief-pockets — v16 primary reference-matcher, proportions retuned (see the TS
     # preset in src/noise/presets.ts for the rationale; keep both in sync).
     'relief-pockets':  {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.40, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.35, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':1, 'smooth_str':0.3,
-                        'relief_cell_size':5.0, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.7, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.07, 'relief_pillow':0.5, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.55, 'relief_junction_lift':0.35, 'relief_crest_variation':0.55, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.0, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':0.9, 'relief_density_noise_freq':0.06, 'relief_warp_freq':0.06},
+                        'relief_cell_size':5.0, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.07, 'relief_pillow':0.0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.3, 'relief_crest_variation':0.5, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.0, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':0.9, 'relief_density_noise_freq':0.06, 'relief_warp_freq':0.06},
     # relief-starburst — v16: the radial-foci system is now fully ported to the IronPython
     # sampler (noise_gen.py implements the same space-warp as the web); this preset mirrors
     # the TS relief-starburst verbatim including the foci. Keep both in sync.
-    'relief-starburst':{'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.00, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.35, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':12, 'mesh_y':36, 'smooth_iter':2, 'smooth_str':0.4,
-                        'relief_cell_size':1.8, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.65, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1.0, 'relief_density_strength':0.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.45, 'relief_base_freq':0.06, 'relief_pillow':0.6, 'relief_pillow_coverage':0.55, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0.0, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.12, 'relief_density_noise':0.2, 'relief_density_noise_freq':0.08, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':1.2, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.3, 'relief_radial_warp':0.65, 'relief_radial_mode':'rays', 'relief_warp_freq':0.07},
+    'relief-starburst':{'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.35, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':12, 'mesh_y':36, 'smooth_iter':1, 'smooth_str':0.3,
+                        'relief_cell_size':1.8, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1.0, 'relief_density_strength':0.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.35, 'relief_base_freq':0.06, 'relief_pillow':0.0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.25, 'relief_crest_variation':0.4, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0.0, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.12, 'relief_density_noise':0.2, 'relief_density_noise_freq':0.08, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':1.2, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.3, 'relief_radial_warp':0.65, 'relief_radial_mode':'rays', 'relief_warp_freq':0.07},
 }
 
 p = PRESETS.get(str(preset), PRESETS['gentle-waves'])

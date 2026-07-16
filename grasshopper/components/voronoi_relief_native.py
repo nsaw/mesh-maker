@@ -7,17 +7,22 @@
 #   - a height-field grid that drops into MeshCraft | Shape unchanged
 #   - the underlying Voronoi cell curves for Brep editing or baking
 #
-# V2 (v16 parity with the web sampler's structural fixes):
+# V2 (v18 parity with the web sampler's boundary-distance construction):
+#   - BOUNDARY-DISTANCE WALLS: d_b = (d2-d1)/2 is the true distance to the
+#     shared Voronoi boundary; the wall spans seam_depth of the per-cell
+#     inradius from the crest plateau to the inset polygonal floor. Every
+#     interior point is crest, wall, or floor -- no neutral gaps, connected
+#     tessellation with shared ridges.
 #   - BASE SUPERPOSITION: cells are carved INTO a smooth value-noise wave
 #     (base_amp / base_freq) so ridge tops undulate instead of sitting on a
 #     flat reference plane.
-#   - WALL BAND: wall_width holds a band of the normalized ridge distance at
-#     base level around every boundary -- walls get finite width.
+#   - CREST PLATEAU: wall_width sets a small physical plateau on the shared
+#     boundary (crest_w = wall_width * cell_size / 2).
 #   - DENSITY NOISE: density_noise / density_noise_freq modulate the local
 #     Bridson radius so giant and small cells coexist (multi-scale patches).
-#   - PER-CELL DEPTH: profile normalization uses the LOCAL min-dist radius
-#     (not the global cell_size), so dense patches read proportionally
-#     shallower -- matches the reference's size-to-depth coupling.
+#   - PER-CELL DEPTH: wall extent normalizes against the per-cell inradius
+#     (closed form: half the nearest-neighbor site distance), so dense patches
+#     read proportionally shallower -- the reference's size-to-depth coupling.
 #   - jitter input is LIVE: it randomizes the local Bridson radius +/-30% for
 #     cell-size variety (it was reserved/unused in V1).
 #   - ghcomp.Voronoi is called with KEYWORD arguments (positional args bound
@@ -29,8 +34,9 @@
 # Pipeline:
 #   sites (Bridson rejection w/ attractor + density-noise radius)
 #     -> Lloyd relaxation (ghcomp.Voronoi centroids, Halton fallback)
-#     -> kNN-2 per grid pixel (d1, d2) -> ridge distance d2-d1
-#     -> wall band -> profile bowl -> + base wave -> renormalize [0,1]
+#     -> per-cell inradius (nearest-neighbor half-distance)
+#     -> kNN-3 per grid pixel (d1, d2, d3) -> d_b -> crest/wall/floor
+#     -> profile bowl -> + base wave -> renormalize [0,1]
 #
 # Inputs:
 #   mesh_x, mesh_y       (float)  panel dimensions
@@ -45,9 +51,12 @@
 #   profile              (str)    'parabolic-bowl'|'spherical-cap'|'cone'|'cosine'
 #   polarity             (str)    'pockets' (cells dip down) | 'domes' (cells rise up)
 #   seam_sharpness       (float)  0..1 -- extra V-groove sharpening near ridge
+#   seam_depth           (float)  wall extent as a fraction of the remaining
+#                                 per-cell inradius (v18: 0.5 => walls span half
+#                                 the crest-to-center distance, floor the rest)
 #   base_amp             (float)  base wave amplitude (0 = flat, like V1)
 #   base_freq            (float)  base wave spatial frequency (per panel unit)
-#   wall_width           (float)  0..0.9 -- ridge band held at base level
+#   wall_width           (float)  0..0.9 -- ridge crest plateau width fraction
 #   density_noise        (float)  0..1.5 -- patchy cell-size noise amount
 #   density_noise_freq   (float)  patch spatial frequency (per panel unit)
 #
@@ -88,6 +97,7 @@ if seed               is None: seed               = 12345
 if profile            is None: profile            = 'parabolic-bowl'
 if polarity           is None: polarity           = 'pockets'
 if seam_sharpness     is None: seam_sharpness     = 0.0
+if seam_depth         is None: seam_depth         = 0.5
 if base_amp           is None: base_amp           = 0.0
 if base_freq          is None: base_freq          = 0.05
 if wall_width         is None: wall_width         = 0.0
@@ -113,6 +123,7 @@ seed               = int(seed)
 profile            = str(profile).lower()
 polarity           = str(polarity).lower()
 seam_sharpness     = max(0.0, min(1.0, float(seam_sharpness)))
+seam_depth         = max(0.05, min(1.0, float(seam_depth)))
 base_amp           = max(0.0, min(2.0, float(base_amp)))
 base_freq          = max(0.005, min(2.0, float(base_freq)))
 wall_width         = max(0.0, min(0.9, float(wall_width)))
@@ -348,6 +359,23 @@ z_arr = [0.0] * total
 sx = [s.X for s in sites]
 sy = [s.Y for s in sites]
 
+# v18 per-cell INRADIUS. The per-cell maximum of the boundary distance
+# d_b = (d2-d1)/2 is exactly half the distance from the site to its nearest
+# neighboring site (triangle inequality; the max is attained at the site), so
+# the closed form replaces the sampled pre-pass the web sampler uses. O(n^2)
+# on a few hundred sites is negligible next to the pixel loop.
+inradius = [cell_size * 0.5] * n_sites
+for k in xrange(n_sites):
+    best = 1.0e30
+    for m in xrange(n_sites):
+        if m == k: continue
+        dx = sx[m] - sx[k]
+        dy = sy[m] - sy[k]
+        dd = dx * dx + dy * dy
+        if dd < best: best = dd
+    if best < 1.0e30:
+        inradius[k] = math.sqrt(best) * 0.5
+
 wall_noise_freq = 0.45 / max(0.2, cell_size)
 crest_freq = 0.25 / max(0.2, cell_size)
 suppress_freq = 0.16 / max(0.2, cell_size)
@@ -378,27 +406,35 @@ for j in xrange(g_rows):
         d1 = math.sqrt(best1)
         d2 = math.sqrt(best2)
         d3 = math.sqrt(best3)
-        # v17 EXACT CELL COORDINATE: u = (d2-d1)/(d2+d1) — 0 at boundaries, 1 at sites.
-        t_raw = (d2 - d1) / max(1e-9, d2 + d1)
-        if t_raw < 0.0: t_raw = 0.0
-        # v17 scale-free junction proximity: (d3-d1)/(d3+d1) -> 0 at three-way corners.
+        # v18 BOUNDARY-DISTANCE CONSTRUCTION. d_b = (d2-d1)/2 is the true distance
+        # to the SHARED Voronoi boundary — its level sets are inset polygons of the
+        # cell, so floors keep polygonal ancestry. The wall extent w is normalized
+        # per cell against the inradius: every interior point is crest, wall, or
+        # floor — no neutral gaps, and shrinking floors WIDENS walls.
+        db = (d2 - d1) * 0.5
+        inr = inradius[owner]
+        if inr < 0.01: inr = 0.01
+        # Scale-free junction proximity: (d3-d1)/(d3+d1) -> 0 at three-way corners.
         jn = 1.0 - min(1.0, (d3 - d1) / max(1e-9, d3 + d1))
         jn_s = (jn - 0.65) / 0.33
         if jn_s < 0.0: jn_s = 0.0
         elif jn_s > 1.0: jn_s = 1.0
         jn_s = jn_s * jn_s * (3.0 - 2.0 * jn_s)
-        # v16.3 variable wall band: width noise + junction widening.
-        wall_local = wall_width
-        if wall_width > 0.0:
-            wn = vnoise(px * wall_noise_freq, py * wall_noise_freq, seed + 83)
-            wall_local = min(0.9, wall_width * max(0.15, 1.0 + 0.8 * wn + 1.4 * jn_s))
-        tw_raw = (t_raw - wall_local) / max(0.05, 1.0 - wall_local)
-        # v16.3 asymmetric walls: per-cell seam-rate jitter (saturation point varies per cell).
-        sat_local = 1.0
+        # Ridge crest band: a small physical plateau on the shared boundary.
+        crest_w = wall_width * max(0.2, cell_size) * 0.5
+        # Wall extent = seam_depth fraction of the remaining inradius, varied per
+        # cell (asymmetric neighbors), along each edge (noise), at junctions (wider).
+        wall_scale = 1.0
         if depth_variation > 0.0:
             h_seam = _cell_hash01(owner, seed + 29)
-            sat_local = max(0.2, 1.0 + (h_seam - 0.5) * 0.8 * depth_variation)
-        tw_raw = tw_raw / sat_local
+            wall_scale *= 1.0 + (h_seam - 0.5) * 0.8 * depth_variation
+        if wall_width > 0.0:
+            wn = vnoise(px * wall_noise_freq, py * wall_noise_freq, seed + 83)
+            wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
+        w = seam_depth * max(0.02, inr - crest_w) * wall_scale
+        if w < 0.02: w = 0.02
+        tw_raw = (db - crest_w) / w
+        if tw_raw < 0.0: tw_raw = 0.0
         # Smooth floor saturation (C1 fillet) instead of a hard clamp.
         FILLET_BAND = 0.18
         if tw_raw >= 1.0 + FILLET_BAND:
@@ -432,7 +468,7 @@ for j in xrange(g_rows):
             if st < 0.0: st = 0.0
             elif st > 1.0: st = 1.0
             st = st * st * (3.0 - 2.0 * st)
-            cell_depth_mul *= 1.0 - 0.92 * depth_variation * st
+            cell_depth_mul *= 1.0 - 0.65 * depth_variation * st
         v = v * cell_depth_mul
         # v16 base superposition: ridge tops follow the wave (z_cell = 1 at
         # ridge for pockets), then the whole field renormalizes to [0,1].

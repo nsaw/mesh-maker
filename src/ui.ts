@@ -330,7 +330,7 @@ function buildReliefSection(): HTMLElement {
     shapeLabel,
     enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
     enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
-    slider('reliefSeamDepth', 'Seam Depth', 0, 1, 0.05),
+    slider('reliefSeamDepth', 'Wall Extent (floor inset)', 0.05, 1, 0.05),
     // v16: fraction of the normalized cell distance held at surface level around every
     // cell boundary — walls get finite width instead of knife-edge ridge lines. The
     // measured response is aggressive (0.3 already floors ~88% of pixels), so presets

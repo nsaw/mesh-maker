@@ -430,16 +430,16 @@ class VoronoiReliefNoise(object):
     LOCAL_DENSITY_MAX = 4.0
     # Output clamp magnitude. Used with explicit negative sign at carve sites.
     OUTPUT_HEIGHT_CLAMP = 1.05
-    # v16 flow-warp + v16.2 polar-lattice + v17 excavation constants — mirror the TS sampler.
+    # v16 flow-warp + v16.2 polar-lattice + v18 boundary-distance constants — mirror the TS sampler.
     FLOW_WARP_AMPLITUDE_CELLS = 0.9
     POLAR_ZONE_SIGMAS = 1.0
     POLAR_TANGENTIAL_PITCH_CELLS = 0.85
     POLAR_EXCLUSION_FRACTION = 0.9
     CREST_VARIATION_GAIN = 0.4
-    SUPPRESSION_STRENGTH = 0.92
+    SUPPRESSION_STRENGTH = 0.65
     JUNCTION_LIFT_GAIN = 0.18
-    SIZE_DEPTH_MIN = 0.65
-    SIZE_DEPTH_MAX = 1.25
+    SIZE_DEPTH_MIN = 0.8
+    SIZE_DEPTH_MAX = 1.2
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
@@ -695,12 +695,18 @@ class VoronoiReliefNoise(object):
                     wx_arr[idx0] = x; wy_arr[idx0] = y
         # Pass 1: accumulate mean F1 per site to derive per-cell radius (in the warped
         # metric — the same one Pass 2 normalizes with).
+        # v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell.
+        # d_b = (F2−F1)/2 is the true Euclidean distance to the Voronoi boundary, so its
+        # per-cell maximum is the inradius that normalizes the wall extent.
         n_sites = len(sites)
         radius_sum = [0.0] * n_sites
         radius_n = [0] * n_sites
+        inradius = [0.0] * n_sites
         for idx0 in range(rows * cols):
             f1, f2, f3, idx = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
             radius_sum[idx] += f1; radius_n[idx] += 1
+            db = (f2 - f1) * 0.5
+            if db > inradius[idx]: inradius[idx] = db
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
         # v17 size-depth coupling normalizes against the MEDIAN actual cell radius.
@@ -758,28 +764,36 @@ class VoronoiReliefNoise(object):
                     dx = x - foci_phys[k][0]; dy = y - foci_phys[k][1]
                     g = math.exp(-(dx * dx + dy * dy) * inv2s2_radial)
                     if g > g_max: g_max = g
-                # v17 EXACT CELL COORDINATE: u = (F2-F1)/(F2+F1) — identically 0 at every
-                # boundary, 1 at every site. Walls can consume most of the span (seamDepth
-                # ~0.7) and floors become small terminal regions — excavation grammar.
-                norm_dist = (f2 - f1) / max(1e-9, f2 + f1)
-                if cell_size_grad > 0.0:
-                    norm_dist = min(1.0, norm_dist * (1.0 + cell_size_grad * mask * 0.6))
-                if radial_grow > 0.0 and g_max > 0.0:
-                    norm_dist = norm_dist / min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
+                # v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
+                # d_b = (F2−F1)/2 is the true distance to the SHARED Voronoi boundary — its
+                # level sets are inset polygons of the cell, so the floor keeps polygonal
+                # ancestry. The wall extent w is normalized per cell against the measured
+                # inradius, so the wall spans the FULL territory from the shared boundary to
+                # the inset floor: every interior point is crest, wall, or floor — no finite
+                # falloff radius, no abandoned neutral surface. q = d_b/w: 0 at the boundary,
+                # 1 at the floor edge.
+                db = (f2 - f1) * 0.5
+                inr = max(0.01, inradius[idx])
                 # Scale-free junction proximity: (F3-F1)/(F3+F1) -> 0 at three-way corners.
                 jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1))
                 jn_s = self._smoothstep(0.65, 0.98, jn)
-                wall_frac_local = wall_frac
-                if wall_noise_gen is not None and wall_frac > 0:
-                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
-                    wall_frac_local = min(0.9, wall_frac * max(0.15, 1.0 + 0.8 * wn + 1.4 * jn_s))
-                tw = max(0.0, (norm_dist - wall_frac_local) / max(0.05, 1.0 - wall_frac_local))
-                # v16.3 asymmetric walls: per-cell seamDepth jitter.
-                seam_depth_local = seam_depth_base
+                # Ridge crest band: a small physical plateau on the shared boundary.
+                crest_w = wall_frac * max(0.2, p['cell_size']) * 0.5
+                # Wall extent = seamDepth fraction of the remaining inradius, varied per cell
+                # (asymmetric neighbors), along each edge (noise), and at junctions (widening).
+                wall_scale = 1.0
                 if depth_variation > 0.0:
                     h_seam = self._cell_hash01(idx, seed + 29)
-                    seam_depth_local = max(0.05, seam_depth_base * (1.0 + (h_seam - 0.5) * 0.8 * depth_variation))
-                bowl_t_raw = tw / seam_depth_local
+                    wall_scale *= 1.0 + (h_seam - 0.5) * 0.8 * depth_variation
+                if wall_noise_gen is not None:
+                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
+                    wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
+                if cell_size_grad > 0.0:
+                    wall_scale *= 1.0 + cell_size_grad * mask * 0.6
+                if radial_grow > 0.0 and g_max > 0.0:
+                    wall_scale /= min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
+                w = max(0.02, seam_depth_base * max(0.02, inr - crest_w) * wall_scale)
+                bowl_t_raw = max(0.0, (db - crest_w) / w)
                 # Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp.
                 if bowl_t_raw >= 1.0 + FILLET_BAND:
                     bowl_t = 1.0

@@ -98,10 +98,10 @@ const LOCAL_DENSITY_MAX = 4;
 // suppression melts whole neighborhoods of cells into calm masses, and heavy-tail density
 // spikes put tiny cell clusters directly beside giant cells.
 const CREST_VARIATION_GAIN = 0.4;
-const SUPPRESSION_STRENGTH = 0.92;
+const SUPPRESSION_STRENGTH = 0.65;
 const JUNCTION_LIFT_GAIN = 0.18;
-const SIZE_DEPTH_MIN = 0.65;
-const SIZE_DEPTH_MAX = 1.25;
+const SIZE_DEPTH_MIN = 0.8;
+const SIZE_DEPTH_MAX = 1.2;
 
 /** Deterministic per-seed PRNG (mulberry32) — better distribution than sin-hash for site jitter. */
 function mulberry32(seed: number): () => number {
@@ -566,10 +566,17 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // normalizes with, so normDist still hits ~1 at cell centers).
     const radiusSum = new Float64Array(sites.length);
     const radiusN = new Int32Array(sites.length);
+    // v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell.
+    // d_b = (F2−F1)/2 is the true Euclidean distance to the Voronoi boundary, so its
+    // per-cell maximum is the inradius that normalizes the wall extent (the critique's
+    // "inset must be normalized per cell and locally capped").
+    const inradius = new Float64Array(sites.length);
     for (let idx = 0; idx < rows * cols; idx++) {
-      const { f1, idx: siteIdx } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
+      const { f1, f2, idx: siteIdx } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
+      const db = (f2 - f1) * 0.5;
+      if (db > inradius[siteIdx]) inradius[siteIdx] = db;
     }
     for (let k = 0; k < sites.length; k++) {
       sites[k].radius = radiusN[k] > 0 ? (radiusSum[k] / radiusN[k]) * 2 : p.cellSize;
@@ -663,44 +670,42 @@ export class VoronoiReliefGen implements ReliefGenerator {
           const g = Math.exp(-(dx * dx + dy * dy) * inv2sigma2Radial);
           if (g > gMax) gMax = g;
         }
-        // v17 EXACT CELL COORDINATE. u = (F2−F1)/(F2+F1) is identically 0 at every cell
-        // boundary and identically 1 at every site — no radius normalization, so the wall
-        // band and saturation points are REAL fractions of every cell's span. The old
-        // (F2−F1)/(2R) coordinate concentrated low (bowls saturated almost immediately),
-        // which made floors cover most of each cell — the "inflated membrane" failure.
-        // Excavation grammar needs walls to consume most of the span: seamDepth ~0.75
-        // means 75% of the coordinate is wall descent and the floor is a small terminal
-        // region — small cells' floors pinch out entirely.
-        let normDist = (f2 - f1) / Math.max(1e-9, f2 + f1);
-        // cellSizeGradient deepens masked zones; focal expansion broadens pockets near foci
-        // (both now act directly on the coordinate — the R field is gone).
-        if (cellSizeGradient > 0) {
-          normDist = Math.min(1, normDist * (1 + cellSizeGradient * mask * 0.6));
-        }
-        if (radialGrow > 0 && gMax > 0) {
-          normDist = normDist / Math.min(FOCAL_EXPAND_CAP, 1 + radialGrow * gMax * FOCAL_EXPAND_GAIN);
-        }
+        // v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
+        // d_b = (F2−F1)/2 is the true distance to the SHARED Voronoi boundary — its level
+        // sets are inset polygons of the cell, so the floor keeps polygonal ancestry.
+        // The wall extent w is normalized per cell against the measured inradius, so the
+        // wall spans the FULL territory from the shared boundary to the inset floor:
+        // every interior point is crest, wall, or floor — no finite falloff radius, no
+        // abandoned neutral surface, and shrinking floors WIDENS walls instead of
+        // retreating the cavity mouth. q = d_b/w: 0 at the boundary, 1 at the floor edge.
+        const db = (f2 - f1) * 0.5;
+        const inr = Math.max(0.01, inradius[ownerIdx]);
         // Scale-free junction proximity: (F3−F1)/(F3+F1) → 0 exactly at three-way corners.
         const jn = 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1));
         const jnS = smoothstep(0.65, 0.98, jn);
-        // v16.3 variable wall band: ridge width varies continuously along each edge
-        // (low-frequency noise) and widens strongly at junctions — the spec's order-of-
-        // magnitude ridge-width variation and star-shaped junction plateaus.
-        let wallFracLocal = wallFrac;
-        if (wallNoiseGen && wallFrac > 0) {
-          const wn = wallNoiseGen.noise(x * wallNoiseFreq, y * wallNoiseFreq);
-          wallFracLocal = Math.min(0.9, wallFrac * Math.max(0.15, 1 + 0.8 * wn + 1.4 * jnS));
-        }
-        const tw = Math.max(0, (normDist - wallFracLocal) / Math.max(0.05, 1 - wallFracLocal));
-        // v16.3 asymmetric walls: per-cell seamDepth jitter — the two cells sharing a ridge
-        // saturate at different rates, so one side descends long/shallow while the other
-        // drops short/steep (spec: "wall profile is asymmetric across many ridges").
-        let seamDepthLocal = seamDepthBase;
+        // Ridge crest band: a small physical plateau on the shared boundary.
+        const crestW = wallFrac * Math.max(0.2, p.cellSize) * 0.5;
+        // Wall extent = seamDepth fraction of the remaining inradius, varied per cell
+        // (asymmetric neighbors), along each edge (noise), and at junctions (widening).
+        // Capped so most cells keep a floor; noise/junction excursions may consume it
+        // entirely — the minority pinch-outs the reference shows.
+        let wallScale = 1;
         if (depthVariation > 0) {
           const hSeam = cellHash01(ownerIdx, seed + 29);
-          seamDepthLocal = Math.max(0.05, seamDepthBase * (1 + (hSeam - 0.5) * 0.8 * depthVariation));
+          wallScale *= 1 + (hSeam - 0.5) * 0.8 * depthVariation;
         }
-        const bowlTRaw = tw / seamDepthLocal;
+        if (wallNoiseGen) {
+          const wn = wallNoiseGen.noise(x * wallNoiseFreq, y * wallNoiseFreq);
+          wallScale *= Math.max(0.3, 1 + 0.6 * wn + 1.1 * jnS);
+        }
+        if (cellSizeGradient > 0) {
+          wallScale *= 1 + cellSizeGradient * mask * 0.6;
+        }
+        if (radialGrow > 0 && gMax > 0) {
+          wallScale /= Math.min(FOCAL_EXPAND_CAP, 1 + radialGrow * gMax * FOCAL_EXPAND_GAIN);
+        }
+        const w = Math.max(0.02, seamDepthBase * Math.max(0.02, inr - crestW) * wallScale);
+        const bowlTRaw = Math.max(0, (db - crestW) / w);
         // Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp kink.
         let bowlT: number;
         if (bowlTRaw >= 1 + FILLET_BAND) bowlT = 1;

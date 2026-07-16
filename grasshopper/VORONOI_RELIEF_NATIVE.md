@@ -36,7 +36,7 @@ just consume the new z-values.
    |-------------------|-----------|--------|
    | `mesh_x`, `mesh_y` | float    | item   |
    | `resolution`, `relax_iter`, `seed` | int | item |
-   | `cell_size`, `jitter`, `attractor_radius`, `density_strength`, `seam_sharpness` | float | item |
+   | `cell_size`, `jitter`, `attractor_radius`, `density_strength`, `seam_sharpness`, `seam_depth` | float | item |
    | `base_amp`, `base_freq`, `wall_width`, `density_noise`, `density_noise_freq`, `pillow`, `pillow_coverage`, `depth_variation`, `junction_lift`, `crest_variation` | float | item |
    | `attractor_pt`    | Point3d   | item   |
    | `profile`, `polarity` | str   | item   |
@@ -64,9 +64,10 @@ seed = 81105
 profile = "cosine"                 # round-bottom bowls like the reference
 polarity = "pockets"               # cells dip down (the reference look)
 seam_sharpness = 0                 # 0 = pure profile; 1 = razor V-groove at ridges
+seam_depth = 0.5                   # v18 wall extent — walls span half the inradius, floor the rest
 base_amp = 0.7                     # v16 base wave — ridge tops undulate (0 = V1 flat look)
 base_freq = 0.05                   # wave cycles per panel inch
-wall_width = 0.12                  # finite wall band around every cell boundary
+wall_width = 0.08                  # v18 crest plateau on the shared boundary (matches web preset)
 density_noise = 0.9                # giant-vs-small cell patches
 density_noise_freq = 0.06          # patch scale (lower = larger patches)
 ```
@@ -97,9 +98,10 @@ On `MeshCraft | Shape`:
 | `profile`         | `parabolic-bowl` | `parabolic-bowl` (default), `spherical-cap` (sharpest V), `cone` (sharp at center too), `cosine` (smoothest). |
 | `polarity`        | `pockets`        | `pockets` (cells dip down — reference) or `domes` (cells bulge up). |
 | `seam_sharpness`  | 0.0              | 0..1 extra V-groove sharpening near ridges. |
+| `seam_depth`      | 0.5              | v18 wall extent — fraction of the per-cell inradius (past the crest plateau) the wall spans before the flat floor begins. 0.5 leaves ~25-35% of each cell as floor; higher values push the floor edge toward the cell center. |
 | `base_amp`        | 0.0              | v16 base wave amplitude — cells are carved INTO this undulating surface. 0 reproduces V1's flat-base look. |
 | `base_freq`       | 0.05             | Base wave spatial frequency (per panel unit). |
-| `wall_width`      | 0.0              | 0..0.9 fraction of normalized ridge distance held at base level — finite wall width. Small values (0.08-0.15) are already strong. |
+| `wall_width`      | 0.0              | v18 crest plateau: a small physical band on the shared boundary held at ridge level (`crest_w = wall_width × cell_size / 2`). Small values (0.08-0.15) are already strong. |
 | `density_noise`   | 0.0              | 0..1.5 patchy cell-size noise (giant cells next to small ones). |
 | `density_noise_freq` | 0.08          | Patch spatial frequency (lower = larger patches). |
 | `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). |
@@ -165,9 +167,10 @@ deltas; only port if the inner loop is actually the bottleneck.
 
 - [ ] Unconnect `attractor_pt` → uniform cells of size ≈ `cell_size`.
 - [ ] `base_amp = 0.7` → ridge tops visibly undulate; `base_amp = 0` → V1 flat-base look.
-- [ ] `wall_width = 0.12` → walls read as finite flat-ish bands, not knife edges.
+- [ ] `wall_width = 0.08` → a narrow crest plateau rides every shared boundary, not knife edges.
+- [ ] `seam_depth = 0.5` → connected tessellation: walls span boundary→floor with flat inset-polygon floors (~25-35% of each cell); `seam_depth = 1.0` → floors shrink to points (pure bowls).
 - [ ] `density_noise = 0.9` → giant cells next to small-cell patches.
-- [ ] `pillow = 0.55` → some pocket floors rise into central mounds (double curvature); `pillow_coverage` varies how many.
+- [ ] `pillow = 0.55` → some pocket floors rise into central mounds (double curvature); `pillow_coverage` varies how many (web presets ship `pillow = 0` — the reference reads flat-floored).
 - [ ] `cells` output NON-EMPTY → keyword Voronoi call works on this machine (empty ⇒ fallback ran; height field still valid — inspect the ghcomp call).
 - [ ] Connect attractor near top of panel → cells visibly smaller/denser near
       attractor, larger toward bottom.
