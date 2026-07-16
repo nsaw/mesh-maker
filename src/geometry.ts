@@ -66,3 +66,29 @@ export function emitWatertightTriangles(
     emit(tt + cols, bt, bt + cols);
   }
 }
+
+/** Weighted 3x3 kernel smoothing (center 4, edge 2, corner 1), `iterations` passes at
+ *  `strength` lerp. Shared by the noise pipeline (mesh.ts) and the drape compositor
+ *  (drape.ts) — lives here so drape.ts never has to import mesh.ts (no import cycle). */
+export function weightedSmooth(verts: number[][], rows: number, cols: number, iterations: number, strength: number): number[][] {
+  let sm = verts;
+  for (let iter = 0; iter < iterations; iter++) {
+    const nv: number[][] = [];
+    for (let j = 0; j < rows; j++) {
+      nv[j] = [];
+      for (let i = 0; i < cols; i++) {
+        let ws = 0, tw = 0;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          const nj = j + dj, ni = i + di;
+          if (nj >= 0 && nj < rows && ni >= 0 && ni < cols) {
+            const w = (dj === 0 && di === 0) ? 4 : (dj === 0 || di === 0) ? 2 : 1;
+            ws += sm[nj][ni] * w; tw += w;
+          }
+        }
+        nv[j][i] = sm[j][i] * (1 - strength) + (ws / tw) * strength;
+      }
+    }
+    sm = nv;
+  }
+  return sm;
+}
