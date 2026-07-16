@@ -359,6 +359,8 @@ function buildReliefSection(): HTMLElement {
     // profiles; junction crest lift with widened star-shaped nodes.
     slider('reliefDepthVariation', 'Depth Variation', 0, 1, 0.05),
     slider('reliefJunctionLift', 'Junction Peaks', 0, 1, 0.05),
+    // v17: ridge-local crest height noise — mesas/saddles/fragmented envelope.
+    slider('reliefCrestVariation', 'Crest Variation', 0, 1, 0.05),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),

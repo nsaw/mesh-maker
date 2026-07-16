@@ -97,6 +97,7 @@ if pillow             is None: pillow             = 0.0
 if pillow_coverage    is None: pillow_coverage    = 0.6
 if depth_variation    is None: depth_variation    = 0.0
 if junction_lift      is None: junction_lift      = 0.0
+if crest_variation    is None: crest_variation    = 0.0
 
 mesh_x             = float(mesh_x)
 mesh_y             = float(mesh_y)
@@ -121,6 +122,7 @@ pillow             = max(0.0, min(1.0, float(pillow)))
 pillow_coverage    = max(0.0, min(1.0, float(pillow_coverage)))
 depth_variation    = max(0.0, min(1.0, float(depth_variation)))
 junction_lift      = max(0.0, min(1.0, float(junction_lift)))
+crest_variation    = max(0.0, min(1.0, float(crest_variation)))
 
 # Grid dimensions: longer axis gets `resolution`, shorter axis scales to keep
 # square pixels.
@@ -194,6 +196,10 @@ def local_min_dist(x, y):
     if density_noise > 0.0:
         n = vnoise(x * density_noise_freq, y * density_noise_freq, seed + 71)
         r /= max(0.5, 1.0 + density_noise * n)
+        # v17 heavy-tail spikes: abrupt scale jumps (hash-gated, deterministic).
+        hcell = _cell_hash01(int(x * 7.13) * 31 + int(y * 7.13), seed + 41)
+        if hcell < 0.03 * density_noise: r *= 0.45
+        elif hcell < 0.08 * density_noise: r *= 2.2
     return r
 
 target_sites = (mesh_x * mesh_y) / max(0.01, cell_size * cell_size)
@@ -343,6 +349,8 @@ sx = [s.X for s in sites]
 sy = [s.Y for s in sites]
 
 wall_noise_freq = 0.45 / max(0.2, cell_size)
+crest_freq = 0.25 / max(0.2, cell_size)
+suppress_freq = 0.16 / max(0.2, cell_size)
 
 for j in xrange(g_rows):
     py = j * dy_pix
@@ -370,16 +378,12 @@ for j in xrange(g_rows):
         d1 = math.sqrt(best1)
         d2 = math.sqrt(best2)
         d3 = math.sqrt(best3)
-        d_seam = d2 - d1
-        # v16 per-cell depth: normalize by the LOCAL radius so dense patches
-        # read proportionally shallower (V1 used the global cell_size). t_raw is
-        # kept UNCAPPED so the pillow ramp can fire past saturation.
-        local_r = max(0.05, local_min_dist(px, py))
-        t_raw = d_seam / local_r
+        # v17 EXACT CELL COORDINATE: u = (d2-d1)/(d2+d1) — 0 at boundaries, 1 at sites.
+        t_raw = (d2 - d1) / max(1e-9, d2 + d1)
         if t_raw < 0.0: t_raw = 0.0
-        # v16.3 junction proximity: (d3 - d1) -> 0 at three-way corners.
-        jn = 1.0 - min(1.0, (d3 - d1) / (2.0 * local_r))
-        jn_s = (jn - 0.55) / 0.4
+        # v17 scale-free junction proximity: (d3-d1)/(d3+d1) -> 0 at three-way corners.
+        jn = 1.0 - min(1.0, (d3 - d1) / max(1e-9, d3 + d1))
+        jn_s = (jn - 0.65) / 0.33
         if jn_s < 0.0: jn_s = 0.0
         elif jn_s > 1.0: jn_s = 1.0
         jn_s = jn_s * jn_s * (3.0 - 2.0 * jn_s)
@@ -417,18 +421,28 @@ for j in xrange(g_rows):
                 pt = pt * pt * (3.0 - 2.0 * pt)
                 v -= pillow * amt_var * 0.65 * pt
                 if v < 0.0: v = 0.0
-        # v16.3 depth tiers: deep / intermediate / shallow-suppressed cells.
+        # v17 depth tiers + SPATIAL suppression (clusters of cells melt into masses).
         cell_depth_mul = 1.0
         if depth_variation > 0.0:
             h_depth = _cell_hash01(owner, seed + 13)
-            tier = 0.25 if h_depth < 0.2 else (0.6 if h_depth < 0.55 else 1.0)
+            tier = 0.55 if h_depth < 0.35 else 1.0
             cell_depth_mul = 1.0 - depth_variation * (1.0 - tier)
+            sn = (vnoise(px * suppress_freq, py * suppress_freq, seed + 103) + 1.0) * 0.5
+            st = (sn - 0.62) / 0.2
+            if st < 0.0: st = 0.0
+            elif st > 1.0: st = 1.0
+            st = st * st * (3.0 - 2.0 * st)
+            cell_depth_mul *= 1.0 - 0.92 * depth_variation * st
         v = v * cell_depth_mul
         # v16 base superposition: ridge tops follow the wave (z_cell = 1 at
         # ridge for pockets), then the whole field renormalizes to [0,1].
         base = base_amp * vnoise(px * base_freq, py * base_freq, seed + 99)
-        # v16.3 junction lift: crests rise toward three-way junctions.
-        lift = junction_lift * 0.35 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
+        # v17 crest variation (ridge-local envelope fragmentation) + tamed junction lift.
+        crest = 0.0
+        if crest_variation > 0.0:
+            crest = crest_variation * 0.4 * vnoise(px * crest_freq, py * crest_freq, seed + 97) * pow(1.0 - v, 1.5)
+        lift = junction_lift * 0.18 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
+        lift += crest
         if polarity == 'domes':
             z_arr[row_off + i] = base + v + lift
         else:

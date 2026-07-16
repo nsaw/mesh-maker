@@ -74,6 +74,7 @@ export interface MeshState {
   // v16.3 spec mechanisms: per-cell depth tiers + asymmetric walls; junction crest lift.
   reliefDepthVariation: number;
   reliefJunctionLift: number;
+  reliefCrestVariation: number;
   // Voronoi-relief radial-foci ("starburst") params
   reliefRadialFociCount: number;
   reliefRadialFocus1X: number;
@@ -192,6 +193,7 @@ export const DEFAULTS: MeshState = {
   reliefPillowCoverage: 0.6,
   reliefDepthVariation: 0,
   reliefJunctionLift: 0,
+  reliefCrestVariation: 0,
   reliefRadialFociCount: 0,
   reliefRadialFocus1X: 0.5,
   reliefRadialFocus1Y: 0.25,
@@ -266,7 +268,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefBaseAmplitude', 'reliefBaseFrequency', 'reliefWallWidth',
   'reliefDensityNoise', 'reliefDensityNoiseFreq',
   'reliefPillow', 'reliefPillowCoverage',
-  'reliefDepthVariation', 'reliefJunctionLift',
+  'reliefDepthVariation', 'reliefJunctionLift', 'reliefCrestVariation',
   'reliefRadialFociCount', 'reliefRadialFocus1X', 'reliefRadialFocus1Y',
   'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
   'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
@@ -713,6 +715,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefPillowCoverage' in result) clampField('reliefPillowCoverage', 0, 1);
     if ('reliefDepthVariation' in result) clampField('reliefDepthVariation', 0, 1);
     if ('reliefJunctionLift' in result) clampField('reliefJunctionLift', 0, 1);
+    if ('reliefCrestVariation' in result) clampField('reliefCrestVariation', 0, 1);
     // Drape (BLEND mode) fold controls — foldScale drives a per-pixel sin() phase and
     // foldDepth a bounded additive term; clamps prevent cosmetic blowouts from crafted links.
     if ('drapeFoldScale' in result) clampField('drapeFoldScale', 2, 40);

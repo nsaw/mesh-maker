@@ -78,25 +78,25 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // base (superposition) gives the undulating ridge network; wallWidth gives the walls
   // finite width; densityNoise produces giant-vs-small cell patches; distortion drives
   // the flow warp that elongates cells organically.
-  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.75, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.6, contrast:1, sharpness:0,
+  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.4, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35, contrast:1, sharpness:0,
     warpFreq:0.06, warpCurl:0,
     reliefCellSize:5.0, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
     // seamDepth = saturation point: 0.75 keeps only the biggest cells reaching full depth,
     // small cells stay shallow — the lafabrica depth gradient. seamWidth drives SBP V-carve
     // width only (no mesh effect under F2-F1).
-    reliefSeamDepth:0.35, reliefSeamWidth:0.15, reliefWallWidth:0.12, reliefAnisotropy:0.2, reliefAnisotropyAngle:75,
+    reliefSeamDepth:0.7, reliefSeamWidth:0.15, reliefWallWidth:0.08, reliefAnisotropy:0.2, reliefAnisotropyAngle:75,
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.35,
     reliefDensityStrength:1.2, reliefIntensityStrength:0.9, reliefTransitionSoftness:0.35, reliefBaseMode:'wave',
-    reliefBaseAmplitude:0.7, reliefBaseFrequency:0.05,
+    reliefBaseAmplitude:0.3, reliefBaseFrequency:0.07,
     reliefCellSizeGradient:0.8, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
-    reliefPillow:0.75, reliefPillowCoverage:0.65,
-    reliefDepthVariation:0.6, reliefJunctionLift:0.5,
+    reliefPillow:0.5, reliefPillowCoverage:0.5,
+    reliefDepthVariation:0.55, reliefJunctionLift:0.35, reliefCrestVariation:0.55,
     reliefAttractorNoise:0.5, reliefAttractorNoiseFreq:0.1,
     reliefDensityNoise:0.9, reliefDensityNoiseFreq:0.06,
     reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
     reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
     reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
-    meshX:24, meshY:48, baseThickness:2.0, smoothIter:2, smoothStr:0.4 },
+    meshX:24, meshY:48, baseThickness:2.5, smoothIter:1, smoothStr:0.3 },
   // relief-starburst — v16: each "Focus" point contributes a radial displacement term to
   // the unified space-warp, so cells stretch outward from each focus because the Voronoi
   // is EVALUATED in warped coordinates (clean curved cell boundaries, no metric tearing).
@@ -112,17 +112,17 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35, contrast:1, sharpness:0,
     warpFreq:0.07, warpCurl:0,
     reliefCellSize:1.8, reliefJitter:0.55, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
-    reliefSeamDepth:0.25, reliefSeamWidth:0.15, reliefWallWidth:0.08, reliefAnisotropy:0, reliefAnisotropyAngle:0,
+    reliefSeamDepth:0.65, reliefSeamWidth:0.15, reliefWallWidth:0.08, reliefAnisotropy:0, reliefAnisotropyAngle:0,
     reliefAttractorMode:'none', reliefAttractorX:0.5, reliefAttractorY:0.5, reliefAttractorRadius:0.5, reliefAttractorFalloff:1,
     reliefDensityStrength:0, reliefIntensityStrength:1, reliefTransitionSoftness:0.5, reliefBaseMode:'wave',
     reliefBaseAmplitude:0.35, reliefBaseFrequency:0.06,
     reliefCellSizeGradient:0.4, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
-    reliefPillow:0.5, reliefPillowCoverage:0.55,
-    reliefDepthVariation:0.45, reliefJunctionLift:0.4,
+    reliefPillow:0.4, reliefPillowCoverage:0.5,
+    reliefDepthVariation:0.5, reliefJunctionLift:0.3, reliefCrestVariation:0.45,
     reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12,
     reliefDensityNoise:0.2, reliefDensityNoiseFreq:0.08,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,
     reliefRadialFocus2X:0.2, reliefRadialFocus2Y:0.5, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.85,
-    reliefRadialStrength:1.2, reliefRadialFalloff:0.3, reliefRadialGrow:0.3, reliefRadialWarp:0.5, reliefRadialMode:'rays',
-    meshX:12, meshY:36, baseThickness:2.0, smoothIter:2, smoothStr:0.4 },
+    reliefRadialStrength:1.2, reliefRadialFalloff:0.3, reliefRadialGrow:0.3, reliefRadialWarp:0.65, reliefRadialMode:'rays',
+    meshX:12, meshY:36, baseThickness:2.5, smoothIter:1, smoothStr:0.3 },
 };

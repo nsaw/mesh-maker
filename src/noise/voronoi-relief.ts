@@ -93,11 +93,15 @@ const TRANSITION_EXPONENT_MAX = 2.0;
 // Hard caps to prevent DoS via crafted params. Both passes are O(rows·cols·sites).
 const SITE_COUNT_MAX = 4096;
 const LOCAL_DENSITY_MAX = 4;
-// Radius field (Pass 1.5) — Gaussian blend over all sites within cutoff. σ in units of
-// cellSize. See the doc block on the coarse-grid computation below.
-const RADIUS_FIELD_SIGMA_CELLS = 0.8;
-const RADIUS_FIELD_CUTOFF_SIGMAS = 3;
-const RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5;
+// v17 excavation-grammar constants (see docs/voronoi-relief-target-spec.md, critique v2):
+// crest variation fragments the upper envelope LOCALLY (ridge-only noise), clustered
+// suppression melts whole neighborhoods of cells into calm masses, and heavy-tail density
+// spikes put tiny cell clusters directly beside giant cells.
+const CREST_VARIATION_GAIN = 0.4;
+const SUPPRESSION_STRENGTH = 0.92;
+const JUNCTION_LIFT_GAIN = 0.18;
+const SIZE_DEPTH_MIN = 0.65;
+const SIZE_DEPTH_MAX = 1.25;
 
 /** Deterministic per-seed PRNG (mulberry32) — better distribution than sin-hash for site jitter. */
 function mulberry32(seed: number): () => number {
@@ -233,6 +237,9 @@ function generatePolarSites(
       const spiralOff = mode === 'spiral' ? ring * 0.381966 * 2 * Math.PI : 0;
       for (let s = 0; s < sectors; s++) {
         if (sites.length >= SITE_COUNT_MAX) break;
+        // v17 sector dropout — deletes random spokes so fans read as discovered, not
+        // generated (critique: radial systems too visibly algorithmic).
+        if (rand() < 0.25 * jitterAmt) continue;
         const th = baseTheta + spiralOff + ((s + 0.5) / sectors) * 2 * Math.PI
           + (rand() - 0.5) * jitterAmt * (2 * Math.PI / sectors);
         const rr = rMid + (rand() - 0.5) * jitterAmt * gap * 0.7;
@@ -290,6 +297,12 @@ function generateSites(
       if (densityGen && densityNoiseAmt > 0) {
         const n = densityGen.noise(cx * densityNoiseFreq, cy * densityNoiseFreq);
         localDensity *= Math.max(0.1, Math.min(LOCAL_DENSITY_MAX, 1 + densityNoiseAmt * n * DENSITY_NOISE_GAIN));
+        // v17 heavy-tail spikes: rare abrupt jumps between scales — tiny cell clusters
+        // directly beside giant cells, with weak spatial correlation (critique: the size
+        // distribution was too continuously graded).
+        const spike = rand();
+        if (spike < 0.03 * densityNoiseAmt) localDensity *= 3;
+        else if (spike < 0.08 * densityNoiseAmt) localDensity *= 0.12;
       }
       localDensity = Math.min(LOCAL_DENSITY_MAX, Math.max(0.1, localDensity));
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
@@ -561,61 +574,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
     for (let k = 0; k < sites.length; k++) {
       sites[k].radius = radiusN[k] > 0 ? (radiusSum[k] / radiusN[k]) * 2 : p.cellSize;
     }
-
-    // Pass 1.5: continuous radius field R via Gaussian blending of per-site radii, computed
-    // on a coarse grid (pitch σ/2, well above Nyquist for a Gaussian field of scale σ) and
-    // bilinear-upsampled at the warped query coordinates. The coarse domain is padded by the
-    // maximum warp displacement so warped queries never sample outside it.
-    const sigmaR = Math.max(0.2, p.cellSize) * RADIUS_FIELD_SIGMA_CELLS;
-    const sigmaR2 = sigmaR * sigmaR;
-    const cutoffR = sigmaR * RADIUS_FIELD_CUTOFF_SIGMAS;
-    const cutoffR2 = cutoffR * cutoffR;
-    // v16.2: only the flow warp displaces query points now (the starburst is a site
-    // layout), so the padding needs only the flow amplitude.
-    const pad = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS;
-    const domX0 = -pad;
-    const domY0 = -pad;
-    const domW = p.meshX + 2 * pad;
-    const domH = p.meshY + 2 * pad;
-    const coarsePitch = sigmaR * RADIUS_FIELD_COARSE_PITCH_SIGMAS;
-    const coarseCols = Math.max(2, Math.ceil(domW / coarsePitch) + 1);
-    const coarseRows = Math.max(2, Math.ceil(domH / coarsePitch) + 1);
-    const coarseStepX = domW / (coarseCols - 1);
-    const coarseStepY = domH / (coarseRows - 1);
-    const Rcoarse = new Float64Array(coarseRows * coarseCols);
-    for (let cj = 0; cj < coarseRows; cj++) {
-      const y = domY0 + cj * coarseStepY;
-      for (let ci = 0; ci < coarseCols; ci++) {
-        const x = domX0 + ci * coarseStepX;
-        let sumR = 0;
-        let sumW = 0;
-        for (let k = 0; k < sites.length; k++) {
-          const dx = x - sites[k].x;
-          const dy = y - sites[k].y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 > cutoffR2) continue;
-          const w = Math.exp(-d2 / sigmaR2);
-          sumR += sites[k].radius * w;
-          sumW += w;
-        }
-        Rcoarse[cj * coarseCols + ci] = sumW > 0 ? sumR / sumW : p.cellSize;
-      }
-    }
-    const sampleRfield = (qx: number, qy: number): number => {
-      const cx = Math.max(0, Math.min(coarseCols - 1.001, (qx - domX0) / coarseStepX));
-      const cy = Math.max(0, Math.min(coarseRows - 1.001, (qy - domY0) / coarseStepY));
-      const ci0 = Math.floor(cx);
-      const cj0 = Math.floor(cy);
-      const tx = cx - ci0;
-      const ty = cy - cj0;
-      const r00 = Rcoarse[cj0 * coarseCols + ci0];
-      const r10 = Rcoarse[cj0 * coarseCols + ci0 + 1];
-      const r01 = Rcoarse[(cj0 + 1) * coarseCols + ci0];
-      const r11 = Rcoarse[(cj0 + 1) * coarseCols + ci0 + 1];
-      const r0 = r00 * (1 - tx) + r10 * tx;
-      const r1 = r01 * (1 - tx) + r11 * tx;
-      return r0 * (1 - ty) + r1 * ty;
-    };
+    // v17 size-depth coupling normalizes against the MEDIAN actual cell radius (the slider
+    // cellSize is a spacing target, not the realized radius — normalizing against it would
+    // scale every cell's depth down uniformly).
+    const sortedRadii = sites.map(site => site.radius).sort((a, b) => a - b);
+    const medianRadius = Math.max(0.05, sortedRadii[Math.floor(sortedRadii.length / 2)]);
 
     // Pass 2: heights. Wall band + bowl profile on the F2-F1 differential, superposed onto
     // the base wave. Attractor/void/intensity shaping preserved from the prior algorithm.
@@ -641,6 +604,17 @@ export class VoronoiReliefGen implements ReliefGenerator {
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 83)
       : null;
     const wallNoiseFreq = 0.45 / Math.max(0.2, p.cellSize);
+    const crestVariation = Number.isFinite(p.crestVariation)
+      ? Math.max(0, Math.min(1, p.crestVariation))
+      : 0;
+    const crestGen = crestVariation > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 97)
+      : null;
+    const crestFreq = 0.25 / Math.max(0.2, p.cellSize);
+    const suppressGen = depthVariation > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 103)
+      : null;
+    const suppressFreq = 0.16 / Math.max(0.2, p.cellSize);
     const seamDepthBase = Math.max(0.05, p.seamDepth);
     // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
     // so floors meet walls through a rounded transition (spec: "tighter-radius fillet",
@@ -689,24 +663,26 @@ export class VoronoiReliefGen implements ReliefGenerator {
           const g = Math.exp(-(dx * dx + dy * dy) * inv2sigma2Radial);
           if (g > gMax) gMax = g;
         }
-        // Cell-size gradient shrinks the effective radius where mask is high; focal
-        // expansion widens it near foci. Both act on the continuous R field.
-        const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        const focalExpand = 1 + radialGrow * gMax * FOCAL_EXPAND_GAIN;
-        const R = Math.max(0.05, sampleRfield(qx, qy)
-          * Math.max(0.2, sizeShrink)
-          * Math.min(FOCAL_EXPAND_CAP, focalExpand));
-
-        // WORLEY F2-F1 DISTANCE-FIELD HEIGHT with v16 wall band.
-        //   - at cell boundary (F1≈F2): normDist → 0 → inside the wall band → h stays at base
-        //   - at cell center: normDist → ~1 → full bowl depth (big cells deeper — the
-        //     lafabrica gradient, via the 2R normalization)
-        const distDiff = f2 - f1;
-        const normDist = Math.min(1, distDiff / (2 * R));
-        // v16.3 junction proximity: (F3−F1) → 0 exactly at three-way corners; jn ≈ 1 there,
-        // → 0 along edge midpoints and inside cells.
-        const jn = 1 - Math.min(1, (f3 - f1) / (2 * R));
-        const jnS = smoothstep(0.55, 0.95, jn);
+        // v17 EXACT CELL COORDINATE. u = (F2−F1)/(F2+F1) is identically 0 at every cell
+        // boundary and identically 1 at every site — no radius normalization, so the wall
+        // band and saturation points are REAL fractions of every cell's span. The old
+        // (F2−F1)/(2R) coordinate concentrated low (bowls saturated almost immediately),
+        // which made floors cover most of each cell — the "inflated membrane" failure.
+        // Excavation grammar needs walls to consume most of the span: seamDepth ~0.75
+        // means 75% of the coordinate is wall descent and the floor is a small terminal
+        // region — small cells' floors pinch out entirely.
+        let normDist = (f2 - f1) / Math.max(1e-9, f2 + f1);
+        // cellSizeGradient deepens masked zones; focal expansion broadens pockets near foci
+        // (both now act directly on the coordinate — the R field is gone).
+        if (cellSizeGradient > 0) {
+          normDist = Math.min(1, normDist * (1 + cellSizeGradient * mask * 0.6));
+        }
+        if (radialGrow > 0 && gMax > 0) {
+          normDist = normDist / Math.min(FOCAL_EXPAND_CAP, 1 + radialGrow * gMax * FOCAL_EXPAND_GAIN);
+        }
+        // Scale-free junction proximity: (F3−F1)/(F3+F1) → 0 exactly at three-way corners.
+        const jn = 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1));
+        const jnS = smoothstep(0.65, 0.98, jn);
         // v16.3 variable wall band: ridge width varies continuously along each edge
         // (low-frequency noise) and widens strongly at junctions — the spec's order-of-
         // magnitude ridge-width variation and star-shaped junction plateaus.
@@ -775,14 +751,23 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Spatial gating: cells fade out where the mask is low (transitionSoftness shapes
         // the falloff). With attractorMode 'none' (mask = 1) this is a no-op.
         const cellWeight = Math.pow(mask, transitionExponent);
-        // v16.3 depth tiers: three per-cell depth classes (deep / intermediate / shallow).
-        // The shallow tier at high variation suppresses cells into the surrounding mass —
-        // the spec's "large calm surface masses" and "cells partially swallowed by walls".
-        let cellDepthMul = 1;
+        // v17 depth composition:
+        //   size coupling — bigger cells carve somewhat deeper (per-cell radius from Pass 1)
+        //   iid tier     — per-cell deep/intermediate jitter (asymmetric neighbors)
+        //   suppression  — SPATIAL low-frequency field melts whole NEIGHBORHOODS of cells
+        //                  into calm masses (clustered, not per-cell — critique: "delete
+        //                  several neighboring cells and merge their wall regions")
+        const sizeMul = Math.max(SIZE_DEPTH_MIN, Math.min(SIZE_DEPTH_MAX,
+          Math.sqrt(sites[ownerIdx].radius / medianRadius)));
+        let cellDepthMul = sizeMul;
         if (depthVariation > 0) {
           const hDepth = cellHash01(ownerIdx, seed + 13);
-          const tier = hDepth < 0.2 ? 0.25 : (hDepth < 0.55 ? 0.6 : 1);
-          cellDepthMul = 1 - depthVariation * (1 - tier);
+          const tier = hDepth < 0.35 ? 0.55 : 1;
+          cellDepthMul *= 1 - depthVariation * (1 - tier);
+          if (suppressGen) {
+            const sn = (suppressGen.noise(x * suppressFreq, y * suppressFreq) + 1) * 0.5;
+            cellDepthMul *= 1 - SUPPRESSION_STRENGTH * depthVariation * smoothstep(0.62, 0.82, sn);
+          }
         }
 
         // v16 SUPERPOSITION: the base wave is never attenuated by the cell system — cells
@@ -791,11 +776,20 @@ export class VoronoiReliefGen implements ReliefGenerator {
           ? baseAmplitude * waveGen.noise(x * baseFrequency, y * baseFrequency)
           : 0;
         let h = base + polarity * bowlH * cellWeight * intensityFactor * cellDepthMul;
-        // v16.3 junction lift: crests rise toward three-way junctions (spec: junction
-        // peaks at 0.90-1.00, crest midpoints dipping). Faded by (1 − bowlH) so the lift
-        // lives on ridges and shoulders, never inside carved floors.
+        // v17 crest variation: ridge-LOCAL height noise (scaled by (1 − bowlH)^1.5 so it
+        // lives on crests/shoulders only). Fragments the upper envelope into mesas, saddles
+        // and differing adjacent crest heights WITHOUT bending the whole panel through one
+        // macro wave — the critique's "upper envelope too continuous / macro flow dominant".
+        if (crestVariation > 0 && crestGen) {
+          const ridgeMask = Math.pow(1 - bowlH, 1.5);
+          h += crestVariation * CREST_VARIATION_GAIN
+            * crestGen.noise(x * crestFreq, y * crestFreq) * ridgeMask;
+        }
+        // v17 junction lift: tighter gate, lower gain — junctions read as tense nodes and
+        // saddles, not swollen domes (critique: "junctions bulge; reference junctions pull,
+        // pinch, split, and saddle").
         if (junctionLift > 0) {
-          h += junctionLift * 0.35 * jnS * (1 - bowlH);
+          h += junctionLift * JUNCTION_LIFT_GAIN * jnS * (1 - bowlH);
         }
 
         // Void mode pushes h toward the negative clamp where mask + bowl depth are high —
@@ -857,6 +851,7 @@ export function sampleReliefParamsFromState(
     reliefPillowCoverage: number;
     reliefDepthVariation: number;
     reliefJunctionLift: number;
+    reliefCrestVariation: number;
     reliefRadialFociCount: number;
     reliefRadialFocus1X: number;
     reliefRadialFocus1Y: number;
@@ -919,6 +914,7 @@ export function sampleReliefParamsFromState(
     pillowCoverage: s.reliefPillowCoverage,
     depthVariation: s.reliefDepthVariation,
     junctionLift: s.reliefJunctionLift,
+    crestVariation: s.reliefCrestVariation,
     radialFoci,
     radialStrength: s.reliefRadialStrength,
     radialFalloff: s.reliefRadialFalloff,

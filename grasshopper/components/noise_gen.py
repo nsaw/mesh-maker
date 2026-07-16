@@ -69,6 +69,7 @@ relief_pillow              = _relief_default('relief_pillow',              0.0)
 relief_pillow_coverage     = _relief_default('relief_pillow_coverage',     0.6)
 relief_depth_variation     = _relief_default('relief_depth_variation',     0.0)
 relief_junction_lift       = _relief_default('relief_junction_lift',       0.0)
+relief_crest_variation     = _relief_default('relief_crest_variation',     0.0)
 relief_radial_foci_count   = _relief_default('relief_radial_foci_count',   0)
 relief_radial_focus1_x     = _relief_default('relief_radial_focus1_x',     0.5)
 relief_radial_focus1_y     = _relief_default('relief_radial_focus1_y',     0.25)
@@ -427,19 +428,18 @@ class VoronoiReliefNoise(object):
     # the normalized F2-F1 differential inside sample_grid, not a per-site radial profile.)
     SITE_COUNT_MAX = 4096
     LOCAL_DENSITY_MAX = 4.0
-    # Radius field (Pass 1.5) Gaussian blend over sites within cutoff. Mirrors TS constants
-    # RADIUS_FIELD_SIGMA_CELLS and RADIUS_FIELD_CUTOFF_SIGMAS exactly.
-    RADIUS_FIELD_SIGMA_CELLS = 0.8
-    RADIUS_FIELD_CUTOFF_SIGMAS = 3.0
-    # Coarse-grid pitch in σ units for the Rfield optimization. See TS sampler.
-    RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5
     # Output clamp magnitude. Used with explicit negative sign at carve sites.
     OUTPUT_HEIGHT_CLAMP = 1.05
-    # v16 flow-warp + v16.2 polar-lattice constants — mirror src/noise/voronoi-relief.ts.
+    # v16 flow-warp + v16.2 polar-lattice + v17 excavation constants — mirror the TS sampler.
     FLOW_WARP_AMPLITUDE_CELLS = 0.9
     POLAR_ZONE_SIGMAS = 1.0
     POLAR_TANGENTIAL_PITCH_CELLS = 0.85
     POLAR_EXCLUSION_FRACTION = 0.9
+    CREST_VARIATION_GAIN = 0.4
+    SUPPRESSION_STRENGTH = 0.92
+    JUNCTION_LIFT_GAIN = 0.18
+    SIZE_DEPTH_MIN = 0.65
+    SIZE_DEPTH_MAX = 1.25
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
@@ -468,6 +468,10 @@ class VoronoiReliefNoise(object):
                 if density_gen is not None and dn_amt > 0.0:
                     n = density_gen.noise(cx * dn_freq, cy * dn_freq)
                     local *= max(0.1, min(self.LOCAL_DENSITY_MAX, 1.0 + dn_amt * n * self.DENSITY_NOISE_GAIN))
+                    # v17 heavy-tail spikes: abrupt scale jumps beside calm masses.
+                    spike = self._rand()
+                    if spike < 0.03 * dn_amt: local *= 3.0
+                    elif spike < 0.08 * dn_amt: local *= 0.12
                 local = min(self.LOCAL_DENSITY_MAX, max(0.1, local))
                 reps = int(math.floor(local))
                 if self._rand() < (local - math.floor(local)):
@@ -538,6 +542,8 @@ class VoronoiReliefNoise(object):
                 spiral_off = ring * 0.381966 * 2.0 * math.pi if mode == 'spiral' else 0.0
                 for si in range(sectors):
                     if len(sites) >= self.SITE_COUNT_MAX: break
+                    # v17 sector dropout — random spoke deletion breaks radial regularity.
+                    if self._rand() < 0.25 * jitter_amt: continue
                     th = (base_theta + spiral_off + ((si + 0.5) / float(sectors)) * 2.0 * math.pi
                           + (self._rand() - 0.5) * jitter_amt * (2.0 * math.pi / sectors))
                     rr = r_mid + (self._rand() - 0.5) * jitter_amt * gap * 0.7
@@ -697,51 +703,9 @@ class VoronoiReliefNoise(object):
             radius_sum[idx] += f1; radius_n[idx] += 1
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
-        # Pass 1.5: continuous radius field R(x,y) via Gaussian blend over sites. Computed
-        # on a coarse grid (pitch sigma/2, well above Nyquist for the Gaussian-smoothed
-        # field) and bilinear-interpolated at the warped query coordinates. The coarse
-        # domain is padded by the maximum warp displacement so warped queries never sample
-        # outside it. Mirrors src/noise/voronoi-relief.ts.
-        sigma_r = max(0.2, p['cell_size']) * self.RADIUS_FIELD_SIGMA_CELLS
-        sigma_r2 = sigma_r * sigma_r
-        cutoff_r = sigma_r * self.RADIUS_FIELD_CUTOFF_SIGMAS
-        cutoff_r2 = cutoff_r * cutoff_r
-        # v16.2: only the flow warp displaces query points (starburst is a site layout).
-        pad = warp_distortion * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS
-        dom_x0 = -pad; dom_y0 = -pad
-        dom_w = p['mesh_x'] + 2.0 * pad
-        dom_h = p['mesh_y'] + 2.0 * pad
-        coarse_pitch = sigma_r * self.RADIUS_FIELD_COARSE_PITCH_SIGMAS
-        coarse_cols = max(2, int(math.ceil(dom_w / coarse_pitch)) + 1)
-        coarse_rows = max(2, int(math.ceil(dom_h / coarse_pitch)) + 1)
-        coarse_step_x = dom_w / float(coarse_cols - 1)
-        coarse_step_y = dom_h / float(coarse_rows - 1)
-        r_coarse = [0.0] * (coarse_rows * coarse_cols)
-        for cj in range(coarse_rows):
-            y = dom_y0 + cj * coarse_step_y
-            for ci in range(coarse_cols):
-                x = dom_x0 + ci * coarse_step_x
-                sum_r = 0.0; sum_w = 0.0
-                for k in range(n_sites):
-                    dx = x - sites[k][0]; dy = y - sites[k][1]
-                    d2 = dx * dx + dy * dy
-                    if d2 > cutoff_r2: continue
-                    w = math.exp(-d2 / sigma_r2)
-                    sum_r += sites[k][2] * w
-                    sum_w += w
-                r_coarse[cj * coarse_cols + ci] = (sum_r / sum_w) if sum_w > 0 else p['cell_size']
-        def sample_rfield(qx, qy):
-            cx = max(0.0, min(coarse_cols - 1.001, (qx - dom_x0) / coarse_step_x))
-            cy = max(0.0, min(coarse_rows - 1.001, (qy - dom_y0) / coarse_step_y))
-            ci0 = int(math.floor(cx)); cj0 = int(math.floor(cy))
-            tx = cx - ci0; ty = cy - cj0
-            r00 = r_coarse[cj0 * coarse_cols + ci0]
-            r10 = r_coarse[cj0 * coarse_cols + ci0 + 1]
-            r01 = r_coarse[(cj0 + 1) * coarse_cols + ci0]
-            r11 = r_coarse[(cj0 + 1) * coarse_cols + ci0 + 1]
-            r0 = r00 * (1.0 - tx) + r10 * tx
-            r1 = r01 * (1.0 - tx) + r11 * tx
-            return r0 * (1.0 - ty) + r1 * ty
+        # v17 size-depth coupling normalizes against the MEDIAN actual cell radius.
+        sorted_radii = sorted(s2[2] for s2 in sites)
+        median_radius = max(0.05, sorted_radii[len(sorted_radii) // 2])
         # Pass 2: heights. Wall band + bowl profile on the F2-F1 differential, superposed
         # onto the base wave (v16 — base never attenuated by the cell system).
         polarity = -1.0 if p['polarity'] == 'pockets' else 1.0
@@ -759,6 +723,11 @@ class VoronoiReliefNoise(object):
         junction_lift = max(0.0, min(1.0, p.get('junction_lift', 0.0)))
         wall_noise_gen = SimplexNoise(seed + 17 + 83) if wall_frac > 0 else None
         wall_noise_freq = 0.45 / max(0.2, p['cell_size'])
+        crest_variation = max(0.0, min(1.0, p.get('crest_variation', 0.0)))
+        crest_gen = SimplexNoise(seed + 17 + 97) if crest_variation > 0 else None
+        crest_freq = 0.25 / max(0.2, p['cell_size'])
+        suppress_gen = SimplexNoise(seed + 17 + 103) if depth_variation > 0 else None
+        suppress_freq = 0.16 / max(0.2, p['cell_size'])
         seam_depth_base = max(0.05, p['seam_depth'])
         FILLET_BAND = 0.18
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
@@ -789,19 +758,17 @@ class VoronoiReliefNoise(object):
                     dx = x - foci_phys[k][0]; dy = y - foci_phys[k][1]
                     g = math.exp(-(dx * dx + dy * dy) * inv2s2_radial)
                     if g > g_max: g_max = g
-                # Cell-size gradient shrinks effective radius where mask is high; focal
-                # expansion widens it near foci. Both act on the continuous R field.
-                size_shrink = 1.0 - cell_size_grad * mask * 0.6
-                focal_expand = 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN
-                R = max(0.05, sample_rfield(qx, qy) * max(0.2, size_shrink) * min(self.FOCAL_EXPAND_CAP, focal_expand))
-                # WORLEY F2-F1 DISTANCE FIELD with v16 wall band — see the TS sampler for
-                # the derivation. Wall band holds [0, wall_frac] at base level.
-                dist_diff = f2 - f1
-                norm_dist = min(1.0, dist_diff / (2.0 * R))
-                # v16.3 junction proximity + variable wall band (ridge width varies along
-                # each edge, widening strongly at three-way junctions).
-                jn = 1.0 - min(1.0, (f3 - f1) / (2.0 * R))
-                jn_s = self._smoothstep(0.55, 0.95, jn)
+                # v17 EXACT CELL COORDINATE: u = (F2-F1)/(F2+F1) — identically 0 at every
+                # boundary, 1 at every site. Walls can consume most of the span (seamDepth
+                # ~0.7) and floors become small terminal regions — excavation grammar.
+                norm_dist = (f2 - f1) / max(1e-9, f2 + f1)
+                if cell_size_grad > 0.0:
+                    norm_dist = min(1.0, norm_dist * (1.0 + cell_size_grad * mask * 0.6))
+                if radial_grow > 0.0 and g_max > 0.0:
+                    norm_dist = norm_dist / min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
+                # Scale-free junction proximity: (F3-F1)/(F3+F1) -> 0 at three-way corners.
+                jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1))
+                jn_s = self._smoothstep(0.65, 0.98, jn)
                 wall_frac_local = wall_frac
                 if wall_noise_gen is not None and wall_frac > 0:
                     wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
@@ -850,17 +817,27 @@ class VoronoiReliefNoise(object):
                 # (whichever is stronger); cellWeight gates cells spatially.
                 intensity = (1.0 - intensity_strength) + intensity_strength * max(mask, g_max)
                 cw = pow(mask, transition_exponent)
-                # v16.3 depth tiers: deep / intermediate / shallow-suppressed cells.
-                cell_depth_mul = 1.0
+                # v17 depth composition: size coupling + iid tier + SPATIAL suppression
+                # (clusters of neighboring cells melt into calm masses).
+                size_mul = max(self.SIZE_DEPTH_MIN, min(self.SIZE_DEPTH_MAX,
+                    math.sqrt(sites[idx][2] / median_radius)))
+                cell_depth_mul = size_mul
                 if depth_variation > 0.0:
                     h_depth = self._cell_hash01(idx, seed + 13)
-                    tier = 0.25 if h_depth < 0.2 else (0.6 if h_depth < 0.55 else 1.0)
-                    cell_depth_mul = 1.0 - depth_variation * (1.0 - tier)
+                    tier = 0.55 if h_depth < 0.35 else 1.0
+                    cell_depth_mul *= 1.0 - depth_variation * (1.0 - tier)
+                    if suppress_gen is not None:
+                        sn = (suppress_gen.noise(x * suppress_freq, y * suppress_freq) + 1.0) * 0.5
+                        cell_depth_mul *= 1.0 - self.SUPPRESSION_STRENGTH * depth_variation * self._smoothstep(0.62, 0.82, sn)
                 base = base_amp * self.wave.noise(x * base_freq, y * base_freq) if base_amp > 0.0 else 0.0
                 h = base + polarity * bowl_h * cw * intensity * cell_depth_mul
-                # v16.3 junction lift: crests rise toward three-way junctions.
+                # v17 crest variation: ridge-LOCAL height noise (fragments the envelope).
+                if crest_variation > 0.0 and crest_gen is not None:
+                    ridge_mask = pow(1.0 - bowl_h, 1.5)
+                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask
+                # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
                 if junction_lift > 0.0:
-                    h += junction_lift * 0.35 * jn_s * (1.0 - bowl_h)
+                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h)
                 # Void mode pushes h toward the negative clamp where mask + bowl depth are
                 # high. Uses bowl_h as the carve-depth proxy (was 'seam' in the old algorithm).
                 if void_strength > 0.0:
@@ -947,6 +924,7 @@ if is_relief:
         'pillow_coverage': float(relief_pillow_coverage),
         'depth_variation': float(relief_depth_variation),
         'junction_lift': float(relief_junction_lift),
+        'crest_variation': float(relief_crest_variation),
         'radial_foci': [
             [float(relief_radial_focus1_x), float(relief_radial_focus1_y)],
             [float(relief_radial_focus2_x), float(relief_radial_focus2_y)],

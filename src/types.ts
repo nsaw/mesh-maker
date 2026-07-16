@@ -99,6 +99,10 @@ export interface ReliefParams {
    *  profiles asymmetric across shared ridges. High values suppress some cells into the
    *  surrounding mass (the spec's "large calm surface masses"). */
   depthVariation: number;
+  /** v17 crest variation in [0, 1]: ridge-local height noise applied only to crests and
+   *  shoulders (scaled by (1−bowlH)^1.5) — fragments the upper envelope into mesas,
+   *  saddles, and differing adjacent crest heights without a dominant macro wave. */
+  crestVariation: number;
   /** v16.3 junction lift in [0, 1]: ridge crests rise toward three-way junctions
    *  (detected via (F3 − F1)/(2R) → 0) and the wall band widens there — star-shaped
    *  elevated nodes with crests dipping at edge midpoints. */

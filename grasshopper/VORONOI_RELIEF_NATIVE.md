@@ -37,7 +37,7 @@ just consume the new z-values.
    | `mesh_x`, `mesh_y` | float    | item   |
    | `resolution`, `relax_iter`, `seed` | int | item |
    | `cell_size`, `jitter`, `attractor_radius`, `density_strength`, `seam_sharpness` | float | item |
-   | `base_amp`, `base_freq`, `wall_width`, `density_noise`, `density_noise_freq`, `pillow`, `pillow_coverage`, `depth_variation`, `junction_lift` | float | item |
+   | `base_amp`, `base_freq`, `wall_width`, `density_noise`, `density_noise_freq`, `pillow`, `pillow_coverage`, `depth_variation`, `junction_lift`, `crest_variation` | float | item |
    | `attractor_pt`    | Point3d   | item   |
    | `profile`, `polarity` | str   | item   |
 
@@ -105,7 +105,8 @@ On `MeshCraft | Shape`:
 | `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). |
 | `pillow_coverage` | 0.6              | Fraction of cells that get pillows (seeded per-cell hash) — the reference mixes pillowed and plain pockets. |
 | `depth_variation` | 0.0              | 0..1 per-cell depth tiers (deep/intermediate/shallow-suppressed) + asymmetric wall saturation per cell. High values merge shallow cells into calm surface masses. |
-| `junction_lift`   | 0.0              | 0..1 crest lift toward three-way junctions (star-shaped elevated nodes; crests dip at edge midpoints). Also widens the wall band at junctions. |
+| `junction_lift`   | 0.0              | 0..1 crest lift toward three-way junctions (tense nodes/saddles; also widens the wall band there). |
+| `crest_variation` | 0.0              | 0..1 ridge-local height noise — fragments the upper envelope into mesas and saddles without a macro wave. |
 
 ## Outputs reference
 
