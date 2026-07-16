@@ -32,7 +32,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // reliefDensityNoise. Distortion drives the flow component of the space-warp.
   // `relief-vertical` targets the tall panel reference: smooth wave field at top, dense
   // domed cells in the middle, cut-through spike fingers at the bottom.
-  'relief-vertical': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
+  'relief-vertical': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
     warpFreq:0.08, warpCurl:0,
     reliefCellSize:1.6, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'parabolic',
     reliefSeamDepth:0.95, reliefSeamWidth:0.14, reliefWallWidth:0.08, reliefAnisotropy:0, reliefAnisotropyAngle:0,
@@ -105,8 +105,9 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   //   reliefRadialGrow     → focal expansion of the continuous radius field (broader pockets)
   //   reliefRadialWarp     → wobble on the displacement direction (organic, not rosette)
   //   reliefRadialMode     → 'rays' (radial elongation) / 'rings' (tangential) / 'spiral'
-  // NOTE: these numbers are mirrored verbatim by the pre-v12 starburst share-link migration
-  // in state.ts (upgradeKnownStarburstDefaults) — keep both in sync when retuning.
+  // NOTE: the pre-v12 starburst share-link migration in state.ts derives its values from
+  // this preset automatically (upgradeKnownStarburstDefaults copies it verbatim) — no
+  // hand-sync needed when retuning.
   'relief-starburst': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.5, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35, contrast:1, sharpness:0,
     warpFreq:0.07, warpCurl:0,
     reliefCellSize:2.5, reliefJitter:0.55, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',

@@ -175,8 +175,9 @@ function makeWarpFn(
   radialStrength: number,
   radialWarpAmt: number,
   radialMode: ReliefRadialMode,
+  warpDistortion: number,
 ): ((x: number, y: number) => [number, number]) | null {
-  const flowAmp = Math.max(0, p.warpDistortion) * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS;
+  const flowAmp = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS;
   const flowFreq = Math.max(0.02, p.warpFrequency);
   const flowGen = flowAmp > 0 ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13) : null;
   const wobbleGen = radialWarpAmt > 0 && fociPhys.length > 0
@@ -437,8 +438,15 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const radialStrength = Math.max(0, Math.min(4, p.radialStrength));
     const radialGrow = Math.max(0, Math.min(2, p.radialGrow));
     const radialWarpAmt = fociPhys.length > 0 ? Math.max(0, Math.min(1, p.radialWarp)) : 0;
+    // Sanitize distortion ONCE and reuse everywhere it sizes work: the warp amplitude and
+    // the radius-field padding below. state.ts clamps URL payloads, but params constructed
+    // directly (tests, future callers) bypass that path — a huge finite value here would
+    // explode the padded coarse-grid allocation.
+    const warpDistortion = Number.isFinite(p.warpDistortion)
+      ? Math.max(0, Math.min(2, p.warpDistortion))
+      : 0;
 
-    const warpFn = makeWarpFn(p, seed, fociPhys, sigmaRadial, radialStrength, radialWarpAmt, p.radialMode);
+    const warpFn = makeWarpFn(p, seed, fociPhys, sigmaRadial, radialStrength, radialWarpAmt, p.radialMode, warpDistortion);
 
     const sites = generateSites(p, rand, densityNoiseGen);
     if (sites.length === 0) {
@@ -526,7 +534,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const sigmaR2 = sigmaR * sigmaR;
     const cutoffR = sigmaR * RADIUS_FIELD_CUTOFF_SIGMAS;
     const cutoffR2 = cutoffR * cutoffR;
-    const pad = Math.max(0, p.warpDistortion) * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS
+    const pad = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS
       + (fociPhys.length > 0 ? RADIAL_DISPLACEMENT_CLAMP_SIGMA * sigmaRadial * fociPhys.length : 0);
     const domX0 = -pad;
     const domY0 = -pad;

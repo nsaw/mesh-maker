@@ -689,9 +689,18 @@ class VoronoiReliefNoise(object):
             lloyd_samples = min(8192, len(sites) * 64)
             for _ in range(relax_iter):
                 self._lloyd_relax(sites, p, lloyd_samples, warp_fn)
-        a_rad = p['anisotropy_angle'] * math.pi / 180.0
+        # NaN guards on the constant metric frame — mirrors the TS sampler's defensive
+        # clamps (crafted params or unwired pins can pass non-finite values).
+        aniso_raw = p['anisotropy']
+        if aniso_raw != aniso_raw or aniso_raw == float('inf') or aniso_raw == float('-inf'):
+            aniso_raw = 0.0
+        aniso_raw = max(0.0, min(2.0, aniso_raw))
+        angle_raw = p['anisotropy_angle']
+        if angle_raw != angle_raw or angle_raw == float('inf') or angle_raw == float('-inf'):
+            angle_raw = 0.0
+        a_rad = angle_raw * math.pi / 180.0
         cosA = math.cos(a_rad); sinA = math.sin(a_rad)
-        aniso_scale = 1.0 + p['anisotropy'] * 1.5
+        aniso_scale = 1.0 + aniso_raw * 1.5
         # Clamp + hoist transition_softness so pow(mask, exponent) is finite when
         # mask=0 even if a crafted param sneaks past the URL boundary.
         ts_clamped = max(0.0, min(1.0, p['transition_softness']))

@@ -36,7 +36,7 @@ just consume the new z-values.
    |-------------------|-----------|--------|
    | `mesh_x`, `mesh_y` | float    | item   |
    | `resolution`, `relax_iter`, `seed` | int | item |
-   | `cell_size`, `jitter`, `attractor_radius`, `density_strength`, `depth`, `seam_sharpness` | float | item |
+   | `cell_size`, `jitter`, `attractor_radius`, `density_strength`, `seam_sharpness` | float | item |
    | `base_amp`, `base_freq`, `wall_width`, `density_noise`, `density_noise_freq`, `pillow`, `pillow_coverage` | float | item |
    | `attractor_pt`    | Point3d   | item   |
    | `profile`, `polarity` | str   | item   |
@@ -53,7 +53,7 @@ just consume the new z-values.
 
 ```
 mesh_x = 24, mesh_y = 48          # panel proportions like the reference (web relief-pockets)
-resolution = 128                   # 128×256 grid, ~33K pixels
+resolution = 128                   # 64×128 grid, ~8K pixels (128 along the longer axis)
 cell_size = 5.0                    # matches the retuned web preset's proportions
 jitter = 0.6                       # V2: LIVE — randomizes local radius ±30% for size variety
 relax_iter = 1                     # tightens cell shapes; bump to 2-4 for very regular cells
@@ -61,7 +61,6 @@ attractor_pt = (12, 0, 0)          # bottom-center of panel (dense zone at botto
 attractor_radius = 20
 density_strength = 0.5             # cells shrink ~50% near attractor
 seed = 81105
-depth = 0.4                        # 0.4" carve depth — Shape's `amplitude` rescales this
 profile = "cosine"                 # round-bottom bowls like the reference
 polarity = "pockets"               # cells dip down (the reference look)
 seam_sharpness = 0                 # 0 = pure profile; 1 = razor V-groove at ridges
@@ -95,7 +94,6 @@ On `MeshCraft | Shape`:
 | `attractor_radius`| 8.0              | Influence radius (panel units). |
 | `density_strength`| 0.4              | 0..1 — how aggressively cells shrink near attractor. |
 | `seed`            | 12345            | RNG seed. |
-| `depth`           | 0.4              | Max relief amplitude (further scaled by Shape's `amplitude`). |
 | `profile`         | `parabolic-bowl` | `parabolic-bowl` (default), `spherical-cap` (sharpest V), `cone` (sharp at center too), `cosine` (smoothest). |
 | `polarity`        | `pockets`        | `pockets` (cells dip down — reference) or `domes` (cells bulge up). |
 | `seam_sharpness`  | 0.0              | 0..1 extra V-groove sharpening near ridges. |

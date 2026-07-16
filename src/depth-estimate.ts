@@ -13,6 +13,23 @@
  */
 
 const MODEL_ID = 'onnx-community/depth-anything-v2-small';
+// Upper bound on a single inference call (model download is separate and cached). A stuck
+// backend otherwise leaves the pipeline promise pending forever and the UI button disabled
+// with no recovery path short of a reload. Generous — first-run WASM on a low-end machine
+// is slow but not minutes-per-image slow.
+const INFERENCE_TIMEOUT_MS = 180000;
+
+/** Reject after `ms` so a hung backend can't wedge the UI. The underlying inference may
+ *  still complete in the background; its result is simply discarded. */
+function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+    work.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e: unknown) => { clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))); },
+    );
+  });
+}
 
 /** Minimal structural view of the transformers.js depth-estimation output we consume. */
 interface DepthOutput {
@@ -75,7 +92,7 @@ export async function estimateDepth(source: HTMLImageElement): Promise<HTMLImage
   srcCtx.drawImage(source, 0, 0);
   const dataUrl = srcCanvas.toDataURL('image/png');
 
-  const raw = await pipe(dataUrl);
+  const raw = await withTimeout(pipe(dataUrl), INFERENCE_TIMEOUT_MS, 'depth inference');
   const result = Array.isArray(raw) ? raw[0] : raw;
   const { data, width, height } = result.depth;
 

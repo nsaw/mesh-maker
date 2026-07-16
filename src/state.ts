@@ -1,4 +1,5 @@
 import type { SbpStats } from './sbp/types';
+import { CNC_PRESETS } from './noise/presets';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 export interface MeshState {
@@ -313,6 +314,22 @@ const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
   reliefAttractorNoise: 0,
   reliefAttractorNoiseFreq: 0.15,
 };
+// v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
+// `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
+const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
+  reliefRadialFociCount: 0,
+  reliefRadialFocus1X: 0.5,
+  reliefRadialFocus1Y: 0.25,
+  reliefRadialFocus2X: 0.25,
+  reliefRadialFocus2Y: 0.6,
+  reliefRadialFocus3X: 0.75,
+  reliefRadialFocus3Y: 0.8,
+  reliefRadialStrength: 1.5,
+  reliefRadialFalloff: 0.3,
+  reliefRadialGrow: 0.45,
+  reliefRadialWarp: 0.4,
+  reliefRadialMode: 'rays',
+};
 // v6→v7 reworked the radial-foci ("starburst") system from metric-anisotropy + site-warp
 // (v1, PR #16, produced "pucker hole" artifacts) to polar-grid site placement (v2). The
 // state-key surface is unchanged but the semantics of strength/falloff/grow/warp are
@@ -346,23 +363,6 @@ const LEGACY_V10_DEFAULTS: Partial<MeshState> = {};
 // internals replaced by a unified space-warp. Old links never carry the new keys; the
 // conditional below (not this table) maps old wave-mode links onto the superposition model.
 const LEGACY_V11_DEFAULTS: Partial<MeshState> = {};
-// v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
-// `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
-const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
-  reliefRadialFociCount: 0,
-  reliefRadialFocus1X: 0.5,
-  reliefRadialFocus1Y: 0.25,
-  reliefRadialFocus2X: 0.25,
-  reliefRadialFocus2Y: 0.6,
-  reliefRadialFocus3X: 0.75,
-  reliefRadialFocus3Y: 0.8,
-  reliefRadialStrength: 1.5,
-  reliefRadialFalloff: 0.3,
-  reliefRadialGrow: 0.45,
-  reliefRadialWarp: 0.4,
-  reliefRadialMode: 'rays',
-};
-
 export function serializeConfig(): string {
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
@@ -638,39 +638,21 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         || matchesV10TunedDefaults
         || matchesV15MidDefaults;
       if (!matchesAnyStarburst) return;
-      // Write the CURRENT (v16) relief-starburst preset values verbatim. Keep this list in
-      // sync with `src/noise/presets.ts:relief-starburst` whenever the preset is retuned —
-      // the parity test in `cli/voronoi-relief.spec.ts` does not check this, so the source of
-      // truth for the migration is the preset file's actual numbers.
-      (result as Record<string, unknown>).reliefCellSize = 2.5;
-      (result as Record<string, unknown>).reliefJitter = 0.55;
-      (result as Record<string, unknown>).reliefRelaxIterations = 1;
-      (result as Record<string, unknown>).distortion = 0.35;
-      (result as Record<string, unknown>).warpFreq = 0.07;
-      (result as Record<string, unknown>).reliefSeamDepth = 0.3;
-      (result as Record<string, unknown>).reliefAnisotropy = 0;
-      (result as Record<string, unknown>).reliefAnisotropyAngle = 0;
-      (result as Record<string, unknown>).reliefCellSizeGradient = 0.4;
-      (result as Record<string, unknown>).reliefAttractorNoise = 0.2;
-      (result as Record<string, unknown>).reliefAttractorNoiseFreq = 0.12;
-      (result as Record<string, unknown>).reliefRadialStrength = 2.5;
-      (result as Record<string, unknown>).reliefRadialFalloff = 0.3;
-      (result as Record<string, unknown>).reliefRadialGrow = 0.2;
-      (result as Record<string, unknown>).reliefRadialWarp = 0.4;
-      (result as Record<string, unknown>).reliefRadialMode = 'rays';
-      // v16 additions — these keys did NOT exist in pre-v12 payloads, so they will be absent
-      // from old share-links and need to be written explicitly to reproduce the current
-      // starburst look (wave base + wall band + patchy density; profile upright, no V-groove).
-      (result as Record<string, unknown>).reliefInvertProfile = 0;
-      (result as Record<string, unknown>).reliefSeamSharpness = 0;
-      (result as Record<string, unknown>).reliefBaseMode = 'wave';
-      (result as Record<string, unknown>).reliefBaseAmplitude = 0.45;
-      (result as Record<string, unknown>).reliefBaseFrequency = 0.06;
-      (result as Record<string, unknown>).reliefWallWidth = 0.1;
-      (result as Record<string, unknown>).reliefDensityNoise = 0.6;
-      (result as Record<string, unknown>).reliefDensityNoiseFreq = 0.08;
-      (result as Record<string, unknown>).reliefPillow = 0.6;
-      (result as Record<string, unknown>).reliefPillowCoverage = 0.55;
+      // Respect explicit preset identity when the payload carries it: a link saved from a
+      // different preset (or hand-tuned after clearing the preset) must not be rewritten
+      // even if its numbers happen to match a known starburst fingerprint.
+      if ('activePreset' in parsed && parsed.activePreset !== 'relief-starburst') return;
+      // Copy the CURRENT relief-starburst preset verbatim — every URL-serializable field
+      // the preset defines — so detected legacy links become exactly the current preset
+      // rather than a hybrid old/new configuration. Deriving from CNC_PRESETS removes the
+      // hand-maintained sync list this block used to carry.
+      const starburstPreset = CNC_PRESETS['relief-starburst'];
+      for (const key of URL_SERIALIZABLE_KEYS) {
+        if (key in starburstPreset) {
+          (result as Record<string, unknown>)[key] = starburstPreset[key];
+        }
+      }
+      (result as Record<string, unknown>).activePreset = 'relief-starburst';
     };
     upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
@@ -685,6 +667,10 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefAttractorMode' in result) clampEnum('reliefAttractorMode', ['none', 'vertical', 'horizontal', 'radial', 'point']);
     if ('reliefBaseMode' in result) clampEnum('reliefBaseMode', ['flat', 'wave']);
     if ('reliefRadialMode' in result) clampEnum('reliefRadialMode', ['rays', 'rings', 'spiral']);
+    // distortion drives the relief space-warp amplitude AND the radius-field padding —
+    // an unbounded payload value explodes the padded coarse-grid allocation.
+    if ('distortion' in result) clampField('distortion', 0, 2);
+    if ('warpFreq' in result) clampField('warpFreq', 0.02, 0.5);
     if ('reliefRelaxIterations' in result) clampField('reliefRelaxIterations', 0, 2, true);
     if ('reliefDensityStrength' in result)  clampField('reliefDensityStrength',  0, 2);
     // anisotropy enters the metric scale `1 + anisotropy·1.5`; an unbounded value degenerates

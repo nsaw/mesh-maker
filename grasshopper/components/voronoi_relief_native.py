@@ -42,7 +42,6 @@
 #   attractor_radius     (float)  influence radius (panel units)
 #   density_strength     (float)  0..1 -- how much density rises near attractor
 #   seed                 (int)    RNG seed
-#   depth                (float)  max relief depth (signed, see polarity)
 #   profile              (str)    'parabolic-bowl'|'spherical-cap'|'cone'|'cosine'
 #   polarity             (str)    'pockets' (cells dip down) | 'domes' (cells rise up)
 #   seam_sharpness       (float)  0..1 -- extra V-groove sharpening near ridge
@@ -86,7 +85,6 @@ if attractor_pt       is None: attractor_pt       = None
 if attractor_radius   is None: attractor_radius   = 8.0
 if density_strength   is None: density_strength   = 0.4
 if seed               is None: seed               = 12345
-if depth              is None: depth              = 0.4
 if profile            is None: profile            = 'parabolic-bowl'
 if polarity           is None: polarity           = 'pockets'
 if seam_sharpness     is None: seam_sharpness     = 0.0
@@ -100,14 +98,15 @@ if pillow_coverage    is None: pillow_coverage    = 0.6
 
 mesh_x             = float(mesh_x)
 mesh_y             = float(mesh_y)
-resolution         = max(8, int(resolution))
+# Upper bounds cap user-controlled work: grid cells scale with resolution^2 and
+# each Lloyd pass repeats the full Voronoi/centroid cost.
+resolution         = max(8, min(512, int(resolution)))
 cell_size          = max(0.05, float(cell_size))
 jitter             = max(0.0, min(1.0, float(jitter)))
-relax_iter         = max(0, int(relax_iter))
+relax_iter         = max(0, min(6, int(relax_iter)))
 attractor_radius   = max(0.01, float(attractor_radius))
 density_strength   = max(0.0, min(1.0, float(density_strength)))
 seed               = int(seed)
-depth              = float(depth)
 profile            = str(profile).lower()
 polarity           = str(polarity).lower()
 seam_sharpness     = max(0.0, min(1.0, float(seam_sharpness)))
@@ -142,7 +141,9 @@ def _cell_hash01(idx, s):
     # Deterministic per-cell hash in [0, 1) from the owning site index (pillow gating).
     h = (((idx + 1) * 374761393) + ((s & 0xffffffff) * 668265263)) & 0xffffffff
     h = ((h ^ (h >> 13)) * 1274126177) & 0xffffffff
-    return float((h ^ (h >> 16)) & 0xffffffff) / 4294967295.0
+    # 2^32 denominator keeps the result in [0, 1) -- dividing by 2^32-1 can return
+    # exactly 1.0, which would fail the `< pillow_coverage` gate even at coverage 1.
+    return float((h ^ (h >> 16)) & 0xffffffff) / 4294967296.0
 
 def vnoise(x, y, s):
     ix = int(math.floor(x)); iy = int(math.floor(y))
@@ -199,10 +200,10 @@ for _k in xrange(n_candidates):
     cx = random.random() * mesh_x
     cy = random.random() * mesh_y
     rmin = local_min_dist(cx, cy)
-    # jitter randomizes the local radius +/-30% -- cell-size variety (V1 kept
-    # this input reserved/unused; V2 makes it live).
+    # jitter randomizes the local radius +/-30% (symmetric) -- cell-size variety
+    # (V1 kept this input reserved/unused; V2 makes it live).
     if jitter > 0.0:
-        rmin *= (1.0 - 0.3 * jitter * random.random())
+        rmin *= (1.0 + 0.3 * jitter * (2.0 * random.random() - 1.0))
     r2 = rmin * rmin
     ok = True
     for s in sites:

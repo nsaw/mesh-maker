@@ -16,7 +16,7 @@
  * vs ≈ 0.25 at wallWidth 0.
  */
 
-import { VoronoiReliefGen } from '../src/noise/voronoi-relief';
+import { VoronoiReliefGen, sampleReliefParamsFromState } from '../src/noise/voronoi-relief';
 import { CNC_PRESETS } from '../src/noise/presets';
 import type { ReliefSampleParams } from '../src/types';
 
@@ -69,56 +69,62 @@ function starburstPresetParams(overrides: Partial<ReliefSampleParams> = {}): Rel
     if (typeof v !== 'string') throw new Error(`relief-starburst.${key} must be string`);
     return v;
   };
-  return baseParams({
-    cols: 120,
-    rows: 240,
-    meshX: numberValue('meshX'),
-    meshY: numberValue('meshY'),
-    cellSize: numberValue('reliefCellSize'),
-    jitter: numberValue('reliefJitter'),
-    relaxIterations: numberValue('reliefRelaxIterations'),
-    polarity: stringValue('reliefPolarity') as ReliefSampleParams['polarity'],
-    profile: stringValue('reliefProfile') as ReliefSampleParams['profile'],
-    seamDepth: numberValue('reliefSeamDepth'),
-    seamWidth: numberValue('reliefSeamWidth'),
-    anisotropy: numberValue('reliefAnisotropy'),
-    anisotropyAngle: numberValue('reliefAnisotropyAngle'),
-    attractorMode: stringValue('reliefAttractorMode') as ReliefSampleParams['attractorMode'],
-    attractorX: numberValue('reliefAttractorX'),
-    attractorY: numberValue('reliefAttractorY'),
-    attractorRadius: numberValue('reliefAttractorRadius'),
-    attractorFalloff: numberValue('reliefAttractorFalloff'),
-    densityStrength: numberValue('reliefDensityStrength'),
-    intensityStrength: numberValue('reliefIntensityStrength'),
-    transitionSoftness: numberValue('reliefTransitionSoftness'),
-    baseMode: stringValue('reliefBaseMode') as ReliefSampleParams['baseMode'],
-    warpDistortion: numberValue('distortion'),
-    warpFrequency: numberValue('warpFreq'),
-    cellSizeGradient: numberValue('reliefCellSizeGradient'),
-    voidStrength: numberValue('reliefVoidStrength'),
-    invertProfile: typeof p.reliefInvertProfile === 'number' ? p.reliefInvertProfile : 0,
-    seamSharpness: typeof p.reliefSeamSharpness === 'number' ? p.reliefSeamSharpness : 0,
-    attractorNoise: numberValue('reliefAttractorNoise'),
-    attractorNoiseFreq: numberValue('reliefAttractorNoiseFreq'),
-    baseAmplitude: numberValue('reliefBaseAmplitude'),
-    baseFrequency: numberValue('reliefBaseFrequency'),
-    wallWidth: numberValue('reliefWallWidth'),
-    densityNoise: numberValue('reliefDensityNoise'),
-    densityNoiseFreq: numberValue('reliefDensityNoiseFreq'),
-    pillow: numberValue('reliefPillow'),
-    pillowCoverage: numberValue('reliefPillowCoverage'),
-    radialFoci: [
-      { x: numberValue('reliefRadialFocus1X'), y: numberValue('reliefRadialFocus1Y') },
-      { x: numberValue('reliefRadialFocus2X'), y: numberValue('reliefRadialFocus2Y') },
-      { x: numberValue('reliefRadialFocus3X'), y: numberValue('reliefRadialFocus3Y') },
-    ].slice(0, Math.floor(numberValue('reliefRadialFociCount'))),
-    radialStrength: numberValue('reliefRadialStrength'),
-    radialFalloff: numberValue('reliefRadialFalloff'),
-    radialGrow: numberValue('reliefRadialGrow'),
-    radialWarp: numberValue('reliefRadialWarp'),
-    radialMode: stringValue('reliefRadialMode') as ReliefSampleParams['radialMode'],
-    ...overrides,
-  });
+  // Route through the PRODUCTION preset→sampler mapping (sampleReliefParamsFromState) so
+  // this coverage cannot drift from real behavior on focus-count pruning, warp wiring, or
+  // future mapping changes. The adapter below only types the raw preset values; all
+  // semantic mapping happens in the production function.
+  const stateLike: Parameters<typeof sampleReliefParamsFromState>[5] = {
+    reliefCellSize: numberValue('reliefCellSize'),
+    reliefJitter: numberValue('reliefJitter'),
+    reliefRelaxIterations: numberValue('reliefRelaxIterations'),
+    reliefPolarity: stringValue('reliefPolarity') as ReliefSampleParams['polarity'],
+    reliefProfile: stringValue('reliefProfile') as ReliefSampleParams['profile'],
+    reliefSeamDepth: numberValue('reliefSeamDepth'),
+    reliefSeamWidth: numberValue('reliefSeamWidth'),
+    reliefAnisotropy: numberValue('reliefAnisotropy'),
+    reliefAnisotropyAngle: numberValue('reliefAnisotropyAngle'),
+    reliefAttractorMode: stringValue('reliefAttractorMode') as ReliefSampleParams['attractorMode'],
+    reliefAttractorX: numberValue('reliefAttractorX'),
+    reliefAttractorY: numberValue('reliefAttractorY'),
+    reliefAttractorRadius: numberValue('reliefAttractorRadius'),
+    reliefAttractorFalloff: numberValue('reliefAttractorFalloff'),
+    reliefDensityStrength: numberValue('reliefDensityStrength'),
+    reliefIntensityStrength: numberValue('reliefIntensityStrength'),
+    reliefTransitionSoftness: numberValue('reliefTransitionSoftness'),
+    reliefBaseMode: stringValue('reliefBaseMode') as ReliefSampleParams['baseMode'],
+    reliefCellSizeGradient: numberValue('reliefCellSizeGradient'),
+    reliefVoidStrength: numberValue('reliefVoidStrength'),
+    reliefInvertProfile: numberValue('reliefInvertProfile'),
+    reliefSeamSharpness: numberValue('reliefSeamSharpness'),
+    reliefAttractorNoise: numberValue('reliefAttractorNoise'),
+    reliefAttractorNoiseFreq: numberValue('reliefAttractorNoiseFreq'),
+    reliefBaseAmplitude: numberValue('reliefBaseAmplitude'),
+    reliefBaseFrequency: numberValue('reliefBaseFrequency'),
+    reliefWallWidth: numberValue('reliefWallWidth'),
+    reliefDensityNoise: numberValue('reliefDensityNoise'),
+    reliefDensityNoiseFreq: numberValue('reliefDensityNoiseFreq'),
+    reliefPillow: numberValue('reliefPillow'),
+    reliefPillowCoverage: numberValue('reliefPillowCoverage'),
+    reliefRadialFociCount: numberValue('reliefRadialFociCount'),
+    reliefRadialFocus1X: numberValue('reliefRadialFocus1X'),
+    reliefRadialFocus1Y: numberValue('reliefRadialFocus1Y'),
+    reliefRadialFocus2X: numberValue('reliefRadialFocus2X'),
+    reliefRadialFocus2Y: numberValue('reliefRadialFocus2Y'),
+    reliefRadialFocus3X: numberValue('reliefRadialFocus3X'),
+    reliefRadialFocus3Y: numberValue('reliefRadialFocus3Y'),
+    reliefRadialStrength: numberValue('reliefRadialStrength'),
+    reliefRadialFalloff: numberValue('reliefRadialFalloff'),
+    reliefRadialGrow: numberValue('reliefRadialGrow'),
+    reliefRadialWarp: numberValue('reliefRadialWarp'),
+    reliefRadialMode: stringValue('reliefRadialMode') as ReliefSampleParams['radialMode'],
+    distortion: numberValue('distortion'),
+    warpFreq: numberValue('warpFreq'),
+  };
+  const seed = typeof overrides.seed === 'number' ? overrides.seed : 7;
+  const params = sampleReliefParamsFromState(
+    120, 240, numberValue('meshX'), numberValue('meshY'), seed, stateLike,
+  );
+  return { ...params, ...overrides };
 }
 
 function flatten(grid: number[][]): number[] {
@@ -556,17 +562,23 @@ function countLocalMinima(grid: number[][]): number {
 }
 
 // 14. Warp continuity (v16). The flow warp replaced the per-pixel metric rotation (which
-//     tore cell ownership — measured 0.70 max adjacent-pixel jump vs 0.28 for the warp).
-//     A strong warp must change the output materially AND stay free of catastrophic jumps.
+//     tore cell ownership). A strong warp must change the output materially AND stay free
+//     of tearing jumps. The fixture uses a NON-saturating gentle profile (parabolic,
+//     seamDepth 1) so legitimate bowl slopes stay small (measured worst 0.21/pixel) and
+//     the 0.45 threshold actually discriminates the torn-metric regression (0.5–1.0
+//     ownership discontinuities). Saturating profiles (hemisphere/cosine at production
+//     seamDepth) legitimately produce ~0.7–0.9 jumps at this grid pitch and cannot
+//     discriminate — do not "tighten" this test by switching the fixture back.
 {
   process.stdout.write('14. warp continuity\n');
   const unwarped = new VoronoiReliefGen(41).sampleGrid(baseParams({
     cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 41, cellSize: 3,
-    polarity: 'pockets', warpDistortion: 0,
+    polarity: 'pockets', profile: 'parabolic', seamDepth: 1.0, warpDistortion: 0,
   }));
   const warped = new VoronoiReliefGen(41).sampleGrid(baseParams({
     cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 41, cellSize: 3,
-    polarity: 'pockets', warpDistortion: 0.8, warpFrequency: 0.1,
+    polarity: 'pockets', profile: 'parabolic', seamDepth: 1.0,
+    warpDistortion: 0.8, warpFrequency: 0.1,
   }));
   let differing = 0;
   for (let j = 0; j < 120; j++) {
@@ -583,18 +595,18 @@ function countLocalMinima(grid: number[][]): number {
     for (let i = 1; i < 160; i++) {
       const d = Math.abs(warped[j][i] - warped[j][i - 1]);
       if (d > worst) worst = d;
-      if (d > 1.5) bigJumps++;
+      if (d > 0.45) bigJumps++;
     }
   }
   for (let j = 1; j < 120; j++) {
     for (let i = 0; i < 160; i++) {
       const d = Math.abs(warped[j][i] - warped[j - 1][i]);
       if (d > worst) worst = d;
-      if (d > 1.5) bigJumps++;
+      if (d > 0.45) bigJumps++;
     }
   }
   assert(bigJumps === 0,
-    'warped output has zero catastrophic pixel-pair jumps (no ownership tearing)',
+    'warped output has zero tearing jumps (> 0.45 on the gentle-profile fixture)',
     `bigJumps=${bigJumps} worst=${worst.toFixed(3)}`);
 }
 

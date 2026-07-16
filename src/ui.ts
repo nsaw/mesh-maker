@@ -739,8 +739,11 @@ export function updateSectionVisibility(): void {
   const mode = STATE.mode;
   document.querySelectorAll<HTMLElement>('.noise-only').forEach(el => {
     // v16: BLEND mode is the drape compositor and no longer consumes the noise pipeline,
-    // so noise sections show in noise mode only.
-    el.style.display = mode === 'noise' ? 'block' : 'none';
+    // so noise sections show in noise mode only — EXCEPT when blend mode has no depth map
+    // yet: generateMesh() falls back to the noise mesh there, and hiding the controls
+    // would leave the user staring at a noise render they cannot configure.
+    const blendNoiseFallback = mode === 'blend' && !STATE.depthMap;
+    el.style.display = (mode === 'noise' || blendNoiseFallback) ? 'block' : 'none';
   });
   document.querySelectorAll<HTMLElement>('.depth-map-only').forEach(el => {
     el.style.display = (mode === 'depthmap' || mode === 'blend') ? 'block' : 'none';
@@ -758,7 +761,15 @@ export function fitMeshToAspect(imgW: number, imgH: number): void {
   }
   // Full grid resolution — image resolution is the hard gate for depth-map/drape quality;
   // 256 visibly quantized fine features that the drape's contact-detail channel needs.
-  STATE.resolution = 400;
+  // Capped by total grid cells: rows scale with meshY/meshX, and an extreme portrait
+  // aspect at resolution 400 would allocate millions of vertices (plus the drape's
+  // envelope/fold/contact grids) and freeze the tab.
+  const aspectRowsPerCol = STATE.meshY / STATE.meshX;
+  const maxGridCells = 250000;
+  STATE.resolution = Math.max(
+    64,
+    Math.min(400, Math.floor(Math.sqrt(maxGridCells / Math.max(0.05, aspectRowsPerCol)))),
+  );
   STATE.depthMapAR = ar;
   STATE.aspectLocked = true;
 }
