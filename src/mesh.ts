@@ -7,7 +7,9 @@ import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
 import { gridMinMax } from './geometry';
 
-/** Sample a depth map image into a grid of raw [0,1] grayscale values. */
+/** Sample a depth map image into a grid of raw [0,1] grayscale values.
+ *  Bilinear interpolation — nearest-neighbor stair-stepped low-res sources, forcing heavy
+ *  dmSmoothing blur that melted the form detail the drape model needs. */
 function sampleDepthMapGrid(
   imgData: ImageData, imgW: number, imgH: number,
   cols: number, rows: number,
@@ -15,12 +17,22 @@ function sampleDepthMapGrid(
   const grid: number[][] = [];
   for (let j = 0; j < rows; j++) {
     grid[j] = [];
+    const fy = (j / (rows - 1)) * (imgH - 1);
+    const iy0 = Math.min(Math.floor(fy), imgH - 1);
+    const iy1 = Math.min(iy0 + 1, imgH - 1);
+    const ty = fy - iy0;
     for (let i = 0; i < cols; i++) {
-      const u = i / (cols - 1), v = j / (rows - 1);
-      const ix = Math.min(Math.floor(u * imgW), imgW - 1);
-      const iy = Math.min(Math.floor(v * imgH), imgH - 1);
-      const idx = (iy * imgW + ix) * 4;
-      grid[j][i] = imgData.data[idx] / 255;
+      const fx = (i / (cols - 1)) * (imgW - 1);
+      const ix0 = Math.min(Math.floor(fx), imgW - 1);
+      const ix1 = Math.min(ix0 + 1, imgW - 1);
+      const tx = fx - ix0;
+      const p00 = imgData.data[(iy0 * imgW + ix0) * 4];
+      const p10 = imgData.data[(iy0 * imgW + ix1) * 4];
+      const p01 = imgData.data[(iy1 * imgW + ix0) * 4];
+      const p11 = imgData.data[(iy1 * imgW + ix1) * 4];
+      const top = p00 * (1 - tx) + p10 * tx;
+      const bot = p01 * (1 - tx) + p11 * tx;
+      grid[j][i] = (top * (1 - ty) + bot * ty) / 255;
     }
   }
   return grid;
