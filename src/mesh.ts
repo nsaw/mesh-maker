@@ -8,8 +8,6 @@ import { updateStats } from './stats';
 import { gridMinMax, weightedSmooth } from './geometry';
 import { closeGrid, contourFolds, slopeMask } from './drape';
 
-export { weightedSmooth };
-
 /** Sample a depth map image into a grid of raw [0,1] grayscale values.
  *  Bilinear interpolation — nearest-neighbor stair-stepped low-res sources, forcing heavy
  *  dmSmoothing blur that melted the form detail the drape model needs. */
@@ -280,8 +278,7 @@ export function generateMesh(): void {
   });
 }
 
-// weightedSmooth moved to geometry.ts (shared with drape.ts, no import cycle); re-exported
-// above for any external callers.
+// weightedSmooth moved to geometry.ts (shared with drape.ts, no import cycle).
 
 // Debounced generation — moved here to avoid circular dependency with stats.ts
 const VIEW_ONLY_KEYS = new Set(['orbit','tilt','roll','zoom']);

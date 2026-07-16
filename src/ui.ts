@@ -764,12 +764,24 @@ async function runDepthEstimation(btn: HTMLButtonElement): Promise<void> {
     showToast('Upload or select an image first');
     return;
   }
+  // Re-estimating an already-estimated depth map degrades it (depth-of-a-depth-image).
+  if (/ \(AI depth\)$/.test(STATE.depthMapName)) {
+    showToast('Already an AI depth map — upload a new photo to re-estimate');
+    return;
+  }
+  const source = STATE.depthMap;
   btn.disabled = true;
   const originalLabel = btn.textContent;
   btn.textContent = 'ESTIMATING…';
   showToast('Loading depth model — first use downloads ~25-50MB', 4000);
   try {
-    const depthImg = await estimateDepth(STATE.depthMap);
+    const depthImg = await estimateDepth(source);
+    // Stale-closure guard: if the user swapped images while estimation ran, discard this
+    // result instead of overwriting the newer image with the old photo's depth.
+    if (STATE.depthMap !== source) {
+      showToast('Image changed during estimation — result discarded');
+      return;
+    }
     STATE.depthMap = depthImg;
     STATE.depthMapName = STATE.depthMapName.replace(/ \(AI depth\)$/, '') + ' (AI depth)';
     fitMeshToAspect(depthImg.width, depthImg.height);
