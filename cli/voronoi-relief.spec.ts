@@ -50,6 +50,8 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
     baseAmplitude: 0, baseFrequency: 0.1, wallWidth: 0, densityNoise: 0, densityNoiseFreq: 0.08,
     // v16.1: pillowed floors.
     pillow: 0, pillowCoverage: 0.6,
+    // v16.3: depth tiers + junction lift.
+    depthVariation: 0, junctionLift: 0,
     // Round-16: radial-foci ("starburst"). Empty radialFoci ⇒ radial system off (matches
     // pre-feature output); the scalar params below are inert until radialFoci is non-empty.
     radialFoci: [], radialStrength: 1.5, radialFalloff: 0.3, radialGrow: 0.45, radialWarp: 0.4, radialMode: 'rays',
@@ -105,6 +107,8 @@ function starburstPresetParams(overrides: Partial<ReliefSampleParams> = {}): Rel
     reliefDensityNoiseFreq: numberValue('reliefDensityNoiseFreq'),
     reliefPillow: numberValue('reliefPillow'),
     reliefPillowCoverage: numberValue('reliefPillowCoverage'),
+    reliefDepthVariation: numberValue('reliefDepthVariation'),
+    reliefJunctionLift: numberValue('reliefJunctionLift'),
     reliefRadialFociCount: numberValue('reliefRadialFociCount'),
     reliefRadialFocus1X: numberValue('reliefRadialFocus1X'),
     reliefRadialFocus1Y: numberValue('reliefRadialFocus1Y'),
@@ -654,6 +658,52 @@ function countLocalMinima(grid: number[][]): number {
   assert(half.count > 50 && half.count < full.count,
     'coverage 0.5 pillows some cells but fewer than full coverage',
     `half=${half.count} full=${full.count}`);
+}
+
+// 14c. v16.3 spec mechanisms: depth tiers, junction lift, floor fillet.
+{
+  process.stdout.write('14c. depth tiers + junction lift + floor fillet\n');
+  const mk = (o: Partial<ReliefSampleParams>): number[][] =>
+    new VoronoiReliefGen(29).sampleGrid(baseParams({
+      cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 29, cellSize: 3,
+      baseMode: 'flat', polarity: 'pockets', wallWidth: 0.12, seamDepth: 0.35,
+      profile: 'cosine', ...o,
+    }));
+  const plain = mk({});
+  // Depth tiers: with variation on, some cells lose most of their depth (suppressed tier)
+  // while others keep full depth — per-pixel diffs must include strong SHALLOWING.
+  const tiered = mk({ depthVariation: 1 });
+  let raised = 0;
+  let maxRaise = 0;
+  for (let j = 0; j < 120; j++) {
+    for (let i = 0; i < 160; i++) {
+      const d = tiered[j][i] - plain[j][i];
+      if (d > 0.05) raised++;
+      if (d > maxRaise) maxRaise = d;
+    }
+  }
+  assert(raised > 500 && maxRaise > 0.4,
+    'depth tiers suppress some cells (large shallowing regions exist)',
+    `raised=${raised} maxRaise=${maxRaise.toFixed(3)}`);
+  // Junction lift: output must gain positive elevation above the flat-base ridge plane.
+  const lifted = mk({ junctionLift: 1 });
+  let plainMax = -Infinity;
+  let liftedMax = -Infinity;
+  for (let j = 0; j < 120; j++) {
+    for (let i = 0; i < 160; i++) {
+      if (plain[j][i] > plainMax) plainMax = plain[j][i];
+      if (lifted[j][i] > liftedMax) liftedMax = lifted[j][i];
+    }
+  }
+  assert(liftedMax > plainMax + 0.1,
+    'junction lift raises crest peaks above the flat ridge plane',
+    `plainMax=${plainMax.toFixed(3)} liftedMax=${liftedMax.toFixed(3)}`);
+  // Floor fillet: the smooth saturation must remove the hard clamp plateau kink — the
+  // deepest floor value still saturates to the same depth (within the fillet tolerance).
+  const deepest = Math.min(...flatten(plain));
+  assert(deepest < -0.95,
+    'smooth saturation still reaches full floor depth',
+    `deepest=${deepest.toFixed(3)}`);
 }
 
 // 14b. Density noise (v16). Patchy site density must change the output materially while

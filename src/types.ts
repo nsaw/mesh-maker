@@ -94,6 +94,15 @@ export interface ReliefParams {
   /** Fraction of cells that receive a pillow (seeded per-cell hash) — the reference mixes
    *  pillowed and plain pockets. */
   pillowCoverage: number;
+  /** v16.3 per-cell depth variation in [0, 1]: hash-quantized depth tiers (deep /
+   *  intermediate / shallow-suppressed) plus per-cell seamDepth jitter that makes wall
+   *  profiles asymmetric across shared ridges. High values suppress some cells into the
+   *  surrounding mass (the spec's "large calm surface masses"). */
+  depthVariation: number;
+  /** v16.3 junction lift in [0, 1]: ridge crests rise toward three-way junctions
+   *  (detected via (F3 − F1)/(2R) → 0) and the wall band widens there — star-shaped
+   *  elevated nodes with crests dipping at edge midpoints. */
+  junctionLift: number;
   /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
    *  count by `sampleReliefParamsFromState`. Empty = the starburst system is off and the
    *  sampler is byte-identical to non-foci output. v16.2: each focus seeds a jittered

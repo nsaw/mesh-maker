@@ -372,20 +372,23 @@ function halton(index: number, base: number): number {
   return result;
 }
 
-/** Find F1, F2 and the index of the nearest site under a CONSTANT anisotropic metric.
+/** Find F1, F2, F3 and the index of the nearest site under a CONSTANT anisotropic metric.
  *  The frame never varies per pixel (v16 removed the rotating-metric mechanism — a
  *  constant frame cannot tear cell ownership). Distance is computed in the rotated
- *  anisotropy frame: rotation preserves length, so we scale x' and take hypot directly. */
-function nearestTwo(
+ *  anisotropy frame: rotation preserves length, so we scale x' and take hypot directly.
+ *  F3 (third-nearest) drives junction detection: at a three-way Voronoi corner
+ *  F1 ≈ F2 ≈ F3, so (F3 − F1) → 0 exactly at junctions (v16.3). */
+function nearestThree(
   sites: Site[],
   x: number,
   y: number,
   cosA: number,
   sinA: number,
   anisotropyScale: number,
-): { f1: number; f2: number; idx: number } {
+): { f1: number; f2: number; f3: number; idx: number } {
   let f1 = Infinity;
   let f2 = Infinity;
+  let f3 = Infinity;
   let idx = 0;
   const isotropic = anisotropyScale <= 1.0001;
   for (let i = 0; i < sites.length; i++) {
@@ -399,10 +402,11 @@ function nearestTwo(
       const yr = -dx * sinA + dy * cosA;
       d = Math.hypot(xr * anisotropyScale, yr);
     }
-    if (d < f1) { f2 = f1; f1 = d; idx = i; }
-    else if (d < f2) { f2 = d; }
+    if (d < f1) { f3 = f2; f2 = f1; f1 = d; idx = i; }
+    else if (d < f2) { f3 = f2; f2 = d; }
+    else if (d < f3) { f3 = d; }
   }
-  return { f1, f2, idx };
+  return { f1, f2, f3, idx };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -550,7 +554,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const radiusSum = new Float64Array(sites.length);
     const radiusN = new Int32Array(sites.length);
     for (let idx = 0; idx < rows * cols; idx++) {
-      const { f1, idx: siteIdx } = nearestTwo(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
+      const { f1, idx: siteIdx } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
     }
@@ -621,6 +625,27 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const attractorNoiseFreq = Math.max(0.02, Math.min(0.5, p.attractorNoiseFreq));
     const intensityStrengthClamped = Math.max(0, Math.min(1, p.intensityStrength));
     const inv2sigma2Radial = 1 / (2 * sigmaRadial * sigmaRadial);
+    // v16.3 spec mechanisms (docs/voronoi-relief-target-spec.md):
+    //   depthVariation — per-cell hash depth TIERS (deep/intermediate/shallow-suppressed)
+    //     plus per-cell seamDepth jitter → asymmetric wall profiles across shared ridges.
+    //   junctionLift — crests rise toward three-way junctions ((F3−F1)/(2R) → 0 there),
+    //     which also WIDENS the local wall band (junctions read wider than their ridges).
+    //   wall-width noise — ridge width varies continuously along each edge.
+    const depthVariation = Number.isFinite(p.depthVariation)
+      ? Math.max(0, Math.min(1, p.depthVariation))
+      : 0;
+    const junctionLift = Number.isFinite(p.junctionLift)
+      ? Math.max(0, Math.min(1, p.junctionLift))
+      : 0;
+    const wallNoiseGen = wallFrac > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 83)
+      : null;
+    const wallNoiseFreq = 0.45 / Math.max(0.2, p.cellSize);
+    const seamDepthBase = Math.max(0.05, p.seamDepth);
+    // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
+    // so floors meet walls through a rounded transition (spec: "tighter-radius fillet",
+    // "floor-to-wall transition is generally softened").
+    const FILLET_BAND = 0.18;
     // v16.1 pillow params. The pillow ramps on the UNCAPPED bowl saturation ratio
     // (bowlTRaw = tw/seamDepth): 1.0 = the floor just saturated, 1.4 = deep interior.
     // Anchoring on this ratio (not on normDist toward 1) matters — the measured normDist
@@ -643,7 +668,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const pixIdx = j * cols + i;
         const qx = wxArr[pixIdx];
         const qy = wyArr[pixIdx];
-        const { f1, f2, idx: ownerIdx } = nearestTwo(sites, qx, qy, cosA, sinA, metricScale);
+        const { f1, f2, f3, idx: ownerIdx } = nearestThree(sites, qx, qy, cosA, sinA, metricScale);
         // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -678,14 +703,36 @@ export class VoronoiReliefGen implements ReliefGenerator {
         //     lafabrica gradient, via the 2R normalization)
         const distDiff = f2 - f1;
         const normDist = Math.min(1, distDiff / (2 * R));
-        // Wall band: hold [0, wallFrac] at base level, remap the rest to [0, 1].
-        const tw = Math.max(0, (normDist - wallFrac) / Math.max(0.05, 1 - wallFrac));
-        // seamDepth = saturation point: lower → bowls saturate sooner (uniform depth),
-        // higher → only the biggest cells reach full depth. The uncapped ratio feeds the
-        // pillow ramp below.
-        const bowlTRaw = tw / Math.max(0.05, p.seamDepth);
-        let bowlT = bowlTRaw;
-        if (bowlT > 1) bowlT = 1;
+        // v16.3 junction proximity: (F3−F1) → 0 exactly at three-way corners; jn ≈ 1 there,
+        // → 0 along edge midpoints and inside cells.
+        const jn = 1 - Math.min(1, (f3 - f1) / (2 * R));
+        const jnS = smoothstep(0.55, 0.95, jn);
+        // v16.3 variable wall band: ridge width varies continuously along each edge
+        // (low-frequency noise) and widens strongly at junctions — the spec's order-of-
+        // magnitude ridge-width variation and star-shaped junction plateaus.
+        let wallFracLocal = wallFrac;
+        if (wallNoiseGen && wallFrac > 0) {
+          const wn = wallNoiseGen.noise(x * wallNoiseFreq, y * wallNoiseFreq);
+          wallFracLocal = Math.min(0.9, wallFrac * Math.max(0.15, 1 + 0.8 * wn + 1.4 * jnS));
+        }
+        const tw = Math.max(0, (normDist - wallFracLocal) / Math.max(0.05, 1 - wallFracLocal));
+        // v16.3 asymmetric walls: per-cell seamDepth jitter — the two cells sharing a ridge
+        // saturate at different rates, so one side descends long/shallow while the other
+        // drops short/steep (spec: "wall profile is asymmetric across many ridges").
+        let seamDepthLocal = seamDepthBase;
+        if (depthVariation > 0) {
+          const hSeam = cellHash01(ownerIdx, seed + 29);
+          seamDepthLocal = Math.max(0.05, seamDepthBase * (1 + (hSeam - 0.5) * 0.8 * depthVariation));
+        }
+        const bowlTRaw = tw / seamDepthLocal;
+        // Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp kink.
+        let bowlT: number;
+        if (bowlTRaw >= 1 + FILLET_BAND) bowlT = 1;
+        else if (bowlTRaw <= 1 - FILLET_BAND) bowlT = bowlTRaw;
+        else {
+          const e = 1 + FILLET_BAND - bowlTRaw;
+          bowlT = 1 - (e * e) / (4 * FILLET_BAND);
+        }
         // Profile shapes the bowl falloff curve. All profiles have dh/dt = 0 at t=0 so the
         // wall-to-bowl transition is crease-free.
         let bowlH: number;
@@ -728,13 +775,28 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Spatial gating: cells fade out where the mask is low (transitionSoftness shapes
         // the falloff). With attractorMode 'none' (mask = 1) this is a no-op.
         const cellWeight = Math.pow(mask, transitionExponent);
+        // v16.3 depth tiers: three per-cell depth classes (deep / intermediate / shallow).
+        // The shallow tier at high variation suppresses cells into the surrounding mass —
+        // the spec's "large calm surface masses" and "cells partially swallowed by walls".
+        let cellDepthMul = 1;
+        if (depthVariation > 0) {
+          const hDepth = cellHash01(ownerIdx, seed + 13);
+          const tier = hDepth < 0.2 ? 0.25 : (hDepth < 0.55 ? 0.6 : 1);
+          cellDepthMul = 1 - depthVariation * (1 - tier);
+        }
 
         // v16 SUPERPOSITION: the base wave is never attenuated by the cell system — cells
         // are carved INTO it. Ridge tops (bowlH = 0) sit exactly on the base surface.
         const base = baseAmplitude > 0
           ? baseAmplitude * waveGen.noise(x * baseFrequency, y * baseFrequency)
           : 0;
-        let h = base + polarity * bowlH * cellWeight * intensityFactor;
+        let h = base + polarity * bowlH * cellWeight * intensityFactor * cellDepthMul;
+        // v16.3 junction lift: crests rise toward three-way junctions (spec: junction
+        // peaks at 0.90-1.00, crest midpoints dipping). Faded by (1 − bowlH) so the lift
+        // lives on ridges and shoulders, never inside carved floors.
+        if (junctionLift > 0) {
+          h += junctionLift * 0.35 * jnS * (1 - bowlH);
+        }
 
         // Void mode pushes h toward the negative clamp where mask + bowl depth are high —
         // the cut-through spike-finger zone.
@@ -793,6 +855,8 @@ export function sampleReliefParamsFromState(
     reliefDensityNoiseFreq: number;
     reliefPillow: number;
     reliefPillowCoverage: number;
+    reliefDepthVariation: number;
+    reliefJunctionLift: number;
     reliefRadialFociCount: number;
     reliefRadialFocus1X: number;
     reliefRadialFocus1Y: number;
@@ -853,6 +917,8 @@ export function sampleReliefParamsFromState(
     densityNoiseFreq: s.reliefDensityNoiseFreq,
     pillow: s.reliefPillow,
     pillowCoverage: s.reliefPillowCoverage,
+    depthVariation: s.reliefDepthVariation,
+    junctionLift: s.reliefJunctionLift,
     radialFoci,
     radialStrength: s.reliefRadialStrength,
     radialFalloff: s.reliefRadialFalloff,

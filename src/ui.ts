@@ -355,6 +355,10 @@ function buildReliefSection(): HTMLElement {
     // rises into a soft central mound. Coverage gates which cells pillow (per-cell hash).
     slider('reliefPillow', 'Pillowed Floors', 0, 1, 0.05),
     slider('reliefPillowCoverage', 'Pillow Coverage', 0, 1, 0.05),
+    // v16.3: per-cell depth tiers (deep/intermediate/suppressed) + asymmetric wall
+    // profiles; junction crest lift with widened star-shaped nodes.
+    slider('reliefDepthVariation', 'Depth Variation', 0, 1, 0.05),
+    slider('reliefJunctionLift', 'Junction Peaks', 0, 1, 0.05),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),

@@ -33,7 +33,7 @@ PRESETS = {
     # relief-pockets — v16 primary reference-matcher, proportions retuned (see the TS
     # preset in src/noise/presets.ts for the rationale; keep both in sync).
     'relief-pockets':  {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.75, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.6, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':2, 'smooth_str':0.4,
-                        'relief_cell_size':5.0, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.35, 'relief_seam_width':0.15, 'relief_wall_width':0.12, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.7, 'relief_base_freq':0.05, 'relief_pillow':0.75, 'relief_pillow_coverage':0.65, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.0, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':0.9, 'relief_density_noise_freq':0.06, 'relief_warp_freq':0.06},
+                        'relief_cell_size':5.0, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.35, 'relief_seam_width':0.15, 'relief_wall_width':0.12, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.7, 'relief_base_freq':0.05, 'relief_pillow':0.75, 'relief_pillow_coverage':0.65, 'relief_depth_variation':0.6, 'relief_junction_lift':0.5, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.0, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':0.9, 'relief_density_noise_freq':0.06, 'relief_warp_freq':0.06},
     # relief-starburst — v16: the radial-foci system is now fully ported to the IronPython
     # sampler (noise_gen.py implements the same space-warp as the web); this preset mirrors
     # the TS relief-starburst verbatim including the foci. Keep both in sync.
@@ -94,6 +94,8 @@ relief_density_noise       = p.get('relief_density_noise',       0.0)
 relief_density_noise_freq  = p.get('relief_density_noise_freq',  0.08)
 relief_pillow              = p.get('relief_pillow',              0.0)
 relief_pillow_coverage     = p.get('relief_pillow_coverage',     0.6)
+relief_depth_variation     = p.get('relief_depth_variation',     0.0)
+relief_junction_lift       = p.get('relief_junction_lift',       0.0)
 relief_radial_foci_count   = p.get('relief_radial_foci_count',   0)
 relief_radial_focus1_x     = p.get('relief_radial_focus1_x',     0.5)
 relief_radial_focus1_y     = p.get('relief_radial_focus1_y',     0.25)

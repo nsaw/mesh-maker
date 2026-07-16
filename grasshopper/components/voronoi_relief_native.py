@@ -95,6 +95,8 @@ if density_noise      is None: density_noise      = 0.0
 if density_noise_freq is None: density_noise_freq = 0.08
 if pillow             is None: pillow             = 0.0
 if pillow_coverage    is None: pillow_coverage    = 0.6
+if depth_variation    is None: depth_variation    = 0.0
+if junction_lift      is None: junction_lift      = 0.0
 
 mesh_x             = float(mesh_x)
 mesh_y             = float(mesh_y)
@@ -117,6 +119,8 @@ density_noise      = max(0.0, min(1.5, float(density_noise)))
 density_noise_freq = max(0.005, min(2.0, float(density_noise_freq)))
 pillow             = max(0.0, min(1.0, float(pillow)))
 pillow_coverage    = max(0.0, min(1.0, float(pillow_coverage)))
+depth_variation    = max(0.0, min(1.0, float(depth_variation)))
+junction_lift      = max(0.0, min(1.0, float(junction_lift)))
 
 # Grid dimensions: longer axis gets `resolution`, shorter axis scales to keep
 # square pixels.
@@ -338,7 +342,7 @@ z_arr = [0.0] * total
 sx = [s.X for s in sites]
 sy = [s.Y for s in sites]
 
-inv_wall_span = 1.0 / max(0.05, 1.0 - wall_width)
+wall_noise_freq = 0.45 / max(0.2, cell_size)
 
 for j in xrange(g_rows):
     py = j * dy_pix
@@ -347,30 +351,60 @@ for j in xrange(g_rows):
         px = i * dx_pix
         best1 = 1.0e30
         best2 = 1.0e30
+        best3 = 1.0e30
         owner = 0
         for k in xrange(n_sites):
             dx = sx[k] - px
             dy = sy[k] - py
             d2v = dx * dx + dy * dy
             if d2v < best1:
+                best3 = best2
                 best2 = best1
                 best1 = d2v
                 owner = k
             elif d2v < best2:
+                best3 = best2
                 best2 = d2v
+            elif d2v < best3:
+                best3 = d2v
         d1 = math.sqrt(best1)
         d2 = math.sqrt(best2)
+        d3 = math.sqrt(best3)
         d_seam = d2 - d1
         # v16 per-cell depth: normalize by the LOCAL radius so dense patches
         # read proportionally shallower (V1 used the global cell_size). t_raw is
         # kept UNCAPPED so the pillow ramp can fire past saturation.
-        t_raw = d_seam / max(0.05, local_min_dist(px, py))
+        local_r = max(0.05, local_min_dist(px, py))
+        t_raw = d_seam / local_r
         if t_raw < 0.0: t_raw = 0.0
-        # v16 wall band: hold [0, wall_width] at base level, remap the rest.
-        tw_raw = (t_raw - wall_width) * inv_wall_span
-        tw = tw_raw
+        # v16.3 junction proximity: (d3 - d1) -> 0 at three-way corners.
+        jn = 1.0 - min(1.0, (d3 - d1) / (2.0 * local_r))
+        jn_s = (jn - 0.55) / 0.4
+        if jn_s < 0.0: jn_s = 0.0
+        elif jn_s > 1.0: jn_s = 1.0
+        jn_s = jn_s * jn_s * (3.0 - 2.0 * jn_s)
+        # v16.3 variable wall band: width noise + junction widening.
+        wall_local = wall_width
+        if wall_width > 0.0:
+            wn = vnoise(px * wall_noise_freq, py * wall_noise_freq, seed + 83)
+            wall_local = min(0.9, wall_width * max(0.15, 1.0 + 0.8 * wn + 1.4 * jn_s))
+        tw_raw = (t_raw - wall_local) / max(0.05, 1.0 - wall_local)
+        # v16.3 asymmetric walls: per-cell seam-rate jitter (saturation point varies per cell).
+        sat_local = 1.0
+        if depth_variation > 0.0:
+            h_seam = _cell_hash01(owner, seed + 29)
+            sat_local = max(0.2, 1.0 + (h_seam - 0.5) * 0.8 * depth_variation)
+        tw_raw = tw_raw / sat_local
+        # Smooth floor saturation (C1 fillet) instead of a hard clamp.
+        FILLET_BAND = 0.18
+        if tw_raw >= 1.0 + FILLET_BAND:
+            tw = 1.0
+        elif tw_raw <= 1.0 - FILLET_BAND:
+            tw = tw_raw
+        else:
+            e = 1.0 + FILLET_BAND - tw_raw
+            tw = 1.0 - (e * e) / (4.0 * FILLET_BAND)
         if tw < 0.0: tw = 0.0
-        elif tw > 1.0: tw = 1.0
         v = profile_fn(tw)
         # v16.1 pillowed floors: past saturation (tw_raw > 1) the floor rises back into a
         # soft central mound. Per-cell hash gates coverage; mound height varies per cell.
@@ -383,13 +417,22 @@ for j in xrange(g_rows):
                 pt = pt * pt * (3.0 - 2.0 * pt)
                 v -= pillow * amt_var * 0.65 * pt
                 if v < 0.0: v = 0.0
+        # v16.3 depth tiers: deep / intermediate / shallow-suppressed cells.
+        cell_depth_mul = 1.0
+        if depth_variation > 0.0:
+            h_depth = _cell_hash01(owner, seed + 13)
+            tier = 0.25 if h_depth < 0.2 else (0.6 if h_depth < 0.55 else 1.0)
+            cell_depth_mul = 1.0 - depth_variation * (1.0 - tier)
+        v = v * cell_depth_mul
         # v16 base superposition: ridge tops follow the wave (z_cell = 1 at
         # ridge for pockets), then the whole field renormalizes to [0,1].
         base = base_amp * vnoise(px * base_freq, py * base_freq, seed + 99)
+        # v16.3 junction lift: crests rise toward three-way junctions.
+        lift = junction_lift * 0.35 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
         if polarity == 'domes':
-            z_arr[row_off + i] = base + v
+            z_arr[row_off + i] = base + v + lift
         else:
-            z_arr[row_off + i] = base + (1.0 - v)
+            z_arr[row_off + i] = base + (1.0 - v) + lift
 
 # Renormalize to [0,1] -- Shape expects a normalized field; the base wave
 # pushes values outside the raw [0,1] band.

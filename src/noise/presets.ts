@@ -84,12 +84,13 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // seamDepth = saturation point: 0.75 keeps only the biggest cells reaching full depth,
     // small cells stay shallow — the lafabrica depth gradient. seamWidth drives SBP V-carve
     // width only (no mesh effect under F2-F1).
-    reliefSeamDepth:0.35, reliefSeamWidth:0.15, reliefWallWidth:0.12, reliefAnisotropy:0, reliefAnisotropyAngle:0,
+    reliefSeamDepth:0.35, reliefSeamWidth:0.15, reliefWallWidth:0.12, reliefAnisotropy:0.2, reliefAnisotropyAngle:75,
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.35,
     reliefDensityStrength:1.2, reliefIntensityStrength:0.9, reliefTransitionSoftness:0.35, reliefBaseMode:'wave',
     reliefBaseAmplitude:0.7, reliefBaseFrequency:0.05,
     reliefCellSizeGradient:0.8, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
     reliefPillow:0.75, reliefPillowCoverage:0.65,
+    reliefDepthVariation:0.6, reliefJunctionLift:0.5,
     reliefAttractorNoise:0.5, reliefAttractorNoiseFreq:0.1,
     reliefDensityNoise:0.9, reliefDensityNoiseFreq:0.06,
     reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
@@ -117,6 +118,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefBaseAmplitude:0.35, reliefBaseFrequency:0.06,
     reliefCellSizeGradient:0.4, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
     reliefPillow:0.5, reliefPillowCoverage:0.55,
+    reliefDepthVariation:0.45, reliefJunctionLift:0.4,
     reliefAttractorNoise:0.2, reliefAttractorNoiseFreq:0.12,
     reliefDensityNoise:0.2, reliefDensityNoiseFreq:0.08,
     reliefRadialFociCount:3, reliefRadialFocus1X:0.7, reliefRadialFocus1Y:0.18,

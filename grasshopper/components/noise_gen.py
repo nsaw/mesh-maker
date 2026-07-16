@@ -67,6 +67,8 @@ relief_density_noise       = _relief_default('relief_density_noise',       0.0)
 relief_density_noise_freq  = _relief_default('relief_density_noise_freq',  0.08)
 relief_pillow              = _relief_default('relief_pillow',              0.0)
 relief_pillow_coverage     = _relief_default('relief_pillow_coverage',     0.6)
+relief_depth_variation     = _relief_default('relief_depth_variation',     0.0)
+relief_junction_lift       = _relief_default('relief_junction_lift',       0.0)
 relief_radial_foci_count   = _relief_default('relief_radial_foci_count',   0)
 relief_radial_focus1_x     = _relief_default('relief_radial_focus1_x',     0.5)
 relief_radial_focus1_y     = _relief_default('relief_radial_focus1_y',     0.25)
@@ -549,10 +551,11 @@ class VoronoiReliefNoise(object):
                         0.0])
                 r += gap
                 ring += 1
-    def _nearest_two(self, sites, x, y, cosA, sinA, aniso_scale):
+    def _nearest_three(self, sites, x, y, cosA, sinA, aniso_scale):
         # CONSTANT anisotropic metric (v16 removed per-pixel rotation — a constant frame
-        # cannot tear ownership). Rotate into stretched frame, scale x', take hypot.
-        f1 = float('inf'); f2 = float('inf'); idx = 0
+        # cannot tear ownership). F3 drives junction detection: at a three-way Voronoi
+        # corner F1 ≈ F2 ≈ F3, so (F3 − F1) → 0 exactly at junctions (v16.3).
+        f1 = float('inf'); f2 = float('inf'); f3 = float('inf'); idx = 0
         isotropic = (aniso_scale <= 1.0001)
         for i in range(len(sites)):
             dx = x - sites[i][0]; dy = y - sites[i][1]
@@ -562,9 +565,10 @@ class VoronoiReliefNoise(object):
                 xr = dx * cosA + dy * sinA
                 yr = -dx * sinA + dy * cosA
                 d = math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-            if d < f1: f2 = f1; f1 = d; idx = i
-            elif d < f2: f2 = d
-        return f1, f2, idx
+            if d < f1: f3 = f2; f2 = f1; f1 = d; idx = i
+            elif d < f2: f3 = f2; f2 = d
+            elif d < f3: f3 = d
+        return f1, f2, f3, idx
     def _halton(self, index, base):
         result = 0.0; f = 1.0 / base; i = index
         while i > 0:
@@ -689,7 +693,7 @@ class VoronoiReliefNoise(object):
         radius_sum = [0.0] * n_sites
         radius_n = [0] * n_sites
         for idx0 in range(rows * cols):
-            f1, f2, idx = self._nearest_two(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
+            f1, f2, f3, idx = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
             radius_sum[idx] += f1; radius_n[idx] += 1
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
@@ -750,6 +754,13 @@ class VoronoiReliefNoise(object):
         intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
         seam_sharp = max(0.0, min(1.0, p.get('seam_sharpness', 0.0)))
         invert_profile = p.get('invert_profile', 0.0)
+        # v16.3 spec mechanisms — mirror src/noise/voronoi-relief.ts + docs/voronoi-relief-target-spec.md.
+        depth_variation = max(0.0, min(1.0, p.get('depth_variation', 0.0)))
+        junction_lift = max(0.0, min(1.0, p.get('junction_lift', 0.0)))
+        wall_noise_gen = SimplexNoise(seed + 17 + 83) if wall_frac > 0 else None
+        wall_noise_freq = 0.45 / max(0.2, p['cell_size'])
+        seam_depth_base = max(0.05, p['seam_depth'])
+        FILLET_BAND = 0.18
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
         # 1.4 = deep interior); anchoring on normDist toward 1 never fires (measured).
         pillow_amt = max(0.0, min(1.0, p.get('pillow', 0.0)))
@@ -762,7 +773,7 @@ class VoronoiReliefNoise(object):
                 u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
                 pix = j * cols + i
                 qx = wx_arr[pix]; qy = wy_arr[pix]
-                f1, f2, idx = self._nearest_two(sites, qx, qy, cosA, sinA, aniso_scale)
+                f1, f2, f3, idx = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale)
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
@@ -787,10 +798,29 @@ class VoronoiReliefNoise(object):
                 # the derivation. Wall band holds [0, wall_frac] at base level.
                 dist_diff = f2 - f1
                 norm_dist = min(1.0, dist_diff / (2.0 * R))
-                tw = max(0.0, (norm_dist - wall_frac) / max(0.05, 1.0 - wall_frac))
-                bowl_t_raw = tw / max(0.05, p['seam_depth'])
-                bowl_t = bowl_t_raw
-                if bowl_t > 1.0: bowl_t = 1.0
+                # v16.3 junction proximity + variable wall band (ridge width varies along
+                # each edge, widening strongly at three-way junctions).
+                jn = 1.0 - min(1.0, (f3 - f1) / (2.0 * R))
+                jn_s = self._smoothstep(0.55, 0.95, jn)
+                wall_frac_local = wall_frac
+                if wall_noise_gen is not None and wall_frac > 0:
+                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
+                    wall_frac_local = min(0.9, wall_frac * max(0.15, 1.0 + 0.8 * wn + 1.4 * jn_s))
+                tw = max(0.0, (norm_dist - wall_frac_local) / max(0.05, 1.0 - wall_frac_local))
+                # v16.3 asymmetric walls: per-cell seamDepth jitter.
+                seam_depth_local = seam_depth_base
+                if depth_variation > 0.0:
+                    h_seam = self._cell_hash01(idx, seed + 29)
+                    seam_depth_local = max(0.05, seam_depth_base * (1.0 + (h_seam - 0.5) * 0.8 * depth_variation))
+                bowl_t_raw = tw / seam_depth_local
+                # Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp.
+                if bowl_t_raw >= 1.0 + FILLET_BAND:
+                    bowl_t = 1.0
+                elif bowl_t_raw <= 1.0 - FILLET_BAND:
+                    bowl_t = bowl_t_raw
+                else:
+                    e = 1.0 + FILLET_BAND - bowl_t_raw
+                    bowl_t = 1.0 - (e * e) / (4.0 * FILLET_BAND)
                 # All profiles MUST have dh/dt = 0 at t=0 (boundary). Otherwise the height
                 # drops from 0 with non-zero slope and mesh triangulation produces knife-edge
                 # spikes along ridges. Mirrors src/noise/voronoi-relief.ts.
@@ -820,8 +850,17 @@ class VoronoiReliefNoise(object):
                 # (whichever is stronger); cellWeight gates cells spatially.
                 intensity = (1.0 - intensity_strength) + intensity_strength * max(mask, g_max)
                 cw = pow(mask, transition_exponent)
+                # v16.3 depth tiers: deep / intermediate / shallow-suppressed cells.
+                cell_depth_mul = 1.0
+                if depth_variation > 0.0:
+                    h_depth = self._cell_hash01(idx, seed + 13)
+                    tier = 0.25 if h_depth < 0.2 else (0.6 if h_depth < 0.55 else 1.0)
+                    cell_depth_mul = 1.0 - depth_variation * (1.0 - tier)
                 base = base_amp * self.wave.noise(x * base_freq, y * base_freq) if base_amp > 0.0 else 0.0
-                h = base + polarity * bowl_h * cw * intensity
+                h = base + polarity * bowl_h * cw * intensity * cell_depth_mul
+                # v16.3 junction lift: crests rise toward three-way junctions.
+                if junction_lift > 0.0:
+                    h += junction_lift * 0.35 * jn_s * (1.0 - bowl_h)
                 # Void mode pushes h toward the negative clamp where mask + bowl depth are
                 # high. Uses bowl_h as the carve-depth proxy (was 'seam' in the old algorithm).
                 if void_strength > 0.0:
@@ -906,6 +945,8 @@ if is_relief:
         'density_noise_freq': float(relief_density_noise_freq),
         'pillow': float(relief_pillow),
         'pillow_coverage': float(relief_pillow_coverage),
+        'depth_variation': float(relief_depth_variation),
+        'junction_lift': float(relief_junction_lift),
         'radial_foci': [
             [float(relief_radial_focus1_x), float(relief_radial_focus1_y)],
             [float(relief_radial_focus2_x), float(relief_radial_focus2_y)],
