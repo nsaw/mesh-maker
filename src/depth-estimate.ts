@@ -18,6 +18,11 @@ const MODEL_ID = 'onnx-community/depth-anything-v2-small';
 // with no recovery path short of a reload. Generous — first-run WASM on a low-end machine
 // is slow but not minutes-per-image slow.
 const INFERENCE_TIMEOUT_MS = 180000;
+// Upper bound on pipeline creation INCLUDING the first-run model download (~25-50MB from
+// the HF hub). A stalled download never rejects on its own, which would leave the button
+// disabled forever; a timeout rejects the load, the catch below resets pipelinePromise,
+// and the user can retry. Generous enough for a slow connection.
+const LOAD_TIMEOUT_MS = 300000;
 
 /** Reject after `ms` so a hung backend can't wedge the UI. The underlying inference may
  *  still complete in the background; its result is simply discarded. */
@@ -76,8 +81,9 @@ async function loadPipeline(): Promise<DepthPipeline> {
  *  inference failure — callers decide the fallback UX. */
 export async function estimateDepth(source: HTMLImageElement): Promise<HTMLImageElement> {
   if (!pipelinePromise) {
-    pipelinePromise = loadPipeline();
-    // A failed load must not poison every later attempt (e.g. transient network).
+    pipelinePromise = withTimeout(loadPipeline(), LOAD_TIMEOUT_MS, 'depth model load');
+    // A failed OR timed-out load must not poison every later attempt (e.g. transient
+    // network, stalled model download).
     pipelinePromise.catch(() => { pipelinePromise = null; });
   }
   const pipe = await pipelinePromise;

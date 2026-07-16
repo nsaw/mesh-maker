@@ -594,13 +594,15 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       return n !== null && Math.abs(n - b) < 1e-9;
     };
     const upgradeKnownStarburstDefaults = (): void => {
-      // Migrate any pre-v11 starburst-preset share-link to the CURRENT (v15.1) preset values,
-      // so users opening older saved links see the latest starburst rendering rather than a
-      // mix of stale param values reinterpreted under the v15 sampler. The migration runs on
-      // payloadVersion < CURRENT_PAYLOAD_VERSION (11) and detects the known starburst signatures
-      // produced by each prior shipped version. Non-starburst links (fociCount = 0) pass through
-      // untouched. Links with custom/manually-tuned values that don't match any known signature
-      // ALSO pass through untouched — their author tuned them deliberately.
+      // Migrate any older starburst-preset share-link to the CURRENT preset values (copied
+      // verbatim from CNC_PRESETS['relief-starburst'] below, so this never drifts from the
+      // shipped preset), so users opening older saved links see the latest starburst
+      // rendering rather than a mix of stale param values reinterpreted under the current
+      // sampler. The migration runs on payloadVersion < CURRENT_PAYLOAD_VERSION and detects
+      // the known starburst signatures produced by each prior shipped version. Non-starburst
+      // links (fociCount = 0) pass through untouched. Links with custom/manually-tuned values
+      // that don't match any known signature ALSO pass through untouched — their author
+      // tuned them deliberately.
       const fociCount = toFiniteNumber(result.reliefRadialFociCount);
       if (payloadVersion >= CURRENT_PAYLOAD_VERSION || fociCount === null || fociCount <= 0) return;
       const matchesV7PolarDefaults =
