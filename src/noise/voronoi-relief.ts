@@ -372,8 +372,11 @@ function lloydRelax(
   const moveLimit = Math.min(sites.length, Math.max(0, pinnedFrom));
   for (let i = 0; i < moveLimit; i++) {
     if (counts[i] > 0) {
-      sites[i].x = sumX[i] / counts[i];
-      sites[i].y = sumY[i] / counts[i];
+      // Warped centroids can land slightly outside the physical panel at high
+      // distortion (the warp displaces samples by up to ~distortion·cellSize·0.9) —
+      // clamp so edge sites cannot drift off-panel and starve boundary cells.
+      sites[i].x = Math.max(0, Math.min(meshX, sumX[i] / counts[i]));
+      sites[i].y = Math.max(0, Math.min(meshY, sumY[i] / counts[i]));
     }
   }
 }

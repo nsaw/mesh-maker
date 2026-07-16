@@ -681,8 +681,11 @@ class VoronoiReliefNoise(object):
         move_limit = min(n, max(0, pinned_from))
         for i in range(move_limit):
             if counts[i] > 0:
-                sites[i][0] = sumX[i] / counts[i]
-                sites[i][1] = sumY[i] / counts[i]
+                # Warped centroids can land slightly outside the physical panel at high
+                # distortion — clamp so edge sites cannot drift off-panel and starve
+                # boundary cells.
+                sites[i][0] = max(0.0, min(p['mesh_x'], sumX[i] / counts[i]))
+                sites[i][1] = max(0.0, min(p['mesh_y'], sumY[i] / counts[i]))
     def sample_grid(self, p):
         # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
         # sampler — same seed produces same site layout and wave field even when the
