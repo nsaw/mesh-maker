@@ -329,6 +329,11 @@ function buildReliefSection(): HTMLElement {
     enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
     enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
     slider('reliefSeamDepth', 'Seam Depth', 0, 1, 0.05),
+    // v16: fraction of the normalized cell distance held at surface level around every
+    // cell boundary — walls get finite width instead of knife-edge ridge lines. The
+    // measured response is aggressive (0.3 already floors ~88% of pixels), so presets
+    // use small values (0.08–0.12).
+    slider('reliefWallWidth', 'Wall Width', 0, 0.5, 0.01),
     // NB: `reliefSeamWidth` does NOT affect the visual mesh under the F2-F1 relief algorithm
     // (see `voronoi-relief.ts`'s "seamWidth is no longer used" comment). It only drives the
     // SBP V-carve toolpath width via `sbp-export.ts:189` (`seamWidthIn = reliefSeamWidth ·
@@ -357,28 +362,34 @@ function buildReliefSection(): HTMLElement {
     slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
     slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
     slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
+    // v16: low-frequency noise on site density — giant and small cells coexist (the
+    // lafabrica multi-scale patchiness). Independent of the attractor gradient above.
+    slider('reliefDensityNoise', 'Cell Size Patchiness', 0, 1.5, 0.05),
+    slider('reliefDensityNoiseFreq', 'Patch Scale', 0.02, 0.3, 0.01),
     slider('reliefCellSizeGradient', 'Cell Size Gradient', 0, 2, 0.05),
     slider('reliefIntensityStrength', 'Intensity Strength', 0, 1, 0.05),
     slider('reliefTransitionSoftness', 'Transition Softness', 0, 1, 0.05),
     slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
     slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
     slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
-    slider('reliefFlowAnisotropy', 'Flow Anisotropy', 0, 1, 0.05),
     radialLabel,
-    slider('reliefRadialFociCount', 'Flow Course (0=off)', 0, 3, 1),
-    slider('reliefRadialFocus1X', 'Flow Point 1 X', 0, 1, 0.01),
-    slider('reliefRadialFocus1Y', 'Flow Point 1 Y', 0, 1, 0.01),
-    slider('reliefRadialFocus2X', 'Flow Point 2 X', 0, 1, 0.01),
-    slider('reliefRadialFocus2Y', 'Flow Point 2 Y', 0, 1, 0.01),
-    slider('reliefRadialFocus3X', 'Flow Point 3 X', 0, 1, 0.01),
-    slider('reliefRadialFocus3Y', 'Flow Point 3 Y', 0, 1, 0.01),
-    slider('reliefRadialStrength', 'Flow Tangent Strength', 0, 3, 0.05),
-    slider('reliefRadialFalloff', 'Flow Width', 0.05, 0.6, 0.01),
-    slider('reliefRadialGrow', 'Curvature Expansion', 0, 2, 0.05),
-    slider('reliefRadialWarp', 'Flow Wobble', 0, 1, 0.02),
+    slider('reliefRadialFociCount', 'Starburst Foci (0=off)', 0, 3, 1),
+    slider('reliefRadialFocus1X', 'Focus 1 X', 0, 1, 0.01),
+    slider('reliefRadialFocus1Y', 'Focus 1 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus2X', 'Focus 2 X', 0, 1, 0.01),
+    slider('reliefRadialFocus2Y', 'Focus 2 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus3X', 'Focus 3 X', 0, 1, 0.01),
+    slider('reliefRadialFocus3Y', 'Focus 3 Y', 0, 1, 0.01),
+    slider('reliefRadialStrength', 'Starburst Strength', 0, 3, 0.05),
+    slider('reliefRadialFalloff', 'Starburst Width', 0.05, 0.6, 0.01),
+    slider('reliefRadialGrow', 'Focal Expansion', 0, 2, 0.05),
+    slider('reliefRadialWarp', 'Starburst Wobble', 0, 1, 0.02),
     enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
+    // v16 superposition: the cellular carve rides ON this wave — ridge tops undulate.
+    slider('reliefBaseAmplitude', 'Base Wave Amplitude', 0, 2, 0.05),
+    slider('reliefBaseFrequency', 'Base Wave Frequency', 0.02, 0.3, 0.01),
   ], false, 'noise-only');
 }
 
