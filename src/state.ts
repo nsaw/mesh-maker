@@ -669,8 +669,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       (result as Record<string, unknown>).reliefWallWidth = 0.1;
       (result as Record<string, unknown>).reliefDensityNoise = 0.6;
       (result as Record<string, unknown>).reliefDensityNoiseFreq = 0.08;
-      (result as Record<string, unknown>).reliefPillow = 0.4;
-      (result as Record<string, unknown>).reliefPillowCoverage = 0.5;
+      (result as Record<string, unknown>).reliefPillow = 0.6;
+      (result as Record<string, unknown>).reliefPillowCoverage = 0.55;
     };
     upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls

@@ -718,7 +718,7 @@ class VoronoiReliefNoise(object):
         seam_sharp = max(0.0, min(1.0, p.get('seam_sharpness', 0.0)))
         invert_profile = p.get('invert_profile', 0.0)
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
-        # 1.6 = deep interior); anchoring on normDist toward 1 never fires (measured).
+        # 1.4 = deep interior); anchoring on normDist toward 1 never fires (measured).
         pillow_amt = max(0.0, min(1.0, p.get('pillow', 0.0)))
         pillow_coverage = max(0.0, min(1.0, p.get('pillow_coverage', 0.6)))
         inv2s2_radial = 1.0 / (2.0 * sigma_radial * sigma_radial)
@@ -777,7 +777,7 @@ class VoronoiReliefNoise(object):
                     gate = self._cell_hash01(idx, seed)
                     if gate < pillow_coverage:
                         amt_var = 0.6 + 0.4 * self._cell_hash01(idx, seed + 7)
-                        pillow_t = self._smoothstep(1.0, 1.6, bowl_t_raw)
+                        pillow_t = self._smoothstep(1.0, 1.4, bowl_t_raw)
                         bowl_h -= pillow_amt * amt_var * 0.65 * pillow_t
                         if bowl_h < 0.0: bowl_h = 0.0
                 # invertProfile: carve the boundary instead of the interior (domed floors).

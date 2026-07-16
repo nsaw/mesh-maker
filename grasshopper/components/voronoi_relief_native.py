@@ -377,8 +377,8 @@ for j in xrange(g_rows):
             if _cell_hash01(owner, seed) < pillow_coverage:
                 amt_var = 0.6 + 0.4 * _cell_hash01(owner, seed + 7)
                 pt = tw_raw
-                if pt > 1.6: pt = 1.6
-                pt = (pt - 1.0) / 0.6
+                if pt > 1.4: pt = 1.4
+                pt = (pt - 1.0) / 0.4
                 pt = pt * pt * (3.0 - 2.0 * pt)
                 v -= pillow * amt_var * 0.65 * pt
                 if v < 0.0: v = 0.0

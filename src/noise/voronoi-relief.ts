@@ -581,7 +581,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const intensityStrengthClamped = Math.max(0, Math.min(1, p.intensityStrength));
     const inv2sigma2Radial = 1 / (2 * sigmaRadial * sigmaRadial);
     // v16.1 pillow params. The pillow ramps on the UNCAPPED bowl saturation ratio
-    // (bowlTRaw = tw/seamDepth): 1.0 = the floor just saturated, 1.6 = deep interior.
+    // (bowlTRaw = tw/seamDepth): 1.0 = the floor just saturated, 1.4 = deep interior.
     // Anchoring on this ratio (not on normDist toward 1) matters — the measured normDist
     // distribution is concentrated low, so ramps anchored near 1 never fire.
     const pillowAmt = Number.isFinite(p.pillow) ? Math.max(0, Math.min(1, p.pillow)) : 0;
@@ -589,7 +589,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
       ? Math.max(0, Math.min(1, p.pillowCoverage))
       : 0.6;
     const PILLOW_RAMP_START = 1.0;
-    const PILLOW_RAMP_END = 1.6;
+    const PILLOW_RAMP_END = 1.4;
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
