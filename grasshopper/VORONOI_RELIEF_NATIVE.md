@@ -37,6 +37,7 @@ just consume the new z-values.
    | `mesh_x`, `mesh_y` | float    | item   |
    | `resolution`, `relax_iter`, `seed` | int | item |
    | `cell_size`, `jitter`, `attractor_radius`, `density_strength`, `depth`, `seam_sharpness` | float | item |
+   | `base_amp`, `base_freq`, `wall_width`, `density_noise`, `density_noise_freq` | float | item |
    | `attractor_pt`    | Point3d   | item   |
    | `profile`, `polarity` | str   | item   |
 
@@ -51,19 +52,24 @@ just consume the new z-values.
 ## Suggested starting values (matches the reference photo)
 
 ```
-mesh_x = 24, mesh_y = 36          # panel proportions like the reference
-resolution = 128                   # 128×192 grid, ~24K pixels
-cell_size = 2.2                    # ~11×16 = ~175 cells
-jitter = 0.85                      # unused in V1 (Bridson is inherently jittered)
-relax_iter = 2                     # tightens cell shapes; bump to 4 for very regular cells
-attractor_pt = (12, 30, 0)         # near top-center of panel
-attractor_radius = 14
-density_strength = 0.55            # cells shrink ~55% near attractor
+mesh_x = 24, mesh_y = 48          # panel proportions like the reference (web relief-pockets)
+resolution = 128                   # 128×256 grid, ~33K pixels
+cell_size = 5.0                    # matches the retuned web preset's proportions
+jitter = 0.6                       # V2: LIVE — randomizes local radius ±30% for size variety
+relax_iter = 1                     # tightens cell shapes; bump to 2-4 for very regular cells
+attractor_pt = (12, 0, 0)          # bottom-center of panel (dense zone at bottom)
+attractor_radius = 20
+density_strength = 0.5             # cells shrink ~50% near attractor
 seed = 81105
 depth = 0.4                        # 0.4" carve depth — Shape's `amplitude` rescales this
-profile = "parabolic-bowl"         # try "spherical-cap" for sharper V-grooves
+profile = "cosine"                 # round-bottom bowls like the reference
 polarity = "pockets"               # cells dip down (the reference look)
-seam_sharpness = 0.25              # 0 = pure profile; 1 = razor V-groove at ridges
+seam_sharpness = 0                 # 0 = pure profile; 1 = razor V-groove at ridges
+base_amp = 0.7                     # v16 base wave — ridge tops undulate (0 = V1 flat look)
+base_freq = 0.05                   # wave cycles per panel inch
+wall_width = 0.12                  # finite wall band around every cell boundary
+density_noise = 0.9                # giant-vs-small cell patches
+density_noise_freq = 0.06          # patch scale (lower = larger patches)
 ```
 
 On `MeshCraft | Shape`:
@@ -83,7 +89,7 @@ On `MeshCraft | Shape`:
 | `mesh_x, mesh_y`  | 24, 36           | Panel dimensions. |
 | `resolution`      | 128              | Grid res along the longer axis. Shorter axis derived to keep square pixels. |
 | `cell_size`       | 2.5              | Target avg cell radius; also normalizes profile depth. |
-| `jitter`          | 0.85             | Reserved for V2 (jittered-grid fallback). Currently unused. |
+| `jitter`          | 0.85             | LIVE in V2: randomizes local Bridson radius ±30% (cell-size variety). |
 | `relax_iter`      | 2                | Lloyd relaxation passes. 0 = wild, 4 = very regular. >6 can wash out attractor density. |
 | `attractor_pt`    | None             | Optional Point3d density attractor. Unconnect to disable. |
 | `attractor_radius`| 8.0              | Influence radius (panel units). |
@@ -93,6 +99,11 @@ On `MeshCraft | Shape`:
 | `profile`         | `parabolic-bowl` | `parabolic-bowl` (default), `spherical-cap` (sharpest V), `cone` (sharp at center too), `cosine` (smoothest). |
 | `polarity`        | `pockets`        | `pockets` (cells dip down — reference) or `domes` (cells bulge up). |
 | `seam_sharpness`  | 0.0              | 0..1 extra V-groove sharpening near ridges. |
+| `base_amp`        | 0.0              | v16 base wave amplitude — cells are carved INTO this undulating surface. 0 reproduces V1's flat-base look. |
+| `base_freq`       | 0.05             | Base wave spatial frequency (per panel unit). |
+| `wall_width`      | 0.0              | 0..0.9 fraction of normalized ridge distance held at base level — finite wall width. Small values (0.08-0.15) are already strong. |
+| `density_noise`   | 0.0              | 0..1.5 patchy cell-size noise (giant cells next to small ones). |
+| `density_noise_freq` | 0.08          | Patch spatial frequency (lower = larger patches). |
 
 ## Outputs reference
 
@@ -104,21 +115,27 @@ On `MeshCraft | Shape`:
 | `mesh_x`   | float            | Passthrough. |
 | `mesh_y`   | float            | Passthrough. |
 | `sites`    | `list[Point3d]`  | Post-Lloyd site centers. Bake to inspect distribution. |
-| `cells`    | `list[Curve]`    | Voronoi cell boundary curves. Bake for Brep edit / fillet / Aspire. |
+| `cells`    | `list[Curve]`    | Voronoi cell boundary curves. Bake for Brep edit / fillet / Aspire. EMPTY when the ghcomp.Voronoi call fails — the height field still generates via the Halton-centroid Lloyd fallback; an empty `cells` output is the signal to inspect the Voronoi node-in-code call on this machine. |
 
 ---
 
-## Two design choices worth flagging
+## Design choices worth flagging (V2)
 
 1. **Site distribution is Bridson rejection, not jittered grid.** Produces
-   tighter, more uniform-looking organic cells like the reference. The
-   `jitter` input is wired but unused in V1 — kept so a jittered-grid
-   fallback can be added without breaking the component signature.
+   tighter, more uniform-looking organic cells like the reference. `jitter`
+   randomizes the local radius ±30% for additional size variety.
 
-2. **Profile uses `t = (d2 − d1) / cell_size`** clamped to [0, 1]. Cells
-   smaller than `cell_size` (the dense ones near the attractor) never reach
-   `t = 1`, so they're proportionally shallower — which matches the
-   reference where dense regions read as finer, lighter texture.
+2. **Profile uses `t = (d2 − d1) / local_min_dist(px, py)`** clamped to
+   [0, 1] — per-cell depth normalization. Dense patches (attractor or
+   density noise) read proportionally shallower, matching the reference's
+   size-to-depth coupling.
+
+3. **ghcomp.Voronoi is called with keyword args and wrapped in try/except.**
+   The GH Voronoi component's inputs are (Points, Radius, Boundary, Plane);
+   V1's positional `ghcomp.Voronoi(pts, bnd_crv)` bound the boundary curve
+   to Radius. If the call fails at runtime, Lloyd relaxation falls back to
+   a Halton-sample centroid pass and `cells` outputs [] — the height field
+   never depends on ghcomp.
 
 ---
 
@@ -144,6 +161,10 @@ deltas; only port if the inner loop is actually the bottleneck.
 ## Test plan once wired
 
 - [ ] Unconnect `attractor_pt` → uniform cells of size ≈ `cell_size`.
+- [ ] `base_amp = 0.7` → ridge tops visibly undulate; `base_amp = 0` → V1 flat-base look.
+- [ ] `wall_width = 0.12` → walls read as finite flat-ish bands, not knife edges.
+- [ ] `density_noise = 0.9` → giant cells next to small-cell patches.
+- [ ] `cells` output NON-EMPTY → keyword Voronoi call works on this machine (empty ⇒ fallback ran; height field still valid — inspect the ghcomp call).
 - [ ] Connect attractor near top of panel → cells visibly smaller/denser near
       attractor, larger toward bottom.
 - [ ] Toggle `polarity`: `pockets` carves down, `domes` bulges up.
