@@ -1110,21 +1110,18 @@ PRESETS = {
     'brushed-metal':   {'noise_type':'gabor',      'frequency':0.10, 'amplitude':0.30, 'noise_exp':0.5, 'peak_exp':1.0, 'valley_exp':1.0,  'valley_floor':0.00, 'offset': 0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.00, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
     # Voronoi Relief presets — relief_* keys consumed by the noise component when noise_type == 'voronoi-relief'.
     'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.55, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':3, 'smooth_str':0.55,
-                        'relief_cell_size':1.6, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'parabolic', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_cell_size_gradient':1.0, 'relief_void_strength':0.7, 'relief_warp_freq':0.08},
+                        'relief_cell_size':1.6, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'parabolic', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_wall_width':0.08, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_base_amp':0.5, 'relief_base_freq':0.1, 'relief_cell_size_gradient':1.0, 'relief_void_strength':0.7, 'relief_density_noise':0.3, 'relief_density_noise_freq':0.08, 'relief_warp_freq':0.08},
     'relief-radial':   {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.20, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.25, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4,
-                        'relief_cell_size':1.8, 'relief_jitter':0.7, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'cosine', 'relief_seam_depth':0.6, 'relief_seam_width':0.14, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.5, 'relief_attractor_y':0.4, 'relief_attractor_radius':0.6, 'relief_attractor_falloff':1.2, 'relief_density_strength':1.2, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.4, 'relief_base_mode':'flat', 'relief_cell_size_gradient':0.6, 'relief_void_strength':0.0, 'relief_warp_freq':0.08},
-    'relief-pockets':  {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':4.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.5, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':1, 'smooth_str':0.3,
-                        'relief_cell_size':5.5, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'parabolic', 'relief_seam_depth':0.6, 'relief_seam_width':0.15, 'relief_anisotropy':0.30, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.6, 'relief_density_strength':1.7, 'relief_intensity_strength':0.6, 'relief_transition_softness':0.5, 'relief_base_mode':'flat', 'relief_cell_size_gradient':1.5, 'relief_void_strength':0.0, 'relief_attractor_noise':0.8, 'relief_attractor_noise_freq':0.13, 'relief_flow_anisotropy':0.5, 'relief_warp_freq':0.08},
-    # relief-starburst — mirrors the web preset's NON-radial settings so that wiring
-    # 'relief-starburst' into this component resolves to a real voronoi-relief setup rather
-    # than silently falling back to 'gentle-waves' (simplex) via the PRESETS.get(...) default.
-    # The radial_* fields (foci coords, strength, falloff, grow, warp, mode) are NOT read by
-    # the IronPython 2.7 sampler in noise_gen.py — the radial-foci system is web-only for now
-    # (see PR #16 plan; full Python port deferred). Selecting this preset in Grasshopper
-    # therefore produces a plain Voronoi relief at the starburst base settings, which is the
-    # correct degradation while the Python-side port is pending.
-    'relief-starburst':{'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.75, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.25, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':12, 'mesh_y':36, 'smooth_iter':3, 'smooth_str':0.45,
-                        'relief_cell_size':4.0, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'parabolic', 'relief_seam_depth':0.6, 'relief_seam_width':0.15, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1.0, 'relief_density_strength':0.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.5, 'relief_base_mode':'flat', 'relief_cell_size_gradient':0.4, 'relief_void_strength':0.0, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.12, 'relief_flow_anisotropy':0.0, 'relief_warp_freq':0.08},
+                        'relief_cell_size':1.8, 'relief_jitter':0.7, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'cosine', 'relief_seam_depth':0.6, 'relief_seam_width':0.14, 'relief_wall_width':0.08, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.5, 'relief_attractor_y':0.4, 'relief_attractor_radius':0.6, 'relief_attractor_falloff':1.2, 'relief_density_strength':1.2, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.4, 'relief_base_mode':'flat', 'relief_base_amp':0.0, 'relief_base_freq':0.1, 'relief_cell_size_gradient':0.6, 'relief_void_strength':0.0, 'relief_density_noise':0.3, 'relief_density_noise_freq':0.08, 'relief_warp_freq':0.08},
+    # relief-pockets — v16 primary reference-matcher, proportions retuned (see the TS
+    # preset in src/noise/presets.ts for the rationale; keep both in sync).
+    'relief-pockets':  {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.75, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.6, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':2, 'smooth_str':0.4,
+                        'relief_cell_size':5.0, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.35, 'relief_seam_width':0.15, 'relief_wall_width':0.12, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.7, 'relief_base_freq':0.05, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.0, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':0.9, 'relief_density_noise_freq':0.06, 'relief_warp_freq':0.06},
+    # relief-starburst — v16: the radial-foci system is now fully ported to the IronPython
+    # sampler (noise_gen.py implements the same space-warp as the web); this preset mirrors
+    # the TS relief-starburst verbatim including the foci. Keep both in sync.
+    'relief-starburst':{'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':1.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.35, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':12, 'mesh_y':36, 'smooth_iter':2, 'smooth_str':0.4,
+                        'relief_cell_size':2.5, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.3, 'relief_seam_width':0.15, 'relief_wall_width':0.1, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1.0, 'relief_density_strength':0.0, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.45, 'relief_base_freq':0.06, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0.0, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.12, 'relief_density_noise':0.6, 'relief_density_noise_freq':0.08, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':2.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.2, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'relief_warp_freq':0.07},
 }
 
 p = PRESETS.get(str(preset), PRESETS['gentle-waves'])
@@ -1171,7 +1168,25 @@ relief_cell_size_gradient  = p.get('relief_cell_size_gradient',  0.0)
 relief_void_strength       = p.get('relief_void_strength',       0.0)
 relief_attractor_noise     = p.get('relief_attractor_noise',     0.0)
 relief_attractor_noise_freq= p.get('relief_attractor_noise_freq',0.15)
-relief_flow_anisotropy     = p.get('relief_flow_anisotropy',     0.0)
+relief_invert_profile      = p.get('relief_invert_profile',      0.0)
+relief_seam_sharpness      = p.get('relief_seam_sharpness',      0.0)
+relief_base_amp            = p.get('relief_base_amp',            0.0)
+relief_base_freq           = p.get('relief_base_freq',           0.1)
+relief_wall_width          = p.get('relief_wall_width',          0.0)
+relief_density_noise       = p.get('relief_density_noise',       0.0)
+relief_density_noise_freq  = p.get('relief_density_noise_freq',  0.08)
+relief_radial_foci_count   = p.get('relief_radial_foci_count',   0)
+relief_radial_focus1_x     = p.get('relief_radial_focus1_x',     0.5)
+relief_radial_focus1_y     = p.get('relief_radial_focus1_y',     0.25)
+relief_radial_focus2_x     = p.get('relief_radial_focus2_x',     0.25)
+relief_radial_focus2_y     = p.get('relief_radial_focus2_y',     0.6)
+relief_radial_focus3_x     = p.get('relief_radial_focus3_x',     0.75)
+relief_radial_focus3_y     = p.get('relief_radial_focus3_y',     0.8)
+relief_radial_strength     = p.get('relief_radial_strength',     1.5)
+relief_radial_falloff      = p.get('relief_radial_falloff',      0.3)
+relief_radial_grow         = p.get('relief_radial_grow',         0.45)
+relief_radial_warp         = p.get('relief_radial_warp',         0.4)
+relief_radial_mode         = p.get('relief_radial_mode',         'rays')
 relief_warp_freq           = p.get('relief_warp_freq',           0.08)
 """
 
