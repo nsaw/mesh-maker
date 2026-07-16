@@ -443,7 +443,13 @@ function buildDepthMapSection(): HTMLElement {
 
   return buildSection('Depth Map', [
     uploadZone,
-    slider('blend', 'Blend (0=image, 1=noise)', 0, 1, 0.01),
+    // Drape (BLEND mode): 'blend' is repurposed as fabric tension — 0 hugs the form,
+    // 1 bridges concavities via the morphological-close envelope (src/drape.ts).
+    slider('blend', 'Fabric Tension (0=hug, 1=bridge)', 0, 1, 0.01),
+    slider('drapeFoldScale', 'Fold Count', 2, 40, 1),
+    slider('drapeFoldDepth', 'Fold Depth', 0, 0.5, 0.01),
+    slider('drapeFoldWarp', 'Fold Irregularity', 0, 1, 0.05),
+    slider('drapeThickness', 'Fabric Thickness (in)', 0, 0.2, 0.005),
     slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05),
     slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01),
     slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1),
@@ -715,7 +721,9 @@ function wireSectionCollapse(): void {
 export function updateSectionVisibility(): void {
   const mode = STATE.mode;
   document.querySelectorAll<HTMLElement>('.noise-only').forEach(el => {
-    el.style.display = (mode === 'noise' || mode === 'blend') ? 'block' : 'none';
+    // v16: BLEND mode is the drape compositor and no longer consumes the noise pipeline,
+    // so noise sections show in noise mode only.
+    el.style.display = mode === 'noise' ? 'block' : 'none';
   });
   document.querySelectorAll<HTMLElement>('.depth-map-only').forEach(el => {
     el.style.display = (mode === 'depthmap' || mode === 'blend') ? 'block' : 'none';
