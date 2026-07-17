@@ -610,6 +610,9 @@ for j in xrange(g_rows):
             st_sz = st_sz * st_sz * (3.0 - 2.0 * st_sz)
             if st_sz > 0.0:
                 field_v = (vnoise(sx[owner] * 0.045, sy[owner] * 0.045, seed + 61) + 1.0) * 0.5
+                # Coverage 0 must fully disable cushions.
+                if pillow_coverage <= 0.0:
+                    field_v = -1.0
                 cg = (field_v - (0.8 - pillow_coverage)) / 0.4
                 if cg < 0.0: cg = 0.0
                 elif cg > 1.0: cg = 1.0

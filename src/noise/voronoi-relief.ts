@@ -1099,7 +1099,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
               sites[ownerIdx].x * PANEL_FIELD_FREQ,
               sites[ownerIdx].y * PANEL_FIELD_FREQ,
             ) + 1) * 0.5;
-            const covGate = smoothstep(0.8 - pillowCoverage, 1.2 - pillowCoverage, fieldV);
+            // Coverage 0 must fully disable cushions (the smooth threshold alone stays
+            // positive for high field values).
+            const covGate = pillowCoverage <= 0
+              ? 0
+              : smoothstep(0.8 - pillowCoverage, 1.2 - pillowCoverage, fieldV);
             if (covGate > 0) {
               const amtVar = 0.55 + 0.45 * fieldV;
               const pillowT = smootherstep(PILLOW_GUTTER_END, PILLOW_RAMP_END, bowlTRaw);

@@ -1086,7 +1086,11 @@ class VoronoiReliefNoise(object):
                     if size_t > 0.0:
                         field_v = (panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ,
                                                          sites[idx][1] * PANEL_FIELD_FREQ) + 1.0) * 0.5
-                        cov_gate = self._smoothstep(0.8 - pillow_coverage, 1.2 - pillow_coverage, field_v)
+                        # Coverage 0 must fully disable cushions.
+                        if pillow_coverage <= 0.0:
+                            cov_gate = 0.0
+                        else:
+                            cov_gate = self._smoothstep(0.8 - pillow_coverage, 1.2 - pillow_coverage, field_v)
                         if cov_gate > 0.0:
                             amt_var = 0.55 + 0.45 * field_v
                             pillow_t = self._smootherstep(1.25, 1.9, bowl_t_raw)
