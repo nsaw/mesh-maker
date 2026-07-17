@@ -953,6 +953,9 @@ function countLocalMinima(grid: number[][]): number {
   assert(raysVar.radial < raysVar.tangential,
     'rays mode: height varies less along spokes than along arcs (radially elongated)',
     `radial=${raysVar.radial.toFixed(4)} tangential=${raysVar.tangential.toFixed(4)}`);
+  assert(ringsVar.radial > ringsVar.tangential,
+    'rings mode: height varies less along arcs than along spokes (tangentially elongated)',
+    `radial=${ringsVar.radial.toFixed(4)} tangential=${ringsVar.tangential.toFixed(4)}`);
   assert(ringsVar.radial / ringsVar.tangential > raysVar.radial / raysVar.tangential * 1.15,
     'rings mode is tangentially biased relative to rays (direction semantics swap)',
     `rays ratio=${(raysVar.radial / raysVar.tangential).toFixed(3)} rings ratio=${(ringsVar.radial / ringsVar.tangential).toFixed(3)}`);
