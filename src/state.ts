@@ -656,11 +656,21 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       // the preset defines — so detected legacy links become exactly the current preset
       // rather than a hybrid old/new configuration. Deriving from CNC_PRESETS removes the
       // hand-maintained sync list this block used to carry.
+      // EXCEPTION — the author's COMPOSITION: the legacy fingerprints match only the
+      // scalar controls, so a link whose author moved the foci (but left the scalars at
+      // defaults) still matches. Focus coordinates and count present in the payload are
+      // the saved composition and must survive the migration.
+      const compositionKeys = new Set([
+        'reliefRadialFociCount',
+        'reliefRadialFocus1X', 'reliefRadialFocus1Y',
+        'reliefRadialFocus2X', 'reliefRadialFocus2Y',
+        'reliefRadialFocus3X', 'reliefRadialFocus3Y',
+      ]);
       const starburstPreset = CNC_PRESETS['relief-starburst'];
       for (const key of URL_SERIALIZABLE_KEYS) {
-        if (key in starburstPreset) {
-          (result as Record<string, unknown>)[key] = starburstPreset[key];
-        }
+        if (!(key in starburstPreset)) continue;
+        if (compositionKeys.has(key) && key in result) continue;
+        (result as Record<string, unknown>)[key] = starburstPreset[key];
       }
       (result as Record<string, unknown>).activePreset = 'relief-starburst';
     };
