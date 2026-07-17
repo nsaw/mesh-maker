@@ -415,7 +415,17 @@ for k in xrange(n_sites):
     sm = math.sqrt(inradius[k] / median_inr)
     if sm < 0.8: sm = 0.8
     elif sm > 1.2: sm = 1.2
-    size_mul_cell[k] = sm
+    # v21.1 continuous depth class + SLOPE BUDGET (a cell only carves as deep as its
+    # walls can descend at the aesthetic ceiling; small cells become shallow dimples).
+    tier_mul = 1.0
+    if depth_variation > 0.0:
+        h_depth = _cell_hash01(k, seed + 13)
+        tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
+    w_typ = seam_depth * inradius[k] * 0.8
+    if w_typ < 0.05: w_typ = 0.05
+    budget = 0.55 * w_typ
+    if budget > 1.0: budget = 1.0
+    size_mul_cell[k] = sm * tier_mul * budget
 
 wall_noise_freq = 0.45 / max(0.2, cell_size)
 crest_freq = 0.25 / max(0.2, cell_size)
@@ -519,6 +529,20 @@ for j in xrange(g_rows):
         if jn_s < 0.0: jn_s = 0.0
         elif jn_s > 1.0: jn_s = 1.0
         jn_s = jn_s * jn_s * (3.0 - 2.0 * jn_s)
+        # v21.1: dissolution fades near junction corners (pairwise blend ill-conditioned
+        # there; references dissolve boundaries MID-EDGE while nodes survive).
+        jg = (jn - 0.45) / 0.3
+        if jg < 0.0: jg = 0.0
+        elif jg > 1.0: jg = 1.0
+        jg = jg * jg * (3.0 - 2.0 * jg)
+        dissolve *= (1.0 - jg)
+        # v21.1 blended static depth multiplier + boundary-fading tilt weight (per-cell
+        # factors must not step across dissolved boundaries).
+        owner_mix = 0.5 + 0.5 * min(1.0, db / max(1e-6, 0.35 * inr))
+        nb_mul = edge_mix * size_mul_cell[nb2] + (1.0 - edge_mix) * size_mul_cell[nb3]
+        static_mul_blended = owner_mix * size_mul_cell[owner] + (1.0 - owner_mix) * nb_mul
+        owner_fade = 2.0 * owner_mix - 1.0
+        if owner_fade < 0.0: owner_fade = 0.0
         # Ridge crest band: a physical plateau on the shared boundary. The plateau
         # width SWINGS along each edge with the wall-noise field (chunky-to-thin
         # ridges) and widens toward junctions.
@@ -539,8 +563,14 @@ for j in xrange(g_rows):
             elif jn_w > 1.0: jn_w = 1.0
             jn_w = jn_w * jn_w * (3.0 - 2.0 * jn_w)
             crest_w *= max(0.15, 1.0 + 1.2 * wn + 6.0 * junction_lift * jn_w)
+        # v21.1: crest leaves a resolvable wall span; wall extent floors at the
+        # physical minimum feature size (never derived from grid resolution).
+        cw_cap = inr - 0.3
+        if cw_cap < 0.0: cw_cap = 0.0
+        if crest_w > 0.6 * inr: crest_w = 0.6 * inr
+        if crest_w > cw_cap: crest_w = cw_cap
         w = seam_depth * max(0.02, inr - crest_w) * wall_scale
-        if w < 0.02: w = 0.02
+        if w < 0.3: w = 0.3
         tw_raw = (db - crest_w) / w
         if tw_raw < 0.0: tw_raw = 0.0
         # Smooth floor saturation (C1 fillet) instead of a hard clamp.
@@ -557,8 +587,9 @@ for j in xrange(g_rows):
             # v21 per-edge profile family: shallow shoulder, broad descent, steeper
             # lower third — no two walls share exactly the same cross-section.
             cos_h = 0.5 * (1.0 - math.cos(math.pi * tw))
-            late_h = pow(tw, 1.6 + 1.2 * edge_shared)
-            prof_mix = 0.2 + 0.55 * edge_side
+            # Tempered so the blended profile's PEAK slope stays <= ~1.9x mean.
+            late_h = pow(tw, 1.5 + 0.6 * edge_shared)
+            prof_mix = 0.15 + 0.45 * edge_side
             v = (1.0 - prof_mix) * cos_h + prof_mix * late_h
         else:
             v = profile_fn(tw)
@@ -586,12 +617,10 @@ for j in xrange(g_rows):
         # v17 depth composition: size coupling (bigger cells carve deeper, per-cell
         # inradius vs median) + depth tiers + SPATIAL suppression (clusters of cells
         # melt into masses).
-        cell_depth_mul = size_mul_cell[owner]
+        # v21.1: size + depth class + slope budget come pre-blended (static). Spatial
+        # suppression stays direct (continuous field).
+        cell_depth_mul = static_mul_blended
         if depth_variation > 0.0:
-            h_depth = _cell_hash01(owner, seed + 13)
-            # v21 continuous depth classes in [0.45, 1.1].
-            tier = 0.45 + 0.65 * h_depth
-            cell_depth_mul = 1.0 - depth_variation * (1.0 - tier)
             sn = (vnoise(px * suppress_freq, py * suppress_freq, seed + 103) + 1.0) * 0.5
             st = (sn - 0.62) / 0.2
             if st < 0.0: st = 0.0
@@ -607,7 +636,7 @@ for j in xrange(g_rows):
             tilt = (math.cos(tilt_ang) * (px - sx[owner])
                     + math.sin(tilt_ang) * (py - sy[owner])) / rad
             tilt_t = (max(-0.9, min(0.9, tilt)) + 0.9) / 1.8
-            v *= 1.0 - 0.7 * depth_variation * tilt_t * v
+            v *= 1.0 - 0.7 * depth_variation * tilt_t * v * owner_fade
         v = v * cell_depth_mul
         # v16 base superposition: ridge tops follow the wave (z_cell = 1 at
         # ridge for pockets), then the whole field renormalizes to [0,1].
@@ -621,8 +650,10 @@ for j in xrange(g_rows):
         # v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
         # boundary. Melted zones keep ghost creases (0.35 floor on the bead scale).
         crown_term = 0.0
-        if wall_width > 0.0 and crest_w > 1e-6 and db < crest_w:
-            ct = db / crest_w
+        crown_w = crest_w
+        if crown_w < 0.25: crown_w = 0.25
+        if wall_width > 0.0 and crest_w > 1e-6 and db < crown_w:
+            ct = db / crown_w
             ct = ct * ct * (3.0 - 2.0 * ct)
             crown_term = 0.15 * (1.0 - ct) * (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
         if polarity == 'domes':

@@ -140,6 +140,9 @@ const EDGE_DISSOLVE_MAX = 0.7;
 // the base wave, exactly like the references' ridge tops (remnants of the original stock
 // face). Also converts pyramid junctions into broad saddles and keeps the panel
 // silhouette clean (no fins above the top edge).
+// v21.1 slope budget (normalized depth per inch of wall extent): 1.0 at the default
+// 2.4\" cut depth is ~67 degrees peak wall slope — the steepest the wood references show.
+const SLOPE_DEPTH_BUDGET = 0.55;
 const STOCK_CAP_START = 0.04;
 const STOCK_CAP_SPAN = 0.13;
 const SIZE_DEPTH_MIN = 0.8;
@@ -393,6 +396,20 @@ function generateSites(
         const jy = (rand() - 0.5) * jitter * sy;
         const px = Math.max(0, Math.min(meshX, cx + jx));
         const py = Math.max(0, Math.min(meshY, cy + jy));
+        // v21.1 minimum separation: jittered reps can land two sites arbitrarily close,
+        // producing sliver cells whose entire wall geometry is narrower than a sample —
+        // they render as torn shelves. (Physically: features below the tool radius
+        // cannot be cut anyway.)
+        {
+          const minSep2 = (0.35 * baseSpacing) * (0.35 * baseSpacing);
+          let tooClose = false;
+          for (let q = 0; q < sites.length; q++) {
+            const ddx = sites[q].x - px;
+            const ddy = sites[q].y - py;
+            if (ddx * ddx + ddy * ddy < minSep2) { tooClose = true; break; }
+          }
+          if (tooClose) continue;
+        }
         // v16.2: the polar lattices own the focal zones — Cartesian sites inside an
         // exclusion disc would double the density there and shred the petal structure.
         if (exclusionR > 0) {
@@ -802,6 +819,37 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // suppressGen was created before generateSites (v19 site deletion shares the field).
     const suppressFreq = 0.16 / Math.max(0.2, p.cellSize);
     const seamDepthBase = Math.max(0.05, p.seamDepth);
+    // v21.1 minimum feature floor — a PHYSICAL constant (tool-radius scale), NOT derived
+    // from the sample pitch: pitch-derived floors would make the exported geometry change
+    // shape with grid resolution. 0.3" also covers the flow warp's local sampling stretch
+    // at the default 400-res grid.
+    const wallMinPhys = 0.3;
+    const crownMinPhys = 0.25;
+    // v21.1 C0 CONTINUITY REPAIR. Dissolution lifts boundaries off zero (bowlH ≈ dissolve
+    // at a weakened edge), so any PER-CELL factor multiplying bowlH now creates a step of
+    // dissolve × |mulA − mulB| along that edge — the "shattered" defect. All hash-static
+    // per-cell depth multipliers are therefore precomputed per site and BLENDED across the
+    // nearest edges per pixel (owner weight is exactly 0.5 on the boundary, so both sides
+    // compute the identical average — C0 by construction).
+    const staticMul = new Float64Array(sites.length);
+    for (let k = 0; k < sites.length; k++) {
+      const sMul = Math.max(SIZE_DEPTH_MIN, Math.min(SIZE_DEPTH_MAX,
+        Math.sqrt(sites[k].radius / medianRadius)));
+      let tierMul = 1;
+      if (depthVariation > 0) {
+        // v21 continuous depth classes: every cell draws its own multiplier in [0.45, 1.1].
+        const hDepth = cellHash01(k, seed + 13);
+        tierMul = 1 - depthVariation * (1 - (0.45 + 0.65 * hDepth));
+      }
+      staticMul[k] = sMul * tierMul;
+      // v21.1 SLOPE BUDGET: a cell can only carve as deep as its walls can descend at
+      // the aesthetic slope ceiling — small cells become shallow dimples and deep
+      // pockets are always big. Every wood reference obeys this; slopes past ~65°
+      // read as fractures, not carving. Folded into the pre-blended static multiplier
+      // so it stays C0 across dissolved boundaries.
+      const wTyp = Math.max(0.05, seamDepthBase * inradius[k] * 0.8);
+      staticMul[k] *= Math.min(1, SLOPE_DEPTH_BUDGET * wTyp);
+    }
     // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
     // so floors meet walls through a rounded transition. Kept tight (spec: "tighter-radius
     // fillet") — the reference's floors read flat and its walls rise decisively; a wide
@@ -895,7 +943,19 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const edgeMix = 0.5 + 0.5 * smoothstep(0, 0.3, (db3 - db2) / Math.max(1e-9, db3 + db2));
         const edgeSide = edgeMix * e2Side + (1 - edgeMix) * e3Side;
         const edgeShared = edgeMix * e2Shared + (1 - edgeMix) * e3Shared;
-        const dissolve = (1 - smoothstep(0.06, 0.3, edgeShared)) * EDGE_DISSOLVE_MAX;
+        // Dissolution fades to zero near junction corners: the pairwise edge blend is
+        // ill-conditioned where three edges meet (both bisector distances → 0, so the
+        // blend flips between adjacent pixels → crest-to-floor steps), and physically
+        // the references dissolve boundaries MID-EDGE while junction nodes survive.
+        const dissolve = (1 - smoothstep(0.06, 0.3, edgeShared)) * EDGE_DISSOLVE_MAX
+          * (1 - smoothstep(0.45, 0.75, jn));
+        // v21.1: hash-static depth multiplier blended across the nearest edges — owner
+        // weight hits exactly 0.5 on the boundary so both sides agree (see staticMul).
+        const ownerMix = 0.5 + 0.5 * Math.min(1, db / Math.max(1e-6, 0.35 * inr));
+        const nbMul = edgeMix * staticMul[nb2] + (1 - edgeMix) * staticMul[nb3];
+        const staticMulBlended = ownerMix * staticMul[ownerIdx] + (1 - ownerMix) * nbMul;
+        // Tilt must vanish at boundaries for the same reason (its direction is per-cell).
+        const ownerFade = Math.max(0, 2 * ownerMix - 1);
         // Ridge crest band: a physical plateau on the shared boundary. The plateau width
         // SWINGS along each edge with the wall-noise field (chunky-to-thin ridges — the
         // reference's most distinctive wall trait) and widens toward junctions.
@@ -918,13 +978,19 @@ export class VoronoiReliefGen implements ReliefGenerator {
           const jnW = smoothstep(0.55, 0.95, jn);
           crestW *= Math.max(0.15, 1 + RIDGE_WIDTH_SWING * wn + JUNCTION_DELTA_GAIN * junctionLift * jnW);
         }
+        // The flare must never consume the cell (a crest wider than the inradius starves
+        // w and renders a star-shaped tear), and must always leave a RESOLVABLE wall span.
+        crestW = Math.min(crestW, 0.6 * inr, Math.max(0, inr - wallMinPhys));
         if (cellSizeGradient > 0) {
           wallScale *= 1 + cellSizeGradient * mask * 0.6;
         }
         if (radialGrow > 0 && gMax > 0) {
           wallScale /= Math.min(FOCAL_EXPAND_CAP, 1 + radialGrow * gMax * FOCAL_EXPAND_GAIN);
         }
-        const w = Math.max(0.02, seamDepthBase * Math.max(0.02, inr - crestW) * wallScale);
+        // v21.1 sampling floor: a wall narrower than ~2 sample pitches cannot be resolved
+        // by the grid — the full crest-to-floor drop lands inside one pixel and renders as
+        // a shard. Clamp the wall extent to the resolvable minimum.
+        const w = Math.max(wallMinPhys, seamDepthBase * Math.max(0.02, inr - crestW) * wallScale);
         const bowlTRaw = Math.max(0, (db - crestW) / w);
         // Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp kink.
         let bowlT: number;
@@ -945,8 +1011,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
           bowlH = 1 - Math.sqrt(Math.max(0, 1 - t2));
         } else if (p.profile === 'cosine') {
           const cosH = 0.5 - 0.5 * Math.cos(bowlT * Math.PI);
-          const lateH = Math.pow(bowlT, 1.6 + 1.2 * edgeShared);
-          const profMix = 0.2 + 0.55 * edgeSide;
+          // Exponent and mix tempered so the blended profile's PEAK slope stays ≤ ~1.9×
+          // the mean — the resolvability budget is sized to peak slope, not average.
+          const lateH = Math.pow(bowlT, 1.5 + 0.6 * edgeShared);
+          const profMix = 0.15 + 0.45 * edgeSide;
           bowlH = (1 - profMix) * cosH + profMix * lateH;
         } else {
           // 'parabolic'
@@ -996,7 +1064,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
           const tilt = (Math.cos(tiltAng) * (qx - sites[ownerIdx].x)
             + Math.sin(tiltAng) * (qy - sites[ownerIdx].y)) / rad;
           const tiltT = (Math.max(-0.9, Math.min(0.9, tilt)) + 0.9) / 1.8;
-          bowlH *= 1 - FLOOR_TILT_GAIN * depthVariation * tiltT * bowlH;
+          bowlH *= 1 - FLOOR_TILT_GAIN * depthVariation * tiltT * bowlH * ownerFade;
         }
         // invertProfile: carve the boundary instead of the interior (domed floors).
         if (p.invertProfile > 0.5) {
@@ -1016,20 +1084,13 @@ export class VoronoiReliefGen implements ReliefGenerator {
         //   suppression  — SPATIAL low-frequency field melts whole NEIGHBORHOODS of cells
         //                  into calm masses (clustered, not per-cell — critique: "delete
         //                  several neighboring cells and merge their wall regions")
-        const sizeMul = Math.max(SIZE_DEPTH_MIN, Math.min(SIZE_DEPTH_MAX,
-          Math.sqrt(sites[ownerIdx].radius / medianRadius)));
-        let cellDepthMul = sizeMul;
-        if (depthVariation > 0) {
-          // v21 continuous depth classes (was a binary deep/suppressed tier): every cell
-          // draws its own depth multiplier in [0.45, 1.1] — very shallow depressions
-          // through pockets that run DEEPER than nominal, organized per cell.
-          const hDepth = cellHash01(ownerIdx, seed + 13);
-          const tier = 0.45 + 0.65 * hDepth;
-          cellDepthMul *= 1 - depthVariation * (1 - tier);
-          if (suppressGen) {
-            const sn = (suppressGen.noise(x * suppressFreq, y * suppressFreq) + 1) * 0.5;
-            cellDepthMul *= 1 - SUPPRESSION_STRENGTH * depthVariation * smoothstep(0.62, 0.82, sn);
-          }
+        // v21.1: the hash-static parts (size coupling + depth class) come pre-blended
+        // across the nearest edges (staticMulBlended) — C0 at dissolved boundaries. The
+        // suppression field is spatial and continuous, so it multiplies directly.
+        let cellDepthMul = staticMulBlended;
+        if (depthVariation > 0 && suppressGen) {
+          const sn = (suppressGen.noise(x * suppressFreq, y * suppressFreq) + 1) * 0.5;
+          cellDepthMul *= 1 - SUPPRESSION_STRENGTH * depthVariation * smoothstep(0.62, 0.82, sn);
         }
         // v20 stretched fans: above grow = 1 the focal zone shallows toward the pinch
         // point while its polar lattice keeps converging walls — drape-like fan creases
@@ -1068,8 +1129,8 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // wall lines even where pockets have faded out. Gated by cellWeight. v21: also
         // scaled by the per-edge crest strength (variable crest heights along the graph;
         // dissolved edges lose their bead entirely).
-        if (wallFrac > 0 && crestW > 1e-6 && db < crestW) {
-          const crown = 1 - smoothstep(0, crestW, db);
+        if (wallFrac > 0 && crestW > 1e-6 && db < Math.max(crestW, crownMinPhys)) {
+          const crown = 1 - smoothstep(0, Math.max(crestW, crownMinPhys), db);
           const crownMul = (0.35 + 0.65 * cellDepthMul) * (0.35 + 0.9 * edgeShared) * (1 - dissolve);
           h -= polarity * RIDGE_CROWN_GAIN * crown * cellWeight * crownMul;
         }

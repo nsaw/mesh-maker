@@ -466,6 +466,13 @@ class VoronoiReliefNoise(object):
     # of the original stock face. Also converts pyramid junctions into saddles.
     STOCK_CAP_START = 0.04
     STOCK_CAP_SPAN = 0.13
+    # v21.1 slope budget (normalized depth per inch of wall extent), sized against the
+    # tempered profile family's PEAK slope: ~68 deg at the default 2.4in cut depth.
+    SLOPE_DEPTH_BUDGET = 0.55
+    # v21.1 minimum feature floors — PHYSICAL constants (tool-radius scale), never
+    # derived from sample pitch (geometry must not change shape with grid resolution).
+    WALL_MIN_PHYS = 0.3
+    CROWN_MIN_PHYS = 0.25
     SIZE_DEPTH_MIN = 0.8
     SIZE_DEPTH_MAX = 1.2
     DENSITY_NOISE_GAIN = 1.6
@@ -524,6 +531,18 @@ class VoronoiReliefNoise(object):
                     jy = (self._rand() - 0.5) * p['jitter'] * sy
                     px = max(0.0, min(p['mesh_x'], cx + jx))
                     py = max(0.0, min(p['mesh_y'], cy + jy))
+                    # v21.1 minimum separation: jittered reps can land two sites arbitrarily
+                    # close, producing sliver cells narrower than any cuttable feature.
+                    min_sep2 = (0.35 * spacing) * (0.35 * spacing)
+                    too_close = False
+                    for sq in sites:
+                        ddx = sq[0] - px
+                        ddy = sq[1] - py
+                        if ddx * ddx + ddy * ddy < min_sep2:
+                            too_close = True
+                            break
+                    if too_close:
+                        continue
                     # v16.2: polar lattices own the focal zones — Cartesian sites inside
                     # an exclusion disc would shred the petal structure.
                     if exclusion_r > 0.0:
@@ -875,6 +894,21 @@ class VoronoiReliefNoise(object):
         # suppress_gen was created before _gen_sites (v19 site deletion shares the field).
         suppress_freq = 0.16 / max(0.2, p['cell_size'])
         seam_depth_base = max(0.05, p['seam_depth'])
+        # v21.1 C0 continuity: hash-static per-cell depth multipliers are precomputed per
+        # site (with the SLOPE BUDGET folded in: a cell only carves as deep as its walls
+        # can descend at the aesthetic ceiling) and BLENDED across the nearest edges per
+        # pixel — dissolution lifts boundaries off zero, so unblended per-cell factors
+        # would step there.
+        static_mul = [0.0] * n_sites
+        for k in range(n_sites):
+            s_mul = max(self.SIZE_DEPTH_MIN, min(self.SIZE_DEPTH_MAX,
+                math.sqrt(sites[k][2] / median_radius)))
+            tier_mul = 1.0
+            if depth_variation > 0.0:
+                h_depth = self._cell_hash01(k, seed + 13)
+                tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
+            w_typ = max(0.05, seam_depth_base * inradius[k] * 0.8)
+            static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
         FILLET_BAND = 0.1
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
         # 1.4 = deep interior); anchoring on normDist toward 1 never fires (measured).
@@ -936,7 +970,15 @@ class VoronoiReliefNoise(object):
                 edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, (db3 - db2) / max(1e-9, db3 + db2))
                 edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
                 edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
-                dissolve = (1.0 - self._smoothstep(0.06, 0.3, edge_shared)) * self.EDGE_DISSOLVE_MAX
+                # Dissolution fades near junction corners (pairwise blend is ill-conditioned
+                # there; physically, references dissolve boundaries MID-EDGE, nodes survive).
+                dissolve = ((1.0 - self._smoothstep(0.06, 0.3, edge_shared)) * self.EDGE_DISSOLVE_MAX
+                            * (1.0 - self._smoothstep(0.45, 0.75, jn)))
+                # v21.1 blended static depth multiplier + boundary-fading tilt weight.
+                owner_mix = 0.5 + 0.5 * min(1.0, db / max(1e-6, 0.35 * inr))
+                nb_mul = edge_mix * static_mul[nb2] + (1.0 - edge_mix) * static_mul[nb3]
+                static_mul_blended = owner_mix * static_mul[idx] + (1.0 - owner_mix) * nb_mul
+                owner_fade = max(0.0, 2.0 * owner_mix - 1.0)
                 # Ridge crest band: a physical plateau on the shared boundary. The plateau
                 # width SWINGS along each edge with the wall-noise field (chunky-to-thin
                 # ridges) and widens toward junctions.
@@ -958,7 +1000,10 @@ class VoronoiReliefNoise(object):
                     wall_scale *= 1.0 + cell_size_grad * mask * 0.6
                 if radial_grow > 0.0 and g_max > 0.0:
                     wall_scale /= min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
-                w = max(0.02, seam_depth_base * max(0.02, inr - crest_w) * wall_scale)
+                # v21.1: crest must leave a resolvable wall span; wall extent floors at the
+                # physical minimum feature size.
+                crest_w = min(crest_w, 0.6 * inr, max(0.0, inr - self.WALL_MIN_PHYS))
+                w = max(self.WALL_MIN_PHYS, seam_depth_base * max(0.02, inr - crest_w) * wall_scale)
                 bowl_t_raw = max(0.0, (db - crest_w) / w)
                 # Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp.
                 if bowl_t_raw >= 1.0 + FILLET_BAND:
@@ -977,8 +1022,9 @@ class VoronoiReliefNoise(object):
                     # v21: per-edge profile FAMILY — each edge blends toward a late-power
                     # curve (shallow shoulder, broad descent, steeper lower third).
                     cos_h = 0.5 - 0.5 * math.cos(bowl_t * math.pi)
-                    late_h = pow(bowl_t, 1.6 + 1.2 * edge_shared)
-                    prof_mix = 0.2 + 0.55 * edge_side
+                    # Tempered so the blended profile's PEAK slope stays <= ~1.9x mean.
+                    late_h = pow(bowl_t, 1.5 + 0.6 * edge_shared)
+                    prof_mix = 0.15 + 0.45 * edge_side
                     bowl_h = (1.0 - prof_mix) * cos_h + prof_mix * late_h
                 else:  # parabolic
                     bowl_h = bowl_t * bowl_t
@@ -1014,7 +1060,7 @@ class VoronoiReliefNoise(object):
                     tilt = (math.cos(tilt_ang) * (qx - sites[idx][0])
                             + math.sin(tilt_ang) * (qy - sites[idx][1])) / rad
                     tilt_t = (max(-0.9, min(0.9, tilt)) + 0.9) / 1.8
-                    bowl_h *= 1.0 - self.FLOOR_TILT_GAIN * depth_variation * tilt_t * bowl_h
+                    bowl_h *= 1.0 - self.FLOOR_TILT_GAIN * depth_variation * tilt_t * bowl_h * owner_fade
                 # invertProfile: carve the boundary instead of the interior (domed floors).
                 if invert_profile > 0.5:
                     bowl_h = 1.0 - bowl_h
@@ -1024,15 +1070,10 @@ class VoronoiReliefNoise(object):
                 cw = pow(mask, transition_exponent)
                 # v17 depth composition: size coupling + iid tier + SPATIAL suppression
                 # (clusters of neighboring cells melt into calm masses).
-                size_mul = max(self.SIZE_DEPTH_MIN, min(self.SIZE_DEPTH_MAX,
-                    math.sqrt(sites[idx][2] / median_radius)))
-                cell_depth_mul = size_mul
+                # v21.1: hash-static parts (size + depth class + slope budget) come
+                # pre-blended across the nearest edges — C0 at dissolved boundaries.
+                cell_depth_mul = static_mul_blended
                 if depth_variation > 0.0:
-                    # v21 continuous depth classes: every cell draws its own multiplier
-                    # in [0.45, 1.1] — shallow depressions through deeper-than-nominal.
-                    h_depth = self._cell_hash01(idx, seed + 13)
-                    tier = 0.45 + 0.65 * h_depth
-                    cell_depth_mul *= 1.0 - depth_variation * (1.0 - tier)
                     if suppress_gen is not None:
                         sn = (suppress_gen.noise(x * suppress_freq, y * suppress_freq) + 1.0) * 0.5
                         cell_depth_mul *= 1.0 - self.SUPPRESSION_STRENGTH * depth_variation * self._smoothstep(0.62, 0.82, sn)
@@ -1053,8 +1094,8 @@ class VoronoiReliefNoise(object):
                     h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw
                 # v20 ridge crown: rounded bead over the crest band — dome peaking on the
                 # shared boundary. Melted zones keep ghost creases (0.35 floor).
-                if wall_frac > 0.0 and crest_w > 1e-6 and db < crest_w:
-                    crown = 1.0 - self._smoothstep(0.0, crest_w, db)
+                if wall_frac > 0.0 and crest_w > 1e-6 and db < max(crest_w, self.CROWN_MIN_PHYS):
+                    crown = 1.0 - self._smoothstep(0.0, max(crest_w, self.CROWN_MIN_PHYS), db)
                     crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
                     h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul
                 # v21 stock-plane soft cap (pockets only): broad crests flatten into
