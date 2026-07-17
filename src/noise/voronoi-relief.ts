@@ -99,7 +99,7 @@ const LOCAL_DENSITY_MAX = 4;
 // spikes put tiny cell clusters directly beside giant cells.
 const CREST_VARIATION_GAIN = 0.4;
 const SUPPRESSION_STRENGTH = 0.5;
-const JUNCTION_LIFT_GAIN = 0.18;
+const JUNCTION_LIFT_GAIN = 0.1;
 // Crest plateau width modulation along each edge: 1 ± this per unit of wall noise
 // (clamped at 0.15× so ridges thin to threads but never vanish). Drives the reference's
 // chunky-to-thin ridge swings — visible ridge MASS varies, not just the wall slope run.
@@ -131,6 +131,17 @@ const RIDGE_CROWN_GAIN = 0.15;
 // walls), so a focus inside a calm mass reads as drape-like creases converging to a pinch
 // point instead of a deep starburst. grow ≤ 1 keeps the classic deepened-focus behavior.
 const FOCAL_CALM_GAIN = 0.8;
+// v21 edge dissolution ceiling: the weakest edges melt this far toward floor level (the
+// two adjacent cells blend into a shared basin). ~6% of edges dissolve strongly, ~20%
+// weaken partially (1 − smoothstep(0.06, 0.3) on the shared edge hash).
+const EDGE_DISSOLVE_MAX = 0.7;
+// v21 stock-plane soft cap (pockets polarity): material can only be REMOVED — positive
+// excursions (crowns, junction lift, crest noise) saturate into flat plateaus just above
+// the base wave, exactly like the references' ridge tops (remnants of the original stock
+// face). Also converts pyramid junctions into broad saddles and keeps the panel
+// silhouette clean (no fins above the top edge).
+const STOCK_CAP_START = 0.04;
+const STOCK_CAP_SPAN = 0.13;
 const SIZE_DEPTH_MIN = 0.8;
 const SIZE_DEPTH_MAX = 1.2;
 
@@ -167,6 +178,13 @@ function cellHash01(idx: number, seed: number): number {
   let h = (Math.imul(idx + 1, 374761393) + Math.imul(seed | 0, 668265263)) >>> 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** v21 per-EDGE hash. An edge is identified by its two site indices. ORDERED (a→b) gives
+ *  each SIDE of a shared ridge its own value (wall asymmetry); callers wanting a value
+ *  both sides agree on (crest strength) pass min/max. */
+function edgeHash01(a: number, b: number, seed: number): number {
+  return cellHash01(Math.imul(a + 1, 7919) + b + 1, seed);
 }
 
 /** Compute the spatial-attractor mask in [0, 1] for a normalized (u, v) ∈ [0, 1]². */
@@ -841,7 +859,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // no finite falloff radius, no abandoned neutral surface, and shrinking floors
         // WIDENS walls instead of retreating the cavity mouth. q = d_b/w: 0 at the
         // boundary, 1 at the floor edge.
-        const db = boundaryDist(f1, f2, f3, f4, ownerIdx, idx2, idx3, idx4);
+        // Per-competitor bisector distances (also feed the exact boundary distance).
+        const bis = (fk: number, ik: number): number => (ik >= 0 && Number.isFinite(fk))
+          ? (fk * fk - f1 * f1) / (2 * Math.max(1e-9, siteDist(ownerIdx, ik)))
+          : dbCap;
+        const db2 = bis(f2, idx2);
+        const db3 = bis(f3, idx3);
+        const db4 = bis(f4, idx4);
+        const db = Math.min(db2, db3, db4);
         const inr = Math.max(0.01, inradius[ownerIdx]);
         // Scale-free junction proximity: (F3−F1)/(F3+F1) → 0 exactly at three-way corners.
         // With fewer than three sites there is no junction anywhere — jn stays 0.
@@ -849,15 +874,37 @@ export class VoronoiReliefGen implements ReliefGenerator {
           ? 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1))
           : 0;
         const jnS = smoothstep(0.65, 0.98, jn);
+        // v21 PER-EDGE FIELDS. The nearest competitor identifies which shared edge this
+        // pixel's wall belongs to, so every Voronoi edge carries its own parameters
+        // instead of one global rule (the references never render all edges equally):
+        //   edgeSide   (ORDERED a→b)  — this SIDE's wall width: asymmetric walls,
+        //               off-center floors, mouth/floor non-parallelism, pinch-outs.
+        //   edgeShared (unordered)    — crest strength both sides agree on: strong /
+        //               moderate / weak / DISSOLVED boundaries (weak edges melt toward
+        //               floor level and neighbors blend into a shared basin), and the
+        //               per-edge wall profile family.
+        // The fields of the TWO nearest edges are BLENDED by relative bisector distance:
+        // edge identity switches at the corner rays, and unblended per-edge values would
+        // jump there — a 3× wall-width step renders as a cliff along every cell corner.
+        const nb2 = idx2 >= 0 ? idx2 : ownerIdx;
+        const nb3 = idx3 >= 0 ? idx3 : nb2;
+        const e2Side = edgeHash01(ownerIdx, nb2, seed + 59);
+        const e2Shared = edgeHash01(Math.min(ownerIdx, nb2), Math.max(ownerIdx, nb2), seed + 53);
+        const e3Side = edgeHash01(ownerIdx, nb3, seed + 59);
+        const e3Shared = edgeHash01(Math.min(ownerIdx, nb3), Math.max(ownerIdx, nb3), seed + 53);
+        const edgeMix = 0.5 + 0.5 * smoothstep(0, 0.3, (db3 - db2) / Math.max(1e-9, db3 + db2));
+        const edgeSide = edgeMix * e2Side + (1 - edgeMix) * e3Side;
+        const edgeShared = edgeMix * e2Shared + (1 - edgeMix) * e3Shared;
+        const dissolve = (1 - smoothstep(0.06, 0.3, edgeShared)) * EDGE_DISSOLVE_MAX;
         // Ridge crest band: a physical plateau on the shared boundary. The plateau width
         // SWINGS along each edge with the wall-noise field (chunky-to-thin ridges — the
         // reference's most distinctive wall trait) and widens toward junctions.
         let crestW = wallFrac * Math.max(0.2, p.cellSize) * 0.5;
         // Wall extent = seamDepth fraction of the remaining inradius, varied per cell
-        // (asymmetric neighbors), along each edge (noise), and at junctions (widening).
-        // Capped so most cells keep a floor; noise/junction excursions may consume it
-        // entirely — the minority pinch-outs the reference shows.
-        let wallScale = 1;
+        // (asymmetric neighbors), per EDGE SIDE (v21 — the dominant variation), along
+        // each edge (noise), and at junctions (widening). Capped so most cells keep a
+        // floor; per-edge excursions may consume it entirely — the reference's pinch-outs.
+        let wallScale = 0.7 + 0.7 * edgeSide;
         if (depthVariation > 0) {
           const hSeam = cellHash01(ownerIdx, seed + 29);
           wallScale *= 1 + (hSeam - 0.5) * 0.8 * depthVariation;
@@ -888,13 +935,19 @@ export class VoronoiReliefGen implements ReliefGenerator {
           bowlT = 1 - (e * e) / (4 * FILLET_BAND);
         }
         // Profile shapes the bowl falloff curve. All profiles have dh/dt = 0 at t=0 so the
-        // wall-to-bowl transition is crease-free.
+        // wall-to-bowl transition is crease-free. v21: 'cosine' is a per-edge FAMILY, not
+        // one global curve — each edge blends toward a late-power profile (shallow
+        // shoulder, broad descent, steeper lower third) by its own amount, so no two
+        // walls share exactly the same cross-section.
         let bowlH: number;
         if (p.profile === 'hemisphere') {
           const t2 = bowlT * bowlT;
           bowlH = 1 - Math.sqrt(Math.max(0, 1 - t2));
         } else if (p.profile === 'cosine') {
-          bowlH = 0.5 - 0.5 * Math.cos(bowlT * Math.PI);
+          const cosH = 0.5 - 0.5 * Math.cos(bowlT * Math.PI);
+          const lateH = Math.pow(bowlT, 1.6 + 1.2 * edgeShared);
+          const profMix = 0.2 + 0.55 * edgeSide;
+          bowlH = (1 - profMix) * cosH + profMix * lateH;
         } else {
           // 'parabolic'
           bowlH = bowlT * bowlT;
@@ -904,17 +957,30 @@ export class VoronoiReliefGen implements ReliefGenerator {
           const sharp = Math.max(0, Math.min(1, p.seamSharpness));
           bowlH = (1 - sharp) * bowlH + sharp * bowlT;
         }
-        // v16.1 pillowed floors: past the saturation point the floor rises back toward the
-        // cell center — the reference's double-curvature pockets. Per-cell hash gates which
-        // cells pillow (coverage) and varies the mound height so the panel mixes pillowed
-        // and plain pockets. Capped at 65% of the depth so mounds never poke above walls.
+        // v21 edge dissolution: weak edges melt toward floor level, so the two adjacent
+        // cells blend into one shared basin — the references' boundary hierarchy runs
+        // strong / moderate / weak / gone, never all-equal.
+        if (dissolve > 0) {
+          bowlH += (1 - bowlH) * dissolve;
+        }
+        // v21 perimeter-clamped CUSHION floors ("a sunken cushion with a low perimeter
+        // gutter and broad convex crown"). The ramp runs on the boundary-distance
+        // saturation ratio, so the cushion inherits the floor's inset-polygon footprint
+        // and aspect (loaf in elongated cells, softened triangle in triangular ones) —
+        // never a circular seed bump. The bowl's own minimum at the floor edge becomes
+        // the perimeter gutter; past it the floor rises to a broad flat crown that stays
+        // well below the ridges. SCALE-DEPENDENT: pronounced in the largest cells, absent
+        // in small ones (inflating every floor equally reads as a field of buttons).
         if (pillowAmt > 0 && bowlTRaw > PILLOW_RAMP_START) {
           const gate = cellHash01(ownerIdx, seed);
           if (gate < pillowCoverage) {
-            const amtVar = 0.6 + 0.4 * cellHash01(ownerIdx, seed + 7);
-            const pillowT = smoothstep(PILLOW_RAMP_START, PILLOW_RAMP_END, bowlTRaw);
-            bowlH -= pillowAmt * amtVar * 0.65 * pillowT;
-            if (bowlH < 0) bowlH = 0;
+            const sizeT = smoothstep(0.9, 1.8, inr / Math.max(0.05, medianRadius * 0.5));
+            if (sizeT > 0) {
+              const amtVar = 0.6 + 0.4 * cellHash01(ownerIdx, seed + 7);
+              const pillowT = smoothstep(PILLOW_RAMP_START, PILLOW_RAMP_END, bowlTRaw);
+              bowlH -= pillowAmt * amtVar * 0.45 * sizeT * pillowT;
+              if (bowlH < 0) bowlH = 0;
+            }
           }
         }
         // v19 scooped floors: a per-cell hash direction tilts the pocket so its deepest
@@ -954,8 +1020,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
           Math.sqrt(sites[ownerIdx].radius / medianRadius)));
         let cellDepthMul = sizeMul;
         if (depthVariation > 0) {
+          // v21 continuous depth classes (was a binary deep/suppressed tier): every cell
+          // draws its own depth multiplier in [0.45, 1.1] — very shallow depressions
+          // through pockets that run DEEPER than nominal, organized per cell.
           const hDepth = cellHash01(ownerIdx, seed + 13);
-          const tier = hDepth < 0.35 ? 0.55 : 1;
+          const tier = 0.45 + 0.65 * hDepth;
           cellDepthMul *= 1 - depthVariation * (1 - tier);
           if (suppressGen) {
             const sn = (suppressGen.noise(x * suppressFreq, y * suppressFreq) + 1) * 0.5;
@@ -996,11 +1065,22 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // boundary, blending to the wall shoulder with zero slope at both ends. The bead
         // follows cellDepthMul only PARTIALLY (floor at 0.35): melted zones keep ghost
         // creases — the reference's calm masses and fan regions show their converging
-        // wall lines even where pockets have faded out. Gated by cellWeight.
+        // wall lines even where pockets have faded out. Gated by cellWeight. v21: also
+        // scaled by the per-edge crest strength (variable crest heights along the graph;
+        // dissolved edges lose their bead entirely).
         if (wallFrac > 0 && crestW > 1e-6 && db < crestW) {
           const crown = 1 - smoothstep(0, crestW, db);
-          const crownMul = 0.35 + 0.65 * cellDepthMul;
+          const crownMul = (0.35 + 0.65 * cellDepthMul) * (0.35 + 0.9 * edgeShared) * (1 - dissolve);
           h -= polarity * RIDGE_CROWN_GAIN * crown * cellWeight * crownMul;
+        }
+        // v21 stock-plane soft cap (pockets only — domes mode intentionally rises).
+        // Broad crests flatten into plateaus just above the base wave; junction fins
+        // become saddles; the silhouette stays a clean rectangle.
+        if (polarity < 0) {
+          const hp = h - base;
+          if (hp > STOCK_CAP_START) {
+            h = base + STOCK_CAP_START + STOCK_CAP_SPAN * Math.tanh((hp - STOCK_CAP_START) / STOCK_CAP_SPAN);
+          }
         }
 
         // Void mode pushes h toward the negative clamp where mask + bowl depth are high —

@@ -54,26 +54,30 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
     reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:1.5, smoothIter:3, smoothStr:0.55 },
-  'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.25, contrast:1, sharpness:0,
-    warpFreq:0.08, warpCurl:0,
-    reliefCellSize:1.8, reliefJitter:0.7, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'cosine',
-    reliefSeamDepth:0.6, reliefSeamWidth:0.14, reliefWallWidth:0.08, reliefAnisotropy:0, reliefAnisotropyAngle:0,
-    reliefAttractorMode:'radial', reliefAttractorX:0.5, reliefAttractorY:0.4, reliefAttractorRadius:0.6, reliefAttractorFalloff:1.2,
-    reliefDensityStrength:1.2, reliefIntensityStrength:1, reliefTransitionSoftness:0.4, reliefBaseMode:'flat',
-    reliefBaseAmplitude:0, reliefBaseFrequency:0.1,
-    reliefCellSizeGradient:0.6, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
-    reliefPillow:0, reliefPillowCoverage:0.6,
-    // Explicit zeros for the same reason as relief-vertical above — prevents stale state
-    // carry-over when switching from relief-pockets / relief-starburst.
-    reliefDepthVariation:0, reliefJunctionLift:0, reliefCrestVariation:0,
-    reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15,
-    reliefDensityNoise:0.3, reliefDensityNoiseFreq:0.08,
+  // relief-radial — v21: the PIERCED-CLUSTER look (organic wood references, IMG_1985/1986):
+  // a dense cluster of small deep cells around an off-center attractor point — the
+  // smallest, deepest ones CUT THROUGH the panel (voidStrength) — growing smoothly
+  // outward into giant stretched bowls. Full-bowl profile (seamDepth 0.9 leaves almost
+  // no flat floor), wide sanded crowns, heavy smoothing. The size gradient is
+  // attractor-driven and SMOOTH, not patchy (low densityNoise).
+  'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
+    warpFreq:0.07, warpCurl:0,
+    reliefCellSize:2.6, reliefJitter:0.8, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
+    reliefSeamDepth:0.7, reliefSeamWidth:0.14, reliefWallWidth:0.12, reliefAnisotropy:0.25, reliefAnisotropyAngle:35,
+    reliefAttractorMode:'radial', reliefAttractorX:0.62, reliefAttractorY:0.42, reliefAttractorRadius:0.55, reliefAttractorFalloff:0.9,
+    reliefDensityStrength:2, reliefIntensityStrength:0.55, reliefTransitionSoftness:0.15, reliefBaseMode:'wave',
+    reliefBaseAmplitude:0.25, reliefBaseFrequency:0.06,
+    reliefCellSizeGradient:0.8, reliefVoidStrength:0.38, reliefInvertProfile:0, reliefSeamSharpness:0,
+    reliefPillow:0.45, reliefPillowCoverage:0.75,
+    reliefDepthVariation:0.2, reliefJunctionLift:0.25, reliefCrestVariation:0.15,
+    reliefAttractorNoise:0.25, reliefAttractorNoiseFreq:0.1,
+    reliefDensityNoise:0.55, reliefDensityNoiseFreq:0.06,
     reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
     reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
     reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     // baseThickness explicit so the preset is deterministic when merged into state — without
     // this, applying relief-radial after another preset inherits the previous baseThickness.
-    meshX:24, meshY:24, baseThickness:1.2, smoothIter:1, smoothStr:0.4 },
+    meshX:24, meshY:36, baseThickness:1.5, smoothIter:2, smoothStr:0.5 },
   // relief-pockets — v16 primary reference-matcher for the lafabrica panel. Proportions
   // retuned from measurement: the reference reads as ~0.25 depth:cell ratio (was 4.5"/5.5"
   // = 0.82, which saturated bowls into thin-fin walls regardless of algorithm). The wave
@@ -86,22 +90,22 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // seamDepth = saturation point: 0.75 keeps only the biggest cells reaching full depth,
     // small cells stay shallow — the lafabrica depth gradient. seamWidth drives SBP V-carve
     // width only (no mesh effect under F2-F1).
-    reliefSeamDepth:0.5, reliefSeamWidth:0.15, reliefWallWidth:0.08, reliefAnisotropy:0.2, reliefAnisotropyAngle:75,
+    reliefSeamDepth:0.62, reliefSeamWidth:0.15, reliefWallWidth:0.11, reliefAnisotropy:0.2, reliefAnisotropyAngle:75,
     reliefAttractorMode:'vertical', reliefAttractorX:0.5, reliefAttractorY:0, reliefAttractorRadius:0.5, reliefAttractorFalloff:0.35,
     reliefDensityStrength:1.2, reliefIntensityStrength:0.9, reliefTransitionSoftness:0.35, reliefBaseMode:'wave',
     reliefBaseAmplitude:0.3, reliefBaseFrequency:0.07,
     reliefCellSizeGradient:0.8, reliefVoidStrength:0, reliefInvertProfile:0, reliefSeamSharpness:0,
-    reliefPillow:0, reliefPillowCoverage:0.5,
+    reliefPillow:0.5, reliefPillowCoverage:0.85,
     reliefDepthVariation:0.35, reliefJunctionLift:0.3, reliefCrestVariation:0.5,
     reliefAttractorNoise:0.5, reliefAttractorNoiseFreq:0.1,
     // v20: bigger cell-size dynamic range (stronger density swings on larger patches) and
     // ONE stretched-fan focus (grow > 1 = shallow converging-crease fan, the reference's
     // drape-like center-left region).
-    reliefDensityNoise:1.2, reliefDensityNoiseFreq:0.045,
+    reliefDensityNoise:1.0, reliefDensityNoiseFreq:0.045,
     reliefRadialFociCount:1, reliefRadialFocus1X:0.3, reliefRadialFocus1Y:0.42,
     reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
     reliefRadialStrength:2.2, reliefRadialFalloff:0.32, reliefRadialGrow:1.6, reliefRadialWarp:0.5, reliefRadialMode:'rays',
-    meshX:24, meshY:48, baseThickness:2.5, smoothIter:1, smoothStr:0.3 },
+    meshX:24, meshY:48, baseThickness:2.5, smoothIter:2, smoothStr:0.45 },
   // relief-starburst — v16: each "Focus" point contributes a radial displacement term to
   // the unified space-warp, so cells stretch outward from each focus because the Voronoi
   // is EVALUATED in warped coordinates (clean curved cell boundaries, no metric tearing).

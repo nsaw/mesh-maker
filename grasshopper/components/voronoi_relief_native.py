@@ -196,6 +196,11 @@ def attractor_w(x, y):
     u = 1.0 - t
     return u * u * u * (10.0 - 15.0 * u + 6.0 * u * u)
 
+def _edge_hash01(a, b, seed):
+    # v21 per-EDGE hash. ORDERED (a, b) gives each side of a shared ridge its own value;
+    # pass (min, max) for a value both sides agree on (crest strength).
+    return _cell_hash01(((a + 1) * 7919 + b + 1) & 0x7fffffff, seed)
+
 def local_min_dist(x, y):
     w = attractor_w(x, y)
     # At w=1, local radius shrinks to (1 - density_strength) of cell_size,
@@ -469,22 +474,43 @@ for j in xrange(g_rows):
         # The wall extent w is normalized per cell against the inradius: every interior
         # point is crest, wall, or floor — no neutral gaps, and shrinking floors WIDENS
         # walls. Squared distances feed the formula directly (dk^2 - d1^2 = best_k - best1).
-        db = mesh_x + mesh_y
+        db_cap = mesh_x + mesh_y
+        db2v = db_cap
+        db3v = db_cap
+        db4v = db_cap
         if owner2 >= 0:
             dxs = sx[owner2] - sx[owner]
             dys = sy[owner2] - sy[owner]
-            dcand = (best2 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
-            if dcand < db: db = dcand
+            db2v = (best2 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
         if owner3 >= 0:
             dxs = sx[owner3] - sx[owner]
             dys = sy[owner3] - sy[owner]
-            dcand = (best3 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
-            if dcand < db: db = dcand
+            db3v = (best3 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
         if owner4 >= 0:
             dxs = sx[owner4] - sx[owner]
             dys = sy[owner4] - sy[owner]
-            dcand = (best4 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
-            if dcand < db: db = dcand
+            db4v = (best4 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
+        db = min(db2v, db3v, db4v)
+        # v21 per-edge fields, blended across the corner-ray transition.
+        nb2 = owner2 if owner2 >= 0 else owner
+        nb3 = owner3 if owner3 >= 0 else nb2
+        e2_side = _edge_hash01(owner, nb2, seed + 59)
+        e2_shared = _edge_hash01(min(owner, nb2), max(owner, nb2), seed + 53)
+        e3_side = _edge_hash01(owner, nb3, seed + 59)
+        e3_shared = _edge_hash01(min(owner, nb3), max(owner, nb3), seed + 53)
+        emt = (db3v - db2v) / max(1e-9, db3v + db2v)
+        if emt < 0.0: emt = 0.0
+        elif emt > 0.3: emt = 0.3
+        emt = emt / 0.3
+        emt = emt * emt * (3.0 - 2.0 * emt)
+        edge_mix = 0.5 + 0.5 * emt
+        edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
+        edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
+        dt = (edge_shared - 0.06) / 0.24
+        if dt < 0.0: dt = 0.0
+        elif dt > 1.0: dt = 1.0
+        dt = dt * dt * (3.0 - 2.0 * dt)
+        dissolve = (1.0 - dt) * 0.7
         inr = inradius[owner]
         if inr < 0.01: inr = 0.01
         # Scale-free junction proximity: (d3-d1)/(d3+d1) -> 0 at three-way corners.
@@ -499,7 +525,7 @@ for j in xrange(g_rows):
         crest_w = wall_width * max(0.2, cell_size) * 0.5
         # Wall extent = seam_depth fraction of the remaining inradius, varied per
         # cell (asymmetric neighbors), along each edge (noise), at junctions (wider).
-        wall_scale = 1.0
+        wall_scale = 0.7 + 0.7 * edge_side
         if depth_variation > 0.0:
             h_seam = _cell_hash01(owner, seed + 29)
             wall_scale *= 1.0 + (h_seam - 0.5) * 0.8 * depth_variation
@@ -527,25 +553,44 @@ for j in xrange(g_rows):
             e = 1.0 + FILLET_BAND - tw_raw
             tw = 1.0 - (e * e) / (4.0 * FILLET_BAND)
         if tw < 0.0: tw = 0.0
-        v = profile_fn(tw)
+        if profile == 'cosine':
+            # v21 per-edge profile family: shallow shoulder, broad descent, steeper
+            # lower third — no two walls share exactly the same cross-section.
+            cos_h = 0.5 * (1.0 - math.cos(math.pi * tw))
+            late_h = pow(tw, 1.6 + 1.2 * edge_shared)
+            prof_mix = 0.2 + 0.55 * edge_side
+            v = (1.0 - prof_mix) * cos_h + prof_mix * late_h
+        else:
+            v = profile_fn(tw)
+        # v21 edge dissolution: weak edges melt toward floor level — adjacent cells
+        # blend into one shared basin.
+        if dissolve > 0.0:
+            v += (1.0 - v) * dissolve
         # v16.1 pillowed floors: past saturation (tw_raw > 1) the floor rises back into a
         # soft central mound. Per-cell hash gates coverage; mound height varies per cell.
         if pillow > 0.0 and tw_raw > 1.0:
             if _cell_hash01(owner, seed) < pillow_coverage:
-                amt_var = 0.6 + 0.4 * _cell_hash01(owner, seed + 7)
-                pt = tw_raw
-                if pt > 1.4: pt = 1.4
-                pt = (pt - 1.0) / 0.4
-                pt = pt * pt * (3.0 - 2.0 * pt)
-                v -= pillow * amt_var * 0.65 * pt
-                if v < 0.0: v = 0.0
+                # v21 perimeter-clamped cushion: SCALE-DEPENDENT (large cells only).
+                st_sz = (inradius[owner] / max(0.05, median_inr) - 0.9) / 0.9
+                if st_sz < 0.0: st_sz = 0.0
+                elif st_sz > 1.0: st_sz = 1.0
+                st_sz = st_sz * st_sz * (3.0 - 2.0 * st_sz)
+                if st_sz > 0.0:
+                    amt_var = 0.6 + 0.4 * _cell_hash01(owner, seed + 7)
+                    pt = tw_raw
+                    if pt > 1.4: pt = 1.4
+                    pt = (pt - 1.0) / 0.4
+                    pt = pt * pt * (3.0 - 2.0 * pt)
+                    v -= pillow * amt_var * 0.45 * st_sz * pt
+                    if v < 0.0: v = 0.0
         # v17 depth composition: size coupling (bigger cells carve deeper, per-cell
         # inradius vs median) + depth tiers + SPATIAL suppression (clusters of cells
         # melt into masses).
         cell_depth_mul = size_mul_cell[owner]
         if depth_variation > 0.0:
             h_depth = _cell_hash01(owner, seed + 13)
-            tier = 0.55 if h_depth < 0.35 else 1.0
+            # v21 continuous depth classes in [0.45, 1.1].
+            tier = 0.45 + 0.65 * h_depth
             cell_depth_mul = 1.0 - depth_variation * (1.0 - tier)
             sn = (vnoise(px * suppress_freq, py * suppress_freq, seed + 103) + 1.0) * 0.5
             st = (sn - 0.62) / 0.2
@@ -571,7 +616,7 @@ for j in xrange(g_rows):
         crest = 0.0
         if crest_variation > 0.0:
             crest = crest_variation * 0.4 * vnoise(px * crest_freq, py * crest_freq, seed + 97) * pow(1.0 - v, 1.5)
-        lift = junction_lift * 0.18 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
+        lift = junction_lift * 0.1 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
         lift += crest
         # v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
         # boundary. Melted zones keep ghost creases (0.35 floor on the bead scale).
@@ -579,11 +624,17 @@ for j in xrange(g_rows):
         if wall_width > 0.0 and crest_w > 1e-6 and db < crest_w:
             ct = db / crest_w
             ct = ct * ct * (3.0 - 2.0 * ct)
-            crown_term = 0.15 * (1.0 - ct) * (0.35 + 0.65 * cell_depth_mul)
+            crown_term = 0.15 * (1.0 - ct) * (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
         if polarity == 'domes':
             z_arr[row_off + i] = base + v + lift - crown_term
         else:
-            z_arr[row_off + i] = base + (1.0 - v) + lift + crown_term
+            zc = base + (1.0 - v) + lift + crown_term
+            # v21 stock-plane soft cap: positive excursions above the local stock face
+            # (base + 1) saturate into flat plateaus; junction fins become saddles.
+            hp = zc - (base + 1.0)
+            if hp > 0.04:
+                zc = base + 1.0 + 0.04 + 0.13 * math.tanh((hp - 0.04) / 0.13)
+            z_arr[row_off + i] = zc
 
 # Renormalize to [0,1] -- Shape expects a normalized field; the base wave
 # pushes values outside the raw [0,1] band.
