@@ -470,6 +470,14 @@ class VoronoiReliefNoise(object):
         # v21 per-EDGE hash. ORDERED (a, b) gives each SIDE of a shared ridge its own
         # value (wall asymmetry); pass (min, max) for a value both sides agree on.
         return self._cell_hash01(((a + 1) * 7919 + b + 1) & 0x7fffffff, seed)
+    def _smootherstep(self, e0, e1, x):
+        # Quintic smootherstep — zero first AND second derivatives at both edges (G2).
+        if e1 <= e0:
+            return 0.0 if x < e0 else 1.0
+        t = (x - e0) / (e1 - e0)
+        if t < 0.0: t = 0.0
+        elif t > 1.0: t = 1.0
+        return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
     def _cell_hash01(self, idx, seed):
         # Deterministic per-cell hash in [0, 1) from the owning site index — drives which
         # cells get pillowed floors. Mirrors cellHash01 in the TS sampler.
@@ -843,6 +851,10 @@ class VoronoiReliefNoise(object):
         # Shared with the height pass's depth-melt AND the v19 site deletion — one field
         # decides both which zones calm down and which cells merge away.
         suppress_gen = SimplexNoise(seed + 17 + 103) if p.get('depth_variation', 0.0) > 0 else None
+        # v22 shared panel field: cushion tilt/amplitude/coverage sample ONE low-frequency
+        # field at the site position — neighboring cells lean and inflate together.
+        panel_field_gen = SimplexNoise(seed + 17 + 61)
+        PANEL_FIELD_FREQ = 0.045
         sites = self._gen_sites(p, density_noise_gen,
                                 foci_phys if starburst_active else [],
                                 zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
@@ -992,7 +1004,8 @@ class VoronoiReliefNoise(object):
             # this estimate — budget against the worst case (C0 requires per-cell static).
             w_typ = max(0.05, seam_depth_base * inradius[k] * 0.52)
             static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
-        FILLET_BAND = 0.1
+        # Wider deceleration band (v22): the wall flattens BEFORE the cushion rises.
+        FILLET_BAND = 0.2
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
         # 1.4 = deep interior); anchoring on normDist toward 1 never fires (measured).
         pillow_amt = max(0.0, min(1.0, p.get('pillow', 0.0)))
@@ -1130,21 +1143,30 @@ class VoronoiReliefNoise(object):
                 # v21 perimeter-clamped CUSHION floors: gutter at the floor edge, broad
                 # convex crown following the inset-polygon footprint. SCALE-DEPENDENT —
                 # pronounced in the largest cells, absent in small ones.
-                if pillow_amt > 0.0 and bowl_t_raw > 1.0:
-                    gate = self._cell_hash01(idx, seed)
-                    if gate < pillow_coverage:
-                        size_t = self._smoothstep(0.9, 1.8, inr / max(0.05, median_radius * 0.5))
-                        if size_t > 0.0:
-                            amt_var = 0.6 + 0.4 * self._cell_hash01(idx, seed + 7)
-                            pillow_t = self._smoothstep(1.0, 1.4, bowl_t_raw)
-                            bowl_h -= pillow_amt * amt_var * 0.45 * size_t * pillow_t
+                # v22 unified profile: wall bottoms out (fillet), HOLDS through a real
+                # gutter (to 1.25), then the crown rises via a G2 smootherstep and ends
+                # flat by 1.9 — a transition REGION, not a line. Amplitude <= ~25% of
+                # depth; coverage is a smooth field threshold (no binary per-cell gate).
+                if pillow_amt > 0.0 and bowl_t_raw > 1.25:
+                    size_t = self._smoothstep(0.9, 1.8, inr / max(0.05, median_radius * 0.5))
+                    if size_t > 0.0:
+                        field_v = (panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ,
+                                                         sites[idx][1] * PANEL_FIELD_FREQ) + 1.0) * 0.5
+                        cov_gate = self._smoothstep(0.8 - pillow_coverage, 1.2 - pillow_coverage, field_v)
+                        if cov_gate > 0.0:
+                            amt_var = 0.55 + 0.45 * field_v
+                            pillow_t = self._smootherstep(1.25, 1.9, bowl_t_raw)
+                            bowl_h -= pillow_amt * amt_var * 0.28 * size_t * cov_gate * pillow_t
                             if bowl_h < 0.0: bowl_h = 0.0
                 # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's
                 # deepest point off-center — steep wall on one flank, long ramp on the
                 # other. Purely reductive (shallow flank ramps up) so the output clamp is
                 # never involved; factor is 1 at the boundary so shared walls stay put.
                 if depth_variation > 0.0 and bowl_h > 0.0:
-                    tilt_ang = self._cell_hash01(idx, seed + 41) * math.pi * 2.0
+                    # v22: tilt direction from the shared panel field (adjacent pockets
+                    # lean in related directions), not a per-cell hash.
+                    tilt_ang = panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ + 37.1,
+                                                     sites[idx][1] * PANEL_FIELD_FREQ + 11.7) * math.pi * 2.0
                     rad = max(0.2, sites[idx][2])
                     tilt = (math.cos(tilt_ang) * (qx - sites[idx][0])
                             + math.sin(tilt_ang) * (qy - sites[idx][1])) / rad

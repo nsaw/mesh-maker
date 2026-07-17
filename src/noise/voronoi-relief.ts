@@ -175,6 +175,15 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Quintic smootherstep — zero FIRST and SECOND derivatives at both edges (G2 blend).
+ *  Used where curvature must fade through a transition band instead of resetting at a
+ *  line (the cushion ramp). */
+function smootherstep(edge0: number, edge1: number, x: number): number {
+  if (edge1 <= edge0) return x < edge0 ? 0 : 1;
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
 /** Deterministic per-cell hash in [0, 1) from the owning site index — drives which cells
  *  get pillowed floors and how strongly, stable across renders for the same seed. */
 function cellHash01(idx: number, seed: number): number {
@@ -873,7 +882,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // so floors meet walls through a rounded transition. Kept tight (spec: "tighter-radius
     // fillet") — the reference's floors read flat and its walls rise decisively; a wide
     // band reads as soft dunes instead of carved cavities.
-    const FILLET_BAND = 0.1;
+    // Wider deceleration band (v22): the wall must FLATTEN before the cushion rises —
+    // the target's transition is a region, not a line.
+    const FILLET_BAND = 0.2;
     // v16.1 pillow params. The pillow ramps on the UNCAPPED bowl saturation ratio
     // (bowlTRaw = tw/seamDepth): 1.0 = the floor just saturated, 1.4 = deep interior.
     // Anchoring on this ratio (not on normDist toward 1) matters — the measured normDist
@@ -882,8 +893,21 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const pillowCoverage = Number.isFinite(p.pillowCoverage)
       ? Math.max(0, Math.min(1, p.pillowCoverage))
       : 0.6;
-    const PILLOW_RAMP_START = 1.0;
-    const PILLOW_RAMP_END = 1.4;
+    // v22 unified profile phases (in saturation-ratio units): the wall bottoms out at
+    // 1.0 through the fillet, HOLDS through a genuine perimeter gutter, then the crown
+    // rises via a G2 smootherstep and finishes flat — one monotonic-then-reversing
+    // profile, not a wall function plus a pasted floor patch.
+    const PILLOW_GUTTER_END = 1.25;
+    const PILLOW_RAMP_END = 1.9;
+    // Crown rise ≤ ~25% of ridge-to-gutter depth — perceived through curvature, not
+    // elevation; the crown stays visibly trapped inside the cavity.
+    const PILLOW_AMP = 0.28;
+    // v22 shared panel field: cushion tilt direction, amplitude variation, and coverage
+    // all sample ONE low-frequency field at the site position, so neighboring cells lean
+    // and inflate in related directions (random per-cell warps read as procedural
+    // islands; a shared field reads as flow).
+    const panelFieldGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61);
+    const PANEL_FIELD_FREQ = 0.045;
     const out: number[][] = [];
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
@@ -1064,14 +1088,22 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // the perimeter gutter; past it the floor rises to a broad flat crown that stays
         // well below the ridges. SCALE-DEPENDENT: pronounced in the largest cells, absent
         // in small ones (inflating every floor equally reads as a field of buttons).
-        if (pillowAmt > 0 && bowlTRaw > PILLOW_RAMP_START) {
-          const gate = cellHash01(ownerIdx, seed);
-          if (gate < pillowCoverage) {
-            const sizeT = smoothstep(0.9, 1.8, inr / Math.max(0.05, medianRadius * 0.5));
-            if (sizeT > 0) {
-              const amtVar = 0.6 + 0.4 * cellHash01(ownerIdx, seed + 7);
-              const pillowT = smoothstep(PILLOW_RAMP_START, PILLOW_RAMP_END, bowlTRaw);
-              bowlH -= pillowAmt * amtVar * 0.45 * sizeT * pillowT;
+        if (pillowAmt > 0 && bowlTRaw > PILLOW_GUTTER_END) {
+          const sizeT = smoothstep(0.9, 1.8, inr / Math.max(0.05, medianRadius * 0.5));
+          if (sizeT > 0) {
+            // Shared-field modulation (sampled at the SITE, constant per cell, C0-safe):
+            // coverage is a SMOOTH threshold on the field — inflation emerges gradually
+            // across the panel instead of switching on per cell — and the amplitude
+            // variation follows the same field, so neighboring cushions relate.
+            const fieldV = (panelFieldGen.noise(
+              sites[ownerIdx].x * PANEL_FIELD_FREQ,
+              sites[ownerIdx].y * PANEL_FIELD_FREQ,
+            ) + 1) * 0.5;
+            const covGate = smoothstep(0.8 - pillowCoverage, 1.2 - pillowCoverage, fieldV);
+            if (covGate > 0) {
+              const amtVar = 0.55 + 0.45 * fieldV;
+              const pillowT = smootherstep(PILLOW_GUTTER_END, PILLOW_RAMP_END, bowlTRaw);
+              bowlH -= pillowAmt * amtVar * PILLOW_AMP * sizeT * covGate * pillowT;
               if (bowlH < 0) bowlH = 0;
             }
           }
@@ -1084,7 +1116,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // into the output clamp, whose crease renders as serrated pocket rims. The factor
         // is 1 at the boundary (bowlH = 0) so ridges and shared walls stay put.
         if (depthVariation > 0 && bowlH > 0) {
-          const tiltAng = cellHash01(ownerIdx, seed + 41) * Math.PI * 2;
+          // v22: tilt direction comes from the shared panel field (sampled at the site),
+          // not a per-cell hash — adjacent pockets lean in related directions.
+          const tiltAng = panelFieldGen.noise(
+            sites[ownerIdx].x * PANEL_FIELD_FREQ + 37.1,
+            sites[ownerIdx].y * PANEL_FIELD_FREQ + 11.7,
+          ) * Math.PI * 2;
           const rad = Math.max(0.2, sites[ownerIdx].radius);
           const tilt = (Math.cos(tiltAng) * (qx - sites[ownerIdx].x)
             + Math.sin(tiltAng) * (qy - sites[ownerIdx].y)) / rad;

@@ -576,7 +576,7 @@ for j in xrange(g_rows):
         tw_raw = (db - crest_w) / w
         if tw_raw < 0.0: tw_raw = 0.0
         # Smooth floor saturation (C1 fillet) instead of a hard clamp.
-        FILLET_BAND = 0.1
+        FILLET_BAND = 0.2
         if tw_raw >= 1.0 + FILLET_BAND:
             tw = 1.0
         elif tw_raw <= 1.0 - FILLET_BAND:
@@ -601,20 +601,26 @@ for j in xrange(g_rows):
             v += (1.0 - v) * dissolve
         # v16.1 pillowed floors: past saturation (tw_raw > 1) the floor rises back into a
         # soft central mound. Per-cell hash gates coverage; mound height varies per cell.
-        if pillow > 0.0 and tw_raw > 1.0:
-            if _cell_hash01(owner, seed) < pillow_coverage:
-                # v21 perimeter-clamped cushion: SCALE-DEPENDENT (large cells only).
-                st_sz = (inradius[owner] / max(0.05, median_inr) - 0.9) / 0.9
-                if st_sz < 0.0: st_sz = 0.0
-                elif st_sz > 1.0: st_sz = 1.0
-                st_sz = st_sz * st_sz * (3.0 - 2.0 * st_sz)
-                if st_sz > 0.0:
-                    amt_var = 0.6 + 0.4 * _cell_hash01(owner, seed + 7)
-                    pt = tw_raw
-                    if pt > 1.4: pt = 1.4
-                    pt = (pt - 1.0) / 0.4
-                    pt = pt * pt * (3.0 - 2.0 * pt)
-                    v -= pillow * amt_var * 0.45 * st_sz * pt
+        # v22 unified profile: gutter hold to 1.25, then G2 smootherstep crown to 1.9;
+        # amplitude <= ~25% of depth; coverage/amplitude/tilt from the shared panel field.
+        if pillow > 0.0 and tw_raw > 1.25:
+            st_sz = (inradius[owner] / max(0.05, median_inr) - 0.9) / 0.9
+            if st_sz < 0.0: st_sz = 0.0
+            elif st_sz > 1.0: st_sz = 1.0
+            st_sz = st_sz * st_sz * (3.0 - 2.0 * st_sz)
+            if st_sz > 0.0:
+                field_v = (vnoise(sx[owner] * 0.045, sy[owner] * 0.045, seed + 61) + 1.0) * 0.5
+                cg = (field_v - (0.8 - pillow_coverage)) / 0.4
+                if cg < 0.0: cg = 0.0
+                elif cg > 1.0: cg = 1.0
+                cg = cg * cg * (3.0 - 2.0 * cg)
+                if cg > 0.0:
+                    amt_var = 0.55 + 0.45 * field_v
+                    pt = (tw_raw - 1.25) / 0.65
+                    if pt < 0.0: pt = 0.0
+                    elif pt > 1.0: pt = 1.0
+                    pt = pt * pt * pt * (pt * (pt * 6.0 - 15.0) + 10.0)
+                    v -= pillow * amt_var * 0.28 * st_sz * cg * pt
                     if v < 0.0: v = 0.0
         # v17 depth composition: size coupling (bigger cells carve deeper, per-cell
         # inradius vs median) + depth tiers + SPATIAL suppression (clusters of cells
@@ -633,7 +639,7 @@ for j in xrange(g_rows):
         # point off-center — steep wall on one flank, long ramp on the other. Purely
         # reductive (shallow flank ramps up); factor is 1 at the boundary (v = 0).
         if depth_variation > 0.0 and v > 0.0:
-            tilt_ang = _cell_hash01(owner, seed + 41) * math.pi * 2.0
+            tilt_ang = vnoise(sx[owner] * 0.045 + 37.1, sy[owner] * 0.045 + 11.7, seed + 61) * math.pi * 2.0
             rad = max(0.2, inradius[owner] * 2.0)
             tilt = (math.cos(tilt_ang) * (px - sx[owner])
                     + math.sin(tilt_ang) * (py - sy[owner])) / rad
