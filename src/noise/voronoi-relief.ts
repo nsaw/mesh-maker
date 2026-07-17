@@ -1255,14 +1255,29 @@ export class VoronoiReliefGen implements ReliefGenerator {
     }
     if (anyCushion) {
       const u = new Float64Array(rows * cols);
+      // Symmetric SOR: sweeps alternate forward/reverse traversal — a forward-only
+      // Gauss-Seidel at a fixed sweep count leaves partially converged large cushions
+      // with a bias toward the sweep origin. Still fully deterministic.
       for (let sweep = 0; sweep < MEMBRANE_SWEEPS; sweep++) {
-        for (let j = 1; j < rows - 1; j++) {
-          const off = j * cols;
-          for (let i = 1; i < cols - 1; i++) {
-            const idx = off + i;
-            if (cushA[idx] <= 0) continue;
-            const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
-            u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
+        if ((sweep & 1) === 0) {
+          for (let j = 1; j < rows - 1; j++) {
+            const off = j * cols;
+            for (let i = 1; i < cols - 1; i++) {
+              const idx = off + i;
+              if (cushA[idx] <= 0) continue;
+              const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
+              u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
+            }
+          }
+        } else {
+          for (let j = rows - 2; j >= 1; j--) {
+            const off = j * cols;
+            for (let i = cols - 2; i >= 1; i--) {
+              const idx = off + i;
+              if (cushA[idx] <= 0) continue;
+              const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
+              u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
+            }
           }
         }
       }

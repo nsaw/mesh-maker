@@ -690,10 +690,17 @@ for _cv in cush_a:
         break
 if _any_cush:
     u_mem = [0.0] * total
+    # Symmetric SOR: alternate forward/reverse sweeps (unbiased at fixed count).
     for _sweep in xrange(80):
-        for j in xrange(1, g_rows - 1):
+        if _sweep % 2 == 0:
+            row_iter = xrange(1, g_rows - 1)
+            col_iter = xrange(1, g_cols - 1)
+        else:
+            row_iter = xrange(g_rows - 2, 0, -1)
+            col_iter = xrange(g_cols - 2, 0, -1)
+        for j in row_iter:
             off = j * g_cols
-            for i in xrange(1, g_cols - 1):
+            for i in col_iter:
                 idx0 = off + i
                 if cush_a[idx0] <= 0.0:
                     continue

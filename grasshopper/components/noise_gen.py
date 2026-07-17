@@ -1187,10 +1187,18 @@ class VoronoiReliefNoise(object):
                 break
         if any_cush:
             u = [0.0] * (cols * rows)
+            # Symmetric SOR: alternate forward/reverse sweeps (forward-only would bias
+            # partially converged cushions toward the sweep origin). Deterministic.
             for _sweep in range(self.MEMBRANE_SWEEPS):
-                for j in range(1, rows - 1):
+                if _sweep % 2 == 0:
+                    row_iter = range(1, rows - 1)
+                    col_iter = range(1, cols - 1)
+                else:
+                    row_iter = range(rows - 2, 0, -1)
+                    col_iter = range(cols - 2, 0, -1)
+                for j in row_iter:
                     off = j * cols
-                    for i in range(1, cols - 1):
+                    for i in col_iter:
                         idx0 = off + i
                         if cush_a[idx0] <= 0.0:
                             continue
