@@ -898,7 +898,15 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // rises via a G2 smootherstep and finishes flat — one monotonic-then-reversing
     // profile, not a wall function plus a pasted floor patch.
     const PILLOW_GUTTER_END = 1.25;
-    const PILLOW_RAMP_END = 1.9;
+    // v23 MEMBRANE CUSHIONS: the crown is no longer a function of the boundary distance
+    // (whose level sets kink at the medial axis) — it is a per-cell MEMBRANE solve
+    // (Poisson, unit inflation source, Dirichlet u = 0 clamped at the gutter ring),
+    // relaxed with a fixed number of SOR sweeps for determinism, normalized per cell,
+    // and composed through the quintic smootherstep so the boundary departs with zero
+    // slope and the crown finishes broad and flat. The membrane is smooth everywhere
+    // inside the region: the medial axis cannot appear.
+    const MEMBRANE_SWEEPS = 80;
+    const MEMBRANE_OMEGA = 1.8;
     // Crown rise ≤ ~25% of ridge-to-gutter depth — perceived through curvature, not
     // elevation; the crown stays visibly trapped inside the cavity.
     const PILLOW_AMP = 0.28;
@@ -909,6 +917,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const panelFieldGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61);
     const PANEL_FIELD_FREQ = 0.045;
     const out: number[][] = [];
+    // v23 membrane-cushion buffers (see MEMBRANE_SWEEPS above).
+    const cushA = new Float64Array(rows * cols);
+    const cushOwner = new Int32Array(rows * cols).fill(-1);
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
       const row: number[] = new Array(cols);
@@ -1088,7 +1099,8 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // the perimeter gutter; past it the floor rises to a broad flat crown that stays
         // well below the ridges. SCALE-DEPENDENT: pronounced in the largest cells, absent
         // in small ones (inflating every floor equally reads as a field of buttons).
-        if (pillowAmt > 0 && bowlTRaw > PILLOW_GUTTER_END) {
+        let cushionAmp = 0;
+        if (pillowAmt > 0 && bowlTRaw > PILLOW_GUTTER_END && p.invertProfile <= 0.5) {
           const sizeT = smoothstep(0.9, 1.8, inr / Math.max(0.05, medianRadius * 0.5));
           if (sizeT > 0) {
             // Shared-field modulation (sampled at the SITE, constant per cell, C0-safe):
@@ -1105,10 +1117,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
               ? 0
               : smoothstep(0.8 - pillowCoverage, 1.2 - pillowCoverage, fieldV);
             if (covGate > 0) {
+              // v23: record the amplitude chain — the crown SHAPE comes from the
+              // membrane solve after this pass, not from the distance field.
               const amtVar = 0.55 + 0.45 * fieldV;
-              const pillowT = smootherstep(PILLOW_GUTTER_END, PILLOW_RAMP_END, bowlTRaw);
-              bowlH -= pillowAmt * amtVar * PILLOW_AMP * sizeT * covGate * pillowT;
-              if (bowlH < 0) bowlH = 0;
+              cushionAmp = pillowAmt * amtVar * PILLOW_AMP * sizeT * covGate;
             }
           }
         }
@@ -1171,6 +1183,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
           ? baseAmplitude * waveGen.noise(x * baseFrequency, y * baseFrequency)
           : 0;
         let h = base + polarity * bowlH * cellWeight * intensityFactor * cellDepthMul;
+        if (cushionAmp > 0) {
+          // Full h-space amplitude: the membrane delta rides the same multiplier chain
+          // the bowl does (raising a pocket floor = reducing |bowlH| through the chain).
+          cushA[pixIdx] = cushionAmp * cellWeight * intensityFactor * cellDepthMul;
+          cushOwner[pixIdx] = ownerIdx;
+        }
         // v17 crest variation: ridge-LOCAL height noise (scaled by (1 − bowlH)^1.5 so it
         // lives on crests/shoulders only). Fragments the upper envelope into mesas, saddles
         // and differing adjacent crest heights WITHOUT bending the whole panel through one
@@ -1224,6 +1242,48 @@ export class VoronoiReliefGen implements ReliefGenerator {
         row[i] = Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, h));
       }
       out.push(row);
+    }
+
+    // v23 membrane cushion pass. Solve one Poisson relaxation over all cushion-region
+    // pixels (u = 0 outside — Dirichlet-clamped at every gutter ring; regions of
+    // different cells are separated by wall corridors, so per-cell normalization is
+    // safe), then lift each floor by amp × smootherstep(u/uMaxCell): zero slope where
+    // the cushion meets the gutter, broad flat crown, no medial-axis trace.
+    let anyCushion = false;
+    for (let i = 0; i < cushA.length; i++) {
+      if (cushA[i] > 0) { anyCushion = true; break; }
+    }
+    if (anyCushion) {
+      const u = new Float64Array(rows * cols);
+      for (let sweep = 0; sweep < MEMBRANE_SWEEPS; sweep++) {
+        for (let j = 1; j < rows - 1; j++) {
+          const off = j * cols;
+          for (let i = 1; i < cols - 1; i++) {
+            const idx = off + i;
+            if (cushA[idx] <= 0) continue;
+            const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
+            u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
+          }
+        }
+      }
+      const uMax = new Float64Array(sites.length);
+      for (let i = 0; i < u.length; i++) {
+        const o = cushOwner[i];
+        if (o >= 0 && u[i] > uMax[o]) uMax[o] = u[i];
+      }
+      for (let j = 0; j < rows; j++) {
+        const off = j * cols;
+        for (let i = 0; i < cols; i++) {
+          const idx = off + i;
+          if (cushA[idx] <= 0) continue;
+          const o = cushOwner[idx];
+          if (o < 0 || uMax[o] <= 1e-9) continue;
+          const w = smootherstep(0, 1, u[idx] / uMax[o]);
+          // Pockets (polarity −1): the floor rises toward the surface; domes: recedes.
+          const lifted = out[j][i] - polarity * cushA[idx] * w;
+          out[j][i] = Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, lifted));
+        }
+      }
     }
     return out;
   }

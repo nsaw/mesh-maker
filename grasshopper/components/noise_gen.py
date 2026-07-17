@@ -481,6 +481,9 @@ class VoronoiReliefNoise(object):
     # derived from sample pitch (geometry must not change shape with grid resolution).
     WALL_MIN_PHYS = 0.3
     CROWN_MIN_PHYS = 0.25
+    # v23 membrane cushions: fixed SOR sweep count for determinism.
+    MEMBRANE_SWEEPS = 80
+    MEMBRANE_OMEGA = 1.8
     SIZE_DEPTH_MIN = 0.8
     SIZE_DEPTH_MAX = 1.2
     DENSITY_NOISE_GAIN = 1.6
@@ -946,6 +949,11 @@ class VoronoiReliefNoise(object):
         pillow_coverage = max(0.0, min(1.0, p.get('pillow_coverage', 0.6)))
         inv2s2_radial = 1.0 / (2.0 * sigma_radial * sigma_radial)
         out = [0.0] * (cols * rows)
+        # v23 membrane-cushion buffers: the crown SHAPE comes from a per-cell membrane
+        # solve after this pass (Poisson, u=0 clamped at the gutter ring, composed
+        # through the quintic) — the medial axis cannot appear.
+        cush_a = [0.0] * (cols * rows)
+        cush_owner = [-1] * (cols * rows)
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
             for i in range(cols):
@@ -1081,7 +1089,8 @@ class VoronoiReliefNoise(object):
                 # gutter (to 1.25), then the crown rises via a G2 smootherstep and ends
                 # flat by 1.9 — a transition REGION, not a line. Amplitude <= ~25% of
                 # depth; coverage is a smooth field threshold (no binary per-cell gate).
-                if pillow_amt > 0.0 and bowl_t_raw > 1.25:
+                cushion_amp = 0.0
+                if pillow_amt > 0.0 and bowl_t_raw > 1.25 and invert_profile <= 0.5:
                     size_t = self._smoothstep(0.9, 1.8, inr / max(0.05, median_radius * 0.5))
                     if size_t > 0.0:
                         field_v = (panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ,
@@ -1093,9 +1102,7 @@ class VoronoiReliefNoise(object):
                             cov_gate = self._smoothstep(0.8 - pillow_coverage, 1.2 - pillow_coverage, field_v)
                         if cov_gate > 0.0:
                             amt_var = 0.55 + 0.45 * field_v
-                            pillow_t = self._smootherstep(1.25, 1.9, bowl_t_raw)
-                            bowl_h -= pillow_amt * amt_var * 0.28 * size_t * cov_gate * pillow_t
-                            if bowl_h < 0.0: bowl_h = 0.0
+                            cushion_amp = pillow_amt * amt_var * 0.28 * size_t * cov_gate
                 # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's
                 # deepest point off-center — steep wall on one flank, long ramp on the
                 # other. Purely reductive (shallow flank ramps up) so the output clamp is
@@ -1132,6 +1139,10 @@ class VoronoiReliefNoise(object):
                     cell_depth_mul *= 1.0 - self.FOCAL_CALM_GAIN * (radial_grow - 1.0) * g_max
                 base = base_amp * self.wave.noise(x * base_freq, y * base_freq) if base_amp > 0.0 else 0.0
                 h = base + polarity * bowl_h * cw * intensity * cell_depth_mul
+                if cushion_amp > 0.0:
+                    pix0 = j * cols + i
+                    cush_a[pix0] = cushion_amp * cw * intensity * cell_depth_mul
+                    cush_owner[pix0] = idx
                 # v17 crest variation: ridge-LOCAL height noise (fragments the envelope).
                 # Both cell-derived additions are gated by cw so relief cannot reappear
                 # where the attractor has faded the cell system out.
@@ -1166,6 +1177,42 @@ class VoronoiReliefNoise(object):
                 if h < -self.OUTPUT_HEIGHT_CLAMP: h = -self.OUTPUT_HEIGHT_CLAMP
                 elif h > self.OUTPUT_HEIGHT_CLAMP: h = self.OUTPUT_HEIGHT_CLAMP
                 out[j * cols + i] = h
+        # v23 membrane cushion pass (mirrors the TS sampler): SOR-relaxed Poisson over
+        # cushion pixels, per-cell normalization, quintic composition, polarity-signed
+        # application, output re-clamped.
+        any_cush = False
+        for v0 in cush_a:
+            if v0 > 0.0:
+                any_cush = True
+                break
+        if any_cush:
+            u = [0.0] * (cols * rows)
+            for _sweep in range(self.MEMBRANE_SWEEPS):
+                for j in range(1, rows - 1):
+                    off = j * cols
+                    for i in range(1, cols - 1):
+                        idx0 = off + i
+                        if cush_a[idx0] <= 0.0:
+                            continue
+                        target = 0.25 * (u[idx0 - 1] + u[idx0 + 1] + u[idx0 - cols] + u[idx0 + cols]) + 1.0
+                        u[idx0] = u[idx0] + self.MEMBRANE_OMEGA * (target - u[idx0])
+            u_max = [0.0] * n_sites
+            for idx0 in range(cols * rows):
+                o = cush_owner[idx0]
+                if o >= 0 and u[idx0] > u_max[o]:
+                    u_max[o] = u[idx0]
+            pol = -1.0 if p['polarity'] == 'pockets' else 1.0
+            for idx0 in range(cols * rows):
+                if cush_a[idx0] <= 0.0:
+                    continue
+                o = cush_owner[idx0]
+                if o < 0 or u_max[o] <= 1e-9:
+                    continue
+                wv = self._smootherstep(0.0, 1.0, u[idx0] / u_max[o])
+                lifted = out[idx0] - pol * cush_a[idx0] * wv
+                if lifted < -self.OUTPUT_HEIGHT_CLAMP: lifted = -self.OUTPUT_HEIGHT_CLAMP
+                elif lifted > self.OUTPUT_HEIGHT_CLAMP: lifted = self.OUTPUT_HEIGHT_CLAMP
+                out[idx0] = lifted
         return out
 
 

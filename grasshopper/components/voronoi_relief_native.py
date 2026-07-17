@@ -383,6 +383,9 @@ dy_pix = mesh_y / float(g_rows - 1) if g_rows > 1 else mesh_y
 
 total = g_cols * g_rows
 z_arr = [0.0] * total
+# v23 membrane-cushion buffers.
+cush_a = [0.0] * total
+cush_owner = [-1] * total
 
 # Cache site coords as plain floats -- attribute access on Point3d in a tight
 # IronPython loop is ~2x slower than indexing flat lists.
@@ -601,8 +604,9 @@ for j in xrange(g_rows):
             v += (1.0 - v) * dissolve
         # v16.1 pillowed floors: past saturation (tw_raw > 1) the floor rises back into a
         # soft central mound. Per-cell hash gates coverage; mound height varies per cell.
-        # v22 unified profile: gutter hold to 1.25, then G2 smootherstep crown to 1.9;
-        # amplitude <= ~25% of depth; coverage/amplitude/tilt from the shared panel field.
+        # v23 membrane cushions: record the amplitude chain; the crown SHAPE comes from
+        # a Poisson relaxation after the pixel loop (no medial-axis trace).
+        cushion_amp = 0.0
         if pillow > 0.0 and tw_raw > 1.25:
             st_sz = (inradius[owner] / max(0.05, median_inr) - 0.9) / 0.9
             if st_sz < 0.0: st_sz = 0.0
@@ -619,12 +623,7 @@ for j in xrange(g_rows):
                 cg = cg * cg * (3.0 - 2.0 * cg)
                 if cg > 0.0:
                     amt_var = 0.55 + 0.45 * field_v
-                    pt = (tw_raw - 1.25) / 0.65
-                    if pt < 0.0: pt = 0.0
-                    elif pt > 1.0: pt = 1.0
-                    pt = pt * pt * pt * (pt * (pt * 6.0 - 15.0) + 10.0)
-                    v -= pillow * amt_var * 0.28 * st_sz * cg * pt
-                    if v < 0.0: v = 0.0
+                    cushion_amp = pillow * amt_var * 0.28 * st_sz * cg
         # v17 depth composition: size coupling (bigger cells carve deeper, per-cell
         # inradius vs median) + depth tiers + SPATIAL suppression (clusters of cells
         # melt into masses).
@@ -667,6 +666,9 @@ for j in xrange(g_rows):
             ct = db / crown_w
             ct = ct * ct * (3.0 - 2.0 * ct)
             crown_term = 0.15 * (1.0 - ct) * (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
+        if cushion_amp > 0.0:
+            cush_a[row_off + i] = cushion_amp * cell_depth_mul
+            cush_owner[row_off + i] = owner
         if polarity == 'domes':
             z_arr[row_off + i] = base + v + lift - crown_term
         else:
@@ -677,6 +679,43 @@ for j in xrange(g_rows):
             if hp > 0.04:
                 zc = base + 1.0 + 0.04 + 0.13 * math.tanh((hp - 0.04) / 0.13)
             z_arr[row_off + i] = zc
+
+# v23 membrane cushion pass: SOR-relaxed Poisson over cushion pixels (u=0 clamped
+# at the gutter ring), per-cell normalization, quintic composition. Pockets floors
+# rise; domes floors recede.
+_any_cush = False
+for _cv in cush_a:
+    if _cv > 0.0:
+        _any_cush = True
+        break
+if _any_cush:
+    u_mem = [0.0] * total
+    for _sweep in xrange(80):
+        for j in xrange(1, g_rows - 1):
+            off = j * g_cols
+            for i in xrange(1, g_cols - 1):
+                idx0 = off + i
+                if cush_a[idx0] <= 0.0:
+                    continue
+                target = 0.25 * (u_mem[idx0 - 1] + u_mem[idx0 + 1] + u_mem[idx0 - g_cols] + u_mem[idx0 + g_cols]) + 1.0
+                u_mem[idx0] = u_mem[idx0] + 1.8 * (target - u_mem[idx0])
+    u_max = [0.0] * n_sites
+    for idx0 in xrange(total):
+        o = cush_owner[idx0]
+        if o >= 0 and u_mem[idx0] > u_max[o]:
+            u_max[o] = u_mem[idx0]
+    for idx0 in xrange(total):
+        if cush_a[idx0] <= 0.0:
+            continue
+        o = cush_owner[idx0]
+        if o < 0 or u_max[o] <= 1e-9:
+            continue
+        un = u_mem[idx0] / u_max[o]
+        wv = un * un * un * (un * (un * 6.0 - 15.0) + 10.0)
+        if polarity == 'domes':
+            z_arr[idx0] -= cush_a[idx0] * wv
+        else:
+            z_arr[idx0] += cush_a[idx0] * wv
 
 # Renormalize to [0,1] -- Shape expects a normalized field; the base wave
 # pushes values outside the raw [0,1] band.
