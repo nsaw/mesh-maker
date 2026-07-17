@@ -393,9 +393,22 @@ function generateSites(
   // Minimum-site floor: deletion is independent per candidate, so a small grid inside a
   // strong suppression field can wipe out EVERY Cartesian site — restore deleted cell
   // centers (deterministic order) so the panel degrades to giant merged cells, never to
-  // the flat zero-site fallback.
+  // the flat zero-site fallback. Reserve centers were captured BEFORE the focal exclusion
+  // check ran, so revalidate here: a restored site inside a polar-owned disc would shred
+  // the petal lattice.
   for (let i = 0; sites.length < 3 && i < killedReserve.length; i++) {
-    sites.push({ x: killedReserve[i].x, y: killedReserve[i].y, radius: 0 });
+    const rx = killedReserve[i].x;
+    const ry = killedReserve[i].y;
+    if (exclusionR > 0) {
+      let excluded = false;
+      for (let f = 0; f < exclusionFoci.length; f++) {
+        const dx = rx - exclusionFoci[f].x;
+        const dy = ry - exclusionFoci[f].y;
+        if (dx * dx + dy * dy < exclusionR2) { excluded = true; break; }
+      }
+      if (excluded) continue;
+    }
+    sites.push({ x: rx, y: ry, radius: 0 });
   }
   return sites;
 }

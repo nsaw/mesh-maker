@@ -529,11 +529,24 @@ class VoronoiReliefNoise(object):
         # Minimum-site floor: deletion is independent per candidate, so a small grid
         # inside a strong suppression field can wipe out EVERY site — restore deleted
         # cell centers (deterministic order) so the panel degrades to giant merged
-        # cells, never to the flat zero-site fallback.
+        # cells, never to the flat zero-site fallback. Reserve centers were captured
+        # BEFORE the focal exclusion check — revalidate so a restored site can't land
+        # inside a polar-owned disc and shred the petal lattice.
         ri = 0
         while len(sites) < 3 and ri < len(killed_reserve):
-            sites.append([killed_reserve[ri][0], killed_reserve[ri][1], 0.0])
+            rx = killed_reserve[ri][0]; ry = killed_reserve[ri][1]
             ri += 1
+            if exclusion_r > 0:
+                excluded = False
+                for f in range(len(exclusion_foci)):
+                    dx = rx - exclusion_foci[f][0]
+                    dy = ry - exclusion_foci[f][1]
+                    if dx * dx + dy * dy < exclusion_r * exclusion_r:
+                        excluded = True
+                        break
+                if excluded:
+                    continue
+            sites.append([rx, ry, 0.0])
         return sites
     def _make_warp(self, p, seed, warp_distortion):
         # Flow warp W (global distortion/warpFreq sliders). Returns None when inactive.
