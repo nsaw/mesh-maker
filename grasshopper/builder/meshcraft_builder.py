@@ -773,13 +773,28 @@ class VoronoiReliefNoise(object):
                     best_d = d; best_idx = i
             sumX[best_idx] += x; sumY[best_idx] += y; counts[best_idx] += 1
         move_limit = min(n, max(0, pinned_from))
+        min_sep2 = 0.3 * 0.3
         for i in range(move_limit):
             if counts[i] > 0:
                 # Warped centroids can land slightly outside the physical panel at high
                 # distortion — clamp so edge sites cannot drift off-panel and starve
                 # boundary cells.
-                sites[i][0] = max(0.0, min(p['mesh_x'], sumX[i] / counts[i]))
-                sites[i][1] = max(0.0, min(p['mesh_y'], sumY[i] / counts[i]))
+                nx = max(0.0, min(p['mesh_x'], sumX[i] / counts[i]))
+                ny = max(0.0, min(p['mesh_y'], sumY[i] / counts[i]))
+                # Relaxation must not defeat the minimum separation — reject moves that
+                # would land within the feature floor of any other site.
+                ok = True
+                for q in range(n):
+                    if q == i:
+                        continue
+                    ddx = sites[q][0] - nx
+                    ddy = sites[q][1] - ny
+                    if ddx * ddx + ddy * ddy < min_sep2:
+                        ok = False
+                        break
+                if ok:
+                    sites[i][0] = nx
+                    sites[i][1] = ny
     def sample_grid(self, p):
         # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
         # sampler — same seed produces same site layout and wave field even when the
@@ -973,7 +988,9 @@ class VoronoiReliefNoise(object):
             if depth_variation > 0.0:
                 h_depth = self._cell_hash01(k, seed + 13)
                 tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
-            w_typ = max(0.05, seam_depth_base * inradius[k] * 0.8)
+            # Conservative: final per-edge/crest modifiers can narrow the wall to ~0.65x
+            # this estimate — budget against the worst case (C0 requires per-cell static).
+            w_typ = max(0.05, seam_depth_base * inradius[k] * 0.52)
             static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
         FILLET_BAND = 0.1
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
@@ -1033,7 +1050,13 @@ class VoronoiReliefNoise(object):
                 e2_shared = self._edge_hash01(min(idx, nb2), max(idx, nb2), seed + 53)
                 e3_side = self._edge_hash01(idx, nb3, seed + 59)
                 e3_shared = self._edge_hash01(min(idx, nb3), max(idx, nb3), seed + 53)
-                edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, (db3 - db2) / max(1e-9, db3 + db2))
+                # Symmetric interpolation: bisector distances need not preserve the F2/F3
+                # ordering, so the signed ratio must map both ways.
+                edge_ratio = (db3 - db2) / max(1e-9, db3 + db2)
+                if edge_ratio >= 0.0:
+                    edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, edge_ratio)
+                else:
+                    edge_mix = 0.5 - 0.5 * self._smoothstep(0.0, 0.3, -edge_ratio)
                 edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
                 edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
                 # Dissolution fades near junction corners (pairwise blend is ill-conditioned
@@ -1454,7 +1477,7 @@ PRESETS = {
     # Voronoi Relief presets — relief_* keys consumed by the noise component when noise_type == 'voronoi-relief'.
     'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.50, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.55, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':3, 'smooth_str':0.55,
                         'relief_cell_size':1.6, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'parabolic', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_wall_width':0.08, 'relief_anisotropy':0.0, 'relief_anisotropy_angle':0.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1.0, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_base_amp':0.5, 'relief_base_freq':0.1, 'relief_cell_size_gradient':1.0, 'relief_void_strength':0.7, 'relief_density_noise':0.3, 'relief_density_noise_freq':0.08, 'relief_warp_freq':0.08},
-    'relief-radial':   {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.20, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.40, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':36, 'smooth_iter':2, 'smooth_str':0.5,
+    'relief-radial':   {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.00, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.40, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':36, 'smooth_iter':2, 'smooth_str':0.5,
                         'relief_cell_size':2.6, 'relief_jitter':0.8, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.7, 'relief_seam_width':0.14, 'relief_wall_width':0.12, 'relief_anisotropy':0.25, 'relief_anisotropy_angle':35.0, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.62, 'relief_attractor_y':0.42, 'relief_attractor_radius':0.55, 'relief_attractor_falloff':0.9, 'relief_density_strength':2.0, 'relief_intensity_strength':0.55, 'relief_transition_softness':0.15, 'relief_base_mode':'wave', 'relief_base_amp':0.25, 'relief_base_freq':0.06, 'relief_pillow':0.45, 'relief_pillow_coverage':0.75, 'relief_depth_variation':0.2, 'relief_junction_lift':0.25, 'relief_crest_variation':0.15, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.38, 'relief_attractor_noise':0.25, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':0.55, 'relief_density_noise_freq':0.06, 'relief_warp_freq':0.07},
     # relief-pockets — v16 primary reference-matcher, proportions retuned (see the TS
     # preset in src/noise/presets.ts for the rationale; keep both in sync).

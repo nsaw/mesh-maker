@@ -294,7 +294,7 @@ function countLocalMinima(grid: number[][]): number {
     baseMode: 'wave', baseAmplitude: 0.5, baseFrequency: 0.1,
     attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     intensityStrength: 1, transitionSoftness: 1,
-    seamDepth: 0.4, seamWidth: 0.15, cellSize: 1.5, polarity: 'pockets',
+    seamDepth: 0.85, seamWidth: 0.15, cellSize: 7, polarity: 'pockets',
     profile: 'parabolic',
   }));
   const flatTop = flatten(wave.slice(0, 32));   // top 20% — pure base zone (mask ≈ 0)
@@ -557,11 +557,11 @@ function countLocalMinima(grid: number[][]): number {
   process.stdout.write('13. attractor patchiness\n');
   const smooth = new VoronoiReliefGen(31).sampleGrid(baseParams({
     seed: 31, attractorMode: 'vertical', attractorY: 0, densityStrength: 1.5,
-    attractorNoise: 0,
+    cellSize: 6, seamDepth: 0.85, attractorNoise: 0,
   }));
   const patchy = new VoronoiReliefGen(31).sampleGrid(baseParams({
     seed: 31, attractorMode: 'vertical', attractorY: 0, densityStrength: 1.5,
-    attractorNoise: 1, attractorNoiseFreq: 0.2,
+    cellSize: 6, seamDepth: 0.85, attractorNoise: 1, attractorNoiseFreq: 0.2,
   }));
   let differing = 0;
   const a = flatten(smooth);

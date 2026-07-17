@@ -60,7 +60,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // outward into giant stretched bowls. Full-bowl profile (seamDepth 0.9 leaves almost
   // no flat floor), wide sanded crowns, heavy smoothing. The size gradient is
   // attractor-driven and SMOOTH, not patchy (low densityNoise).
-  'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
+  'relief-radial': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
     warpFreq:0.07, warpCurl:0,
     reliefCellSize:2.6, reliefJitter:0.8, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
     reliefSeamDepth:0.7, reliefSeamWidth:0.14, reliefWallWidth:0.12, reliefAnisotropy:0.25, reliefAnisotropyAngle:35,
@@ -77,7 +77,8 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
     // baseThickness explicit so the preset is deterministic when merged into state — without
     // this, applying relief-radial after another preset inherits the previous baseThickness.
-    meshX:24, meshY:36, baseThickness:1.5, smoothIter:2, smoothStr:0.5 },
+    // amplitude == baseThickness: the pierced cells cut clean through the stock.
+    meshX:24, meshY:36, baseThickness:2, smoothIter:2, smoothStr:0.5 },
   // relief-pockets — v16 primary reference-matcher for the lafabrica panel. Proportions
   // retuned from measurement: the reference reads as ~0.25 depth:cell ratio (was 4.5"/5.5"
   // = 0.82, which saturated bowls into thin-fin walls regardless of algorithm). The wave

@@ -483,13 +483,28 @@ function lloydRelax(
     counts[bestIdx]++;
   }
   const moveLimit = Math.min(sites.length, Math.max(0, pinnedFrom));
+  const minSep2 = 0.3 * 0.3;
   for (let i = 0; i < moveLimit; i++) {
     if (counts[i] > 0) {
       // Warped centroids can land slightly outside the physical panel at high
       // distortion (the warp displaces samples by up to ~distortion·cellSize·0.9) —
       // clamp so edge sites cannot drift off-panel and starve boundary cells.
-      sites[i].x = Math.max(0, Math.min(meshX, sumX[i] / counts[i]));
-      sites[i].y = Math.max(0, Math.min(meshY, sumY[i] / counts[i]));
+      const nx = Math.max(0, Math.min(meshX, sumX[i] / counts[i]));
+      const ny = Math.max(0, Math.min(meshY, sumY[i] / counts[i]));
+      // Relaxation (and proximity to pinned polar sites) must not defeat the minimum
+      // separation guarantee — reject moves that would land within the feature floor
+      // of any other site (the site keeps its previous valid position).
+      let ok = true;
+      for (let q = 0; q < sites.length; q++) {
+        if (q === i) continue;
+        const ddx = sites[q].x - nx;
+        const ddy = sites[q].y - ny;
+        if (ddx * ddx + ddy * ddy < minSep2) { ok = false; break; }
+      }
+      if (ok) {
+        sites[i].x = nx;
+        sites[i].y = ny;
+      }
     }
   }
 }
@@ -847,7 +862,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
       // pockets are always big. Every wood reference obeys this; slopes past ~65°
       // read as fractures, not carving. Folded into the pre-blended static multiplier
       // so it stays C0 across dissolved boundaries.
-      const wTyp = Math.max(0.05, seamDepthBase * inradius[k] * 0.8);
+      // Conservative: per-edge/crest modifiers can narrow the FINAL wall to ~0.65× this
+      // typical estimate without reducing depth — budgeting against the worst case keeps
+      // the documented ceiling honest while staying per-cell static (C0 requirement; a
+      // pixel-level cap from final w would step across dissolved boundaries).
+      const wTyp = Math.max(0.05, seamDepthBase * inradius[k] * 0.52);
       staticMul[k] *= Math.min(1, SLOPE_DEPTH_BUDGET * wTyp);
     }
     // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
@@ -940,7 +959,13 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const e2Shared = edgeHash01(Math.min(ownerIdx, nb2), Math.max(ownerIdx, nb2), seed + 53);
         const e3Side = edgeHash01(ownerIdx, nb3, seed + 59);
         const e3Shared = edgeHash01(Math.min(ownerIdx, nb3), Math.max(ownerIdx, nb3), seed + 53);
-        const edgeMix = 0.5 + 0.5 * smoothstep(0, 0.3, (db3 - db2) / Math.max(1e-9, db3 + db2));
+        // Symmetric interpolation: bisector distances need not preserve the F2/F3 site
+        // ordering, so the signed ratio must map BOTH ways (a one-sided map left edge-3-
+        // constrained walls stuck at the 50/50 average instead of favoring edge 3).
+        const edgeRatio = (db3 - db2) / Math.max(1e-9, db3 + db2);
+        const edgeMix = edgeRatio >= 0
+          ? 0.5 + 0.5 * smoothstep(0, 0.3, edgeRatio)
+          : 0.5 - 0.5 * smoothstep(0, 0.3, -edgeRatio);
         const edgeSide = edgeMix * e2Side + (1 - edgeMix) * e3Side;
         const edgeShared = edgeMix * e2Shared + (1 - edgeMix) * e3Shared;
         // Dissolution fades to zero near junction corners: the pairwise edge blend is

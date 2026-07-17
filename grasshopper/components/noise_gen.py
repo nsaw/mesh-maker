@@ -707,13 +707,28 @@ class VoronoiReliefNoise(object):
                     best_d = d; best_idx = i
             sumX[best_idx] += x; sumY[best_idx] += y; counts[best_idx] += 1
         move_limit = min(n, max(0, pinned_from))
+        min_sep2 = 0.3 * 0.3
         for i in range(move_limit):
             if counts[i] > 0:
                 # Warped centroids can land slightly outside the physical panel at high
                 # distortion — clamp so edge sites cannot drift off-panel and starve
                 # boundary cells.
-                sites[i][0] = max(0.0, min(p['mesh_x'], sumX[i] / counts[i]))
-                sites[i][1] = max(0.0, min(p['mesh_y'], sumY[i] / counts[i]))
+                nx = max(0.0, min(p['mesh_x'], sumX[i] / counts[i]))
+                ny = max(0.0, min(p['mesh_y'], sumY[i] / counts[i]))
+                # Relaxation must not defeat the minimum separation — reject moves that
+                # would land within the feature floor of any other site.
+                ok = True
+                for q in range(n):
+                    if q == i:
+                        continue
+                    ddx = sites[q][0] - nx
+                    ddy = sites[q][1] - ny
+                    if ddx * ddx + ddy * ddy < min_sep2:
+                        ok = False
+                        break
+                if ok:
+                    sites[i][0] = nx
+                    sites[i][1] = ny
     def sample_grid(self, p):
         # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
         # sampler — same seed produces same site layout and wave field even when the
@@ -907,7 +922,9 @@ class VoronoiReliefNoise(object):
             if depth_variation > 0.0:
                 h_depth = self._cell_hash01(k, seed + 13)
                 tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
-            w_typ = max(0.05, seam_depth_base * inradius[k] * 0.8)
+            # Conservative: final per-edge/crest modifiers can narrow the wall to ~0.65x
+            # this estimate — budget against the worst case (C0 requires per-cell static).
+            w_typ = max(0.05, seam_depth_base * inradius[k] * 0.52)
             static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
         FILLET_BAND = 0.1
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
@@ -967,7 +984,13 @@ class VoronoiReliefNoise(object):
                 e2_shared = self._edge_hash01(min(idx, nb2), max(idx, nb2), seed + 53)
                 e3_side = self._edge_hash01(idx, nb3, seed + 59)
                 e3_shared = self._edge_hash01(min(idx, nb3), max(idx, nb3), seed + 53)
-                edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, (db3 - db2) / max(1e-9, db3 + db2))
+                # Symmetric interpolation: bisector distances need not preserve the F2/F3
+                # ordering, so the signed ratio must map both ways.
+                edge_ratio = (db3 - db2) / max(1e-9, db3 + db2)
+                if edge_ratio >= 0.0:
+                    edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, edge_ratio)
+                else:
+                    edge_mix = 0.5 - 0.5 * self._smoothstep(0.0, 0.3, -edge_ratio)
                 edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
                 edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
                 # Dissolution fades near junction corners (pairwise blend is ill-conditioned

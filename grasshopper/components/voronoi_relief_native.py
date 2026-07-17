@@ -421,7 +421,8 @@ for k in xrange(n_sites):
     if depth_variation > 0.0:
         h_depth = _cell_hash01(k, seed + 13)
         tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
-    w_typ = seam_depth * inradius[k] * 0.8
+    # Conservative: final modifiers can narrow the wall to ~0.65x this estimate.
+    w_typ = seam_depth * inradius[k] * 0.52
     if w_typ < 0.05: w_typ = 0.05
     budget = 0.55 * w_typ
     if budget > 1.0: budget = 1.0
@@ -508,12 +509,13 @@ for j in xrange(g_rows):
         e2_shared = _edge_hash01(min(owner, nb2), max(owner, nb2), seed + 53)
         e3_side = _edge_hash01(owner, nb3, seed + 59)
         e3_shared = _edge_hash01(min(owner, nb3), max(owner, nb3), seed + 53)
-        emt = (db3v - db2v) / max(1e-9, db3v + db2v)
-        if emt < 0.0: emt = 0.0
-        elif emt > 0.3: emt = 0.3
-        emt = emt / 0.3
-        emt = emt * emt * (3.0 - 2.0 * emt)
-        edge_mix = 0.5 + 0.5 * emt
+        # Symmetric interpolation (bisector distances need not preserve d2/d3 ordering).
+        emr = (db3v - db2v) / max(1e-9, db3v + db2v)
+        ema = emr if emr >= 0.0 else -emr
+        if ema > 0.3: ema = 0.3
+        ema = ema / 0.3
+        ema = ema * ema * (3.0 - 2.0 * ema)
+        edge_mix = 0.5 + 0.5 * ema if emr >= 0.0 else 0.5 - 0.5 * ema
         edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
         edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
         dt = (edge_shared - 0.06) / 0.24
