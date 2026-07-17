@@ -47,6 +47,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     // Explicit zeros so switching from relief-pockets / relief-starburst (which set these to
     // non-zero) cleanly resets back to relief-vertical's designed appearance. Presets are
     // key-only merges, so omitting a field means inheriting the previous preset's value.
+    reliefDepthVariation:0, reliefJunctionLift:0, reliefCrestVariation:0,
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15,
     reliefDensityNoise:0.3, reliefDensityNoiseFreq:0.08,
     reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
@@ -64,6 +65,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefPillow:0, reliefPillowCoverage:0.6,
     // Explicit zeros for the same reason as relief-vertical above — prevents stale state
     // carry-over when switching from relief-pockets / relief-starburst.
+    reliefDepthVariation:0, reliefJunctionLift:0, reliefCrestVariation:0,
     reliefAttractorNoise:0, reliefAttractorNoiseFreq:0.15,
     reliefDensityNoise:0.3, reliefDensityNoiseFreq:0.08,
     reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
@@ -80,7 +82,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // the flow warp that elongates cells organically.
   'relief-pockets': { noiseType:'voronoi-relief', frequency:0.1, amplitude:2.4, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35, contrast:1, sharpness:0,
     warpFreq:0.06, warpCurl:0,
-    reliefCellSize:5.0, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
+    reliefCellSize:4.0, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
     // seamDepth = saturation point: 0.75 keeps only the biggest cells reaching full depth,
     // small cells stay shallow — the lafabrica depth gradient. seamWidth drives SBP V-carve
     // width only (no mesh effect under F2-F1).
@@ -92,10 +94,13 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
     reliefPillow:0, reliefPillowCoverage:0.5,
     reliefDepthVariation:0.35, reliefJunctionLift:0.3, reliefCrestVariation:0.5,
     reliefAttractorNoise:0.5, reliefAttractorNoiseFreq:0.1,
-    reliefDensityNoise:0.9, reliefDensityNoiseFreq:0.06,
-    reliefRadialFociCount:0, reliefRadialFocus1X:0.5, reliefRadialFocus1Y:0.25,
+    // v20: bigger cell-size dynamic range (stronger density swings on larger patches) and
+    // ONE stretched-fan focus (grow > 1 = shallow converging-crease fan, the reference's
+    // drape-like center-left region).
+    reliefDensityNoise:1.2, reliefDensityNoiseFreq:0.045,
+    reliefRadialFociCount:1, reliefRadialFocus1X:0.3, reliefRadialFocus1Y:0.42,
     reliefRadialFocus2X:0.25, reliefRadialFocus2Y:0.6, reliefRadialFocus3X:0.75, reliefRadialFocus3Y:0.8,
-    reliefRadialStrength:1.5, reliefRadialFalloff:0.3, reliefRadialGrow:0.45, reliefRadialWarp:0.4, reliefRadialMode:'rays',
+    reliefRadialStrength:2.2, reliefRadialFalloff:0.32, reliefRadialGrow:1.6, reliefRadialWarp:0.5, reliefRadialMode:'rays',
     meshX:24, meshY:48, baseThickness:2.5, smoothIter:1, smoothStr:0.3 },
   // relief-starburst — v16: each "Focus" point contributes a radial displacement term to
   // the unified space-warp, so cells stretch outward from each focus because the Voronoi

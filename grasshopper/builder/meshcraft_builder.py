@@ -509,12 +509,18 @@ class VoronoiReliefNoise(object):
     RIDGE_WIDTH_SWING = 1.2
     # Junction deltas: the crest plateau flares toward three-way junctions into bold
     # smooth triangular masses, pinching thin mid-edge (wider gate than the lift term).
-    JUNCTION_DELTA_GAIN = 2.2
+    JUNCTION_DELTA_GAIN = 6.0
     # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's deepest point
     # off-center. Purely reductive (shallow flank ramps up) so the clamp is never involved.
     FLOOR_TILT_GAIN = 0.7
     # v19 giant merged cells: site-deletion probability at full suppression-field strength.
     SUPPRESSION_KILL = 0.9
+    # v20 ridge crown: rounded bead over the crest band (broad convex wall tops, never
+    # flat strips). Melted zones keep ghost creases via the 0.35 floor on the bead scale.
+    RIDGE_CROWN_GAIN = 0.15
+    # v20 stretched fans: radial_grow above 1 shallows the focal zone while the lattice
+    # keeps radially-converging walls (drape-like fan creases in a calm mass).
+    FOCAL_CALM_GAIN = 0.8
     SIZE_DEPTH_MIN = 0.8
     SIZE_DEPTH_MAX = 1.2
     DENSITY_NOISE_GAIN = 1.6
@@ -536,6 +542,7 @@ class VoronoiReliefNoise(object):
         # read as long sweeping creases across the calm zone.
         dv_amt = max(0.0, min(1.0, p.get('depth_variation', 0.0)))
         suppress_freq_sites = 0.16 / max(0.2, p['cell_size'])
+        killed_reserve = []
         sites = []
         # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
@@ -550,7 +557,10 @@ class VoronoiReliefNoise(object):
                 if suppress_gen is not None and dv_amt > 0.0:
                     sn01 = (suppress_gen.noise(cx * suppress_freq_sites, cy * suppress_freq_sites) + 1.0) * 0.5
                     kill = self._smoothstep(0.66, 0.8, sn01) * self.SUPPRESSION_KILL * dv_amt
-                    if kill > 0.0 and self._rand() < kill: continue
+                    if kill > 0.0 and self._rand() < kill:
+                        if len(killed_reserve) < 8:
+                            killed_reserve.append([cx, cy])
+                        continue
                 local = max(0.0, min(self.LOCAL_DENSITY_MAX, 1.0 + p['density_strength'] * mask))
                 if density_gen is not None and dn_amt > 0.0:
                     n = density_gen.noise(cx * dn_freq, cy * dn_freq)
@@ -582,6 +592,14 @@ class VoronoiReliefNoise(object):
                         if excluded:
                             continue
                     sites.append([px, py, 0.0])
+        # Minimum-site floor: deletion is independent per candidate, so a small grid
+        # inside a strong suppression field can wipe out EVERY site — restore deleted
+        # cell centers (deterministic order) so the panel degrades to giant merged
+        # cells, never to the flat zero-site fallback.
+        ri = 0
+        while len(sites) < 3 and ri < len(killed_reserve):
+            sites.append([killed_reserve[ri][0], killed_reserve[ri][1], 0.0])
+            ri += 1
         return sites
     def _make_warp(self, p, seed, warp_distortion):
         # Flow warp W (global distortion/warpFreq sliders). Returns None when inactive.
@@ -607,8 +625,13 @@ class VoronoiReliefNoise(object):
         # tangential pitch — the Voronoi cells of that lattice are radially elongated
         # petals fanning out of the node. 'rings' swaps the pitches (tangential arcs);
         # 'spiral' advances each ring by the golden angle. Mirrors the TS sampler.
+        # v20 fan regime (radial_grow > 1): pitch stops growing with grow, the sector
+        # COUNT locks across rings so boundaries align into long radially-converging
+        # creases, angular jitter is damped, dropout reduced.
+        fan = radial_grow > 1.0
+        pitch_grow = 1.0 if fan else radial_grow
         pitch_t = max(0.3, cell_size * self.POLAR_TANGENTIAL_PITCH_CELLS
-                      * (1.0 + 0.5 * max(0.0, min(2.0, radial_grow))))
+                      * (1.0 + 0.5 * max(0.0, min(2.0, pitch_grow))))
         elong = 1.0 + max(0.0, min(4.0, radial_strength))
         margin = max(0.2, cell_size)
         for k in range(len(foci_phys)):
@@ -621,6 +644,7 @@ class VoronoiReliefNoise(object):
             base_theta = self._rand() * 2.0 * math.pi
             r = pitch_t * 0.75
             ring = 0
+            sectors_locked = 0
             while r < zone_r and len(sites) < self.SITE_COUNT_MAX:
                 if mode == 'rings':
                     gap = pitch_t * 0.8
@@ -629,14 +653,21 @@ class VoronoiReliefNoise(object):
                     gap = pitch_t * elong * (1.0 + 0.1 * ring)
                     pitch = pitch_t
                 r_mid = r + gap * 0.5
-                sectors = max(4, int(round((2.0 * math.pi * r_mid) / pitch)))
+                if fan and sectors_locked > 0:
+                    sectors = sectors_locked
+                else:
+                    sectors = max(4, int(round((2.0 * math.pi * r_mid) / pitch)))
+                if fan and sectors_locked == 0:
+                    sectors_locked = sectors
                 spiral_off = ring * 0.381966 * 2.0 * math.pi if mode == 'spiral' else 0.0
+                drop_p = 0.1 if fan else 0.25
+                jit_scale = 0.35 if fan else 1.0
                 for si in range(sectors):
                     if len(sites) >= self.SITE_COUNT_MAX: break
                     # v17 sector dropout — random spoke deletion breaks radial regularity.
-                    if self._rand() < 0.25 * jitter_amt: continue
+                    if self._rand() < drop_p * jitter_amt: continue
                     th = (base_theta + spiral_off + ((si + 0.5) / float(sectors)) * 2.0 * math.pi
-                          + (self._rand() - 0.5) * jitter_amt * (2.0 * math.pi / sectors))
+                          + (self._rand() - 0.5) * jitter_amt * (2.0 * math.pi / sectors) * jit_scale)
                     rr = r_mid + (self._rand() - 0.5) * jitter_amt * gap * 0.7
                     sx0 = cpx + rr * math.cos(th)
                     sy0 = cpy + rr * math.sin(th)
@@ -654,8 +685,8 @@ class VoronoiReliefNoise(object):
         # corner F1 ≈ F2 ≈ F3, so (F3 − F1) → 0 exactly at junctions (v16.3).
         # v18.1: also returns the COMPETITOR INDICES so callers can compute the exact
         # bisector distance to the shared cell boundary.
-        f1 = float('inf'); f2 = float('inf'); f3 = float('inf')
-        idx = 0; idx2 = -1; idx3 = -1
+        f1 = float('inf'); f2 = float('inf'); f3 = float('inf'); f4 = float('inf')
+        idx = 0; idx2 = -1; idx3 = -1; idx4 = -1
         isotropic = (aniso_scale <= 1.0001)
         for i in range(len(sites)):
             dx = x - sites[i][0]; dy = y - sites[i][1]
@@ -665,12 +696,14 @@ class VoronoiReliefNoise(object):
                 xr = dx * cosA + dy * sinA
                 yr = -dx * sinA + dy * cosA
                 d = math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-            if d < f1: f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i
-            elif d < f2: f3 = f2; idx3 = idx2; f2 = d; idx2 = i
-            elif d < f3: f3 = d; idx3 = i
+            if d < f1: f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i
+            elif d < f2: f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = i
+            elif d < f3: f4 = f3; idx4 = idx3; f3 = d; idx3 = i
+            elif d < f4: f4 = d; idx4 = i
         if f2 == float('inf'): idx2 = -1
         if f3 == float('inf'): idx3 = -1
-        return f1, f2, f3, idx, idx2, idx3
+        if f4 == float('inf'): idx4 = -1
+        return f1, f2, f3, f4, idx, idx2, idx3, idx4
     def _halton(self, index, base):
         result = 0.0; f = 1.0 / base; i = index
         while i > 0:
@@ -828,13 +861,19 @@ class VoronoiReliefNoise(object):
             xr = dx * cosA + dy * sinA
             yr = -dx * sinA + dy * cosA
             return math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-        def boundary_dist(f1, f2, f3, owner, i2, i3):
+        # Minimized over the THREE nearest competitors: Fk ordering does not strictly
+        # order bisector distances (the |sk - s1| denominator varies); the third covers
+        # cell-corner regions and 4-degree vertices.
+        def boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4):
             db = db_cap
             if i2 >= 0 and f2 != float('inf'):
                 d = (f2 * f2 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i2)))
                 if d < db: db = d
             if i3 >= 0 and f3 != float('inf'):
                 d = (f3 * f3 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i3)))
+                if d < db: db = d
+            if i4 >= 0 and f4 != float('inf'):
+                d = (f4 * f4 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i4)))
                 if d < db: db = d
             return db
         # Pass 1: accumulate mean F1 per site to derive per-cell radius (in the warped
@@ -846,9 +885,9 @@ class VoronoiReliefNoise(object):
         radius_n = [0] * n_sites
         inradius = [0.0] * n_sites
         for idx0 in range(rows * cols):
-            f1, f2, f3, idx, idx2, idx3 = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
+            f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
             radius_sum[idx] += f1; radius_n[idx] += 1
-            db = boundary_dist(f1, f2, f3, idx, idx2, idx3)
+            db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4)
             if db > inradius[idx]: inradius[idx] = db
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
@@ -891,7 +930,7 @@ class VoronoiReliefNoise(object):
                 u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
                 pix = j * cols + i
                 qx = wx_arr[pix]; qy = wy_arr[pix]
-                f1, f2, f3, idx, idx2, idx3 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale)
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale)
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
@@ -914,7 +953,7 @@ class VoronoiReliefNoise(object):
                 # measured inradius, so the wall spans the FULL territory from the shared
                 # boundary to the inset floor: every interior point is crest, wall, or
                 # floor — no neutral gaps. q = d_b/w: 0 at the boundary, 1 at the floor edge.
-                db = boundary_dist(f1, f2, f3, idx, idx2, idx3)
+                db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4)
                 inr = max(0.01, inradius[idx])
                 # Scale-free junction proximity: (F3-F1)/(F3+F1) -> 0 at three-way corners.
                 # With fewer than three sites there is no junction anywhere — jn stays 0.
@@ -939,7 +978,7 @@ class VoronoiReliefNoise(object):
                     # Junction DELTAS use a wider gate than the lift term: the plateau
                     # flares well before the corner into bold triangular Y-masses.
                     jn_w = self._smoothstep(0.55, 0.95, jn)
-                    crest_w *= max(0.15, 1.0 + self.RIDGE_WIDTH_SWING * wn + self.JUNCTION_DELTA_GAIN * jn_w)
+                    crest_w *= max(0.15, 1.0 + self.RIDGE_WIDTH_SWING * wn + self.JUNCTION_DELTA_GAIN * junction_lift * jn_w)
                 if cell_size_grad > 0.0:
                     wall_scale *= 1.0 + cell_size_grad * mask * 0.6
                 if radial_grow > 0.0 and g_max > 0.0:
@@ -1006,6 +1045,10 @@ class VoronoiReliefNoise(object):
                     if suppress_gen is not None:
                         sn = (suppress_gen.noise(x * suppress_freq, y * suppress_freq) + 1.0) * 0.5
                         cell_depth_mul *= 1.0 - self.SUPPRESSION_STRENGTH * depth_variation * self._smoothstep(0.62, 0.82, sn)
+                # v20 stretched fans: above grow = 1 the focal zone shallows toward the
+                # pinch point while its lattice keeps converging walls.
+                if radial_grow > 1.0 and g_max > 0.0:
+                    cell_depth_mul *= 1.0 - self.FOCAL_CALM_GAIN * (radial_grow - 1.0) * g_max
                 base = base_amp * self.wave.noise(x * base_freq, y * base_freq) if base_amp > 0.0 else 0.0
                 h = base + polarity * bowl_h * cw * intensity * cell_depth_mul
                 # v17 crest variation: ridge-LOCAL height noise (fragments the envelope).
@@ -1017,6 +1060,12 @@ class VoronoiReliefNoise(object):
                 # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
                 if junction_lift > 0.0:
                     h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw
+                # v20 ridge crown: rounded bead over the crest band — dome peaking on the
+                # shared boundary. Melted zones keep ghost creases (0.35 floor).
+                if wall_frac > 0.0 and crest_w > 1e-6 and db < crest_w:
+                    crown = 1.0 - self._smoothstep(0.0, crest_w, db)
+                    crown_mul = 0.35 + 0.65 * cell_depth_mul
+                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul
                 # Void mode pushes h toward the negative clamp where mask + bowl depth are
                 # high. Uses bowl_h as the carve-depth proxy (was 'seam' in the old algorithm).
                 if void_strength > 0.0:
@@ -1306,7 +1355,7 @@ PRESETS = {
     # relief-pockets — v16 primary reference-matcher, proportions retuned (see the TS
     # preset in src/noise/presets.ts for the rationale; keep both in sync).
     'relief-pockets':  {'noise_type':'voronoi-relief', 'frequency':0.10, 'amplitude':2.40, 'noise_exp':1.0, 'peak_exp':1.0, 'valley_exp':1.0, 'valley_floor':0.00, 'offset':0.0, 'octaves':1, 'persistence':0.50, 'lacunarity':2.0, 'distortion':0.35, 'contrast':1.0, 'sharpness':0.00, 'mesh_x':24, 'mesh_y':48, 'smooth_iter':1, 'smooth_str':0.3,
-                        'relief_cell_size':5.0, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.07, 'relief_pillow':0.0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.3, 'relief_crest_variation':0.5, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.0, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':0.9, 'relief_density_noise_freq':0.06, 'relief_warp_freq':0.06},
+                        'relief_cell_size':4.0, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75.0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0.0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.07, 'relief_pillow':0.0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.3, 'relief_crest_variation':0.5, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.0, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.1, 'relief_density_noise':1.2, 'relief_density_noise_freq':0.045, 'relief_radial_foci_count':1, 'relief_radial_focus1_x':0.3, 'relief_radial_focus1_y':0.42, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':2.2, 'relief_radial_falloff':0.32, 'relief_radial_grow':1.6, 'relief_radial_warp':0.5, 'relief_radial_mode':'rays', 'relief_warp_freq':0.06},
     # relief-starburst — v16: the radial-foci system is now fully ported to the IronPython
     # sampler (noise_gen.py implements the same space-warp as the web); this preset mirrors
     # the TS relief-starburst verbatim including the foci. Keep both in sync.

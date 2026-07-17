@@ -344,25 +344,26 @@ function countLocalMinima(grid: number[][]): number {
   assert(identical, 'wave mode with baseAmplitude 0 equals flat mode byte-identically');
 }
 
-// 7c. Wall band (v16). wallWidth holds a band of the normalized cell distance at base
-//     level around every boundary. Measured response: wallFrac(0.3) ≈ 0.88 vs
-//     wallFrac(0) ≈ 0.25 — assert a ≥ 0.25 separation.
+// 7c. Wall band (v16/v20). wallWidth holds a crest band around every boundary — since
+//     v20 the band is a CROWNED bead (rounded plateau above base), not a flat strip, so
+//     band membership is "at or above base" (pockets carve strictly downward; only crest
+//     pixels sit at h ≥ -0.02, crowned ones above 0).
 {
   process.stdout.write('7c. wall band\n');
-  const wallFrac = (wallWidth: number): number => {
+  const crestFrac = (wallWidth: number): number => {
     const grid = new VoronoiReliefGen(29).sampleGrid(baseParams({
       cols: 160, rows: 120, meshX: 36, meshY: 24, seed: 29, cellSize: 3,
       baseMode: 'flat', polarity: 'pockets', wallWidth,
     }));
     let inBand = 0;
     let total = 0;
-    for (const row of grid) for (const v of row) { total++; if (Math.abs(v) < 0.02) inBand++; }
+    for (const row of grid) for (const v of row) { total++; if (v > -0.02) inBand++; }
     return inBand / total;
   };
-  const f0 = wallFrac(0);
-  const f03 = wallFrac(0.3);
+  const f0 = crestFrac(0);
+  const f03 = crestFrac(0.3);
   assert(f03 > f0 + 0.25,
-    'wallWidth 0.3 floors ≥ 25 points more of the panel than wallWidth 0',
+    'wallWidth 0.3 crest band covers ≥ 25 points more of the panel than wallWidth 0',
     `f0=${(f0 * 100).toFixed(1)}% f03=${(f03 * 100).toFixed(1)}%`);
 }
 
@@ -970,11 +971,11 @@ function countLocalMinima(grid: number[][]): number {
   // depth — a deep focus pocket is design, not the v1 "pucker hole". The actual defect
   // signature is a hole WITHOUT a formed wall: assert the focus pixel's neighborhood
   // climbs well above it (walls rise around a well-formed pocket).
-  // The wall must ENCLOSE the focus, not merely have one nearby peak: sample the 17×17
-  // neighborhood in 8 angular sectors and require the wall rise in (nearly) every sector,
-  // so a malformed pocket with a single adjacent ridge cannot pass. Radius 8 ≈ 2.4" —
-  // wide enough to reach past the nucleus petal walls at this grid pitch (measured
-  // sector rises 0.70–1.05; at radius 6 some sectors sit entirely inside the pocket).
+  // The wall must ENCLOSE the focus, not merely have one nearby peak: sample a DISC in
+  // 8 angular sectors and require the wall rise in (nearly) every sector, so a malformed
+  // pocket with a single adjacent ridge cannot pass. Disc radius 11 ≈ 3.3" — wide enough
+  // to reach past the nucleus petal walls in every direction at this grid pitch
+  // (measured 7-of-8 rises 0.99–1.05; radius 8 leaves sectors inside the pocket).
   const fociPositions = [{ x: 0.7, y: 0.2 }, { x: 0.25, y: 0.55 }, { x: 0.75, y: 0.85 }];
   let worstEnclosure = Infinity;
   for (const f of fociPositions) {
@@ -982,9 +983,14 @@ function countLocalMinima(grid: number[][]): number {
     const cj = Math.round(f.y * (80 - 1));
     const center = withFoci[cj][ci];
     const sectorMax = new Array<number>(8).fill(-Infinity);
-    for (let dj = -8; dj <= 8; dj++) {
-      for (let di = -8; di <= 8; di++) {
+    for (let dj = -11; dj <= 11; dj++) {
+      for (let di = -11; di <= 11; di++) {
         if (di === 0 && dj === 0) continue;
+        // Disc, not square: a square box samples ~1.41R on diagonals vs R on axes,
+        // biasing diagonal sectors toward distant unrelated ridges. A THIN annulus would
+        // be wrong the other way — the enclosing wall sits at direction-dependent radii
+        // (petals), so each sector takes its max over ALL radii within the disc.
+        if (Math.hypot(di, dj) > 11) continue;
         const jj = Math.min(79, Math.max(0, cj + dj));
         const ii = Math.min(119, Math.max(0, ci + di));
         const sector = Math.floor(((Math.atan2(dj, di) + Math.PI) / (2 * Math.PI)) * 8) % 8;

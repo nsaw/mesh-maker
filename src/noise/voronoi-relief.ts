@@ -106,8 +106,11 @@ const JUNCTION_LIFT_GAIN = 0.18;
 const RIDGE_WIDTH_SWING = 1.2;
 // Junction deltas: the crest plateau flares toward three-way junctions into bold smooth
 // triangular masses (the reference's Y-deltas are as big as small cells), pinching thin
-// mid-edge. Applied to the crest width with a WIDER gate than the lift term.
-const JUNCTION_DELTA_GAIN = 2.2;
+// mid-edge. Applied to the crest width with a WIDER gate than the lift term, and SCALED
+// by the junctionLift control (0 disables — junctionLift is the documented junction
+// knob). Gain sized so the shipped presets (junctionLift 0.25-0.3) keep the ~1.5-1.8×
+// flare the reference look was tuned against.
+const JUNCTION_DELTA_GAIN = 6.0;
 // v19 scooped floors: per-cell floor tilt (hash direction) shifts each pocket's deepest
 // point off-center — steep wall on one flank, long ramp on the other. The reference's
 // pockets are carved directionally, not radially symmetric. Gated by depthVariation;
@@ -118,6 +121,16 @@ const FLOOR_TILT_GAIN = 0.7;
 // zone) instead of relying on depth-melt alone, which erases structure rather than merging
 // it. Deletion probability at full field strength, scaled by depthVariation.
 const SUPPRESSION_KILL = 0.9;
+// v20 ridge crown: the crest band is not a flat strip (whose edges read as lines under
+// raking light) but a rounded BEAD — a smoothstep dome over the crest with zero slope at
+// both the ridge line and the wall shoulder. The reference's wall tops are broad convex
+// plateaus, never flat-topped.
+const RIDGE_CROWN_GAIN = 0.15;
+// v20 stretched fans: radialGrow ABOVE 1 enters a documented fan regime — the focal zone
+// gets progressively SHALLOWER (while the polar lattice keeps its radially-converging
+// walls), so a focus inside a calm mass reads as drape-like creases converging to a pinch
+// point instead of a deep starburst. grow ≤ 1 keeps the classic deepened-focus behavior.
+const FOCAL_CALM_GAIN = 0.8;
 const SIZE_DEPTH_MIN = 0.8;
 const SIZE_DEPTH_MAX = 1.2;
 
@@ -230,8 +243,13 @@ function generatePolarSites(
   meshY: number,
   sites: Site[],
 ): void {
+  // v20 fan regime (radialGrow > 1): the lattice pitch stops growing with grow (more
+  // sectors survive), the sector COUNT locks across rings so sector boundaries align
+  // into long radially-converging creases, angular jitter is damped, and dropout is
+  // reduced — a stretched fan whose creases run unbroken toward the pinch point.
+  const fan = radialGrow > 1;
   const pitchT = Math.max(0.3, cellSize * POLAR_TANGENTIAL_PITCH_CELLS
-    * (1 + 0.5 * Math.max(0, Math.min(2, radialGrow))));
+    * (1 + 0.5 * Math.max(0, Math.min(2, fan ? 1 : radialGrow))));
   const elong = 1 + Math.max(0, Math.min(4, radialStrength));
   const margin = Math.max(0.2, cellSize);
   for (let k = 0; k < fociPhys.length; k++) {
@@ -246,21 +264,25 @@ function generatePolarSites(
     const baseTheta = rand() * 2 * Math.PI;
     let r = pitchT * 0.75;
     let ring = 0;
+    let sectorsLocked = 0;
     while (r < zoneR && sites.length < SITE_COUNT_MAX) {
       const gap = mode === 'rings'
         ? pitchT * 0.8
         : pitchT * elong * (1 + 0.1 * ring);
       const pitch = mode === 'rings' ? pitchT * elong : pitchT;
       const rMid = r + gap * 0.5;
-      const sectors = Math.max(4, Math.round((2 * Math.PI * rMid) / pitch));
+      const sectors = fan && sectorsLocked > 0
+        ? sectorsLocked
+        : Math.max(4, Math.round((2 * Math.PI * rMid) / pitch));
+      if (fan && sectorsLocked === 0) sectorsLocked = sectors;
       const spiralOff = mode === 'spiral' ? ring * 0.381966 * 2 * Math.PI : 0;
       for (let s = 0; s < sectors; s++) {
         if (sites.length >= SITE_COUNT_MAX) break;
         // v17 sector dropout — deletes random spokes so fans read as discovered, not
         // generated (critique: radial systems too visibly algorithmic).
-        if (rand() < 0.25 * jitterAmt) continue;
+        if (rand() < (fan ? 0.1 : 0.25) * jitterAmt) continue;
         const th = baseTheta + spiralOff + ((s + 0.5) / sectors) * 2 * Math.PI
-          + (rand() - 0.5) * jitterAmt * (2 * Math.PI / sectors);
+          + (rand() - 0.5) * jitterAmt * (2 * Math.PI / sectors) * (fan ? 0.35 : 1);
         const rr = rMid + (rand() - 0.5) * jitterAmt * gap * 0.7;
         const sx0 = cp.x + rr * Math.cos(th);
         const sy0 = cp.y + rr * Math.sin(th);
@@ -308,6 +330,7 @@ function generateSites(
     ? Math.max(0, Math.min(1, p.depthVariation))
     : 0;
   const suppressFreqSites = 0.16 / Math.max(0.2, cellSize);
+  const killedReserve: Array<{ x: number; y: number }> = [];
 
   const sites: Site[] = [];
   outer: for (let j = 0; j < ny; j++) {
@@ -323,7 +346,13 @@ function generateSites(
       if (suppressGen && depthVariationAmt > 0) {
         const sn01 = (suppressGen.noise(cx * suppressFreqSites, cy * suppressFreqSites) + 1) * 0.5;
         const kill = smoothstep(0.66, 0.8, sn01) * SUPPRESSION_KILL * depthVariationAmt;
-        if (kill > 0 && rand() < kill) continue;
+        if (kill > 0 && rand() < kill) {
+          // Remember a few deleted cell centers — if deletion (on a small grid inside a
+          // strong field) wipes out every candidate, restore from these below so the
+          // sampler degrades to giant merged cells, never to a flat zero-site panel.
+          if (killedReserve.length < 8) killedReserve.push({ x: cx, y: cy });
+          continue;
+        }
       }
       let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
       // v16 patchy density: low-frequency noise multiplies local density so giant cells
@@ -360,6 +389,13 @@ function generateSites(
         sites.push({ x: px, y: py, radius: 0 });
       }
     }
+  }
+  // Minimum-site floor: deletion is independent per candidate, so a small grid inside a
+  // strong suppression field can wipe out EVERY Cartesian site — restore deleted cell
+  // centers (deterministic order) so the panel degrades to giant merged cells, never to
+  // the flat zero-site fallback.
+  for (let i = 0; sites.length < 3 && i < killedReserve.length; i++) {
+    sites.push({ x: killedReserve[i].x, y: killedReserve[i].y, radius: 0 });
   }
   return sites;
 }
@@ -435,13 +471,15 @@ function nearestThree(
   cosA: number,
   sinA: number,
   anisotropyScale: number,
-): { f1: number; f2: number; f3: number; idx: number; idx2: number; idx3: number } {
+): { f1: number; f2: number; f3: number; f4: number; idx: number; idx2: number; idx3: number; idx4: number } {
   let f1 = Infinity;
   let f2 = Infinity;
   let f3 = Infinity;
+  let f4 = Infinity;
   let idx = 0;
   let idx2 = -1;
   let idx3 = -1;
+  let idx4 = -1;
   const isotropic = anisotropyScale <= 1.0001;
   for (let i = 0; i < sites.length; i++) {
     const dx = x - sites[i].x;
@@ -454,14 +492,16 @@ function nearestThree(
       const yr = -dx * sinA + dy * cosA;
       d = Math.hypot(xr * anisotropyScale, yr);
     }
-    if (d < f1) { f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i; }
-    else if (d < f2) { f3 = f2; idx3 = idx2; f2 = d; idx2 = i; }
-    else if (d < f3) { f3 = d; idx3 = i; }
+    if (d < f1) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i; }
+    else if (d < f2) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = i; }
+    else if (d < f3) { f4 = f3; idx4 = idx3; f3 = d; idx3 = i; }
+    else if (d < f4) { f4 = d; idx4 = i; }
   }
   // idx2 seeds as the initial idx placeholder when only one site exists — normalize.
   if (!Number.isFinite(f2)) idx2 = -1;
   if (!Number.isFinite(f3)) idx3 = -1;
-  return { f1, f2, f3, idx, idx2, idx3 };
+  if (!Number.isFinite(f4)) idx4 = -1;
+  return { f1, f2, f3, f4, idx, idx2, idx3, idx4 };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -649,8 +689,13 @@ export class VoronoiReliefGen implements ReliefGenerator {
       const yr = -dx * sinA + dy * cosA;
       return Math.hypot(xr * metricScale, yr);
     };
+    // Minimized over the THREE nearest competitors: near-nearest ordering by Fk does not
+    // strictly order the bisector distances (the |sk − s1| denominator varies), so the
+    // third competitor covers cell-corner regions and ≥4-degree vertices; jittered site
+    // sets make deeper competitors constraining only on a measure-zero locus.
     const boundaryDist = (
-      f1: number, f2: number, f3: number, owner: number, i2: number, i3: number,
+      f1: number, f2: number, f3: number, f4: number,
+      owner: number, i2: number, i3: number, i4: number,
     ): number => {
       let db = dbCap;
       if (i2 >= 0 && Number.isFinite(f2)) {
@@ -659,6 +704,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
       }
       if (i3 >= 0 && Number.isFinite(f3)) {
         const d = (f3 * f3 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i3)));
+        if (d < db) db = d;
+      }
+      if (i4 >= 0 && Number.isFinite(f4)) {
+        const d = (f4 * f4 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i4)));
         if (d < db) db = d;
       }
       return db;
@@ -673,10 +722,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // cell and locally capped").
     const inradius = new Float64Array(sites.length);
     for (let idx = 0; idx < rows * cols; idx++) {
-      const { f1, f2, f3, idx: siteIdx, idx2, idx3 } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
+      const { f1, f2, f3, f4, idx: siteIdx, idx2, idx3, idx4 } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
-      const db = boundaryDist(f1, f2, f3, siteIdx, idx2, idx3);
+      const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4);
       if (db > inradius[siteIdx]) inradius[siteIdx] = db;
     }
     for (let k = 0; k < sites.length; k++) {
@@ -749,7 +798,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const pixIdx = j * cols + i;
         const qx = wxArr[pixIdx];
         const qy = wyArr[pixIdx];
-        const { f1, f2, f3, idx: ownerIdx, idx2, idx3 } = nearestThree(sites, qx, qy, cosA, sinA, metricScale);
+        const { f1, f2, f3, f4, idx: ownerIdx, idx2, idx3, idx4 } = nearestThree(sites, qx, qy, cosA, sinA, metricScale);
         // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -779,7 +828,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // no finite falloff radius, no abandoned neutral surface, and shrinking floors
         // WIDENS walls instead of retreating the cavity mouth. q = d_b/w: 0 at the
         // boundary, 1 at the floor edge.
-        const db = boundaryDist(f1, f2, f3, ownerIdx, idx2, idx3);
+        const db = boundaryDist(f1, f2, f3, f4, ownerIdx, idx2, idx3, idx4);
         const inr = Math.max(0.01, inradius[ownerIdx]);
         // Scale-free junction proximity: (F3−F1)/(F3+F1) → 0 exactly at three-way corners.
         // With fewer than three sites there is no junction anywhere — jn stays 0.
@@ -805,8 +854,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
           wallScale *= Math.max(0.3, 1 + 0.6 * wn + 1.1 * jnS);
           // Junction DELTAS use a wider gate than the lift term: the plateau starts
           // flaring well before the corner, forming the bold triangular Y-masses.
+          // Scaled by junctionLift — the documented junction control; 0 disables.
           const jnW = smoothstep(0.55, 0.95, jn);
-          crestW *= Math.max(0.15, 1 + RIDGE_WIDTH_SWING * wn + JUNCTION_DELTA_GAIN * jnW);
+          crestW *= Math.max(0.15, 1 + RIDGE_WIDTH_SWING * wn + JUNCTION_DELTA_GAIN * junctionLift * jnW);
         }
         if (cellSizeGradient > 0) {
           wallScale *= 1 + cellSizeGradient * mask * 0.6;
@@ -899,6 +949,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
             cellDepthMul *= 1 - SUPPRESSION_STRENGTH * depthVariation * smoothstep(0.62, 0.82, sn);
           }
         }
+        // v20 stretched fans: above grow = 1 the focal zone shallows toward the pinch
+        // point while its polar lattice keeps converging walls — drape-like fan creases
+        // in a calm mass (the reference's center-left region), not a deep starburst.
+        if (radialGrow > 1 && gMax > 0) {
+          cellDepthMul *= 1 - FOCAL_CALM_GAIN * (radialGrow - 1) * gMax;
+        }
 
         // v16 SUPERPOSITION: the base wave is never attenuated by the cell system — cells
         // are carved INTO it. Ridge tops (bowlH = 0) sit exactly on the base surface.
@@ -922,6 +978,16 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // where the attractor has faded the cell system out.
         if (junctionLift > 0) {
           h += junctionLift * JUNCTION_LIFT_GAIN * jnS * (1 - bowlH) * cellWeight;
+        }
+        // v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
+        // boundary, blending to the wall shoulder with zero slope at both ends. The bead
+        // follows cellDepthMul only PARTIALLY (floor at 0.35): melted zones keep ghost
+        // creases — the reference's calm masses and fan regions show their converging
+        // wall lines even where pockets have faded out. Gated by cellWeight.
+        if (wallFrac > 0 && crestW > 1e-6 && db < crestW) {
+          const crown = 1 - smoothstep(0, crestW, db);
+          const crownMul = 0.35 + 0.65 * cellDepthMul;
+          h -= polarity * RIDGE_CROWN_GAIN * crown * cellWeight * crownMul;
         }
 
         // Void mode pushes h toward the negative clamp where mask + bowl depth are high —

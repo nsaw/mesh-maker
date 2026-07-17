@@ -121,7 +121,10 @@ export interface ReliefParams {
    *  disc of ~σ around each focus (Cartesian sites are excluded slightly inside it). */
   radialFalloff: number;
   /** Focal cell scale in [0, 2]: widens the lattice pitch (bigger petals) and expands the
-   *  continuous radius/bowl normalization near foci. */
+   *  continuous radius/bowl normalization near foci. v20: values ABOVE 1 enter the
+   *  stretched-fan regime — the focal zone gets progressively shallower while the lattice
+   *  keeps its radially-converging walls, so the focus reads as drape-like creases
+   *  converging to a pinch point in a calm mass instead of a deep starburst. */
   radialGrow: number;
   /** Lattice jitter in [0,1] — randomizes ring radii and sector angles so foci read as
    *  organic fans, not mandalas. */

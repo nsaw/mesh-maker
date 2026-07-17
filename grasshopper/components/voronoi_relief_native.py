@@ -217,6 +217,7 @@ target_sites = (mesh_x * mesh_y) / max(0.01, cell_size * cell_size)
 n_candidates = int(min(8000, max(80, target_sites * 6.0)))
 
 sites = []
+killed_reserve = []
 suppress_freq = 0.16 / max(0.2, cell_size)
 for _k in xrange(n_candidates):
     cx = random.random() * mesh_x
@@ -232,6 +233,8 @@ for _k in xrange(n_candidates):
         elif st > 1.0: st = 1.0
         st = st * st * (3.0 - 2.0 * st)
         if random.random() < 0.9 * depth_variation * st:
+            if len(killed_reserve) < 8:
+                killed_reserve.append((cx, cy))
             continue
     rmin = local_min_dist(cx, cy)
     # jitter randomizes the local radius +/-30% (symmetric) -- cell-size variety
@@ -248,6 +251,15 @@ for _k in xrange(n_candidates):
             break
     if ok:
         sites.append(rg.Point3d(cx, cy, 0.0))
+
+# Minimum-site floor: suppression deletion is independent per candidate, so a
+# small panel inside a strong field could reject every candidate -- restore
+# deleted positions (deterministic order) so the component degrades to giant
+# merged cells, never to a zero-site failure.
+_ri = 0
+while len(sites) < 3 and _ri < len(killed_reserve):
+    sites.append(rg.Point3d(killed_reserve[_ri][0], killed_reserve[_ri][1], 0.0))
+    _ri += 1
 
 # Voronoi cells + Lloyd relaxation -----------------------------------------
 def make_boundary():
@@ -412,14 +424,18 @@ for j in xrange(g_rows):
         best1 = 1.0e30
         best2 = 1.0e30
         best3 = 1.0e30
+        best4 = 1.0e30
         owner = 0
         owner2 = -1
         owner3 = -1
+        owner4 = -1
         for k in xrange(n_sites):
             dx = sx[k] - px
             dy = sy[k] - py
             d2v = dx * dx + dy * dy
             if d2v < best1:
+                best4 = best3
+                owner4 = owner3
                 best3 = best2
                 owner3 = owner2
                 best2 = best1
@@ -427,15 +443,23 @@ for j in xrange(g_rows):
                 best1 = d2v
                 owner = k
             elif d2v < best2:
+                best4 = best3
+                owner4 = owner3
                 best3 = best2
                 owner3 = owner2
                 best2 = d2v
                 owner2 = k
             elif d2v < best3:
+                best4 = best3
+                owner4 = owner3
                 best3 = d2v
                 owner3 = k
+            elif d2v < best4:
+                best4 = d2v
+                owner4 = k
         if best2 >= 1.0e30: owner2 = -1
         if best3 >= 1.0e30: owner3 = -1
+        if best4 >= 1.0e30: owner4 = -1
         d1 = math.sqrt(best1)
         d3 = math.sqrt(best3) if best3 < 1.0e30 else 1.0e15
         # v18 BOUNDARY-DISTANCE CONSTRUCTION. d_b is the EXACT distance to the shared
@@ -455,6 +479,11 @@ for j in xrange(g_rows):
             dxs = sx[owner3] - sx[owner]
             dys = sy[owner3] - sy[owner]
             dcand = (best3 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
+            if dcand < db: db = dcand
+        if owner4 >= 0:
+            dxs = sx[owner4] - sx[owner]
+            dys = sy[owner4] - sy[owner]
+            dcand = (best4 - best1) / (2.0 * max(1e-9, math.sqrt(dxs * dxs + dys * dys)))
             if dcand < db: db = dcand
         inr = inradius[owner]
         if inr < 0.01: inr = 0.01
@@ -483,7 +512,7 @@ for j in xrange(g_rows):
             if jn_w < 0.0: jn_w = 0.0
             elif jn_w > 1.0: jn_w = 1.0
             jn_w = jn_w * jn_w * (3.0 - 2.0 * jn_w)
-            crest_w *= max(0.15, 1.0 + 1.2 * wn + 2.2 * jn_w)
+            crest_w *= max(0.15, 1.0 + 1.2 * wn + 6.0 * junction_lift * jn_w)
         w = seam_depth * max(0.02, inr - crest_w) * wall_scale
         if w < 0.02: w = 0.02
         tw_raw = (db - crest_w) / w
@@ -544,10 +573,17 @@ for j in xrange(g_rows):
             crest = crest_variation * 0.4 * vnoise(px * crest_freq, py * crest_freq, seed + 97) * pow(1.0 - v, 1.5)
         lift = junction_lift * 0.18 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
         lift += crest
+        # v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
+        # boundary. Melted zones keep ghost creases (0.35 floor on the bead scale).
+        crown_term = 0.0
+        if wall_width > 0.0 and crest_w > 1e-6 and db < crest_w:
+            ct = db / crest_w
+            ct = ct * ct * (3.0 - 2.0 * ct)
+            crown_term = 0.15 * (1.0 - ct) * (0.35 + 0.65 * cell_depth_mul)
         if polarity == 'domes':
-            z_arr[row_off + i] = base + v + lift
+            z_arr[row_off + i] = base + v + lift - crown_term
         else:
-            z_arr[row_off + i] = base + (1.0 - v) + lift
+            z_arr[row_off + i] = base + (1.0 - v) + lift + crown_term
 
 # Renormalize to [0,1] -- Shape expects a normalized field; the base wave
 # pushes values outside the raw [0,1] band.
