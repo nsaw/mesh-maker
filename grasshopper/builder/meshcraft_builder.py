@@ -502,17 +502,25 @@ class VoronoiReliefNoise(object):
     POLAR_TANGENTIAL_PITCH_CELLS = 0.85
     POLAR_EXCLUSION_FRACTION = 0.9
     CREST_VARIATION_GAIN = 0.4
-    SUPPRESSION_STRENGTH = 0.65
+    SUPPRESSION_STRENGTH = 0.5
     JUNCTION_LIFT_GAIN = 0.18
     # Crest plateau width modulation along each edge (chunky-to-thin ridge swings),
     # clamped at 0.15x so ridges thin to threads but never vanish.
     RIDGE_WIDTH_SWING = 1.2
+    # Junction deltas: the crest plateau flares toward three-way junctions into bold
+    # smooth triangular masses, pinching thin mid-edge (wider gate than the lift term).
+    JUNCTION_DELTA_GAIN = 2.2
+    # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's deepest point
+    # off-center. Purely reductive (shallow flank ramps up) so the clamp is never involved.
+    FLOOR_TILT_GAIN = 0.7
+    # v19 giant merged cells: site-deletion probability at full suppression-field strength.
+    SUPPRESSION_KILL = 0.9
     SIZE_DEPTH_MIN = 0.8
     SIZE_DEPTH_MAX = 1.2
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
-    def _gen_sites(self, p, density_gen, exclusion_foci, exclusion_r):
+    def _gen_sites(self, p, density_gen, exclusion_foci, exclusion_r, suppress_gen):
         # v16: sites live on the unwarped jittered grid and are NEVER displaced — cell flow
         # comes entirely from warping the query points (see _make_warp). Density is modulated
         # by the attractor mask and a low-frequency noise field (giant-vs-small patches).
@@ -522,6 +530,12 @@ class VoronoiReliefNoise(object):
         sx = p['mesh_x'] / nx; sy = p['mesh_y'] / ny
         dn_amt = max(0.0, min(1.5, p.get('density_noise', 0.0)))
         dn_freq = max(0.02, min(0.3, p.get('density_noise_freq', 0.08)))
+        # v19 giant merged cells: the SAME low-frequency field that melts depth in the
+        # height pass (seed offset +103, freq 0.16/cell_size) deletes sites here — several
+        # neighboring cells merge into one giant territory whose surviving perimeter walls
+        # read as long sweeping creases across the calm zone.
+        dv_amt = max(0.0, min(1.0, p.get('depth_variation', 0.0)))
+        suppress_freq_sites = 0.16 / max(0.2, p['cell_size'])
         sites = []
         # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
@@ -533,6 +547,10 @@ class VoronoiReliefNoise(object):
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
+                if suppress_gen is not None and dv_amt > 0.0:
+                    sn01 = (suppress_gen.noise(cx * suppress_freq_sites, cy * suppress_freq_sites) + 1.0) * 0.5
+                    kill = self._smoothstep(0.66, 0.8, sn01) * self.SUPPRESSION_KILL * dv_amt
+                    if kill > 0.0 and self._rand() < kill: continue
                 local = max(0.0, min(self.LOCAL_DENSITY_MAX, 1.0 + p['density_strength'] * mask))
                 if density_gen is not None and dn_amt > 0.0:
                     n = density_gen.noise(cx * dn_freq, cy * dn_freq)
@@ -731,9 +749,13 @@ class VoronoiReliefNoise(object):
         # elongation) but the focal organization remains.
         starburst_active = len(foci_phys) > 0
         zone_r = self.POLAR_ZONE_SIGMAS * sigma_radial if starburst_active else 0.0
+        # Shared with the height pass's depth-melt AND the v19 site deletion — one field
+        # decides both which zones calm down and which cells merge away.
+        suppress_gen = SimplexNoise(seed + 17 + 103) if p.get('depth_variation', 0.0) > 0 else None
         sites = self._gen_sites(p, density_noise_gen,
                                 foci_phys if starburst_active else [],
-                                zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0)
+                                zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
+                                suppress_gen)
         cartesian_count = len(sites)
         if starburst_active:
             # Polar sites must survive the global cap — generate into a scratch list,
@@ -853,7 +875,7 @@ class VoronoiReliefNoise(object):
         crest_variation = max(0.0, min(1.0, p.get('crest_variation', 0.0)))
         crest_gen = SimplexNoise(seed + 17 + 97) if crest_variation > 0 else None
         crest_freq = 0.25 / max(0.2, p['cell_size'])
-        suppress_gen = SimplexNoise(seed + 17 + 103) if depth_variation > 0 else None
+        # suppress_gen was created before _gen_sites (v19 site deletion shares the field).
         suppress_freq = 0.16 / max(0.2, p['cell_size'])
         seam_depth_base = max(0.05, p['seam_depth'])
         FILLET_BAND = 0.1
@@ -914,7 +936,10 @@ class VoronoiReliefNoise(object):
                 if wall_noise_gen is not None:
                     wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
                     wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
-                    crest_w *= max(0.15, 1.0 + self.RIDGE_WIDTH_SWING * wn + 1.2 * jn_s)
+                    # Junction DELTAS use a wider gate than the lift term: the plateau
+                    # flares well before the corner into bold triangular Y-masses.
+                    jn_w = self._smoothstep(0.55, 0.95, jn)
+                    crest_w *= max(0.15, 1.0 + self.RIDGE_WIDTH_SWING * wn + self.JUNCTION_DELTA_GAIN * jn_w)
                 if cell_size_grad > 0.0:
                     wall_scale *= 1.0 + cell_size_grad * mask * 0.6
                 if radial_grow > 0.0 and g_max > 0.0:
@@ -951,6 +976,17 @@ class VoronoiReliefNoise(object):
                         pillow_t = self._smoothstep(1.0, 1.4, bowl_t_raw)
                         bowl_h -= pillow_amt * amt_var * 0.65 * pillow_t
                         if bowl_h < 0.0: bowl_h = 0.0
+                # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's
+                # deepest point off-center — steep wall on one flank, long ramp on the
+                # other. Purely reductive (shallow flank ramps up) so the output clamp is
+                # never involved; factor is 1 at the boundary so shared walls stay put.
+                if depth_variation > 0.0 and bowl_h > 0.0:
+                    tilt_ang = self._cell_hash01(idx, seed + 41) * math.pi * 2.0
+                    rad = max(0.2, sites[idx][2])
+                    tilt = (math.cos(tilt_ang) * (qx - sites[idx][0])
+                            + math.sin(tilt_ang) * (qy - sites[idx][1])) / rad
+                    tilt_t = (max(-0.9, min(0.9, tilt)) + 0.9) / 1.8
+                    bowl_h *= 1.0 - self.FLOOR_TILT_GAIN * depth_variation * tilt_t * bowl_h
                 # invertProfile: carve the boundary instead of the interior (domed floors).
                 if invert_profile > 0.5:
                     bowl_h = 1.0 - bowl_h

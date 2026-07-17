@@ -1115,9 +1115,10 @@ function countLocalMinima(grid: number[][]): number {
   const starburstCrossings = countMeanCrossings(starburst);
   const starburstMinima = countLocalMinima(starburst);
   // v16 preset: cellSize 4 on a 120×240 grid with a wave base — broad organic pockets.
-  // Bounds bracket the measured value generously; they exist to catch a dense-lattice or
-  // flat-panel regression, not to pin the exact texture.
-  assert(starburstCrossings > 500 && starburstCrossings < 8000,
+  // Bounds bracket the measured value generously (v19 tilted floors oscillate around the
+  // panel mean more: measured 9134); they exist to catch a dense-lattice or flat-panel
+  // regression, not to pin the exact texture. The minima cap below is the sliver guard.
+  assert(starburstCrossings > 500 && starburstCrossings < 13000,
     'starburst preset stays in broad-pocket crossing range (not dense lattice, not flat)',
     `crossings=${starburstCrossings}`);
   assert(starburstMinima >= 5 && starburstMinima <= 1200,

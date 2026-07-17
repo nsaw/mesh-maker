@@ -98,12 +98,26 @@ const LOCAL_DENSITY_MAX = 4;
 // suppression melts whole neighborhoods of cells into calm masses, and heavy-tail density
 // spikes put tiny cell clusters directly beside giant cells.
 const CREST_VARIATION_GAIN = 0.4;
-const SUPPRESSION_STRENGTH = 0.65;
+const SUPPRESSION_STRENGTH = 0.5;
 const JUNCTION_LIFT_GAIN = 0.18;
 // Crest plateau width modulation along each edge: 1 ± this per unit of wall noise
 // (clamped at 0.15× so ridges thin to threads but never vanish). Drives the reference's
 // chunky-to-thin ridge swings — visible ridge MASS varies, not just the wall slope run.
 const RIDGE_WIDTH_SWING = 1.2;
+// Junction deltas: the crest plateau flares toward three-way junctions into bold smooth
+// triangular masses (the reference's Y-deltas are as big as small cells), pinching thin
+// mid-edge. Applied to the crest width with a WIDER gate than the lift term.
+const JUNCTION_DELTA_GAIN = 2.2;
+// v19 scooped floors: per-cell floor tilt (hash direction) shifts each pocket's deepest
+// point off-center — steep wall on one flank, long ramp on the other. The reference's
+// pockets are carved directionally, not radially symmetric. Gated by depthVariation;
+// purely reductive (shallow flank ramps up) so the output clamp is never involved.
+const FLOOR_TILT_GAIN = 0.7;
+// v19 giant merged cells: inside the spatial suppression field, SITES are deleted (their
+// territory merges into neighbors — walls survive as long sweeping creases across the calm
+// zone) instead of relying on depth-melt alone, which erases structure rather than merging
+// it. Deletion probability at full field strength, scaled by depthVariation.
+const SUPPRESSION_KILL = 0.9;
 const SIZE_DEPTH_MIN = 0.8;
 const SIZE_DEPTH_MAX = 1.2;
 
@@ -274,6 +288,7 @@ function generateSites(
   densityGen: SimplexNoiseGen | null,
   exclusionFoci: ReadonlyArray<{ x: number; y: number }>,
   exclusionR: number,
+  suppressGen: SimplexNoiseGen | null,
 ): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
   const baseSpacing = Math.max(0.2, cellSize);
@@ -284,6 +299,15 @@ function generateSites(
   const densityNoiseAmt = Math.max(0, Math.min(1.5, p.densityNoise));
   const densityNoiseFreq = Math.max(0.02, Math.min(0.3, p.densityNoiseFreq));
   const exclusionR2 = exclusionR * exclusionR;
+  // v19 giant merged cells: the SAME low-frequency field that melts depth in Pass 2
+  // (seed offset +103, freq 0.16/cellSize) deletes sites here — several neighboring
+  // cells merge into one giant territory whose surviving perimeter walls read as long
+  // sweeping creases across the calm zone (the reference's smooth masses are enormous
+  // CELLS, not erased relief).
+  const depthVariationAmt = Number.isFinite(p.depthVariation)
+    ? Math.max(0, Math.min(1, p.depthVariation))
+    : 0;
+  const suppressFreqSites = 0.16 / Math.max(0.2, cellSize);
 
   const sites: Site[] = [];
   outer: for (let j = 0; j < ny; j++) {
@@ -296,6 +320,11 @@ function generateSites(
         p.attractorMode, u, v, p.attractorX, p.attractorY,
         p.attractorRadius, p.attractorFalloff,
       );
+      if (suppressGen && depthVariationAmt > 0) {
+        const sn01 = (suppressGen.noise(cx * suppressFreqSites, cy * suppressFreqSites) + 1) * 0.5;
+        const kill = smoothstep(0.66, 0.8, sn01) * SUPPRESSION_KILL * depthVariationAmt;
+        if (kill > 0 && rand() < kill) continue;
+      }
       let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
       // v16 patchy density: low-frequency noise multiplies local density so giant cells
       // (density < 1) and dense clusters (density > 1) coexist across the panel.
@@ -510,10 +539,16 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // ("Empty = the starburst system is off").
     const starburstActive = fociPhys.length > 0;
     const zoneR = starburstActive ? POLAR_ZONE_SIGMAS * sigmaRadial : 0;
+    // Shared with Pass 2's depth-melt AND the v19 site deletion in generateSites — one
+    // field decides both which zones calm down and which cells merge away.
+    const suppressGen = Number.isFinite(p.depthVariation) && p.depthVariation > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 103)
+      : null;
     const sites = generateSites(
       p, rand, densityNoiseGen,
       starburstActive ? fociPhys : [],
       starburstActive ? zoneR * POLAR_EXCLUSION_FRACTION : 0,
+      suppressGen,
     );
     let cartesianCount = sites.length;
     if (starburstActive) {
@@ -684,9 +719,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 97)
       : null;
     const crestFreq = 0.25 / Math.max(0.2, p.cellSize);
-    const suppressGen = depthVariation > 0
-      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 103)
-      : null;
+    // suppressGen was created before generateSites (v19 site deletion shares the field).
     const suppressFreq = 0.16 / Math.max(0.2, p.cellSize);
     const seamDepthBase = Math.max(0.05, p.seamDepth);
     // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
@@ -770,7 +803,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (wallNoiseGen) {
           const wn = wallNoiseGen.noise(x * wallNoiseFreq, y * wallNoiseFreq);
           wallScale *= Math.max(0.3, 1 + 0.6 * wn + 1.1 * jnS);
-          crestW *= Math.max(0.15, 1 + RIDGE_WIDTH_SWING * wn + 1.2 * jnS);
+          // Junction DELTAS use a wider gate than the lift term: the plateau starts
+          // flaring well before the corner, forming the bold triangular Y-masses.
+          const jnW = smoothstep(0.55, 0.95, jn);
+          crestW *= Math.max(0.15, 1 + RIDGE_WIDTH_SWING * wn + JUNCTION_DELTA_GAIN * jnW);
         }
         if (cellSizeGradient > 0) {
           wallScale *= 1 + cellSizeGradient * mask * 0.6;
@@ -817,6 +853,21 @@ export class VoronoiReliefGen implements ReliefGenerator {
             bowlH -= pillowAmt * amtVar * 0.65 * pillowT;
             if (bowlH < 0) bowlH = 0;
           }
+        }
+        // v19 scooped floors: a per-cell hash direction tilts the pocket so its deepest
+        // point shifts off-center — steep wall on one flank, long ramp on the other (the
+        // reference's pockets are carved directionally, never radially symmetric). The
+        // tilt is purely REDUCTIVE: the deep flank keeps full depth and the shallow flank
+        // ramps up, so max depth never exceeds 1 — deepening instead would drive cells
+        // into the output clamp, whose crease renders as serrated pocket rims. The factor
+        // is 1 at the boundary (bowlH = 0) so ridges and shared walls stay put.
+        if (depthVariation > 0 && bowlH > 0) {
+          const tiltAng = cellHash01(ownerIdx, seed + 41) * Math.PI * 2;
+          const rad = Math.max(0.2, sites[ownerIdx].radius);
+          const tilt = (Math.cos(tiltAng) * (qx - sites[ownerIdx].x)
+            + Math.sin(tiltAng) * (qy - sites[ownerIdx].y)) / rad;
+          const tiltT = (Math.max(-0.9, Math.min(0.9, tilt)) + 0.9) / 1.8;
+          bowlH *= 1 - FLOOR_TILT_GAIN * depthVariation * tiltT * bowlH;
         }
         // invertProfile: carve the boundary instead of the interior (domed floors).
         if (p.invertProfile > 0.5) {

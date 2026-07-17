@@ -217,9 +217,22 @@ target_sites = (mesh_x * mesh_y) / max(0.01, cell_size * cell_size)
 n_candidates = int(min(8000, max(80, target_sites * 6.0)))
 
 sites = []
+suppress_freq = 0.16 / max(0.2, cell_size)
 for _k in xrange(n_candidates):
     cx = random.random() * mesh_x
     cy = random.random() * mesh_y
+    # v19 giant merged cells: the same low-frequency field that melts depth in the
+    # height pass (seed+103) deletes candidate sites — several neighboring cells merge
+    # into one giant territory whose surviving perimeter walls read as long sweeping
+    # creases across the calm zone.
+    if depth_variation > 0.0:
+        sn01 = (vnoise(cx * suppress_freq, cy * suppress_freq, seed + 103) + 1.0) * 0.5
+        st = (sn01 - 0.66) / 0.14
+        if st < 0.0: st = 0.0
+        elif st > 1.0: st = 1.0
+        st = st * st * (3.0 - 2.0 * st)
+        if random.random() < 0.9 * depth_variation * st:
+            continue
     rmin = local_min_dist(cx, cy)
     # jitter randomizes the local radius +/-30% (symmetric) -- cell-size variety
     # (V1 kept this input reserved/unused; V2 makes it live).
@@ -464,7 +477,13 @@ for j in xrange(g_rows):
         if wall_width > 0.0:
             wn = vnoise(px * wall_noise_freq, py * wall_noise_freq, seed + 83)
             wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
-            crest_w *= max(0.15, 1.0 + 1.2 * wn + 1.2 * jn_s)
+            # Junction DELTAS use a wider gate than the lift term: the plateau flares
+            # well before the corner into bold triangular Y-masses.
+            jn_w = (jn - 0.55) / 0.4
+            if jn_w < 0.0: jn_w = 0.0
+            elif jn_w > 1.0: jn_w = 1.0
+            jn_w = jn_w * jn_w * (3.0 - 2.0 * jn_w)
+            crest_w *= max(0.15, 1.0 + 1.2 * wn + 2.2 * jn_w)
         w = seam_depth * max(0.02, inr - crest_w) * wall_scale
         if w < 0.02: w = 0.02
         tw_raw = (db - crest_w) / w
@@ -504,7 +523,17 @@ for j in xrange(g_rows):
             if st < 0.0: st = 0.0
             elif st > 1.0: st = 1.0
             st = st * st * (3.0 - 2.0 * st)
-            cell_depth_mul *= 1.0 - 0.65 * depth_variation * st
+            cell_depth_mul *= 1.0 - 0.5 * depth_variation * st
+        # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's deepest
+        # point off-center — steep wall on one flank, long ramp on the other. Purely
+        # reductive (shallow flank ramps up); factor is 1 at the boundary (v = 0).
+        if depth_variation > 0.0 and v > 0.0:
+            tilt_ang = _cell_hash01(owner, seed + 41) * math.pi * 2.0
+            rad = max(0.2, inradius[owner] * 2.0)
+            tilt = (math.cos(tilt_ang) * (px - sx[owner])
+                    + math.sin(tilt_ang) * (py - sy[owner])) / rad
+            tilt_t = (max(-0.9, min(0.9, tilt)) + 0.9) / 1.8
+            v *= 1.0 - 0.7 * depth_variation * tilt_t * v
         v = v * cell_depth_mul
         # v16 base superposition: ridge tops follow the wave (z_cell = 1 at
         # ridge for pockets), then the whole field renormalizes to [0,1].
