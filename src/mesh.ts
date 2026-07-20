@@ -5,9 +5,12 @@ import type { VoronoiReliefGen } from './noise/voronoi-relief';
 import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
 import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
-import { gridMinMax } from './geometry';
+import { gridMinMax, weightedSmooth } from './geometry';
+import { closeGrid, contourFolds, slopeMask } from './drape';
 
-/** Sample a depth map image into a grid of raw [0,1] grayscale values. */
+/** Sample a depth map image into a grid of raw [0,1] grayscale values.
+ *  Bilinear interpolation — nearest-neighbor stair-stepped low-res sources, forcing heavy
+ *  dmSmoothing blur that melted the form detail the drape model needs. */
 function sampleDepthMapGrid(
   imgData: ImageData, imgW: number, imgH: number,
   cols: number, rows: number,
@@ -15,12 +18,22 @@ function sampleDepthMapGrid(
   const grid: number[][] = [];
   for (let j = 0; j < rows; j++) {
     grid[j] = [];
+    const fy = (j / (rows - 1)) * (imgH - 1);
+    const iy0 = Math.min(Math.floor(fy), imgH - 1);
+    const iy1 = Math.min(iy0 + 1, imgH - 1);
+    const ty = fy - iy0;
     for (let i = 0; i < cols; i++) {
-      const u = i / (cols - 1), v = j / (rows - 1);
-      const ix = Math.min(Math.floor(u * imgW), imgW - 1);
-      const iy = Math.min(Math.floor(v * imgH), imgH - 1);
-      const idx = (iy * imgW + ix) * 4;
-      grid[j][i] = imgData.data[idx] / 255;
+      const fx = (i / (cols - 1)) * (imgW - 1);
+      const ix0 = Math.min(Math.floor(fx), imgW - 1);
+      const ix1 = Math.min(ix0 + 1, imgW - 1);
+      const tx = fx - ix0;
+      const p00 = imgData.data[(iy0 * imgW + ix0) * 4];
+      const p10 = imgData.data[(iy0 * imgW + ix1) * 4];
+      const p01 = imgData.data[(iy1 * imgW + ix0) * 4];
+      const p11 = imgData.data[(iy1 * imgW + ix1) * 4];
+      const top = p00 * (1 - tx) + p10 * tx;
+      const bot = p01 * (1 - tx) + p11 * tx;
+      grid[j][i] = (top * (1 - ty) + bot * ty) / 255;
     }
   }
   return grid;
@@ -153,18 +166,14 @@ export function generateNoiseMesh(): void {
 
 export function generateDepthMapMesh(): void {
   const t0 = performance.now();
-  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing, frequency,
-          noiseExp, peakExp, valleyExp, valleyFloor, distortion, warpFreq, warpCurl,
-          contrast, sharpness, smoothIter, smoothStr,
-          seed, octaves, persistence, lacunarity, meshX, meshY, resolution, noiseType, baseThickness } = STATE;
+  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing,
+          drapeFoldScale, drapeFoldDepth, drapeFoldWarp, drapeThickness,
+          seed, meshX, meshY, resolution, baseThickness } = STATE;
 
   if (!depthMap) { STATE.vertices = null; return; }
 
   const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
-
-  const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
-  const gen = createNoiseGen(noiseType, seed, noiseConfig);
 
   const tmpCanvas = document.createElement('canvas');
   tmpCanvas.width = depthMap.width;
@@ -173,62 +182,81 @@ export function generateDepthMapMesh(): void {
   tmpCtx.drawImage(depthMap, 0, 0);
   const imgData = tmpCtx.getImageData(0, 0, depthMap.width, depthMap.height);
 
-  const effectiveBlend = STATE.mode === 'depthmap' ? 0 : blend;
   const bt = STATE.watertight ? Math.max(0.01, baseThickness) : baseThickness;
   const cutDepth = Math.min(dmHeightScale, bt);
 
-  if (effectiveBlend > 0) {
-    // Blend approach matching the p5.js prototype: both noise and depth map
-    // normalized to [0, 1], linearly blended in shared space, then a single
-    // CNC normalization at the end. This ensures both surfaces occupy the
-    // same z-range so the blend slider produces a natural transition.
-    const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
-
-    const noiseVerts = sampleNoiseGrid({
-      cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp, valleyFloor,
-      contrast, sharpness, octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
-      gen, warpGen,
-    });
-
-    // Smooth noise independently, then normalize to [0, 1]
-    const smoothedNoise = smoothIter > 0 ? weightedSmooth(noiseVerts, rows, cols, smoothIter, smoothStr) : noiseVerts;
-    const [nMin, nMax] = gridMinMax(smoothedNoise, rows, cols);
-    const nRange = nMax - nMin || 1;
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++)
-        smoothedNoise[j][i] = (smoothedNoise[j][i] - nMin) / nRange;
-
-    // --- Depth map grid: smooth then normalize to [0, 1] (same order as pure DM path) ---
-    const dmVerts = sampleDepthMapGrid(imgData, depthMap.width, depthMap.height, cols, rows);
-    const smoothedDM = dmSmoothing > 0 ? weightedSmooth(dmVerts, rows, cols, dmSmoothing, 0.6) : dmVerts;
-    const [dmMin, dmMax] = gridMinMax(smoothedDM, rows, cols);
+  if (STATE.mode === 'blend') {
+    // DRAPE compositor — fabric membrane INTERACTING with the depth-map form (src/drape.ts).
+    // The fabric is not "heights added on top": the under-form's fine detail transmits
+    // through the cloth wherever the membrane is in CONTACT with it, and disappears where
+    // the fabric bridges. The image's full resolution is the hard gate — the fine channel
+    // is never pre-blurred (dmSmoothing shapes only the low-frequency form used for the
+    // envelope/membrane).
+    //   dmFine    : full-detail form (bilinear sample, no smoothing)
+    //   dmForm    : low-frequency form (dmSmoothing) — envelope + membrane skeleton
+    //   envelope  : morphological closing of dmForm — tension bridging over concavities
+    //   membrane  : lerp(dmForm, envelope, tension) + fabric thickness
+    //   contact   : 1 where the membrane touches the form, 0 where it bridges
+    //   h = membrane + detail·conform·contact + folds·foldDepth·taut·(slack-weighted)
+    //   no-penetration: h = max(h, dmFine)
+    const dmFine = sampleDepthMapGrid(imgData, depthMap.width, depthMap.height, cols, rows);
+    // Normalize the fine channel first; the form channel is smoothed FROM the normalized
+    // fine channel so detail = fine − form is consistent.
+    const [dmMin, dmMax] = gridMinMax(dmFine, rows, cols);
     const dmRange = dmMax - dmMin || 1;
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++)
-        smoothedDM[j][i] = (smoothedDM[j][i] - dmMin) / dmRange;
+        dmFine[j][i] = (dmFine[j][i] - dmMin) / dmRange;
+    const dmForm = dmSmoothing > 0 ? weightedSmooth(dmFine, rows, cols, dmSmoothing, 0.6) : dmFine;
 
-    // --- Blend in shared [0, 1] space, then CNC normalize once ---
-    // Both surfaces in [0, 1]. blend=0 -> pure depth map, blend=1 -> noise
-    // floored by depth map (noise adds texture above it but never caves in).
-    const b = effectiveBlend;
-    const blended: number[][] = [];
+    const tension = Math.max(0, Math.min(1, blend));
+    const conform = Math.max(0, Math.min(1, STATE.drapeConform));
+    // Bridge radius scales with tension: 0 → the membrane hugs the form; 1 → the fabric
+    // spans concavities up to ~12% of the panel width.
+    const bridgeRadius = Math.round(tension * 0.12 * cols);
+    const envelope = closeGrid(dmForm, rows, cols, bridgeRadius);
+    const thicknessNorm = cutDepth > 0 ? drapeThickness / cutDepth : 0;
+    const membrane: number[][] = [];
+    const contact: number[][] = [];
     for (let j = 0; j < rows; j++) {
-      blended[j] = [];
+      membrane[j] = [];
+      contact[j] = [];
       for (let i = 0; i < cols; i++) {
-        const lerped = b * smoothedNoise[j][i] + (1 - b) * smoothedDM[j][i];
-        // Depth map is the floor -- noise can add texture above it but never cave in
-        blended[j][i] = Math.max(lerped, smoothedDM[j][i]);
+        membrane[j][i] = dmForm[j][i] * (1 - tension) + envelope[j][i] * tension + thicknessNorm;
+        // Gap between the membrane and the form (thickness excluded): 0 = resting on the
+        // form (fine detail shows through), > ~5% of the height range = fully bridged.
+        const gap = tension * (envelope[j][i] - dmForm[j][i]);
+        const t = Math.max(0, Math.min(1, (gap - 0.005) / 0.045));
+        contact[j][i] = 1 - t * t * (3 - 2 * t);
       }
     }
 
-    // CNC z-model: scale blended [0,1] to [bt - cutDepth, bt]
+    const folds = contourFolds(membrane, rows, cols, drapeFoldScale, drapeFoldWarp, seed);
+    const taut = slopeMask(membrane, rows, cols);
+    const draped: number[][] = [];
+    for (let j = 0; j < rows; j++) {
+      draped[j] = [];
+      for (let i = 0; i < cols; i++) {
+        const detail = dmFine[j][i] - dmForm[j][i];
+        // Folds concentrate in slack/bridged zones; cloth pressed against the form is
+        // taut and carries fewer wrinkles.
+        const slack = 0.35 + 0.65 * (1 - contact[j][i]);
+        const h = membrane[j][i]
+          + detail * conform * contact[j][i]
+          + folds[j][i] * drapeFoldDepth * taut[j][i] * slack;
+        // No-penetration: the fabric can sag between supports but never enter the form.
+        draped[j][i] = Math.max(0, Math.min(1, Math.max(h, dmFine[j][i])));
+      }
+    }
+
+    // CNC z-model: scale [0,1] to [bt - cutDepth, bt]
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++) {
-        const raw = (bt - cutDepth) + blended[j][i] * cutDepth + dmOffset;
-        blended[j][i] = Math.max(0, Math.min(bt, raw));
+        const raw = (bt - cutDepth) + draped[j][i] * cutDepth + dmOffset;
+        draped[j][i] = Math.max(0, Math.min(bt, raw));
       }
 
-    STATE.vertices = blended;
+    STATE.vertices = draped;
   } else {
     // Pure depth map path -- no noise, original pipeline unchanged
     const verts = sampleDepthMapGrid(imgData, depthMap.width, depthMap.height, cols, rows);
@@ -272,28 +300,7 @@ export function generateMesh(): void {
   });
 }
 
-export function weightedSmooth(verts: number[][], rows: number, cols: number, iterations: number, strength: number): number[][] {
-  let sm = verts;
-  for (let iter = 0; iter < iterations; iter++) {
-    const nv: number[][] = [];
-    for (let j = 0; j < rows; j++) {
-      nv[j] = [];
-      for (let i = 0; i < cols; i++) {
-        let ws = 0, tw = 0;
-        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-          const nj = j + dj, ni = i + di;
-          if (nj >= 0 && nj < rows && ni >= 0 && ni < cols) {
-            const w = (dj === 0 && di === 0) ? 4 : (dj === 0 || di === 0) ? 2 : 1;
-            ws += sm[nj][ni] * w; tw += w;
-          }
-        }
-        nv[j][i] = sm[j][i] * (1 - strength) + (ws / tw) * strength;
-      }
-    }
-    sm = nv;
-  }
-  return sm;
-}
+// weightedSmooth moved to geometry.ts (shared with drape.ts, no import cycle).
 
 // Debounced generation — moved here to avoid circular dependency with stats.ts
 const VIEW_ONLY_KEYS = new Set(['orbit','tilt','roll','zoom']);

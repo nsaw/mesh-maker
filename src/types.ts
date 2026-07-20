@@ -13,6 +13,9 @@ export type ReliefPolarity = 'pockets' | 'domes';
 export type ReliefProfile = 'hemisphere' | 'cosine' | 'parabolic';
 export type ReliefAttractorMode = 'none' | 'vertical' | 'horizontal' | 'radial' | 'point';
 export type ReliefBaseMode = 'flat' | 'wave';
+/** Radial-foci elongation axis: 'rays' = cells stretched along the radius from each focus
+ *  (sunburst), 'rings' = stretched tangentially (concentric), 'spiral' = radius + ~30°. */
+export type ReliefRadialMode = 'rays' | 'rings' | 'spiral';
 
 export interface ReliefParams {
   cellSize: number;
@@ -46,6 +49,20 @@ export interface ReliefParams {
    *  CNC normalizer drops to z=0). Produces the spike-finger zone seen in lafabrica
    *  panels where cells become disconnected protrusions. */
   voidStrength: number;
+  /** When true, the bowl profile is inverted: `bowlH := 1 − bowlH`. The Worley F2-F1 field
+   *  gives distDiff ≈ 0 at cell boundaries and large at cell centers. Without inversion, the
+   *  height field is carved INSIDE the cells (pockets) or raised AT the cells (domes). With
+   *  inversion, the carving moves to the cell BOUNDARIES — cell INTERIORS sit at the
+   *  original surface with a dome-shaped rise from the carved seam to the center. Matches
+   *  the reference panel's "domed floors with carved valleys between" signature. Boolean
+   *  semantics expressed as 0/1 to keep the existing slider UI binding simple. */
+  invertProfile: number;
+  /** Seam V-groove sharpness in [0, 1]. 0 = smooth profile (dh/dt = 0 at the cell boundary
+   *  → round-bottom gutter); 1 = linear ramp (dh/dt = 1 at the boundary → knife-edge V-groove).
+   *  Linearly blends `bowlH` between the chosen profile curve and a linear ramp `bowlT`. The
+   *  rendered mesh can show polygon aliasing at high sharpness — unavoidable for true V-grooves
+   *  and acceptable for CNC V-bit carving paths. */
+  seamSharpness: number;
   /** Patches the otherwise-smooth attractor mask with a 2D noise field — produces
    *  patchy, random-looking INTENSITY variation in the cellular zone (cell HEIGHTS
    *  and SHAPES vary; cell COUNT/DENSITY stays a smooth gradient driven by the
@@ -54,11 +71,67 @@ export interface ReliefParams {
   attractorNoise: number;
   /** Spatial frequency of the attractor noise field. Lower = larger blobs. */
   attractorNoiseFreq: number;
-  /** Per-pixel deviation of the anisotropy angle from the global `anisotropyAngle`,
-   *  driven by a flow-noise field. 0 = uniform global angle (current behavior),
-   *  1 = anisotropy direction varies wildly across the panel. Produces the
-   *  organic, randomly-stretched-in-different-directions look. */
-  flowAnisotropy: number;
+  /** v16 base-surface superposition amplitude. The cellular carve is ADDED to a smooth
+   *  low-frequency wave field of this amplitude, so ridge tops follow an undulating
+   *  surface instead of a flat reference plane. 0 = flat base (with baseMode 'flat',
+   *  the base term is forced to 0 regardless). */
+  baseAmplitude: number;
+  /** Spatial frequency of the base wave field (independent of the warp frequency). */
+  baseFrequency: number;
+  /** Fraction of the normalized cell distance held at base level around every cell
+   *  boundary — walls get finite width instead of knife-edge ridge lines. The bowl
+   *  profile is remapped to the remaining (1 − wallWidth) band. */
+  wallWidth: number;
+  /** Low-frequency multiplicative noise on local site density. 0 = uniform jittered
+   *  grid; higher values produce patchy multi-scale cell sizes (giant cells next to
+   *  small ones — the lafabrica signature). */
+  densityNoise: number;
+  /** Spatial frequency of the density noise field. Lower = larger patches. */
+  densityNoiseFreq: number;
+  /** v16.1 pillowed floors: past the bowl's saturation point the floor rises back into a
+   *  soft central mound (double-curvature pockets). 0 = plain saturated floors. */
+  pillow: number;
+  /** Fraction of cells that receive a pillow (seeded per-cell hash) — the reference mixes
+   *  pillowed and plain pockets. */
+  pillowCoverage: number;
+  /** v16.3 per-cell depth variation in [0, 1]: hash-quantized depth tiers (deep /
+   *  intermediate / shallow-suppressed) plus per-cell seamDepth jitter that makes wall
+   *  profiles asymmetric across shared ridges. High values suppress some cells into the
+   *  surrounding mass (the spec's "large calm surface masses"). */
+  depthVariation: number;
+  /** v17 crest variation in [0, 1]: ridge-local height noise applied only to crests and
+   *  shoulders (scaled by (1−bowlH)^1.5) — fragments the upper envelope into mesas,
+   *  saddles, and differing adjacent crest heights without a dominant macro wave. */
+  crestVariation: number;
+  /** v16.3 junction lift in [0, 1]: ridge crests rise toward three-way junctions
+   *  (detected via (F3 − F1)/(2R) → 0) and the wall band widens there — star-shaped
+   *  elevated nodes with crests dipping at edge midpoints. */
+  junctionLift: number;
+  /** Radial focal points (normalized [0,1]² panel coords), already pruned to the active
+   *  count by `sampleReliefParamsFromState`. Empty = the starburst system is off and the
+   *  sampler is byte-identical to non-foci output. v16.2: each focus seeds a jittered
+   *  POLAR SITE LATTICE (nucleus + concentric rings) whose Voronoi cells are radially
+   *  elongated petals — a site layout, not a warp or metric trick, so cell boundaries
+   *  stay clean curves. */
+  radialFoci: Array<{ x: number; y: number }>;
+  /** Petal elongation: the lattice's radial ring gap is (1 + radialStrength) × the
+   *  tangential pitch, so 1.2 ≈ 2.2:1 petal aspect. */
+  radialStrength: number;
+  /** Focal zone radius σ as a fraction of the panel diagonal — the polar lattice owns a
+   *  disc of ~σ around each focus (Cartesian sites are excluded slightly inside it). */
+  radialFalloff: number;
+  /** Focal cell scale in [0, 2]: widens the lattice pitch (bigger petals) and expands the
+   *  continuous radius/bowl normalization near foci. v20: values ABOVE 1 enter the
+   *  stretched-fan regime — the focal zone gets progressively shallower while the lattice
+   *  keeps its radially-converging walls, so the focus reads as drape-like creases
+   *  converging to a pinch point in a calm mass instead of a deep starburst. */
+  radialGrow: number;
+  /** Lattice jitter in [0,1] — randomizes ring radii and sector angles so foci read as
+   *  organic fans, not mandalas. */
+  radialWarp: number;
+  /** Lattice arrangement: 'rays' = radially elongated petals, 'rings' = tangential arcs,
+   *  'spiral' = petals with golden-angle ring offsets joining into spiral arms. */
+  radialMode: ReliefRadialMode;
 }
 
 export interface ReliefSampleParams extends ReliefParams {

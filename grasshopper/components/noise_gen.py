@@ -56,7 +56,32 @@ relief_cell_size_gradient  = _relief_default('relief_cell_size_gradient',  0.0)
 relief_void_strength       = _relief_default('relief_void_strength',       0.0)
 relief_attractor_noise     = _relief_default('relief_attractor_noise',     0.0)
 relief_attractor_noise_freq= _relief_default('relief_attractor_noise_freq',0.15)
-relief_flow_anisotropy     = _relief_default('relief_flow_anisotropy',     0.0)
+# v16: per-pixel flow anisotropy removed (it tore cell ownership — the space-warp below
+# replaces it). relief_flow_anisotropy pins on old canvases are simply ignored.
+relief_invert_profile      = _relief_default('relief_invert_profile',      0.0)
+relief_seam_sharpness      = _relief_default('relief_seam_sharpness',      0.0)
+relief_base_amp            = _relief_default('relief_base_amp',            0.0)
+relief_base_freq           = _relief_default('relief_base_freq',           0.1)
+relief_wall_width          = _relief_default('relief_wall_width',          0.0)
+relief_density_noise       = _relief_default('relief_density_noise',       0.0)
+relief_density_noise_freq  = _relief_default('relief_density_noise_freq',  0.08)
+relief_pillow              = _relief_default('relief_pillow',              0.0)
+relief_pillow_coverage     = _relief_default('relief_pillow_coverage',     0.6)
+relief_depth_variation     = _relief_default('relief_depth_variation',     0.0)
+relief_junction_lift       = _relief_default('relief_junction_lift',       0.0)
+relief_crest_variation     = _relief_default('relief_crest_variation',     0.0)
+relief_radial_foci_count   = _relief_default('relief_radial_foci_count',   0)
+relief_radial_focus1_x     = _relief_default('relief_radial_focus1_x',     0.5)
+relief_radial_focus1_y     = _relief_default('relief_radial_focus1_y',     0.25)
+relief_radial_focus2_x     = _relief_default('relief_radial_focus2_x',     0.25)
+relief_radial_focus2_y     = _relief_default('relief_radial_focus2_y',     0.6)
+relief_radial_focus3_x     = _relief_default('relief_radial_focus3_x',     0.75)
+relief_radial_focus3_y     = _relief_default('relief_radial_focus3_y',     0.8)
+relief_radial_strength     = _relief_default('relief_radial_strength',     1.5)
+relief_radial_falloff      = _relief_default('relief_radial_falloff',      0.3)
+relief_radial_grow         = _relief_default('relief_radial_grow',         0.45)
+relief_radial_warp         = _relief_default('relief_radial_warp',         0.4)
+relief_radial_mode         = _relief_default('relief_radial_mode',         'rays')         # 'rays'|'rings'|'spiral'
 # warp_freq for the relief sampler — mirrors `warpFreq` in TS sampleReliefParamsFromState.
 # Default 0.08 matches the canonical TS relief presets; the input pin can override per-run.
 relief_warp_freq           = _relief_default('relief_warp_freq',           0.08)
@@ -375,6 +400,24 @@ class VoronoiReliefNoise(object):
         if t < 0.0: t = 0.0
         elif t > 1.0: t = 1.0
         return t * t * (3.0 - 2.0 * t)
+    def _edge_hash01(self, a, b, seed):
+        # v21 per-EDGE hash. ORDERED (a, b) gives each SIDE of a shared ridge its own
+        # value (wall asymmetry); pass (min, max) for a value both sides agree on.
+        return self._cell_hash01(((a + 1) * 7919 + b + 1) & 0x7fffffff, seed)
+    def _smootherstep(self, e0, e1, x):
+        # Quintic smootherstep — zero first AND second derivatives at both edges (G2).
+        if e1 <= e0:
+            return 0.0 if x < e0 else 1.0
+        t = (x - e0) / (e1 - e0)
+        if t < 0.0: t = 0.0
+        elif t > 1.0: t = 1.0
+        return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+    def _cell_hash01(self, idx, seed):
+        # Deterministic per-cell hash in [0, 1) from the owning site index — drives which
+        # cells get pillowed floors. Mirrors cellHash01 in the TS sampler.
+        h = (((idx + 1) * 374761393) + ((seed & 0xffffffff) * 668265263)) & 0xffffffff
+        h = ((h ^ (h >> 13)) * 1274126177) & 0xffffffff
+        return float((h ^ (h >> 16)) & 0xffffffff) / 4294967296.0
     def _attractor_mask(self, mode, u, v, ax, ay, radius, falloff):
         if mode == 'none': return 1.0
         if mode == 'vertical':
@@ -393,38 +436,76 @@ class VoronoiReliefNoise(object):
         if mode == 'radial':
             return pow(1.0 - self._smoothstep(r * 0.5, r, d), shaped)
         return pow(self._smoothstep(r * 0.5, r, d), shaped)  # 'point'
-    def _dome(self, profile, d, R):
-        if R <= 0: return 0.0
-        t = min(1.0, d / R)
-        if profile == 'hemisphere':
-            inside = 1.0 - t * t
-            return math.sqrt(inside) if inside > 0 else 0.0
-        if profile == 'cosine':
-            return math.cos(t * math.pi * 0.5)
-        return max(0.0, 1.0 - t * t)  # parabolic
+    # (_dome removed with the F2-F1 algorithm — profile is now a falloff curve applied to
+    # the normalized F2-F1 differential inside sample_grid, not a per-site radial profile.)
     SITE_COUNT_MAX = 4096
     LOCAL_DENSITY_MAX = 4.0
-    # Radius field (Pass 1.5) Gaussian blend over sites within cutoff. Mirrors TS constants
-    # RADIUS_FIELD_SIGMA_CELLS and RADIUS_FIELD_CUTOFF_SIGMAS exactly.
-    RADIUS_FIELD_SIGMA_CELLS = 0.8
-    RADIUS_FIELD_CUTOFF_SIGMAS = 3.0
-    # Coarse-grid pitch in σ units for the Rfield optimization. See TS sampler.
-    RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5
-    # Minimum seam smoothstep transition width in pixel units (anti-aliasing floor).
-    SEAM_MIN_PIXEL_WIDTH = 3.0
-    # Cap on the floor as a fraction of R per-pixel (prevents floor from inverting cells at low resolution).
-    SEAM_FLOOR_MAX_R_FRACTION = 0.3
     # Output clamp magnitude. Used with explicit negative sign at carve sites.
     OUTPUT_HEIGHT_CLAMP = 1.05
-    def _gen_sites(self, p, warp_gen):
+    # v16 flow-warp + v16.2 polar-lattice + v18 boundary-distance constants — mirror the TS sampler.
+    FLOW_WARP_AMPLITUDE_CELLS = 0.9
+    POLAR_ZONE_SIGMAS = 1.0
+    POLAR_TANGENTIAL_PITCH_CELLS = 0.85
+    POLAR_EXCLUSION_FRACTION = 0.9
+    CREST_VARIATION_GAIN = 0.4
+    SUPPRESSION_STRENGTH = 0.5
+    JUNCTION_LIFT_GAIN = 0.1
+    # Crest plateau width modulation along each edge (chunky-to-thin ridge swings),
+    # clamped at 0.15x so ridges thin to threads but never vanish.
+    RIDGE_WIDTH_SWING = 1.2
+    # Junction deltas: the crest plateau flares toward three-way junctions into bold
+    # smooth triangular masses, pinching thin mid-edge (wider gate than the lift term).
+    JUNCTION_DELTA_GAIN = 6.0
+    # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's deepest point
+    # off-center. Purely reductive (shallow flank ramps up) so the clamp is never involved.
+    FLOOR_TILT_GAIN = 0.7
+    # v19 giant merged cells: site-deletion probability at full suppression-field strength.
+    SUPPRESSION_KILL = 0.9
+    # v20 ridge crown: rounded bead over the crest band (broad convex wall tops, never
+    # flat strips). Melted zones keep ghost creases via the 0.35 floor on the bead scale.
+    RIDGE_CROWN_GAIN = 0.15
+    # v20 stretched fans: radial_grow above 1 shallows the focal zone while the lattice
+    # keeps radially-converging walls (drape-like fan creases in a calm mass).
+    FOCAL_CALM_GAIN = 0.8
+    # v21 edge dissolution ceiling (~6% of edges dissolve strongly, ~20% weaken).
+    EDGE_DISSOLVE_MAX = 0.7
+    # v21 stock-plane soft cap (pockets polarity): positive excursions saturate into
+    # flat plateaus just above the base wave — the references' ridge tops are remnants
+    # of the original stock face. Also converts pyramid junctions into saddles.
+    STOCK_CAP_START = 0.04
+    STOCK_CAP_SPAN = 0.13
+    # v21.1 slope budget (normalized depth per inch of wall extent), sized against the
+    # tempered profile family's PEAK slope: ~68 deg at the default 2.4in cut depth.
+    SLOPE_DEPTH_BUDGET = 0.55
+    # v21.1 minimum feature floors — PHYSICAL constants (tool-radius scale), never
+    # derived from sample pitch (geometry must not change shape with grid resolution).
+    WALL_MIN_PHYS = 0.3
+    CROWN_MIN_PHYS = 0.25
+    # v23 membrane cushions: fixed SOR sweep count for determinism.
+    MEMBRANE_SWEEPS = 80
+    MEMBRANE_OMEGA = 1.8
+    SIZE_DEPTH_MIN = 0.8
+    SIZE_DEPTH_MAX = 1.2
+    DENSITY_NOISE_GAIN = 1.6
+    FOCAL_EXPAND_GAIN = 1.7
+    FOCAL_EXPAND_CAP = 2.2
+    def _gen_sites(self, p, density_gen, exclusion_foci, exclusion_r, suppress_gen):
+        # v16: sites live on the unwarped jittered grid and are NEVER displaced — cell flow
+        # comes entirely from warping the query points (see _make_warp). Density is modulated
+        # by the attractor mask and a low-frequency noise field (giant-vs-small patches).
         spacing = max(0.2, p['cell_size'])
         nx = max(2, int(math.ceil(p['mesh_x'] / spacing)) + 1)
         ny = max(2, int(math.ceil(p['mesh_y'] / spacing)) + 1)
         sx = p['mesh_x'] / nx; sy = p['mesh_y'] / ny
-        # Warp tuning matches TS: amplitude scales with cellSize so warp is visible relative
-        # to grid spacing but never large enough to shove sites off-panel before the clamp.
-        warp_amp = (p.get('warp_distortion', 0.0) * spacing * 0.7) if warp_gen else 0.0
-        warp_freq = max(0.02, p.get('warp_frequency', 0.1))
+        dn_amt = max(0.0, min(1.5, p.get('density_noise', 0.0)))
+        dn_freq = max(0.02, min(0.3, p.get('density_noise_freq', 0.08)))
+        # v19 giant merged cells: the SAME low-frequency field that melts depth in the
+        # height pass (seed offset +103, freq 0.16/cell_size) deletes sites here — several
+        # neighboring cells merge into one giant territory whose surviving perimeter walls
+        # read as long sweeping creases across the calm zone.
+        dv_amt = max(0.0, min(1.0, p.get('depth_variation', 0.0)))
+        suppress_freq_sites = 0.16 / max(0.2, p['cell_size'])
+        killed_reserve = []
         sites = []
         # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
@@ -436,7 +517,22 @@ class VoronoiReliefNoise(object):
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
+                if suppress_gen is not None and dv_amt > 0.0:
+                    sn01 = (suppress_gen.noise(cx * suppress_freq_sites, cy * suppress_freq_sites) + 1.0) * 0.5
+                    kill = self._smoothstep(0.66, 0.8, sn01) * self.SUPPRESSION_KILL * dv_amt
+                    if kill > 0.0 and self._rand() < kill:
+                        if len(killed_reserve) < 8:
+                            killed_reserve.append([cx, cy])
+                        continue
                 local = max(0.0, min(self.LOCAL_DENSITY_MAX, 1.0 + p['density_strength'] * mask))
+                if density_gen is not None and dn_amt > 0.0:
+                    n = density_gen.noise(cx * dn_freq, cy * dn_freq)
+                    local *= max(0.1, min(self.LOCAL_DENSITY_MAX, 1.0 + dn_amt * n * self.DENSITY_NOISE_GAIN))
+                    # v17 heavy-tail spikes: abrupt scale jumps beside calm masses.
+                    spike = self._rand()
+                    if spike < 0.03 * dn_amt: local *= 3.0
+                    elif spike < 0.08 * dn_amt: local *= 0.12
+                local = min(self.LOCAL_DENSITY_MAX, max(0.1, local))
                 reps = int(math.floor(local))
                 if self._rand() < (local - math.floor(local)):
                     reps += 1
@@ -444,22 +540,142 @@ class VoronoiReliefNoise(object):
                     if len(sites) >= self.SITE_COUNT_MAX: break
                     jx = (self._rand() - 0.5) * p['jitter'] * sx
                     jy = (self._rand() - 0.5) * p['jitter'] * sy
-                    px = cx + jx; py = cy + jy
-                    if warp_gen and warp_amp > 0:
-                        wx = warp_gen.noise(px * warp_freq, py * warp_freq)
-                        wy = warp_gen.noise(px * warp_freq + 31.7, py * warp_freq + 17.3)
-                        px += wx * warp_amp; py += wy * warp_amp
-                    sites.append([
-                        max(0.0, min(p['mesh_x'], px)),
-                        max(0.0, min(p['mesh_y'], py)),
-                        0.0  # radius (set after Pass 1)
-                    ])
+                    px = max(0.0, min(p['mesh_x'], cx + jx))
+                    py = max(0.0, min(p['mesh_y'], cy + jy))
+                    # v21.1 minimum separation: jittered reps can land two sites arbitrarily
+                    # close, producing sliver cells narrower than any cuttable feature.
+                    min_sep2 = (0.35 * spacing) * (0.35 * spacing)
+                    too_close = False
+                    for sq in sites:
+                        ddx = sq[0] - px
+                        ddy = sq[1] - py
+                        if ddx * ddx + ddy * ddy < min_sep2:
+                            too_close = True
+                            break
+                    if too_close:
+                        continue
+                    # v16.2: polar lattices own the focal zones — Cartesian sites inside
+                    # an exclusion disc would shred the petal structure.
+                    if exclusion_r > 0.0:
+                        excluded = False
+                        for f in range(len(exclusion_foci)):
+                            dx = px - exclusion_foci[f][0]
+                            dy = py - exclusion_foci[f][1]
+                            if dx * dx + dy * dy < exclusion_r * exclusion_r:
+                                excluded = True
+                                break
+                        if excluded:
+                            continue
+                    sites.append([px, py, 0.0])
+        # Minimum-site floor: deletion is independent per candidate, so a small grid
+        # inside a strong suppression field can wipe out EVERY site — restore deleted
+        # cell centers (deterministic order) so the panel degrades to giant merged
+        # cells, never to the flat zero-site fallback. Reserve centers were captured
+        # BEFORE the focal exclusion check — revalidate so a restored site can't land
+        # inside a polar-owned disc and shred the petal lattice.
+        ri = 0
+        while len(sites) < 3 and ri < len(killed_reserve):
+            rx = killed_reserve[ri][0]; ry = killed_reserve[ri][1]
+            ri += 1
+            if exclusion_r > 0:
+                excluded = False
+                for f in range(len(exclusion_foci)):
+                    dx = rx - exclusion_foci[f][0]
+                    dy = ry - exclusion_foci[f][1]
+                    if dx * dx + dy * dy < exclusion_r * exclusion_r:
+                        excluded = True
+                        break
+                if excluded:
+                    continue
+            sites.append([rx, ry, 0.0])
         return sites
-    def _nearest_two(self, sites, x, y, cosA, sinA, aniso_scale):
-        # Anisotropy: rotate into stretched frame, scale x', take hypot. Rotation preserves length
-        # so we don't need to rotate back.
-        f1 = float('inf'); f2 = float('inf'); idx = 0
-        isotropic = (aniso_scale == 1.0)
+    def _make_warp(self, p, seed, warp_distortion):
+        # Flow warp W (global distortion/warpFreq sliders). Returns None when inactive.
+        # Sites are NEVER passed through W — only query points are. (v16.2: the starburst
+        # no longer lives here — see _gen_polar_sites.)
+        flow_amp = warp_distortion * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS
+        # Finite fallback before the clamp — max() propagates NaN into every warped query.
+        ff_raw = float(p.get('warp_frequency', 0.1))
+        if ff_raw != ff_raw or ff_raw == float('inf') or ff_raw == float('-inf'):
+            ff_raw = 0.1
+        flow_freq = max(0.02, ff_raw)
+        if flow_amp <= 0:
+            return None
+        flow_gen = SimplexNoise(seed + 17 + 13)
+        def warp(x, y):
+            qx = x + flow_gen.noise(x * flow_freq, y * flow_freq) * flow_amp
+            qy = y + flow_gen.noise(x * flow_freq + 31.7, y * flow_freq + 17.3) * flow_amp
+            return qx, qy
+        return warp
+    def _gen_polar_sites(self, foci_phys, zone_r, cell_size, radial_strength, radial_grow, jitter_amt, mode, mesh_x, mesh_y, sites):
+        # Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus
+        # jittered concentric rings whose RADIAL gap is (1 + radialStrength) x the
+        # tangential pitch — the Voronoi cells of that lattice are radially elongated
+        # petals fanning out of the node. 'rings' swaps the pitches (tangential arcs);
+        # 'spiral' advances each ring by the golden angle. Mirrors the TS sampler.
+        # v20 fan regime (radial_grow > 1): pitch stops growing with grow, the sector
+        # COUNT locks across rings so boundaries align into long radially-converging
+        # creases, angular jitter is damped, dropout reduced.
+        fan = radial_grow > 1.0
+        pitch_grow = 1.0 if fan else radial_grow
+        pitch_t = max(0.3, cell_size * self.POLAR_TANGENTIAL_PITCH_CELLS
+                      * (1.0 + 0.5 * max(0.0, min(2.0, pitch_grow))))
+        elong = 1.0 + max(0.0, min(4.0, radial_strength))
+        margin = max(0.2, cell_size)
+        for k in range(len(foci_phys)):
+            if len(sites) >= self.SITE_COUNT_MAX: break
+            cpx = foci_phys[k][0]; cpy = foci_phys[k][1]
+            sites.append([
+                max(0.0, min(mesh_x, cpx + (self._rand() - 0.5) * 0.2 * pitch_t)),
+                max(0.0, min(mesh_y, cpy + (self._rand() - 0.5) * 0.2 * pitch_t)),
+                0.0])
+            base_theta = self._rand() * 2.0 * math.pi
+            r = pitch_t * 0.75
+            ring = 0
+            sectors_locked = 0
+            while r < zone_r and len(sites) < self.SITE_COUNT_MAX:
+                if mode == 'rings':
+                    gap = pitch_t * 0.8
+                    pitch = pitch_t * elong
+                else:
+                    gap = pitch_t * elong * (1.0 + 0.1 * ring)
+                    pitch = pitch_t
+                r_mid = r + gap * 0.5
+                if fan and sectors_locked > 0:
+                    sectors = sectors_locked
+                else:
+                    sectors = max(4, int(round((2.0 * math.pi * r_mid) / pitch)))
+                if fan and sectors_locked == 0:
+                    sectors_locked = sectors
+                spiral_off = ring * 0.381966 * 2.0 * math.pi if mode == 'spiral' else 0.0
+                drop_p = 0.1 if fan else 0.25
+                jit_scale = 0.35 if fan else 1.0
+                for si in range(sectors):
+                    if len(sites) >= self.SITE_COUNT_MAX: break
+                    # v17 sector dropout — random spoke deletion breaks radial regularity.
+                    if self._rand() < drop_p * jitter_amt: continue
+                    th = (base_theta + spiral_off + ((si + 0.5) / float(sectors)) * 2.0 * math.pi
+                          + (self._rand() - 0.5) * jitter_amt * (2.0 * math.pi / sectors) * jit_scale)
+                    rr = r_mid + (self._rand() - 0.5) * jitter_amt * gap * 0.7
+                    sx0 = cpx + rr * math.cos(th)
+                    sy0 = cpy + rr * math.sin(th)
+                    if sx0 < -margin or sx0 > mesh_x + margin or sy0 < -margin or sy0 > mesh_y + margin:
+                        continue
+                    sites.append([
+                        max(0.0, min(mesh_x, sx0)),
+                        max(0.0, min(mesh_y, sy0)),
+                        0.0])
+                r += gap
+                ring += 1
+    def _nearest_three(self, sites, x, y, cosA, sinA, aniso_scale):
+        # CONSTANT anisotropic metric (v16 removed per-pixel rotation — a constant frame
+        # cannot tear ownership). F3 drives junction detection: at a three-way Voronoi
+        # corner F1 ≈ F2 ≈ F3, so (F3 − F1) → 0 exactly at junctions (v16.3).
+        # v18.1: also returns the COMPETITOR INDICES so callers can compute the exact
+        # bisector distance to the shared cell boundary.
+        f1 = float('inf'); f2 = float('inf'); f3 = float('inf'); f4 = float('inf')
+        idx = 0; idx2 = -1; idx3 = -1; idx4 = -1
+        isotropic = (aniso_scale <= 1.0001)
         for i in range(len(sites)):
             dx = x - sites[i][0]; dy = y - sites[i][1]
             if isotropic:
@@ -468,9 +684,14 @@ class VoronoiReliefNoise(object):
                 xr = dx * cosA + dy * sinA
                 yr = -dx * sinA + dy * cosA
                 d = math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-            if d < f1: f2 = f1; f1 = d; idx = i
-            elif d < f2: f2 = d
-        return f1, f2, idx
+            if d < f1: f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i
+            elif d < f2: f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = i
+            elif d < f3: f4 = f3; idx4 = idx3; f3 = d; idx3 = i
+            elif d < f4: f4 = d; idx4 = i
+        if f2 == float('inf'): idx2 = -1
+        if f3 == float('inf'): idx3 = -1
+        if f4 == float('inf'): idx4 = -1
+        return f1, f2, f3, f4, idx, idx2, idx3, idx4
     def _halton(self, index, base):
         result = 0.0; f = 1.0 / base; i = index
         while i > 0:
@@ -478,13 +699,17 @@ class VoronoiReliefNoise(object):
             i = i // base
             f /= base
         return result
-    def _lloyd_relax(self, sites, p, samples):
-        # One Lloyd pass — move each site toward the centroid of its assigned low-discrepancy samples.
+    def _lloyd_relax(self, sites, p, samples, warp_fn, pinned_from):
+        # One Lloyd pass — move each site toward the centroid of its assigned low-discrepancy
+        # samples. Samples are warped through W so relaxation happens in the same space the
+        # distance queries use.
         n = len(sites)
         sumX = [0.0] * n; sumY = [0.0] * n; counts = [0] * n
         for s in range(samples):
             x = self._halton(s + 1, 2) * p['mesh_x']
             y = self._halton(s + 1, 3) * p['mesh_y']
+            if warp_fn is not None:
+                x, y = warp_fn(x, y)
             best_idx = 0; best_d = float('inf')
             for i in range(n):
                 dx = sites[i][0] - x; dy = sites[i][1] - y
@@ -492,10 +717,29 @@ class VoronoiReliefNoise(object):
                 if d < best_d:
                     best_d = d; best_idx = i
             sumX[best_idx] += x; sumY[best_idx] += y; counts[best_idx] += 1
-        for i in range(n):
+        move_limit = min(n, max(0, pinned_from))
+        min_sep2 = 0.3 * 0.3
+        for i in range(move_limit):
             if counts[i] > 0:
-                sites[i][0] = sumX[i] / counts[i]
-                sites[i][1] = sumY[i] / counts[i]
+                # Warped centroids can land slightly outside the physical panel at high
+                # distortion — clamp so edge sites cannot drift off-panel and starve
+                # boundary cells.
+                nx = max(0.0, min(p['mesh_x'], sumX[i] / counts[i]))
+                ny = max(0.0, min(p['mesh_y'], sumY[i] / counts[i]))
+                # Relaxation must not defeat the minimum separation — reject moves that
+                # would land within the feature floor of any other site.
+                ok = True
+                for q in range(n):
+                    if q == i:
+                        continue
+                    ddx = sites[q][0] - nx
+                    ddy = sites[q][1] - ny
+                    if ddx * ddx + ddy * ddy < min_sep2:
+                        ok = False
+                        break
+                if ok:
+                    sites[i][0] = nx
+                    sites[i][1] = ny
     def sample_grid(self, p):
         # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
         # sampler — same seed produces same site layout and wave field even when the
@@ -503,121 +747,220 @@ class VoronoiReliefNoise(object):
         seed = int(p.get('seed', 0)) & 0xffffffff
         self._prng_state = seed
         self.wave = SimplexNoise(seed + 17)
-        warp_gen = SimplexNoise(seed + 17 + 13) if p.get('warp_distortion', 0.0) > 0 else None
         attractor_noise_gen = SimplexNoise(seed + 17 + 29) if p.get('attractor_noise', 0.0) > 0 else None
-        flow_gen = SimplexNoise(seed + 17 + 47) if p.get('flow_anisotropy', 0.0) > 0 else None
-        sites = self._gen_sites(p, warp_gen)
+        density_noise_gen = SimplexNoise(seed + 17 + 71) if p.get('density_noise', 0.0) > 0 else None
+        # Starburst foci — sanitize defensively (mirrors the TS sampler): filter non-finite,
+        # clamp to [0,1], cap to 3.
+        foci_norm = []
+        for f in p.get('radial_foci', []):
+            if len(foci_norm) >= 3: break
+            fx = float(f[0]); fy = float(f[1])
+            if fx != fx or fy != fy: continue
+            if fx == float('inf') or fx == float('-inf'): continue
+            if fy == float('inf') or fy == float('-inf'): continue
+            foci_norm.append([max(0.0, min(1.0, fx)), max(0.0, min(1.0, fy))])
+        foci_phys = [[f[0] * p['mesh_x'], f[1] * p['mesh_y']] for f in foci_norm]
+        # Finite fallbacks BEFORE clamping — min/max propagate NaN, so a bad pin value
+        # could otherwise poison sigma, the polar lattice, or focal expansion.
+        def _finite(v, fallback):
+            v = float(v)
+            if v != v or v == float('inf') or v == float('-inf'):
+                return fallback
+            return v
+        sigma_radial = max(1e-3,
+            max(0.02, min(0.6, _finite(p.get('radial_falloff', 0.3), 0.3)))
+            * math.sqrt(p['mesh_x'] * p['mesh_x'] + p['mesh_y'] * p['mesh_y']))
+        radial_strength = max(0.0, min(4.0, _finite(p.get('radial_strength', 1.5), 0.0)))
+        radial_grow = max(0.0, min(2.0, _finite(p.get('radial_grow', 0.45), 0.0)))
+        radial_warp_amt = max(0.0, min(1.0, _finite(p.get('radial_warp', 0.4), 0.0))) if foci_phys else 0.0
+        radial_mode = str(p.get('radial_mode', 'rays'))
+        # Sanitize distortion ONCE — sizes both the warp amplitude and the Rfield padding.
+        wd_raw = p.get('warp_distortion', 0.0)
+        if wd_raw != wd_raw or wd_raw == float('inf') or wd_raw == float('-inf'):
+            wd_raw = 0.0
+        warp_distortion = max(0.0, min(2.0, wd_raw))
+        warp_fn = self._make_warp(p, seed, warp_distortion)
+        # v16.2 starburst: polar lattices own a disc of radius zone_r around each focus.
+        # Foci are the sole enable — at radial_strength 0 the lattice pitch is 1:1 (no
+        # elongation) but the focal organization remains.
+        starburst_active = len(foci_phys) > 0
+        zone_r = self.POLAR_ZONE_SIGMAS * sigma_radial if starburst_active else 0.0
+        # Shared with the height pass's depth-melt AND the v19 site deletion — one field
+        # decides both which zones calm down and which cells merge away.
+        suppress_gen = SimplexNoise(seed + 17 + 103) if p.get('depth_variation', 0.0) > 0 else None
+        # v22 shared panel field: cushion tilt/amplitude/coverage sample ONE low-frequency
+        # field at the site position — neighboring cells lean and inflate together.
+        panel_field_gen = SimplexNoise(seed + 17 + 61)
+        PANEL_FIELD_FREQ = 0.045
+        sites = self._gen_sites(p, density_noise_gen,
+                                foci_phys if starburst_active else [],
+                                zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
+                                suppress_gen)
+        cartesian_count = len(sites)
+        if starburst_active:
+            # Polar sites must survive the global cap — generate into a scratch list,
+            # then trim the Cartesian TAIL to reserve capacity (Cartesian-first ordering
+            # is what pinned_from relies on).
+            polar = []
+            self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
+                                  radial_grow, radial_warp_amt, radial_mode,
+                                  p['mesh_x'], p['mesh_y'], polar)
+            budget = max(0, self.SITE_COUNT_MAX - len(polar))
+            if len(sites) > budget:
+                del sites[budget:]
+            cartesian_count = len(sites)
+            sites.extend(polar)
         if not sites:
             return [0.0] * (p['cols'] * p['rows'])
-        # Lloyd relaxation passes — clamped 0..2.
+        # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
+        # erase their deliberate radial elongation).
         relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
         if relax_iter > 0:
             lloyd_samples = min(8192, len(sites) * 64)
             for _ in range(relax_iter):
-                self._lloyd_relax(sites, p, lloyd_samples)
-        a_rad = p['anisotropy_angle'] * math.pi / 180.0
+                self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
+        # NaN guards on the constant metric frame — mirrors the TS sampler's defensive
+        # clamps (crafted params or unwired pins can pass non-finite values).
+        aniso_raw = p['anisotropy']
+        if aniso_raw != aniso_raw or aniso_raw == float('inf') or aniso_raw == float('-inf'):
+            aniso_raw = 0.0
+        aniso_raw = max(0.0, min(2.0, aniso_raw))
+        angle_raw = p['anisotropy_angle']
+        if angle_raw != angle_raw or angle_raw == float('inf') or angle_raw == float('-inf'):
+            angle_raw = 0.0
+        a_rad = angle_raw * math.pi / 180.0
         cosA = math.cos(a_rad); sinA = math.sin(a_rad)
-        aniso_scale = 1.0 + p['anisotropy'] * 1.5
+        aniso_scale = 1.0 + aniso_raw * 1.5
         # Clamp + hoist transition_softness so pow(mask, exponent) is finite when
         # mask=0 even if a crafted param sneaks past the URL boundary.
         ts_clamped = max(0.0, min(1.0, p['transition_softness']))
         transition_exponent = 0.2 + ts_clamped * 1.8
+        # v16 base superposition + wall band params.
+        base_amp = max(0.0, min(2.0, p.get('base_amp', 0.0))) if p['base_mode'] == 'wave' else 0.0
+        base_freq = max(0.02, min(0.3, p.get('base_freq', 0.1)))
+        wall_frac = max(0.0, min(0.9, p.get('wall_width', 0.0)))
         cols = p['cols']; rows = p['rows']
-        # Pass 1: accumulate mean F1 per site to derive per-cell radius. Accumulators live
-        # in local arrays so the site row stays slim and concurrent sample_grid calls don't
-        # trample each other (mirrors the Float64Array approach in the TS sampler).
+        # Precompute warped query coordinates once — shared by Pass 1 and Pass 2 (identity
+        # fast path when no warp is active).
+        wx_arr = [0.0] * (rows * cols)
+        wy_arr = [0.0] * (rows * cols)
+        for j in range(rows):
+            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
+            for i in range(cols):
+                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
+                idx0 = j * cols + i
+                if warp_fn is not None:
+                    qx, qy = warp_fn(x, y)
+                    wx_arr[idx0] = qx; wy_arr[idx0] = qy
+                else:
+                    wx_arr[idx0] = x; wy_arr[idx0] = y
+        # Exact boundary distance (v18.1). (F2−F1)/2 is exact only on the two-site axis —
+        # the true distance to the shared Voronoi boundary is the bisector distance
+        # (Fk² − F1²)/(2·|sk − s1|), minimized over the two nearest competitors. Its level
+        # sets are TRUE inset polygons of the cell. Measured in the same (an)isotropic
+        # metric as the F-distances; capped at the panel diagonal so degenerate one-site
+        # panels stay finite.
+        db_cap = p['mesh_x'] + p['mesh_y']
+        def site_dist(a, b):
+            dx = sites[a][0] - sites[b][0]; dy = sites[a][1] - sites[b][1]
+            if aniso_scale <= 1.0001:
+                return math.sqrt(dx * dx + dy * dy)
+            xr = dx * cosA + dy * sinA
+            yr = -dx * sinA + dy * cosA
+            return math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
+        # Minimized over the THREE nearest competitors: Fk ordering does not strictly
+        # order bisector distances (the |sk - s1| denominator varies); the third covers
+        # cell-corner regions and 4-degree vertices.
+        def boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4):
+            db = db_cap
+            if i2 >= 0 and f2 != float('inf'):
+                d = (f2 * f2 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i2)))
+                if d < db: db = d
+            if i3 >= 0 and f3 != float('inf'):
+                d = (f3 * f3 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i3)))
+                if d < db: db = d
+            if i4 >= 0 and f4 != float('inf'):
+                d = (f4 * f4 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i4)))
+                if d < db: db = d
+            return db
+        # Pass 1: accumulate mean F1 per site to derive per-cell radius (in the warped
+        # metric — the same one Pass 2 normalizes with).
+        # v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell —
+        # the normalizer for the wall extent.
         n_sites = len(sites)
         radius_sum = [0.0] * n_sites
         radius_n = [0] * n_sites
-        pass1_flow_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
-        for j in range(rows):
-            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
-            for i in range(cols):
-                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
-                px_cosA = cosA; px_sinA = sinA
-                if flow_gen and pass1_flow_amt > 0.0:
-                    flow = flow_gen.noise(x * 0.18, y * 0.18)
-                    local_angle = (p['anisotropy_angle'] + flow * pass1_flow_amt * 90.0) * math.pi / 180.0
-                    px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
-                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
-                radius_sum[idx] += f1; radius_n[idx] += 1
+        inradius = [0.0] * n_sites
+        for idx0 in range(rows * cols):
+            f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
+            radius_sum[idx] += f1; radius_n[idx] += 1
+            db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4)
+            if db > inradius[idx]: inradius[idx] = db
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
-        # Pass 1.5: continuous radius field R(x,y) via Gaussian blend over sites. Computed
-        # on a coarse grid (pitch sigma/2, well above Nyquist for the Gaussian-smoothed
-        # field) and bilinear-interpolated to full resolution. Without the coarse-grid
-        # optimization the full-resolution computation is O(cols*rows*sites) which times
-        # out the browser at production resolution. Mirrors src/noise/voronoi-relief.ts.
-        sigma_r = max(0.2, p['cell_size']) * self.RADIUS_FIELD_SIGMA_CELLS
-        sigma_r2 = sigma_r * sigma_r
-        cutoff_r = sigma_r * self.RADIUS_FIELD_CUTOFF_SIGMAS
-        cutoff_r2 = cutoff_r * cutoff_r
-        coarse_pitch = sigma_r * self.RADIUS_FIELD_COARSE_PITCH_SIGMAS
-        coarse_cols = max(2, int(math.ceil(p['mesh_x'] / coarse_pitch)) + 1)
-        coarse_rows = max(2, int(math.ceil(p['mesh_y'] / coarse_pitch)) + 1)
-        coarse_step_x = p['mesh_x'] / float(coarse_cols - 1)
-        coarse_step_y = p['mesh_y'] / float(coarse_rows - 1)
-        r_coarse = [0.0] * (coarse_rows * coarse_cols)
-        for cj in range(coarse_rows):
-            y = cj * coarse_step_y
-            for ci in range(coarse_cols):
-                x = ci * coarse_step_x
-                sum_r = 0.0; sum_w = 0.0
-                for k in range(n_sites):
-                    dx = x - sites[k][0]; dy = y - sites[k][1]
-                    d2 = dx * dx + dy * dy
-                    if d2 > cutoff_r2: continue
-                    w = math.exp(-d2 / sigma_r2)
-                    sum_r += sites[k][2] * w
-                    sum_w += w
-                r_coarse[cj * coarse_cols + ci] = (sum_r / sum_w) if sum_w > 0 else p['cell_size']
-        # Bilinear-interpolate coarse field to full resolution.
-        r_field = [0.0] * (rows * cols)
-        for j in range(rows):
-            v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
-            cy = y / coarse_step_y
-            cj0 = min(coarse_rows - 2, int(math.floor(cy)))
-            ty = cy - cj0
-            for i in range(cols):
-                u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
-                cx = x / coarse_step_x
-                ci0 = min(coarse_cols - 2, int(math.floor(cx)))
-                tx = cx - ci0
-                r00 = r_coarse[cj0 * coarse_cols + ci0]
-                r10 = r_coarse[cj0 * coarse_cols + ci0 + 1]
-                r01 = r_coarse[(cj0 + 1) * coarse_cols + ci0]
-                r11 = r_coarse[(cj0 + 1) * coarse_cols + ci0 + 1]
-                r0 = r00 * (1.0 - tx) + r10 * tx
-                r1 = r01 * (1.0 - tx) + r11 * tx
-                r_field[j * cols + i] = r0 * (1.0 - ty) + r1 * ty
-        # Pass 2: heights
+        # v17 size-depth coupling normalizes against the MEDIAN actual cell radius.
+        sorted_radii = sorted(s2[2] for s2 in sites)
+        median_radius = max(0.05, sorted_radii[len(sorted_radii) // 2])
+        # Pass 2: heights. Wall band + bowl profile on the F2-F1 differential, superposed
+        # onto the base wave (v16 — base never attenuated by the cell system).
         polarity = -1.0 if p['polarity'] == 'pockets' else 1.0
         cell_size_grad = max(0.0, min(2.0, p.get('cell_size_gradient', 0.0)))
         void_strength = max(0.0, min(1.0, p.get('void_strength', 0.0)))
         attractor_noise_amt = max(0.0, min(1.0, p.get('attractor_noise', 0.0)))
         attractor_noise_freq = max(0.02, min(0.5, p.get('attractor_noise_freq', 0.15)))
-        flow_anisotropy_amt = max(0.0, min(1.0, p.get('flow_anisotropy', 0.0)))
         # intensity_strength clamp — parity with the TS sampler's defensive clamp. Out-of-range
         # values would invert (negative) or over-amplify (>1) the relief before output clamp.
         intensity_strength = max(0.0, min(1.0, p['intensity_strength']))
-        # Pixel pitch + minimum seam-transition width (anti-aliasing floor). The floor is
-        # later capped to a fraction of R per-pixel so it can't dominate the natural width
-        # at low grid resolutions (which would invert the dome/seam balance). Use the LARGER
-        # of the two axis pitches: on non-square grids the coarser axis aliases first.
-        px_pitch_x = p['mesh_x'] / float(max(1, cols - 1))
-        px_pitch_y = p['mesh_y'] / float(max(1, rows - 1))
-        pixel_min_width = max(px_pitch_x, px_pitch_y) * self.SEAM_MIN_PIXEL_WIDTH
+        seam_sharp = max(0.0, min(1.0, p.get('seam_sharpness', 0.0)))
+        invert_profile = p.get('invert_profile', 0.0)
+        # v16.3 spec mechanisms — mirror src/noise/voronoi-relief.ts + docs/voronoi-relief-target-spec.md.
+        depth_variation = max(0.0, min(1.0, p.get('depth_variation', 0.0)))
+        junction_lift = max(0.0, min(1.0, p.get('junction_lift', 0.0)))
+        wall_noise_gen = SimplexNoise(seed + 17 + 83) if wall_frac > 0 else None
+        wall_noise_freq = 0.45 / max(0.2, p['cell_size'])
+        crest_variation = max(0.0, min(1.0, p.get('crest_variation', 0.0)))
+        crest_gen = SimplexNoise(seed + 17 + 97) if crest_variation > 0 else None
+        crest_freq = 0.25 / max(0.2, p['cell_size'])
+        # suppress_gen was created before _gen_sites (v19 site deletion shares the field).
+        suppress_freq = 0.16 / max(0.2, p['cell_size'])
+        seam_depth_base = max(0.05, p['seam_depth'])
+        # v21.1 C0 continuity: hash-static per-cell depth multipliers are precomputed per
+        # site (with the SLOPE BUDGET folded in: a cell only carves as deep as its walls
+        # can descend at the aesthetic ceiling) and BLENDED across the nearest edges per
+        # pixel — dissolution lifts boundaries off zero, so unblended per-cell factors
+        # would step there.
+        static_mul = [0.0] * n_sites
+        for k in range(n_sites):
+            s_mul = max(self.SIZE_DEPTH_MIN, min(self.SIZE_DEPTH_MAX,
+                math.sqrt(sites[k][2] / median_radius)))
+            tier_mul = 1.0
+            if depth_variation > 0.0:
+                h_depth = self._cell_hash01(k, seed + 13)
+                tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
+            # Conservative: final per-edge/crest modifiers can narrow the wall to ~0.65x
+            # this estimate — budget against the worst case (C0 requires per-cell static).
+            w_typ = max(0.05, seam_depth_base * inradius[k] * 0.52)
+            static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
+        # Wider deceleration band (v22): the wall flattens BEFORE the cushion rises.
+        FILLET_BAND = 0.2
+        # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
+        # 1.4 = deep interior); anchoring on normDist toward 1 never fires (measured).
+        pillow_amt = max(0.0, min(1.0, p.get('pillow', 0.0)))
+        pillow_coverage = max(0.0, min(1.0, p.get('pillow_coverage', 0.6)))
+        inv2s2_radial = 1.0 / (2.0 * sigma_radial * sigma_radial)
         out = [0.0] * (cols * rows)
+        # v23 membrane-cushion buffers: the crown SHAPE comes from a per-cell membrane
+        # solve after this pass (Poisson, u=0 clamped at the gutter ring, composed
+        # through the quintic) — the medial axis cannot appear.
+        cush_a = [0.0] * (cols * rows)
+        cush_owner = [-1] * (cols * rows)
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
             for i in range(cols):
                 u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
-                px_cosA = cosA; px_sinA = sinA
-                if flow_gen and flow_anisotropy_amt > 0.0:
-                    flow = flow_gen.noise(x * 0.18, y * 0.18)
-                    local_angle = (p['anisotropy_angle'] + flow * flow_anisotropy_amt * 90.0) * math.pi / 180.0
-                    px_cosA = math.cos(local_angle); px_sinA = math.sin(local_angle)
-                f1, f2, idx = self._nearest_two(sites, x, y, px_cosA, px_sinA, aniso_scale)
+                pix = j * cols + i
+                qx = wx_arr[pix]; qy = wy_arr[pix]
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale)
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
@@ -627,31 +970,204 @@ class VoronoiReliefNoise(object):
                     mask = mask * ((1.0 - attractor_noise_amt) + attractor_noise_amt * modulator * 1.5)
                     if mask > 1.0: mask = 1.0
                     if mask < 0.0: mask = 0.0
-                # Cell-size gradient shrinks effective radius where mask is high. R is read
-                # from the continuous radius field (Pass 1.5), not from sites[idx], so it
-                # has no ownership-boundary discontinuities.
-                size_shrink = 1.0 - cell_size_grad * mask * 0.6
-                R = max(0.05, r_field[j * cols + i] * max(0.2, size_shrink))
-                dome = self._dome(p['profile'], f1, R)
-                # Seam smoothstep transition width: max of (seam_width * R) and a pixel-aware
-                # floor, where the floor is capped to a fraction of R so it can't grow wider
-                # than the cell. Eliminates sub-pixel-wall sawtooth aliasing.
-                capped_floor = min(pixel_min_width, R * self.SEAM_FLOOR_MAX_R_FRACTION)
-                seam_width_physical = max(p['seam_width'] * R, capped_floor)
-                seam = 1.0 - self._smoothstep(0.0, seam_width_physical, f2 - f1)
-                # Dome decays at the seam so seamDepth represents the true trough depth.
-                h = polarity * (dome * (1.0 - seam) - p['seam_depth'] * seam)
-                intensity = (1.0 - intensity_strength) + intensity_strength * mask
-                if p['base_mode'] == 'wave':
-                    base = self.wave.noise(x * 0.1, y * 0.1) * 0.5
-                    cw = pow(mask, transition_exponent)
-                    h = base * (1.0 - cw) + h * cw * intensity
+                # Focal proximity (real-space) — drives focal expansion and intensity deepening.
+                g_max = 0.0
+                for k in range(len(foci_phys)):
+                    dx = x - foci_phys[k][0]; dy = y - foci_phys[k][1]
+                    g = math.exp(-(dx * dx + dy * dy) * inv2s2_radial)
+                    if g > g_max: g_max = g
+                # v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
+                # d_b is the exact distance to the SHARED Voronoi boundary (boundary_dist) —
+                # its level sets are true inset polygons of the cell, so the floor keeps
+                # polygonal ancestry. The wall extent w is normalized per cell against the
+                # measured inradius, so the wall spans the FULL territory from the shared
+                # boundary to the inset floor: every interior point is crest, wall, or
+                # floor — no neutral gaps. q = d_b/w: 0 at the boundary, 1 at the floor edge.
+                # Per-competitor bisector distances (also feed the exact boundary distance).
+                db2 = ((f2 * f2 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx2)))) if (idx2 >= 0 and f2 != float('inf')) else db_cap
+                db3 = ((f3 * f3 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx3)))) if (idx3 >= 0 and f3 != float('inf')) else db_cap
+                db4 = ((f4 * f4 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx4)))) if (idx4 >= 0 and f4 != float('inf')) else db_cap
+                db = min(db2, db3, db4)
+                inr = max(0.01, inradius[idx])
+                # Scale-free junction proximity: (F3-F1)/(F3+F1) -> 0 at three-way corners.
+                # With fewer than three sites there is no junction anywhere — jn stays 0.
+                if f3 == float('inf'):
+                    jn = 0.0
                 else:
-                    h = h * intensity
-                # Void mode applied AFTER the wave/cell blend so the floor-clamp intent
-                # is not diluted by the wave base in transition zones.
+                    jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1))
+                jn_s = self._smoothstep(0.65, 0.98, jn)
+                # v21 PER-EDGE FIELDS, blended between the two nearest edges by relative
+                # bisector distance (edge identity switches at corner rays — unblended
+                # values would jump there and render cliffs along every cell corner).
+                nb2 = idx2 if idx2 >= 0 else idx
+                nb3 = idx3 if idx3 >= 0 else nb2
+                e2_side = self._edge_hash01(idx, nb2, seed + 59)
+                e2_shared = self._edge_hash01(min(idx, nb2), max(idx, nb2), seed + 53)
+                e3_side = self._edge_hash01(idx, nb3, seed + 59)
+                e3_shared = self._edge_hash01(min(idx, nb3), max(idx, nb3), seed + 53)
+                # Symmetric interpolation: bisector distances need not preserve the F2/F3
+                # ordering, so the signed ratio must map both ways.
+                edge_ratio = (db3 - db2) / max(1e-9, db3 + db2)
+                if edge_ratio >= 0.0:
+                    edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, edge_ratio)
+                else:
+                    edge_mix = 0.5 - 0.5 * self._smoothstep(0.0, 0.3, -edge_ratio)
+                edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
+                edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
+                # Dissolution fades near junction corners (pairwise blend is ill-conditioned
+                # there; physically, references dissolve boundaries MID-EDGE, nodes survive).
+                dissolve = ((1.0 - self._smoothstep(0.06, 0.3, edge_shared)) * self.EDGE_DISSOLVE_MAX
+                            * (1.0 - self._smoothstep(0.45, 0.75, jn)))
+                # v21.1 blended static depth multiplier + boundary-fading tilt weight.
+                owner_mix = 0.5 + 0.5 * min(1.0, db / max(1e-6, 0.35 * inr))
+                nb_mul = edge_mix * static_mul[nb2] + (1.0 - edge_mix) * static_mul[nb3]
+                static_mul_blended = owner_mix * static_mul[idx] + (1.0 - owner_mix) * nb_mul
+                owner_fade = max(0.0, 2.0 * owner_mix - 1.0)
+                # Ridge crest band: a physical plateau on the shared boundary. The plateau
+                # width SWINGS along each edge with the wall-noise field (chunky-to-thin
+                # ridges) and widens toward junctions.
+                crest_w = wall_frac * max(0.2, p['cell_size']) * 0.5
+                # Wall extent = seamDepth fraction of the remaining inradius, varied per cell
+                # (asymmetric neighbors), along each edge (noise), and at junctions (widening).
+                wall_scale = 0.7 + 0.7 * edge_side
+                if depth_variation > 0.0:
+                    h_seam = self._cell_hash01(idx, seed + 29)
+                    wall_scale *= 1.0 + (h_seam - 0.5) * 0.8 * depth_variation
+                if wall_noise_gen is not None:
+                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
+                    wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
+                    # Junction DELTAS use a wider gate than the lift term: the plateau
+                    # flares well before the corner into bold triangular Y-masses.
+                    jn_w = self._smoothstep(0.55, 0.95, jn)
+                    crest_w *= max(0.15, 1.0 + self.RIDGE_WIDTH_SWING * wn + self.JUNCTION_DELTA_GAIN * junction_lift * jn_w)
+                if cell_size_grad > 0.0:
+                    wall_scale *= 1.0 + cell_size_grad * mask * 0.6
+                if radial_grow > 0.0 and g_max > 0.0:
+                    wall_scale /= min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
+                # v21.1: crest must leave a resolvable wall span; wall extent floors at the
+                # physical minimum feature size.
+                crest_w = min(crest_w, 0.6 * inr, max(0.0, inr - self.WALL_MIN_PHYS))
+                w = max(self.WALL_MIN_PHYS, seam_depth_base * max(0.02, inr - crest_w) * wall_scale)
+                bowl_t_raw = max(0.0, (db - crest_w) / w)
+                # Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp.
+                if bowl_t_raw >= 1.0 + FILLET_BAND:
+                    bowl_t = 1.0
+                elif bowl_t_raw <= 1.0 - FILLET_BAND:
+                    bowl_t = bowl_t_raw
+                else:
+                    e = 1.0 + FILLET_BAND - bowl_t_raw
+                    bowl_t = 1.0 - (e * e) / (4.0 * FILLET_BAND)
+                # All profiles MUST have dh/dt = 0 at t=0 (boundary). Otherwise the height
+                # drops from 0 with non-zero slope and mesh triangulation produces knife-edge
+                # spikes along ridges. Mirrors src/noise/voronoi-relief.ts.
+                if p['profile'] == 'hemisphere':
+                    bowl_h = 1.0 - math.sqrt(max(0.0, 1.0 - bowl_t * bowl_t))
+                elif p['profile'] == 'cosine':
+                    # v21: per-edge profile FAMILY — each edge blends toward a late-power
+                    # curve (shallow shoulder, broad descent, steeper lower third).
+                    cos_h = 0.5 - 0.5 * math.cos(bowl_t * math.pi)
+                    # Tempered so the blended profile's PEAK slope stays <= ~1.9x mean.
+                    late_h = pow(bowl_t, 1.5 + 0.6 * edge_shared)
+                    prof_mix = 0.15 + 0.45 * edge_side
+                    bowl_h = (1.0 - prof_mix) * cos_h + prof_mix * late_h
+                else:  # parabolic
+                    bowl_h = bowl_t * bowl_t
+                # Seam sharpness — blend toward a linear ramp for V-groove gutters.
+                if seam_sharp > 0.0:
+                    bowl_h = (1.0 - seam_sharp) * bowl_h + seam_sharp * bowl_t
+                # v16.1 pillowed floors: past saturation the floor rises back toward the
+                # cell center (double-curvature pockets). Per-cell hash gates coverage and
+                # varies mound height. Capped at 65% of depth so mounds stay inside pockets.
+                # v21 edge dissolution: weak edges melt toward floor level — adjacent
+                # cells blend into one shared basin (boundary hierarchy, never all-equal).
+                if dissolve > 0.0:
+                    bowl_h += (1.0 - bowl_h) * dissolve
+                # v21 perimeter-clamped CUSHION floors: gutter at the floor edge, broad
+                # convex crown following the inset-polygon footprint. SCALE-DEPENDENT —
+                # pronounced in the largest cells, absent in small ones.
+                # v22 unified profile: wall bottoms out (fillet), HOLDS through a real
+                # gutter (to 1.25), then the crown rises via a G2 smootherstep and ends
+                # flat by 1.9 — a transition REGION, not a line. Amplitude <= ~25% of
+                # depth; coverage is a smooth field threshold (no binary per-cell gate).
+                cushion_amp = 0.0
+                if pillow_amt > 0.0 and bowl_t_raw > 1.25 and invert_profile <= 0.5:
+                    size_t = self._smoothstep(0.9, 1.8, inr / max(0.05, median_radius * 0.5))
+                    if size_t > 0.0:
+                        field_v = (panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ,
+                                                         sites[idx][1] * PANEL_FIELD_FREQ) + 1.0) * 0.5
+                        # Coverage 0 must fully disable cushions.
+                        if pillow_coverage <= 0.0:
+                            cov_gate = 0.0
+                        else:
+                            cov_gate = self._smoothstep(0.8 - pillow_coverage, 1.2 - pillow_coverage, field_v)
+                        if cov_gate > 0.0:
+                            amt_var = 0.55 + 0.45 * field_v
+                            cushion_amp = pillow_amt * amt_var * 0.28 * size_t * cov_gate
+                # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's
+                # deepest point off-center — steep wall on one flank, long ramp on the
+                # other. Purely reductive (shallow flank ramps up) so the output clamp is
+                # never involved; factor is 1 at the boundary so shared walls stay put.
+                if depth_variation > 0.0 and bowl_h > 0.0:
+                    # v22: tilt direction from the shared panel field (adjacent pockets
+                    # lean in related directions), not a per-cell hash.
+                    tilt_ang = panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ + 37.1,
+                                                     sites[idx][1] * PANEL_FIELD_FREQ + 11.7) * math.pi * 2.0
+                    rad = max(0.2, sites[idx][2])
+                    tilt = (math.cos(tilt_ang) * (qx - sites[idx][0])
+                            + math.sin(tilt_ang) * (qy - sites[idx][1])) / rad
+                    tilt_t = (max(-0.9, min(0.9, tilt)) + 0.9) / 1.8
+                    bowl_h *= 1.0 - self.FLOOR_TILT_GAIN * depth_variation * tilt_t * bowl_h * owner_fade
+                # invertProfile: carve the boundary instead of the interior (domed floors).
+                if invert_profile > 0.5:
+                    bowl_h = 1.0 - bowl_h
+                # Intensity scales bowl depth by the attractor mask OR focal proximity
+                # (whichever is stronger); cellWeight gates cells spatially.
+                intensity = (1.0 - intensity_strength) + intensity_strength * max(mask, g_max)
+                cw = pow(mask, transition_exponent)
+                # v17 depth composition: size coupling + iid tier + SPATIAL suppression
+                # (clusters of neighboring cells melt into calm masses).
+                # v21.1: hash-static parts (size + depth class + slope budget) come
+                # pre-blended across the nearest edges — C0 at dissolved boundaries.
+                cell_depth_mul = static_mul_blended
+                if depth_variation > 0.0:
+                    if suppress_gen is not None:
+                        sn = (suppress_gen.noise(x * suppress_freq, y * suppress_freq) + 1.0) * 0.5
+                        cell_depth_mul *= 1.0 - self.SUPPRESSION_STRENGTH * depth_variation * self._smoothstep(0.62, 0.82, sn)
+                # v20 stretched fans: above grow = 1 the focal zone shallows toward the
+                # pinch point while its lattice keeps converging walls.
+                if radial_grow > 1.0 and g_max > 0.0:
+                    cell_depth_mul *= 1.0 - self.FOCAL_CALM_GAIN * (radial_grow - 1.0) * g_max
+                base = base_amp * self.wave.noise(x * base_freq, y * base_freq) if base_amp > 0.0 else 0.0
+                h = base + polarity * bowl_h * cw * intensity * cell_depth_mul
+                if cushion_amp > 0.0:
+                    pix0 = j * cols + i
+                    cush_a[pix0] = cushion_amp * cw * intensity * cell_depth_mul
+                    cush_owner[pix0] = idx
+                # v17 crest variation: ridge-LOCAL height noise (fragments the envelope).
+                # Both cell-derived additions are gated by cw so relief cannot reappear
+                # where the attractor has faded the cell system out.
+                if crest_variation > 0.0 and crest_gen is not None:
+                    ridge_mask = pow(1.0 - bowl_h, 1.5)
+                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw
+                # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
+                if junction_lift > 0.0:
+                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw
+                # v20 ridge crown: rounded bead over the crest band — dome peaking on the
+                # shared boundary. Melted zones keep ghost creases (0.35 floor).
+                if wall_frac > 0.0 and crest_w > 1e-6 and db < max(crest_w, self.CROWN_MIN_PHYS):
+                    crown = 1.0 - self._smoothstep(0.0, max(crest_w, self.CROWN_MIN_PHYS), db)
+                    crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
+                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul
+                # v21 stock-plane soft cap (pockets only): broad crests flatten into
+                # plateaus just above the base wave; junction fins become saddles.
+                if polarity < 0.0:
+                    hp = h - base
+                    if hp > self.STOCK_CAP_START:
+                        h = base + self.STOCK_CAP_START + self.STOCK_CAP_SPAN * math.tanh((hp - self.STOCK_CAP_START) / self.STOCK_CAP_SPAN)
+                # Void mode pushes h toward the negative clamp where mask + bowl depth are
+                # high. Uses bowl_h as the carve-depth proxy (was 'seam' in the old algorithm).
                 if void_strength > 0.0:
-                    void_gate = mask * seam
+                    void_gate = mask * bowl_h
                     void_edge0 = 1.0 - void_strength
                     void_edge1 = 1.0 - void_strength * 0.5
                     void_t = self._smoothstep(void_edge0, void_edge1, void_gate)
@@ -661,6 +1177,50 @@ class VoronoiReliefNoise(object):
                 if h < -self.OUTPUT_HEIGHT_CLAMP: h = -self.OUTPUT_HEIGHT_CLAMP
                 elif h > self.OUTPUT_HEIGHT_CLAMP: h = self.OUTPUT_HEIGHT_CLAMP
                 out[j * cols + i] = h
+        # v23 membrane cushion pass (mirrors the TS sampler): SOR-relaxed Poisson over
+        # cushion pixels, per-cell normalization, quintic composition, polarity-signed
+        # application, output re-clamped.
+        any_cush = False
+        for v0 in cush_a:
+            if v0 > 0.0:
+                any_cush = True
+                break
+        if any_cush:
+            u = [0.0] * (cols * rows)
+            # Symmetric SOR: alternate forward/reverse sweeps (forward-only would bias
+            # partially converged cushions toward the sweep origin). Deterministic.
+            for _sweep in range(self.MEMBRANE_SWEEPS):
+                if _sweep % 2 == 0:
+                    row_iter = range(1, rows - 1)
+                    col_iter = range(1, cols - 1)
+                else:
+                    row_iter = range(rows - 2, 0, -1)
+                    col_iter = range(cols - 2, 0, -1)
+                for j in row_iter:
+                    off = j * cols
+                    for i in col_iter:
+                        idx0 = off + i
+                        if cush_a[idx0] <= 0.0:
+                            continue
+                        target = 0.25 * (u[idx0 - 1] + u[idx0 + 1] + u[idx0 - cols] + u[idx0 + cols]) + 1.0
+                        u[idx0] = u[idx0] + self.MEMBRANE_OMEGA * (target - u[idx0])
+            u_max = [0.0] * n_sites
+            for idx0 in range(cols * rows):
+                o = cush_owner[idx0]
+                if o >= 0 and u[idx0] > u_max[o]:
+                    u_max[o] = u[idx0]
+            pol = -1.0 if p['polarity'] == 'pockets' else 1.0
+            for idx0 in range(cols * rows):
+                if cush_a[idx0] <= 0.0:
+                    continue
+                o = cush_owner[idx0]
+                if o < 0 or u_max[o] <= 1e-9:
+                    continue
+                wv = self._smootherstep(0.0, 1.0, u[idx0] / u_max[o])
+                lifted = out[idx0] - pol * cush_a[idx0] * wv
+                if lifted < -self.OUTPUT_HEIGHT_CLAMP: lifted = -self.OUTPUT_HEIGHT_CLAMP
+                elif lifted > self.OUTPUT_HEIGHT_CLAMP: lifted = self.OUTPUT_HEIGHT_CLAMP
+                out[idx0] = lifted
         return out
 
 
@@ -723,7 +1283,28 @@ if is_relief:
         'void_strength': float(relief_void_strength),
         'attractor_noise': float(relief_attractor_noise),
         'attractor_noise_freq': float(relief_attractor_noise_freq),
-        'flow_anisotropy': float(relief_flow_anisotropy),
+        'invert_profile': float(relief_invert_profile),
+        'seam_sharpness': float(relief_seam_sharpness),
+        'base_amp': float(relief_base_amp),
+        'base_freq': float(relief_base_freq),
+        'wall_width': float(relief_wall_width),
+        'density_noise': float(relief_density_noise),
+        'density_noise_freq': float(relief_density_noise_freq),
+        'pillow': float(relief_pillow),
+        'pillow_coverage': float(relief_pillow_coverage),
+        'depth_variation': float(relief_depth_variation),
+        'junction_lift': float(relief_junction_lift),
+        'crest_variation': float(relief_crest_variation),
+        'radial_foci': [
+            [float(relief_radial_focus1_x), float(relief_radial_focus1_y)],
+            [float(relief_radial_focus2_x), float(relief_radial_focus2_y)],
+            [float(relief_radial_focus3_x), float(relief_radial_focus3_y)],
+        ][:max(0, min(3, int(relief_radial_foci_count)))],
+        'radial_strength': float(relief_radial_strength),
+        'radial_falloff': float(relief_radial_falloff),
+        'radial_grow': float(relief_radial_grow),
+        'radial_warp': float(relief_radial_warp),
+        'radial_mode': str(relief_radial_mode),
         'warp_distortion': float(distortion),
         'warp_frequency': float(relief_warp_freq),
     }

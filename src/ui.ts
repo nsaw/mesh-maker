@@ -4,6 +4,8 @@ import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ } from './sbp-export';
 import { updateExportControls } from './toolbar';
+import { estimateDepth } from './depth-estimate';
+import { showToast } from './toast';
 
 
 const PRESET_GROUPS: [string, string[]][] = [
@@ -12,7 +14,7 @@ const PRESET_GROUPS: [string, string[]][] = [
   ['Aggressive', ['deep-carve', 'hard-wave', 'turbulent-marble']],
   ['Ridge & Stone', ['sharp-ridges', 'eroded-stone', 'natural-ridge']],
   ['Cell & Directional', ['voronoi-cells', 'worley-cracks', 'brushed-metal']],
-  ['Relief', ['relief-vertical', 'relief-radial', 'relief-pockets']],
+  ['Relief', ['relief-vertical', 'relief-radial', 'relief-pockets', 'relief-starburst']],
 ];
 
 function formatPresetName(key: string): string {
@@ -127,6 +129,7 @@ function enumSelect(key: string, label: string, options: Array<[string, string]>
   sel.id = `sl_${key}`;
   sel.dataset.key = key;
   const current = String(STATE[key as keyof typeof STATE]);
+  sel.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? current);
   for (const [value, text] of options) {
     const opt = createElement('option') as HTMLOptionElement;
     opt.value = value;
@@ -314,6 +317,8 @@ function buildReliefSection(): HTMLElement {
   anisoLabel.textContent = 'Anisotropy';
   const attractorLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
   attractorLabel.textContent = 'Attractor';
+  const radialLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
+  radialLabel.textContent = 'Radial foci (starburst)';
   const baseLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
   baseLabel.textContent = 'Base field';
 
@@ -325,8 +330,37 @@ function buildReliefSection(): HTMLElement {
     shapeLabel,
     enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
     enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
-    slider('reliefSeamDepth', 'Seam Depth', 0, 1, 0.05),
-    slider('reliefSeamWidth', 'Seam Width', 0.02, 0.6, 0.01),
+    slider('reliefSeamDepth', 'Wall Extent (floor inset)', 0.05, 1, 0.05),
+    // v16: fraction of the normalized cell distance held at surface level around every
+    // cell boundary — walls get finite width instead of knife-edge ridge lines. The
+    // measured response is aggressive (0.3 already floors ~88% of pixels), so presets
+    // use small values (0.08–0.12).
+    slider('reliefWallWidth', 'Wall Width', 0, 0.5, 0.01),
+    // NB: `reliefSeamWidth` does NOT affect the visual mesh under the F2-F1 relief algorithm
+    // (see `voronoi-relief.ts`'s "seamWidth is no longer used" comment). It only drives the
+    // SBP V-carve toolpath width via `sbp-export.ts:189` (`seamWidthIn = reliefSeamWidth ·
+    // reliefCellSize · 0.5`). Label clarifies the slider's actual function so users don't tune
+    // it expecting a mesh effect.
+    slider('reliefSeamWidth', 'SBP V-carve Seam Width', 0.02, 0.6, 0.01),
+    // v15: 0/1 toggle. When 1, cell INTERIORS sit at the surface with a domed rise and the
+    // cell BOUNDARIES are carved (matches the reference panel's "domed floors" signature).
+    // When 0 (default), standard pocket carving (interior sunk, boundary at surface).
+    slider('reliefInvertProfile', 'Domed Floors (0/1)', 0, 1, 1),
+    // v15.1: 0 = smooth round-bottom gutter at cell boundary; 1 = knife-edge V-groove.
+    // Linear blend of the profile curve toward a `bowlT` ramp. High values produce real
+    // V-grooves but the rendered mesh will show polygon aliasing along seam ridges — fine
+    // for CNC V-bit carving paths.
+    slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
+    // v16.1: double-curvature pocket floors — past the bowl's saturation point the floor
+    // rises into a soft central mound. Coverage gates which cells pillow (per-cell hash).
+    slider('reliefPillow', 'Pillowed Floors', 0, 1, 0.05),
+    slider('reliefPillowCoverage', 'Pillow Coverage', 0, 1, 0.05),
+    // v16.3: per-cell depth tiers (deep/intermediate/suppressed) + asymmetric wall
+    // profiles; junction crest lift with widened star-shaped nodes.
+    slider('reliefDepthVariation', 'Depth Variation', 0, 1, 0.05),
+    slider('reliefJunctionLift', 'Junction Peaks', 0, 1, 0.05),
+    // v17: ridge-local crest height noise — mesas/saddles/fragmented envelope.
+    slider('reliefCrestVariation', 'Crest Variation', 0, 1, 0.05),
     anisoLabel,
     slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
     slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
@@ -340,15 +374,34 @@ function buildReliefSection(): HTMLElement {
     slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
     slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
     slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
+    // v16: low-frequency noise on site density — giant and small cells coexist (the
+    // lafabrica multi-scale patchiness). Independent of the attractor gradient above.
+    slider('reliefDensityNoise', 'Cell Size Patchiness', 0, 1.5, 0.05),
+    slider('reliefDensityNoiseFreq', 'Patch Scale', 0.02, 0.3, 0.01),
     slider('reliefCellSizeGradient', 'Cell Size Gradient', 0, 2, 0.05),
     slider('reliefIntensityStrength', 'Intensity Strength', 0, 1, 0.05),
     slider('reliefTransitionSoftness', 'Transition Softness', 0, 1, 0.05),
     slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
     slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
     slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
-    slider('reliefFlowAnisotropy', 'Flow Anisotropy', 0, 1, 0.05),
+    radialLabel,
+    slider('reliefRadialFociCount', 'Starburst Foci (0=off)', 0, 3, 1),
+    slider('reliefRadialFocus1X', 'Focus 1 X', 0, 1, 0.01),
+    slider('reliefRadialFocus1Y', 'Focus 1 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus2X', 'Focus 2 X', 0, 1, 0.01),
+    slider('reliefRadialFocus2Y', 'Focus 2 Y', 0, 1, 0.01),
+    slider('reliefRadialFocus3X', 'Focus 3 X', 0, 1, 0.01),
+    slider('reliefRadialFocus3Y', 'Focus 3 Y', 0, 1, 0.01),
+    slider('reliefRadialStrength', 'Starburst Strength', 0, 3, 0.05),
+    slider('reliefRadialFalloff', 'Starburst Width', 0.05, 0.6, 0.01),
+    slider('reliefRadialGrow', 'Focal Expansion', 0, 2, 0.05),
+    slider('reliefRadialWarp', 'Starburst Wobble', 0, 1, 0.02),
+    enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
     baseLabel,
     enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
+    // v16 superposition: the cellular carve rides ON this wave — ridge tops undulate.
+    slider('reliefBaseAmplitude', 'Base Wave Amplitude', 0, 2, 0.05),
+    slider('reliefBaseFrequency', 'Base Wave Frequency', 0.02, 0.3, 0.01),
   ], false, 'noise-only');
 }
 
@@ -400,9 +453,26 @@ function buildDepthMapSection(): HTMLElement {
   input.accept = 'image/*';
   uploadZone.append(uploadText, input);
 
+  // AI depth estimation — converts the current photo into a real depth map (photos feed
+  // luminance into the height field otherwise: marble highlights read as peaks). Lazy
+  // model download on first use; on failure the luminance path stays untouched.
+  const aiBtn = createElement('button', 'btn btn-sm', 'AI DEPTH FROM PHOTO') as HTMLButtonElement;
+  aiBtn.id = 'aiDepthBtn';
+  aiBtn.style.width = '100%';
+  aiBtn.style.marginTop = '6px';
+  aiBtn.addEventListener('click', () => { void runDepthEstimation(aiBtn); });
+
   return buildSection('Depth Map', [
     uploadZone,
-    slider('blend', 'Blend (0=image, 1=noise)', 0, 1, 0.01),
+    aiBtn,
+    // Drape (BLEND mode): 'blend' is repurposed as fabric tension — 0 hugs the form,
+    // 1 bridges concavities via the morphological-close envelope (src/drape.ts).
+    slider('blend', 'Fabric Tension (0=hug, 1=bridge)', 0, 1, 0.01),
+    slider('drapeFoldScale', 'Fold Count', 2, 40, 1),
+    slider('drapeFoldDepth', 'Fold Depth', 0, 0.5, 0.01),
+    slider('drapeFoldWarp', 'Fold Irregularity', 0, 1, 0.05),
+    slider('drapeThickness', 'Fabric Thickness (in)', 0, 0.2, 0.005),
+    slider('drapeConform', 'Detail Transmission (0=felt, 1=silk)', 0, 1, 0.05),
     slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05),
     slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01),
     slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1),
@@ -533,6 +603,14 @@ function wireControls(): void {
         if (pill) pill.classList.remove('active');
       }
       debouncedGenerate(key);
+    });
+
+    // Double-click select to reset to default (mirrors the slider gesture).
+    sel.addEventListener('dblclick', () => {
+      const def = sel.dataset.default;
+      if (def === undefined) return;
+      sel.value = def;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
     });
   });
 
@@ -666,7 +744,12 @@ function wireSectionCollapse(): void {
 export function updateSectionVisibility(): void {
   const mode = STATE.mode;
   document.querySelectorAll<HTMLElement>('.noise-only').forEach(el => {
-    el.style.display = (mode === 'noise' || mode === 'blend') ? 'block' : 'none';
+    // v16: BLEND mode is the drape compositor and no longer consumes the noise pipeline,
+    // so noise sections show in noise mode only — EXCEPT when blend mode has no depth map
+    // yet: generateMesh() falls back to the noise mesh there, and hiding the controls
+    // would leave the user staring at a noise render they cannot configure.
+    const blendNoiseFallback = mode === 'blend' && !STATE.depthMap;
+    el.style.display = (mode === 'noise' || blendNoiseFallback) ? 'block' : 'none';
   });
   document.querySelectorAll<HTMLElement>('.depth-map-only').forEach(el => {
     el.style.display = (mode === 'depthmap' || mode === 'blend') ? 'block' : 'none';
@@ -682,9 +765,65 @@ export function fitMeshToAspect(imgW: number, imgH: number): void {
     STATE.meshY = 24;
     STATE.meshX = Math.max(1, Math.round(24 * ar));
   }
-  STATE.resolution = 256;
+  // Full grid resolution — image resolution is the hard gate for depth-map/drape quality;
+  // 256 visibly quantized fine features that the drape's contact-detail channel needs.
+  // Capped by total grid cells: rows scale with meshY/meshX, and an extreme portrait
+  // aspect at resolution 400 would allocate millions of vertices (plus the drape's
+  // envelope/fold/contact grids) and freeze the tab.
+  const aspectRowsPerCol = STATE.meshY / STATE.meshX;
+  const maxGridCells = 250000;
+  STATE.resolution = Math.max(
+    64,
+    Math.min(400, Math.floor(Math.sqrt(maxGridCells / Math.max(0.05, aspectRowsPerCol)))),
+  );
   STATE.depthMapAR = ar;
   STATE.aspectLocked = true;
+}
+
+/** Run monocular depth estimation on the current depth-map image and swap the result in
+ *  (same state pattern as loadDepthMap). Failures leave state untouched — the luminance
+ *  path keeps working offline or when the model can't load. */
+async function runDepthEstimation(btn: HTMLButtonElement): Promise<void> {
+  if (!STATE.depthMap) {
+    showToast('Upload or select an image first');
+    return;
+  }
+  // Re-estimating an already-estimated depth map degrades it (depth-of-a-depth-image).
+  if (/ \(AI depth\)$/.test(STATE.depthMapName)) {
+    showToast('Already an AI depth map — upload a new photo to re-estimate');
+    return;
+  }
+  const source = STATE.depthMap;
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'ESTIMATING…';
+  showToast('Loading depth model — first use downloads ~25-50MB', 4000);
+  try {
+    const depthImg = await estimateDepth(source);
+    // Stale-closure guard: if the user swapped images while estimation ran, discard this
+    // result instead of overwriting the newer image with the old photo's depth.
+    if (STATE.depthMap !== source) {
+      showToast('Image changed during estimation — result discarded');
+      return;
+    }
+    STATE.depthMap = depthImg;
+    STATE.depthMapName = STATE.depthMapName.replace(/ \(AI depth\)$/, '') + ' (AI depth)';
+    fitMeshToAspect(depthImg.width, depthImg.height);
+    const zone = document.getElementById('uploadZone');
+    if (zone) {
+      zone.classList.add('has-image');
+      zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
+    }
+    buildSidebar();
+    generateMesh();
+    showToast('Depth map estimated');
+  } catch (err) {
+    const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
+    showToast(`Depth estimation unavailable — using image luminance${reason}`, 4500);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 }
 
 export function loadDepthMap(file: File): void {

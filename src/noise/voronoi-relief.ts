@@ -1,29 +1,52 @@
 /**
- * VoronoiReliefGen — grid-aware 3D Voronoi cell relief sampler.
+ * VoronoiReliefGen — grid-aware 3D Voronoi cell relief sampler (v16).
  *
- * Reproduces lafabricatrun-style 3D cellular wood carvings: smooth domed cells with
- * deep V-seams between them, optionally fading into a smooth wave field via a spatial
- * attractor. Cannot be expressed as a per-pixel scalar field because each cell needs
- * an identity (which site does this sample belong to?) and a per-cell radius (how big
- * is THIS cell vs its neighbors?).
+ * Reproduces lafabricatrun-style 3D cellular wood carvings: cells carved INTO a smooth
+ * undulating base surface, separated by finite-width walls, elongated along an organic
+ * flow. Cannot be expressed as a per-pixel scalar field because each cell needs an
+ * identity (which site owns this sample?) and a per-cell radius (how big is THIS cell?).
+ *
+ * Three structural mechanisms (v16 — replaces the v1–v15 crossfade/starburst machinery):
+ *
+ *   1. BASE SUPERPOSITION. The final height is `base + polarity·bowl·…` where `base` is an
+ *      independent low-frequency wave field (reliefBaseAmplitude/Frequency). Ridge tops
+ *      follow the base surface instead of collapsing onto a flat reference plane. The old
+ *      model crossfaded base and cells through one weight, so full-depth cells always sat
+ *      on a flattened base — the "dimpled flat panel" failure.
+ *
+ *   2. WALL BAND. `wallWidth` holds a band of the normalized cell distance at base level
+ *      around every cell boundary before the bowl profile starts, giving walls finite
+ *      width instead of knife-edge ridge lines (the F2-F1 field's natural boundary).
+ *
+ *   3. FLOW WARP W(x, y) + POLAR STARBURST LATTICES. All distance queries (Pass 1, Lloyd
+ *      samples, radius field, Pass 2) are evaluated at W(q), a smooth flow warp driven by
+ *      the global distortion/warpFreq sliders — cells stretch and flow but ownership
+ *      boundaries stay clean curves (the old per-pixel metric rotation tore ownership;
+ *      measured 0.70 max adjacent-pixel jump vs 0.28). The STARBURST (v16.2) is a SITE
+ *      LAYOUT, not a warp: jittered polar ring lattices around each focus whose radial
+ *      gap is (1 + radialStrength) × the tangential pitch produce radially elongated
+ *      petal cells (direction-verified: boundary-crossing rate along spokes ≈ half the
+ *      rate along arcs in 'rays' mode). A radial displacement warp CANNOT produce petals:
+ *      any Gaussian-localized radial displacement compresses radially somewhere in its
+ *      falloff annulus, rendering tangential ring bands — measured on both signs.
+ *
+ * Site density is additionally modulated by low-frequency noise (reliefDensityNoise) so
+ * giant and small cells coexist — the reference's patchy multi-scale cell sizes.
  *
  * Algorithm:
- *   1. Site generation — jittered grid in physical units, density modulated by attractor.
- *   2. Lloyd relaxation — 0–2 passes via low-discrepancy Halton sampling, smooths cell sizes.
- *   3. Pass 1 over the output grid — find F1 and owning site for every (x,y); accumulate
- *      mean F1 per site.
- *   4. Per-cell radius — R ≈ 2 × mean F1 (mean F1 inside a roughly disc-shaped Voronoi cell
- *      ≈ R/2). Clamps when too few samples per cell.
- *   5. Pass 2 over the grid — re-sample F1, F2, owner; combine dome + seam + attractor mask
- *      + optional smooth-wave base field; clamp to ~[-1, 1].
+ *   1. Site generation — jittered grid in physical units; density modulated by the
+ *      attractor mask and the density noise field. Sites are never displaced.
+ *   2. Lloyd relaxation — 0–2 passes via low-discrepancy Halton sampling (samples warped
+ *      through W so relaxation happens in the same space as the queries).
+ *   3. Pass 1 — find F1 and owning site for every W(x, y); accumulate mean F1 per site.
+ *   4. Per-cell radius — R ≈ 2 × mean F1. Pass 1.5 blends per-site radii into a continuous
+ *      Gaussian radius field on a coarse grid (bilinear-upsampled) covering the warped
+ *      domain, so per-pixel R reads are C0-continuous.
+ *   5. Pass 2 — re-sample F1/F2 at W(x, y); wall-band remap; bowl profile; superpose onto
+ *      the base wave; attractor/void/intensity shaping; clamp to ~[-1, 1].
  *
  * Output is in noise-native range; the standard CNC-z normalization in mesh.ts handles
- * the rest. Per-pixel domain warp (the warpGen mix in sampleNoiseGrid) is intentionally
- * skipped for relief — warping discrete cells tears them visually. However `generateSites`
- * DOES apply site-position warping when `warpDistortion > 0`: the warp displaces each
- * jittered site rather than the heightmap, producing curving cell layouts without tearing.
- * `sampleReliefParamsFromState` wires both `warpDistortion` and `warpFrequency` into that
- * path so the global warp sliders affect relief output.
+ * the rest.
  */
 import type {
   ReliefAttractorMode,
@@ -31,6 +54,7 @@ import type {
   ReliefGenerator,
   ReliefPolarity,
   ReliefProfile,
+  ReliefRadialMode,
   ReliefSampleParams,
 } from '../types';
 import { SimplexNoiseGen } from './generators';
@@ -39,47 +63,90 @@ import { SimplexNoiseGen } from './generators';
 const LLOYD_SAMPLE_BUDGET_MAX = 8192;
 const LLOYD_SAMPLES_PER_SITE = 64;
 const WAVE_GEN_SEED_OFFSET = 17;
-const WAVE_NOISE_FREQUENCY = 0.1;
-const WAVE_AMPLITUDE = 0.5;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
-// Sampler output clamp. Positive constant; used with explicit `-` sign at carve sites
-// (e.g. void mode pushes h to `-OUTPUT_HEIGHT_CLAMP`). Naming clarifies the magnitude
-// vs. previous `OUTPUT_CLAMP` which was used asymmetrically and read confusingly.
+// Flow-warp displacement amplitude in units of cellSize at distortion = 1. Chosen so a
+// full-slider warp moves sites' apparent positions by roughly one cell — strong visible
+// flow without folding the domain (the warp field gradient stays well below 1/amplitude).
+const FLOW_WARP_AMPLITUDE_CELLS = 0.9;
+// Starburst polar-lattice geometry (v16.2). The focal "explosion" is a SITE LAYOUT, not a
+// warp: jittered polar rings around each focus whose radial gap is `1 + radialStrength`
+// times the tangential pitch — Voronoi cells of such a lattice are radially elongated
+// petals/wedges. (v16.0 tried a radial displacement warp; measured result: ANY Gaussian-
+// localized radial displacement produces tangential ring bands at the falloff annulus —
+// both modes rendered as concentric webs. Site placement is the honest mechanism.)
+const POLAR_ZONE_SIGMAS = 1.0;
+const POLAR_TANGENTIAL_PITCH_CELLS = 0.85;
+// Cartesian sites are excluded slightly inside the polar zone so the lattice owns it.
+const POLAR_EXCLUSION_FRACTION = 0.9;
+// Density-noise gain: at reliefDensityNoise = 1.5 (clamp max) local density swings by
+// ±2.4× before the [0.1, LOCAL_DENSITY_MAX] clamp — enough for giant-vs-small patches.
+const DENSITY_NOISE_GAIN = 1.6;
+// Focal expansion gain/cap (unchanged from v14.2 — middle ground between blobby and flat).
+const FOCAL_EXPAND_GAIN = 1.7;
+const FOCAL_EXPAND_CAP = 2.2;
+// Sampler output clamp. Positive constant; used with explicit `-` sign at carve sites.
 const OUTPUT_HEIGHT_CLAMP = 1.05;
 // transitionSoftness=0 → exponent 0.2 (cells take over abruptly).
-// transitionSoftness=1 → exponent 2.0 (gradual lerp from waves to cells).
+// transitionSoftness=1 → exponent 2.0 (gradual lerp from base to cells).
 const TRANSITION_EXPONENT_MIN = 0.2;
 const TRANSITION_EXPONENT_MAX = 2.0;
-// Hard caps to prevent DoS via crafted params. Both passes are O(rows·cols·sites);
-// at ~107K pixels and the SITE_COUNT_MAX below, two passes ≈ 870M ops → ~1s on
-// modern hardware. Anything beyond this either freezes the tab or produces a
-// mesh that's noisier than the underlying CNC tool can resolve anyway.
+// Hard caps to prevent DoS via crafted params. Both passes are O(rows·cols·sites).
 const SITE_COUNT_MAX = 4096;
 const LOCAL_DENSITY_MAX = 4;
-// Radius field (Pass 1.5) — Gaussian blend over all sites within cutoff. σ in units of
-// cellSize: small enough that R(x,y) follows per-cell radius near each cell center, but
-// large enough that the field has no discontinuities at F1 or F2 ownership boundaries.
-// σ=0.8 cellSize gives w≈0.21 at neighbor centers, w≈0.002 at 2 cellSizes away.
-const RADIUS_FIELD_SIGMA_CELLS = 0.8;
-// Cutoff in σ units. At 3σ, Gaussian weight is e⁻⁹ ≈ 1.2e-4 — beyond noise. Halves the
-// inner loop cost vs full sum without measurable accuracy loss.
-const RADIUS_FIELD_CUTOFF_SIGMAS = 3;
-// Coarse-grid pitch in σ units. The Gaussian field varies on the scale of σ, so sampling
-// at σ/2 is well above Nyquist; bilinear interpolation to full resolution introduces no
-// visible error. This is the speed lever: full-resolution Rfield is O(cols·rows·sites)
-// which times out at production resolution; coarse Rfield is O((cols/k)·(rows/k)·sites)
-// where k = sigma/(2*pxPitch) is typically 30+ for relief-pockets.
-const RADIUS_FIELD_COARSE_PITCH_SIGMAS = 0.5;
-// Minimum seam smoothstep transition width in pixel units. Below this, the smoothstep
-// alias-staircases along grid lines because adjacent pixels see seam values too far apart.
-// 3 pixels = ~half-cycle of bilinear smoothing; matches the resolution gate's natural floor.
-const SEAM_MIN_PIXEL_WIDTH = 3;
-// Cap the pixel-min floor at this fraction of the per-pixel R. Without this cap, at low
-// grid resolutions (small panels or test fixtures with few cols) the pixel-min would
-// dominate the natural seamWidth and turn entire cells into "wall" territory, inverting
-// the dome/seam balance. 30% of R keeps the wall < 60% of cell diameter even when the
-// floor kicks in.
-const SEAM_FLOOR_MAX_R_FRACTION = 0.3;
+// v17 excavation-grammar constants (see docs/voronoi-relief-target-spec.md, critique v2):
+// crest variation fragments the upper envelope LOCALLY (ridge-only noise), clustered
+// suppression melts whole neighborhoods of cells into calm masses, and heavy-tail density
+// spikes put tiny cell clusters directly beside giant cells.
+const CREST_VARIATION_GAIN = 0.4;
+const SUPPRESSION_STRENGTH = 0.5;
+const JUNCTION_LIFT_GAIN = 0.1;
+// Crest plateau width modulation along each edge: 1 ± this per unit of wall noise
+// (clamped at 0.15× so ridges thin to threads but never vanish). Drives the reference's
+// chunky-to-thin ridge swings — visible ridge MASS varies, not just the wall slope run.
+const RIDGE_WIDTH_SWING = 1.2;
+// Junction deltas: the crest plateau flares toward three-way junctions into bold smooth
+// triangular masses (the reference's Y-deltas are as big as small cells), pinching thin
+// mid-edge. Applied to the crest width with a WIDER gate than the lift term, and SCALED
+// by the junctionLift control (0 disables — junctionLift is the documented junction
+// knob). Gain sized so the shipped presets (junctionLift 0.25-0.3) keep the ~1.5-1.8×
+// flare the reference look was tuned against.
+const JUNCTION_DELTA_GAIN = 6.0;
+// v19 scooped floors: per-cell floor tilt (hash direction) shifts each pocket's deepest
+// point off-center — steep wall on one flank, long ramp on the other. The reference's
+// pockets are carved directionally, not radially symmetric. Gated by depthVariation;
+// purely reductive (shallow flank ramps up) so the output clamp is never involved.
+const FLOOR_TILT_GAIN = 0.7;
+// v19 giant merged cells: inside the spatial suppression field, SITES are deleted (their
+// territory merges into neighbors — walls survive as long sweeping creases across the calm
+// zone) instead of relying on depth-melt alone, which erases structure rather than merging
+// it. Deletion probability at full field strength, scaled by depthVariation.
+const SUPPRESSION_KILL = 0.9;
+// v20 ridge crown: the crest band is not a flat strip (whose edges read as lines under
+// raking light) but a rounded BEAD — a smoothstep dome over the crest with zero slope at
+// both the ridge line and the wall shoulder. The reference's wall tops are broad convex
+// plateaus, never flat-topped.
+const RIDGE_CROWN_GAIN = 0.15;
+// v20 stretched fans: radialGrow ABOVE 1 enters a documented fan regime — the focal zone
+// gets progressively SHALLOWER (while the polar lattice keeps its radially-converging
+// walls), so a focus inside a calm mass reads as drape-like creases converging to a pinch
+// point instead of a deep starburst. grow ≤ 1 keeps the classic deepened-focus behavior.
+const FOCAL_CALM_GAIN = 0.8;
+// v21 edge dissolution ceiling: the weakest edges melt this far toward floor level (the
+// two adjacent cells blend into a shared basin). ~6% of edges dissolve strongly, ~20%
+// weaken partially (1 − smoothstep(0.06, 0.3) on the shared edge hash).
+const EDGE_DISSOLVE_MAX = 0.7;
+// v21 stock-plane soft cap (pockets polarity): material can only be REMOVED — positive
+// excursions (crowns, junction lift, crest noise) saturate into flat plateaus just above
+// the base wave, exactly like the references' ridge tops (remnants of the original stock
+// face). Also converts pyramid junctions into broad saddles and keeps the panel
+// silhouette clean (no fins above the top edge).
+// v21.1 slope budget (normalized depth per inch of wall extent): 1.0 at the default
+// 2.4\" cut depth is ~67 degrees peak wall slope — the steepest the wood references show.
+const SLOPE_DEPTH_BUDGET = 0.55;
+const STOCK_CAP_START = 0.04;
+const STOCK_CAP_SPAN = 0.13;
+const SIZE_DEPTH_MIN = 0.8;
+const SIZE_DEPTH_MAX = 1.2;
 
 /** Deterministic per-seed PRNG (mulberry32) — better distribution than sin-hash for site jitter. */
 function mulberry32(seed: number): () => number {
@@ -108,6 +175,30 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Quintic smootherstep — zero FIRST and SECOND derivatives at both edges (G2 blend).
+ *  Used where curvature must fade through a transition band instead of resetting at a
+ *  line (the cushion ramp). */
+function smootherstep(edge0: number, edge1: number, x: number): number {
+  if (edge1 <= edge0) return x < edge0 ? 0 : 1;
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+/** Deterministic per-cell hash in [0, 1) from the owning site index — drives which cells
+ *  get pillowed floors and how strongly, stable across renders for the same seed. */
+function cellHash01(idx: number, seed: number): number {
+  let h = (Math.imul(idx + 1, 374761393) + Math.imul(seed | 0, 668265263)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** v21 per-EDGE hash. An edge is identified by its two site indices. ORDERED (a→b) gives
+ *  each SIDE of a shared ridge its own value (wall asymmetry); callers wanting a value
+ *  both sides agree on (crest strength) pass min/max. */
+function edgeHash01(a: number, b: number, seed: number): number {
+  return cellHash01(Math.imul(a + 1, 7919) + b + 1, seed);
+}
+
 /** Compute the spatial-attractor mask in [0, 1] for a normalized (u, v) ∈ [0, 1]². */
 function attractorMask(
   mode: ReliefAttractorMode,
@@ -121,9 +212,6 @@ function attractorMask(
   if (mode === 'none') return 1;
   if (mode === 'vertical') {
     // Distance from the attractor anchor along Y, clamped to [0, 1] then sharpened by falloff.
-    // This makes `attractorY` a real directional control: 0 = peak at viewport bottom (matches
-    // lafabrica wall-panel orientation — dense cells gravitate to the bottom edge), 1 = peak at
-    // viewport top, 0.5 = peak band running across the middle. Falloff sharpens or broadens.
     const dy = Math.abs(v - ay);
     return Math.pow(Math.max(0, 1 - dy), Math.max(0.05, falloff));
   }
@@ -136,89 +224,261 @@ function attractorMask(
   const dy = v - ay;
   const d = Math.sqrt(dx * dx + dy * dy);
   const r = Math.max(0.001, radius);
-  // falloff shapes the smoothstep curve for radial/point modes — < 1 broadens, > 1 sharpens.
   const shapedFalloff = Math.max(0.05, falloff);
   if (mode === 'radial') {
-    // Inside radius → 1; outside falls off — high density at center, sparse at edge.
     return Math.pow(1 - smoothstep(r * 0.5, r, d), shapedFalloff);
   }
-  // 'point': inverse — sparse at center, dense outside (useful for vignette/border patterns).
+  // 'point': inverse — sparse at center, dense outside (vignette/border patterns).
   return Math.pow(smoothstep(r * 0.5, r, d), shapedFalloff);
 }
 
-/** Generate a roughly-uniform jittered grid of sites scaled by the attractor mask.
- *  When `warpDistortion > 0`, a SimplexNoise warp field displaces site positions so the
- *  Voronoi grid flows organically with the noise pipeline (matches lafabrica panels where
- *  cells curve around the panel rather than gridding). */
-function generateSites(p: ReliefSampleParams, rand: () => number, warpGen: SimplexNoiseGen | null): Site[] {
+/** The flow warp W (global distortion/warpFreq sliders). Returns null when inactive so
+ *  callers can take the identity fast path. Sites are NEVER passed through W — only query
+ *  points are, which makes real-space cells the preimages of clean warped-space Voronoi
+ *  cells. (v16.2: the starburst no longer lives here — see generatePolarSites.) */
+function makeWarpFn(
+  p: ReliefSampleParams,
+  seed: number,
+  warpDistortion: number,
+): ((x: number, y: number) => [number, number]) | null {
+  const flowAmp = warpDistortion * Math.max(0.2, p.cellSize) * FLOW_WARP_AMPLITUDE_CELLS;
+  // Finite fallback before the clamp — Math.max propagates NaN into every warped query.
+  const flowFreq = Math.max(0.02, Number.isFinite(p.warpFrequency) ? p.warpFrequency : 0.1);
+  if (flowAmp <= 0) return null;
+  const flowGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13);
+  return (x: number, y: number): [number, number] => [
+    x + flowGen.noise(x * flowFreq, y * flowFreq) * flowAmp,
+    y + flowGen.noise(x * flowFreq + 31.7, y * flowFreq + 17.3) * flowAmp,
+  ];
+}
+
+/** Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus jittered
+ *  concentric rings whose RADIAL gap is `(1 + radialStrength)` × the tangential pitch —
+ *  the Voronoi cells of that lattice are radially elongated petals fanning out of the
+ *  node, exactly the reference's wedge structure. 'rings' swaps the two pitches
+ *  (tangential arcs); 'spiral' advances each ring by the golden angle so sectors join
+ *  into spiral arms. jitterAmt (the Starburst Wobble slider) breaks mandala regularity;
+ *  radialGrow scales the whole lattice pitch (bigger focal cells). Petal length grows
+ *  with ring index, matching the reference's outward-lengthening fans. */
+function generatePolarSites(
+  fociPhys: ReadonlyArray<{ x: number; y: number }>,
+  zoneR: number,
+  cellSize: number,
+  radialStrength: number,
+  radialGrow: number,
+  jitterAmt: number,
+  mode: ReliefRadialMode,
+  rand: () => number,
+  meshX: number,
+  meshY: number,
+  sites: Site[],
+): void {
+  // v20 fan regime (radialGrow > 1): the lattice pitch stops growing with grow (more
+  // sectors survive), the sector COUNT locks across rings so sector boundaries align
+  // into long radially-converging creases, angular jitter is damped, and dropout is
+  // reduced — a stretched fan whose creases run unbroken toward the pinch point.
+  const fan = radialGrow > 1;
+  const pitchT = Math.max(0.3, cellSize * POLAR_TANGENTIAL_PITCH_CELLS
+    * (1 + 0.5 * Math.max(0, Math.min(2, fan ? 1 : radialGrow))));
+  const elong = 1 + Math.max(0, Math.min(4, radialStrength));
+  const margin = Math.max(0.2, cellSize);
+  for (let k = 0; k < fociPhys.length; k++) {
+    if (sites.length >= SITE_COUNT_MAX) break;
+    const cp = fociPhys[k];
+    // Nucleus site — the small calm cell at the node the reference shows.
+    sites.push({
+      x: Math.max(0, Math.min(meshX, cp.x + (rand() - 0.5) * 0.2 * pitchT)),
+      y: Math.max(0, Math.min(meshY, cp.y + (rand() - 0.5) * 0.2 * pitchT)),
+      radius: 0,
+    });
+    const baseTheta = rand() * 2 * Math.PI;
+    let r = pitchT * 0.75;
+    let ring = 0;
+    let sectorsLocked = 0;
+    while (r < zoneR && sites.length < SITE_COUNT_MAX) {
+      const gap = mode === 'rings'
+        ? pitchT * 0.8
+        : pitchT * elong * (1 + 0.1 * ring);
+      const pitch = mode === 'rings' ? pitchT * elong : pitchT;
+      const rMid = r + gap * 0.5;
+      const sectors = fan && sectorsLocked > 0
+        ? sectorsLocked
+        : Math.max(4, Math.round((2 * Math.PI * rMid) / pitch));
+      if (fan && sectorsLocked === 0) sectorsLocked = sectors;
+      const spiralOff = mode === 'spiral' ? ring * 0.381966 * 2 * Math.PI : 0;
+      for (let s = 0; s < sectors; s++) {
+        if (sites.length >= SITE_COUNT_MAX) break;
+        // v17 sector dropout — deletes random spokes so fans read as discovered, not
+        // generated (critique: radial systems too visibly algorithmic).
+        if (rand() < (fan ? 0.1 : 0.25) * jitterAmt) continue;
+        const th = baseTheta + spiralOff + ((s + 0.5) / sectors) * 2 * Math.PI
+          + (rand() - 0.5) * jitterAmt * (2 * Math.PI / sectors) * (fan ? 0.35 : 1);
+        const rr = rMid + (rand() - 0.5) * jitterAmt * gap * 0.7;
+        const sx0 = cp.x + rr * Math.cos(th);
+        const sy0 = cp.y + rr * Math.sin(th);
+        // Skip sites far off-panel; clamp near-edge ones (border cells stay sane).
+        if (sx0 < -margin || sx0 > meshX + margin || sy0 < -margin || sy0 > meshY + margin) continue;
+        sites.push({
+          x: Math.max(0, Math.min(meshX, sx0)),
+          y: Math.max(0, Math.min(meshY, sy0)),
+          radius: 0,
+        });
+      }
+      r += gap;
+      ring++;
+    }
+  }
+}
+
+/** Generate a roughly-uniform jittered grid of sites, density modulated by the attractor
+ *  mask and (v16) a low-frequency density-noise field. Sites are placed in the same
+ *  coordinate space the warped queries live in and are never displaced — cell flow comes
+ *  entirely from warping the query points. */
+function generateSites(
+  p: ReliefSampleParams,
+  rand: () => number,
+  densityGen: SimplexNoiseGen | null,
+  exclusionFoci: ReadonlyArray<{ x: number; y: number }>,
+  exclusionR: number,
+  suppressGen: SimplexNoiseGen | null,
+): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
-  // baseSpacing converts cellSize (avg cell diameter) to grid spacing for site placement.
   const baseSpacing = Math.max(0.2, cellSize);
-  // Grid count along each axis; +2 padding so border cells don't pinch.
   const nx = Math.max(2, Math.ceil(meshX / baseSpacing) + 1);
   const ny = Math.max(2, Math.ceil(meshY / baseSpacing) + 1);
   const sx = meshX / nx;
   const sy = meshY / ny;
-
-  // Warp tuning: amplitude scales with cellSize so warp displacement is visible relative
-  // to grid spacing but never large enough to push sites off-panel before the clamp.
-  const warpAmp = warpGen ? p.warpDistortion * baseSpacing * 0.7 : 0;
-  const warpFreq = Math.max(0.02, p.warpFrequency);
+  const densityNoiseAmt = Math.max(0, Math.min(1.5, p.densityNoise));
+  const densityNoiseFreq = Math.max(0.02, Math.min(0.3, p.densityNoiseFreq));
+  const exclusionR2 = exclusionR * exclusionR;
+  // v19 giant merged cells: the SAME low-frequency field that melts depth in Pass 2
+  // (seed offset +103, freq 0.16/cellSize) deletes sites here — several neighboring
+  // cells merge into one giant territory whose surviving perimeter walls read as long
+  // sweeping creases across the calm zone (the reference's smooth masses are enormous
+  // CELLS, not erased relief).
+  const depthVariationAmt = Number.isFinite(p.depthVariation)
+    ? Math.max(0, Math.min(1, p.depthVariation))
+    : 0;
+  const suppressFreqSites = 0.16 / Math.max(0.2, cellSize);
+  const killedReserve: Array<{ x: number; y: number }> = [];
 
   const sites: Site[] = [];
-  // Hard caps: defense in depth on top of state.ts URL clamps. SITE_COUNT_MAX bounds the
-  // O(rows·cols·sites) cost of both passes; LOCAL_DENSITY_MAX prevents a single cell from
-  // exploding even if densityStrength sneaks past the URL clamp via tests/future code paths.
   outer: for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const cx = (i + 0.5) * sx;
       const cy = (j + 0.5) * sy;
-      // Density attractor decides whether to keep this site (subsample) or split it (oversample).
       const u = cx / meshX;
       const v = cy / meshY;
       const mask = attractorMask(
         p.attractorMode, u, v, p.attractorX, p.attractorY,
         p.attractorRadius, p.attractorFalloff,
       );
-      const localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
-      // Stochastic acceptance: density 1 keeps all, density 2 doubles via extra in-cell sample.
+      if (suppressGen && depthVariationAmt > 0) {
+        const sn01 = (suppressGen.noise(cx * suppressFreqSites, cy * suppressFreqSites) + 1) * 0.5;
+        const kill = smoothstep(0.66, 0.8, sn01) * SUPPRESSION_KILL * depthVariationAmt;
+        if (kill > 0 && rand() < kill) {
+          // Remember a few deleted cell centers — if deletion (on a small grid inside a
+          // strong field) wipes out every candidate, restore from these below so the
+          // sampler degrades to giant merged cells, never to a flat zero-site panel.
+          if (killedReserve.length < 8) killedReserve.push({ x: cx, y: cy });
+          continue;
+        }
+      }
+      let localDensity = Math.max(0, Math.min(LOCAL_DENSITY_MAX, 1 + p.densityStrength * mask));
+      // v16 patchy density: low-frequency noise multiplies local density so giant cells
+      // (density < 1) and dense clusters (density > 1) coexist across the panel.
+      if (densityGen && densityNoiseAmt > 0) {
+        const n = densityGen.noise(cx * densityNoiseFreq, cy * densityNoiseFreq);
+        localDensity *= Math.max(0.1, Math.min(LOCAL_DENSITY_MAX, 1 + densityNoiseAmt * n * DENSITY_NOISE_GAIN));
+        // v17 heavy-tail spikes: rare abrupt jumps between scales — tiny cell clusters
+        // directly beside giant cells, with weak spatial correlation (critique: the size
+        // distribution was too continuously graded).
+        const spike = rand();
+        if (spike < 0.03 * densityNoiseAmt) localDensity *= 3;
+        else if (spike < 0.08 * densityNoiseAmt) localDensity *= 0.12;
+      }
+      localDensity = Math.min(LOCAL_DENSITY_MAX, Math.max(0.1, localDensity));
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
       for (let k = 0; k < reps; k++) {
         if (sites.length >= SITE_COUNT_MAX) break outer;
         const jx = (rand() - 0.5) * jitter * sx;
         const jy = (rand() - 0.5) * jitter * sy;
-        let px = cx + jx;
-        let py = cy + jy;
-        // Domain warp on site positions — shifts the whole grid by a smoothly-varying field
-        // so cells curve and flow rather than tile uniformly.
-        if (warpGen && warpAmp > 0) {
-          const wx = warpGen.noise(px * warpFreq, py * warpFreq);
-          const wy = warpGen.noise(px * warpFreq + 31.7, py * warpFreq + 17.3);
-          px += wx * warpAmp;
-          py += wy * warpAmp;
+        const px = Math.max(0, Math.min(meshX, cx + jx));
+        const py = Math.max(0, Math.min(meshY, cy + jy));
+        // v21.1 minimum separation: jittered reps can land two sites arbitrarily close,
+        // producing sliver cells whose entire wall geometry is narrower than a sample —
+        // they render as torn shelves. (Physically: features below the tool radius
+        // cannot be cut anyway.)
+        {
+          const minSep2 = (0.35 * baseSpacing) * (0.35 * baseSpacing);
+          let tooClose = false;
+          for (let q = 0; q < sites.length; q++) {
+            const ddx = sites[q].x - px;
+            const ddy = sites[q].y - py;
+            if (ddx * ddx + ddy * ddy < minSep2) { tooClose = true; break; }
+          }
+          if (tooClose) continue;
         }
-        sites.push({
-          x: Math.max(0, Math.min(meshX, px)),
-          y: Math.max(0, Math.min(meshY, py)),
-          radius: 0,
-        });
+        // v16.2: the polar lattices own the focal zones — Cartesian sites inside an
+        // exclusion disc would double the density there and shred the petal structure.
+        if (exclusionR > 0) {
+          let excluded = false;
+          for (let f = 0; f < exclusionFoci.length; f++) {
+            const dx = px - exclusionFoci[f].x;
+            const dy = py - exclusionFoci[f].y;
+            if (dx * dx + dy * dy < exclusionR2) { excluded = true; break; }
+          }
+          if (excluded) continue;
+        }
+        sites.push({ x: px, y: py, radius: 0 });
       }
     }
+  }
+  // Minimum-site floor: deletion is independent per candidate, so a small grid inside a
+  // strong suppression field can wipe out EVERY Cartesian site — restore deleted cell
+  // centers (deterministic order) so the panel degrades to giant merged cells, never to
+  // the flat zero-site fallback. Reserve centers were captured BEFORE the focal exclusion
+  // check ran, so revalidate here: a restored site inside a polar-owned disc would shred
+  // the petal lattice.
+  for (let i = 0; sites.length < 3 && i < killedReserve.length; i++) {
+    const rx = killedReserve[i].x;
+    const ry = killedReserve[i].y;
+    if (exclusionR > 0) {
+      let excluded = false;
+      for (let f = 0; f < exclusionFoci.length; f++) {
+        const dx = rx - exclusionFoci[f].x;
+        const dy = ry - exclusionFoci[f].y;
+        if (dx * dx + dy * dy < exclusionR2) { excluded = true; break; }
+      }
+      if (excluded) continue;
+    }
+    sites.push({ x: rx, y: ry, radius: 0 });
   }
   return sites;
 }
 
-/** One pass of Lloyd relaxation — moves each site toward the centroid of its assigned samples. */
-function lloydRelax(sites: Site[], p: ReliefSampleParams, samples: number): void {
+/** One pass of Lloyd relaxation — moves each site toward the centroid of its assigned
+ *  samples. Samples are warped through W so relaxation happens in the same space the
+ *  distance queries use. Sites at index ≥ pinnedFrom (the polar starburst lattices) are
+ *  NOT moved: centroidal relaxation homogenizes cells toward isotropy, which would erase
+ *  exactly the radial elongation the lattices exist to produce. */
+function lloydRelax(
+  sites: Site[],
+  p: ReliefSampleParams,
+  samples: number,
+  warpFn: ((x: number, y: number) => [number, number]) | null,
+  pinnedFrom: number,
+): void {
   const { meshX, meshY } = p;
   const sumX = new Float64Array(sites.length);
   const sumY = new Float64Array(sites.length);
   const counts = new Int32Array(sites.length);
-  // Use a low-discrepancy sample set instead of full grid for speed (samples ~4096 typical).
   for (let s = 0; s < samples; s++) {
-    // Halton(2, 3) for low-discrepancy coverage.
-    const x = halton(s + 1, 2) * meshX;
-    const y = halton(s + 1, 3) * meshY;
+    let x = halton(s + 1, 2) * meshX;
+    let y = halton(s + 1, 3) * meshY;
+    if (warpFn) {
+      [x, y] = warpFn(x, y);
+    }
     let bestIdx = 0;
     let bestD = Infinity;
     for (let i = 0; i < sites.length; i++) {
@@ -231,10 +491,29 @@ function lloydRelax(sites: Site[], p: ReliefSampleParams, samples: number): void
     sumY[bestIdx] += y;
     counts[bestIdx]++;
   }
-  for (let i = 0; i < sites.length; i++) {
+  const moveLimit = Math.min(sites.length, Math.max(0, pinnedFrom));
+  const minSep2 = 0.3 * 0.3;
+  for (let i = 0; i < moveLimit; i++) {
     if (counts[i] > 0) {
-      sites[i].x = sumX[i] / counts[i];
-      sites[i].y = sumY[i] / counts[i];
+      // Warped centroids can land slightly outside the physical panel at high
+      // distortion (the warp displaces samples by up to ~distortion·cellSize·0.9) —
+      // clamp so edge sites cannot drift off-panel and starve boundary cells.
+      const nx = Math.max(0, Math.min(meshX, sumX[i] / counts[i]));
+      const ny = Math.max(0, Math.min(meshY, sumY[i] / counts[i]));
+      // Relaxation (and proximity to pinned polar sites) must not defeat the minimum
+      // separation guarantee — reject moves that would land within the feature floor
+      // of any other site (the site keeps its previous valid position).
+      let ok = true;
+      for (let q = 0; q < sites.length; q++) {
+        if (q === i) continue;
+        const ddx = sites[q].x - nx;
+        const ddy = sites[q].y - ny;
+        if (ddx * ddx + ddy * ddy < minSep2) { ok = false; break; }
+      }
+      if (ok) {
+        sites[i].x = nx;
+        sites[i].y = ny;
+      }
     }
   }
 }
@@ -251,36 +530,29 @@ function halton(index: number, base: number): number {
   return result;
 }
 
-/** Return the dome contribution at radial distance d from a site of effective radius R. */
-function domeHeight(profile: ReliefProfile, d: number, R: number): number {
-  if (R <= 0) return 0;
-  const t = Math.min(1, d / R);
-  if (profile === 'hemisphere') {
-    const inside = 1 - t * t;
-    return inside > 0 ? Math.sqrt(inside) : 0;
-  }
-  if (profile === 'cosine') {
-    return Math.cos(t * Math.PI * 0.5);
-  }
-  // parabolic
-  return Math.max(0, 1 - t * t);
-}
-
-/** Find F1, F2 and the index of the nearest site, with optional anisotropic distance metric.
- *  Distance is computed in the rotated anisotropy frame: rotation preserves length, so we
- *  scale x' and take hypot directly without rotating back. */
-function nearestTwo(
+/** Find F1, F2, F3 and the index of the nearest site under a CONSTANT anisotropic metric.
+ *  The frame never varies per pixel (v16 removed the rotating-metric mechanism — a
+ *  constant frame cannot tear cell ownership). Distance is computed in the rotated
+ *  anisotropy frame: rotation preserves length, so we scale x' and take hypot directly.
+ *  F3 (third-nearest) drives junction detection: at a three-way Voronoi corner
+ *  F1 ≈ F2 ≈ F3, so (F3 − F1) → 0 exactly at junctions (v16.3). */
+function nearestThree(
   sites: Site[],
   x: number,
   y: number,
   cosA: number,
   sinA: number,
   anisotropyScale: number,
-): { f1: number; f2: number; idx: number } {
+): { f1: number; f2: number; f3: number; f4: number; idx: number; idx2: number; idx3: number; idx4: number } {
   let f1 = Infinity;
   let f2 = Infinity;
+  let f3 = Infinity;
+  let f4 = Infinity;
   let idx = 0;
-  const isotropic = anisotropyScale === 1;
+  let idx2 = -1;
+  let idx3 = -1;
+  let idx4 = -1;
+  const isotropic = anisotropyScale <= 1.0001;
   for (let i = 0; i < sites.length; i++) {
     const dx = x - sites[i].x;
     const dy = y - sites[i].y;
@@ -292,10 +564,16 @@ function nearestTwo(
       const yr = -dx * sinA + dy * cosA;
       d = Math.hypot(xr * anisotropyScale, yr);
     }
-    if (d < f1) { f2 = f1; f1 = d; idx = i; }
-    else if (d < f2) { f2 = d; }
+    if (d < f1) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i; }
+    else if (d < f2) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = i; }
+    else if (d < f3) { f4 = f3; idx4 = idx3; f3 = d; idx3 = i; }
+    else if (d < f4) { f4 = d; idx4 = i; }
   }
-  return { f1, f2, idx };
+  // idx2 seeds as the initial idx placeholder when only one site exists — normalize.
+  if (!Number.isFinite(f2)) idx2 = -1;
+  if (!Number.isFinite(f3)) idx3 = -1;
+  if (!Number.isFinite(f4)) idx4 = -1;
+  return { f1, f2, f3, f4, idx, idx2, idx3, idx4 };
 }
 
 export class VoronoiReliefGen implements ReliefGenerator {
@@ -311,177 +589,337 @@ export class VoronoiReliefGen implements ReliefGenerator {
   noise(): number { return 0; }
 
   sampleGrid(p: ReliefSampleParams): number[][] {
-    // Use the per-call seed from params (the canonical source — STATE.seed flows through
-    // sampleReliefParamsFromState into p.seed). Fall back to constructor seed only if
-    // p.seed is missing (defensive — currently never happens).
     const seed = (p.seed ?? this.fallbackSeed) >>> 0;
     const rand = mulberry32(seed);
-    // Re-seed the wave generator per call so same p.seed → same wave field even when the
-    // generator instance is reused across renders.
+    // Base wave field (v16 superposition term). Re-seeded per call so same p.seed → same
+    // wave even when the generator instance is reused across renders.
     const waveGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET);
-    // Separate warp generator (only created when distortion > 0) — driven by the global
-    // distortion/warpFreq sliders so the existing noise UI integrates with relief mode.
-    const warpGen = p.warpDistortion > 0
-      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 13)
-      : null;
-    // Patchy modulator for the attractor mask — produces random "blob" zones of
-    // density/intensity instead of a smooth linear gradient. Off when attractorNoise=0.
+    // Patchy modulator for the attractor mask — random "blob" zones of intensity.
     const attractorNoiseGen = p.attractorNoise > 0
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 29)
       : null;
-    // Flow field for per-pixel anisotropy direction — drives organic stretched-in-different-
-    // directions look. Off when flowAnisotropy=0; otherwise creates two noise channels
-    // (ang + freq variation) so cell orientation curves smoothly across the panel.
-    const flowGen = p.flowAnisotropy > 0
-      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 47)
+    // v16 patchy site density field.
+    const densityNoiseGen = p.densityNoise > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 71)
       : null;
-    const sites = generateSites(p, rand, warpGen);
+
+    // Starburst foci — sanitize defensively even though state.ts URL-clamps cover the
+    // share-link path: callers constructing ReliefSampleParams directly (tests, future
+    // paths) bypass sampleReliefParamsFromState's pruning.
+    const radialFociNormalized = p.radialFoci
+      .filter(f => Number.isFinite(f.x) && Number.isFinite(f.y))
+      .slice(0, 3)
+      .map(f => ({
+        x: Math.max(0, Math.min(1, f.x)),
+        y: Math.max(0, Math.min(1, f.y)),
+      }));
+    const fociPhys = radialFociNormalized.map(f => ({
+      x: f.x * p.meshX,
+      y: f.y * p.meshY,
+    }));
+    // Finite fallbacks BEFORE clamping — Math.min/Math.max propagate NaN, so a direct
+    // caller (tests, future paths) could otherwise poison sigma, the polar lattice, or
+    // focal expansion through any of these scalars.
+    const radialFalloffSafe = Number.isFinite(p.radialFalloff) ? p.radialFalloff : 0.3;
+    const sigmaRadial = Math.max(
+      1e-3,
+      Math.max(0.02, Math.min(0.6, radialFalloffSafe)) * Math.hypot(p.meshX, p.meshY),
+    );
+    const radialStrength = Number.isFinite(p.radialStrength)
+      ? Math.max(0, Math.min(4, p.radialStrength))
+      : 0;
+    const radialGrow = Number.isFinite(p.radialGrow)
+      ? Math.max(0, Math.min(2, p.radialGrow))
+      : 0;
+    const radialWarpAmt = fociPhys.length > 0 && Number.isFinite(p.radialWarp)
+      ? Math.max(0, Math.min(1, p.radialWarp))
+      : 0;
+    // Sanitize distortion ONCE and reuse everywhere it sizes work: the warp amplitude and
+    // the radius-field padding below. state.ts clamps URL payloads, but params constructed
+    // directly (tests, future callers) bypass that path — a huge finite value here would
+    // explode the padded coarse-grid allocation.
+    const warpDistortion = Number.isFinite(p.warpDistortion)
+      ? Math.max(0, Math.min(2, p.warpDistortion))
+      : 0;
+
+    const warpFn = makeWarpFn(p, seed, warpDistortion);
+
+    // v16.2 starburst: polar site lattices own a disc of radius zoneR around each focus;
+    // Cartesian sites are excluded slightly inside it so the petal structure stays clean.
+    // Foci are the sole enable — at radialStrength 0 the lattice pitch is 1:1 (no
+    // elongation) but the focal organization remains, per the ReliefParams contract
+    // ("Empty = the starburst system is off").
+    const starburstActive = fociPhys.length > 0;
+    const zoneR = starburstActive ? POLAR_ZONE_SIGMAS * sigmaRadial : 0;
+    // Shared with Pass 2's depth-melt AND the v19 site deletion in generateSites — one
+    // field decides both which zones calm down and which cells merge away.
+    const suppressGen = Number.isFinite(p.depthVariation) && p.depthVariation > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 103)
+      : null;
+    const sites = generateSites(
+      p, rand, densityNoiseGen,
+      starburstActive ? fociPhys : [],
+      starburstActive ? zoneR * POLAR_EXCLUSION_FRACTION : 0,
+      suppressGen,
+    );
+    let cartesianCount = sites.length;
+    if (starburstActive) {
+      // Polar sites must survive the global cap — if Cartesian generation already
+      // consumed SITE_COUNT_MAX, the exclusion discs would otherwise become empty
+      // craters. Generate into a scratch array, then trim the Cartesian TAIL to
+      // reserve capacity (Cartesian-first ordering is what pinnedFrom relies on).
+      const polar: Site[] = [];
+      generatePolarSites(
+        fociPhys, zoneR, Math.max(0.2, p.cellSize), radialStrength, radialGrow,
+        radialWarpAmt, p.radialMode, rand, p.meshX, p.meshY, polar,
+      );
+      const budget = Math.max(0, SITE_COUNT_MAX - polar.length);
+      if (sites.length > budget) sites.length = budget;
+      cartesianCount = sites.length;
+      for (const s of polar) sites.push(s);
+    }
     if (sites.length === 0) {
-      // Defensive: empty cellgrid → flat field.
       const empty: number[][] = [];
       for (let j = 0; j < p.rows; j++) empty.push(new Array(p.cols).fill(0));
       return empty;
     }
 
-    // Lloyd relaxation passes (default 1, max 2). Defensive clamp — STATE is the canonical
-    // source, but params may originate from URLs, tests, or future callers. Hard-cap at 2
-    // to prevent a denial-of-service via a crafted share link.
+    // Lloyd relaxation passes (default 1, max 2). Hard-cap defends against crafted links.
+    // Polar lattice sites (index ≥ cartesianCount) are pinned — relaxation would erase
+    // their deliberate radial elongation.
     const relaxIters = Math.max(0, Math.min(2, Math.floor(p.relaxIterations) || 0));
     const lloydSamples = Math.min(LLOYD_SAMPLE_BUDGET_MAX, sites.length * LLOYD_SAMPLES_PER_SITE);
     for (let r = 0; r < relaxIters; r++) {
-      lloydRelax(sites, p, lloydSamples);
+      lloydRelax(sites, p, lloydSamples, warpFn, cartesianCount);
     }
 
-    const aAngle = p.anisotropyAngle * Math.PI / 180;
+    // NaN guards on the constant metric frame (crafted params / direct construction).
+    const baseAnisotropy = Number.isFinite(p.anisotropy)
+      ? Math.max(0, Math.min(2, p.anisotropy))
+      : 0;
+    const safeAnisotropyAngle = Number.isFinite(p.anisotropyAngle) ? p.anisotropyAngle : 0;
+    const aAngle = safeAnisotropyAngle * Math.PI / 180;
     const cosA = Math.cos(aAngle);
     const sinA = Math.sin(aAngle);
-    // anisotropyScale > 1 squashes along the angle's perpendicular → elongated cells along the angle axis.
-    const anisotropyScale = 1 + p.anisotropy * ANISOTROPY_SCALE_MULTIPLIER;
+    // The metric scale inflates the component ALONG (cosA, sinA), which narrows the cell
+    // along that axis and widens it perpendicular → cells elongate ⟂ anisotropyAngle.
+    const metricScale = 1 + baseAnisotropy * ANISOTROPY_SCALE_MULTIPLIER;
 
-    // Hoisted + clamped wave-mode params. transitionSoftness must stay in [0, 1] —
-    // negative values would make the exponent ≤ 0 and `Math.pow(0, ≤0)` = Infinity,
-    // which the non-finite guard later flattens to 0, punching dead bands into the mesh.
+    // Hoisted + clamped shaping params.
     const transitionSoftness = Math.max(0, Math.min(1, p.transitionSoftness));
     const transitionExponent = TRANSITION_EXPONENT_MIN
       + transitionSoftness * (TRANSITION_EXPONENT_MAX - TRANSITION_EXPONENT_MIN);
+    const baseAmplitude = p.baseMode === 'wave' && Number.isFinite(p.baseAmplitude)
+      ? Math.max(0, Math.min(2, p.baseAmplitude))
+      : 0;
+    const baseFrequency = Number.isFinite(p.baseFrequency)
+      ? Math.max(0.02, Math.min(0.3, p.baseFrequency))
+      : 0.1;
+    const wallFrac = Number.isFinite(p.wallWidth)
+      ? Math.max(0, Math.min(0.9, p.wallWidth))
+      : 0;
 
     const cols = p.cols;
     const rows = p.rows;
 
-    // Pass 1: accumulate per-site mean F1 to derive per-cell radius. Accumulators live in
-    // Float64Arrays local to this sampleGrid call so the Site interface stays slim and
-    // multiple concurrent sampleGrid calls (e.g. tests) can't trample each other.
-    const radiusSum = new Float64Array(sites.length);
-    const radiusN = new Int32Array(sites.length);
-    const pass1FlowAnisotropyAmt = Math.max(0, Math.min(1, p.flowAnisotropy));
+    // Precompute warped query coordinates once — shared by Pass 1 and Pass 2 (and the
+    // per-pixel radius-field lookups). Identity fast path when no warp is active.
+    const wxArr = new Float64Array(rows * cols);
+    const wyArr = new Float64Array(rows * cols);
     for (let j = 0; j < rows; j++) {
       const v = j / Math.max(1, rows - 1);
       const y = v * p.meshY;
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
-        let pxCosA = cosA, pxSinA = sinA;
-        if (flowGen && pass1FlowAnisotropyAmt > 0) {
-          const flow = flowGen.noise(x * 0.18, y * 0.18);
-          const localAngle = (p.anisotropyAngle + flow * pass1FlowAnisotropyAmt * 90) * Math.PI / 180;
-          pxCosA = Math.cos(localAngle); pxSinA = Math.sin(localAngle);
+        const idx = j * cols + i;
+        if (warpFn) {
+          const [qx, qy] = warpFn(x, y);
+          wxArr[idx] = qx;
+          wyArr[idx] = qy;
+        } else {
+          wxArr[idx] = x;
+          wyArr[idx] = y;
         }
-        const { f1, idx } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
-        radiusSum[idx] += f1;
-        radiusN[idx]++;
       }
     }
-    // Per-cell radius ≈ 2 × mean F1 (since mean F1 inside a Voronoi cell ≈ R/2 for a disk).
+
+    // Exact boundary distance. (F2−F1)/2 is exact only on the two-site axis — its level
+    // sets are hyperbolae that curve around the site. The true distance from a query to
+    // the shared Voronoi boundary is the bisector distance (Fk² − F1²)/(2·|sk − s1|),
+    // minimized over the two nearest competitors (the third catches corner regions where
+    // the constraining bisector is not the F2 site's). Its level sets are TRUE inset
+    // polygons of the cell — the critique's floor geometry. Measured in the same
+    // (an)isotropic metric as the F-distances; capped at the panel diagonal so degenerate
+    // one-site panels stay finite.
+    const dbCap = p.meshX + p.meshY;
+    const siteDist = (a: number, b: number): number => {
+      const dx = sites[a].x - sites[b].x;
+      const dy = sites[a].y - sites[b].y;
+      if (metricScale <= 1.0001) return Math.hypot(dx, dy);
+      const xr = dx * cosA + dy * sinA;
+      const yr = -dx * sinA + dy * cosA;
+      return Math.hypot(xr * metricScale, yr);
+    };
+    // Minimized over the THREE nearest competitors: near-nearest ordering by Fk does not
+    // strictly order the bisector distances (the |sk − s1| denominator varies), so the
+    // third competitor covers cell-corner regions and ≥4-degree vertices; jittered site
+    // sets make deeper competitors constraining only on a measure-zero locus.
+    const boundaryDist = (
+      f1: number, f2: number, f3: number, f4: number,
+      owner: number, i2: number, i3: number, i4: number,
+    ): number => {
+      let db = dbCap;
+      if (i2 >= 0 && Number.isFinite(f2)) {
+        const d = (f2 * f2 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i2)));
+        if (d < db) db = d;
+      }
+      if (i3 >= 0 && Number.isFinite(f3)) {
+        const d = (f3 * f3 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i3)));
+        if (d < db) db = d;
+      }
+      if (i4 >= 0 && Number.isFinite(f4)) {
+        const d = (f4 * f4 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i4)));
+        if (d < db) db = d;
+      }
+      return db;
+    };
+
+    // Pass 1: accumulate per-site mean F1 (in the warped metric — the same one Pass 2
+    // normalizes with, so normDist still hits ~1 at cell centers).
+    const radiusSum = new Float64Array(sites.length);
+    const radiusN = new Int32Array(sites.length);
+    // v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell —
+    // the normalizer for the wall extent (the critique's "inset must be normalized per
+    // cell and locally capped").
+    const inradius = new Float64Array(sites.length);
+    for (let idx = 0; idx < rows * cols; idx++) {
+      const { f1, f2, f3, f4, idx: siteIdx, idx2, idx3, idx4 } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
+      radiusSum[siteIdx] += f1;
+      radiusN[siteIdx]++;
+      const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4);
+      if (db > inradius[siteIdx]) inradius[siteIdx] = db;
+    }
     for (let k = 0; k < sites.length; k++) {
       sites[k].radius = radiusN[k] > 0 ? (radiusSum[k] / radiusN[k]) * 2 : p.cellSize;
     }
+    // v17 size-depth coupling normalizes against the MEDIAN actual cell radius (the slider
+    // cellSize is a spacing target, not the realized radius — normalizing against it would
+    // scale every cell's depth down uniformly).
+    const sortedRadii = sites.map(site => site.radius).sort((a, b) => a - b);
+    const medianRadius = Math.max(0.05, sortedRadii[Math.floor(sortedRadii.length / 2)]);
 
-    // Pass 1.5: build a continuous radius field R(x,y) via Gaussian blending of sites.
-    // Architectural fix for the spike-and-sawtooth artifacts: any per-pixel formula that
-    // reads R must read a continuous quantity, NOT a per-site discrete lookup. Gaussian
-    // basis is C∞ smooth, so the field has no discontinuities anywhere.
-    //
-    // OPTIMIZATION: compute Rfield on a coarse grid at pitch σ/2 (well above Nyquist for
-    // a Gaussian-smoothed field of scale σ), then bilinear-interpolate to full resolution.
-    // Without this optimization the full-resolution Rfield is O(cols·rows·sites) ≈ 224M
-    // ops at production resolution (400×800 × 700 sites), which times out the browser.
-    // The coarse grid is typically O(50×100 × 700) ≈ 3.5M ops — fast enough.
-    const sigmaR = Math.max(0.2, p.cellSize) * RADIUS_FIELD_SIGMA_CELLS;
-    const sigmaR2 = sigmaR * sigmaR;
-    const cutoffR = sigmaR * RADIUS_FIELD_CUTOFF_SIGMAS;
-    const cutoffR2 = cutoffR * cutoffR;
-    const coarsePitch = sigmaR * RADIUS_FIELD_COARSE_PITCH_SIGMAS;
-    const coarseCols = Math.max(2, Math.ceil(p.meshX / coarsePitch) + 1);
-    const coarseRows = Math.max(2, Math.ceil(p.meshY / coarsePitch) + 1);
-    const coarseStepX = p.meshX / (coarseCols - 1);
-    const coarseStepY = p.meshY / (coarseRows - 1);
-    const Rcoarse = new Float64Array(coarseRows * coarseCols);
-    for (let cj = 0; cj < coarseRows; cj++) {
-      const y = cj * coarseStepY;
-      for (let ci = 0; ci < coarseCols; ci++) {
-        const x = ci * coarseStepX;
-        let sumR = 0;
-        let sumW = 0;
-        for (let k = 0; k < sites.length; k++) {
-          const dx = x - sites[k].x;
-          const dy = y - sites[k].y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 > cutoffR2) continue;
-          const w = Math.exp(-d2 / sigmaR2);
-          sumR += sites[k].radius * w;
-          sumW += w;
-        }
-        Rcoarse[cj * coarseCols + ci] = sumW > 0 ? sumR / sumW : p.cellSize;
-      }
-    }
-    // Bilinear-interpolate the coarse field to full resolution. Result is C0 (the Gaussian
-    // field is C∞ but bilinear interp introduces piecewise-linear seams between coarse
-    // samples — invisible at this scale since the coarse pitch is well below the per-cell
-    // variation length).
-    const Rfield = new Float64Array(rows * cols);
-    for (let j = 0; j < rows; j++) {
-      const v = j / Math.max(1, rows - 1);
-      const y = v * p.meshY;
-      const cy = y / coarseStepY;
-      const cj0 = Math.min(coarseRows - 2, Math.floor(cy));
-      const ty = cy - cj0;
-      for (let i = 0; i < cols; i++) {
-        const u = i / Math.max(1, cols - 1);
-        const x = u * p.meshX;
-        const cx = x / coarseStepX;
-        const ci0 = Math.min(coarseCols - 2, Math.floor(cx));
-        const tx = cx - ci0;
-        const r00 = Rcoarse[cj0 * coarseCols + ci0];
-        const r10 = Rcoarse[cj0 * coarseCols + ci0 + 1];
-        const r01 = Rcoarse[(cj0 + 1) * coarseCols + ci0];
-        const r11 = Rcoarse[(cj0 + 1) * coarseCols + ci0 + 1];
-        const r0 = r00 * (1 - tx) + r10 * tx;
-        const r1 = r01 * (1 - tx) + r11 * tx;
-        Rfield[j * cols + i] = r0 * (1 - ty) + r1 * ty;
-      }
-    }
-
-    // Pass 2: compute heights using F1 + F2 + Rfield. R is read from the continuous radius
-    // field (not from sites[idx]) — that's the key fix for the spike-and-sawtooth artifacts.
+    // Pass 2: heights. Wall band + bowl profile on the F2-F1 differential, superposed onto
+    // the base wave. Attractor/void/intensity shaping preserved from the prior algorithm.
     const cellSizeGradient = Math.max(0, Math.min(2, p.cellSizeGradient));
     const voidStrength = Math.max(0, Math.min(1, p.voidStrength));
     const attractorNoiseAmt = Math.max(0, Math.min(1, p.attractorNoise));
     const attractorNoiseFreq = Math.max(0.02, Math.min(0.5, p.attractorNoiseFreq));
-    const flowAnisotropyAmt = Math.max(0, Math.min(1, p.flowAnisotropy));
-    // intensityStrength is the only sibling param previously read directly from p; clamp it
-    // defensively for parity with the others. Out-of-range values would invert (negative)
-    // or over-amplify (>1) the relief intensity before the final output clamp.
     const intensityStrengthClamped = Math.max(0, Math.min(1, p.intensityStrength));
-    // Pixel pitch in physical units — used to enforce a minimum seam smoothstep width so
-    // walls can't alias below the grid resolution (the sawtooth artifact source). The floor
-    // is later capped to a fraction of R per-pixel so it can't dominate the natural width.
-    // Use the LARGER of the two axis pitches: on non-square sampling grids, the coarser
-    // axis is what aliases first, so the floor must match its sampling rate (the smaller
-    // axis can already resolve features at that width).
-    const pxPitchX = p.meshX / Math.max(1, cols - 1);
-    const pxPitchY = p.meshY / Math.max(1, rows - 1);
-    const pixelMinWidth = Math.max(pxPitchX, pxPitchY) * SEAM_MIN_PIXEL_WIDTH;
+    const inv2sigma2Radial = 1 / (2 * sigmaRadial * sigmaRadial);
+    // v16.3 spec mechanisms (docs/voronoi-relief-target-spec.md):
+    //   depthVariation — per-cell hash depth TIERS (deep/intermediate/shallow-suppressed)
+    //     plus per-cell seamDepth jitter → asymmetric wall profiles across shared ridges.
+    //   junctionLift — crests rise toward three-way junctions ((F3−F1)/(2R) → 0 there),
+    //     which also WIDENS the local wall band (junctions read wider than their ridges).
+    //   wall-width noise — ridge width varies continuously along each edge.
+    const depthVariation = Number.isFinite(p.depthVariation)
+      ? Math.max(0, Math.min(1, p.depthVariation))
+      : 0;
+    const junctionLift = Number.isFinite(p.junctionLift)
+      ? Math.max(0, Math.min(1, p.junctionLift))
+      : 0;
+    const wallNoiseGen = wallFrac > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 83)
+      : null;
+    const wallNoiseFreq = 0.45 / Math.max(0.2, p.cellSize);
+    const crestVariation = Number.isFinite(p.crestVariation)
+      ? Math.max(0, Math.min(1, p.crestVariation))
+      : 0;
+    const crestGen = crestVariation > 0
+      ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 97)
+      : null;
+    const crestFreq = 0.25 / Math.max(0.2, p.cellSize);
+    // suppressGen was created before generateSites (v19 site deletion shares the field).
+    const suppressFreq = 0.16 / Math.max(0.2, p.cellSize);
+    const seamDepthBase = Math.max(0.05, p.seamDepth);
+    // v21.1 minimum feature floor — a PHYSICAL constant (tool-radius scale), NOT derived
+    // from the sample pitch: pitch-derived floors would make the exported geometry change
+    // shape with grid resolution. 0.3" also covers the flow warp's local sampling stretch
+    // at the default 400-res grid.
+    const wallMinPhys = 0.3;
+    const crownMinPhys = 0.25;
+    // v21.1 C0 CONTINUITY REPAIR. Dissolution lifts boundaries off zero (bowlH ≈ dissolve
+    // at a weakened edge), so any PER-CELL factor multiplying bowlH now creates a step of
+    // dissolve × |mulA − mulB| along that edge — the "shattered" defect. All hash-static
+    // per-cell depth multipliers are therefore precomputed per site and BLENDED across the
+    // nearest edges per pixel (owner weight is exactly 0.5 on the boundary, so both sides
+    // compute the identical average — C0 by construction).
+    const staticMul = new Float64Array(sites.length);
+    for (let k = 0; k < sites.length; k++) {
+      const sMul = Math.max(SIZE_DEPTH_MIN, Math.min(SIZE_DEPTH_MAX,
+        Math.sqrt(sites[k].radius / medianRadius)));
+      let tierMul = 1;
+      if (depthVariation > 0) {
+        // v21 continuous depth classes: every cell draws its own multiplier in [0.45, 1.1].
+        const hDepth = cellHash01(k, seed + 13);
+        tierMul = 1 - depthVariation * (1 - (0.45 + 0.65 * hDepth));
+      }
+      staticMul[k] = sMul * tierMul;
+      // v21.1 SLOPE BUDGET: a cell can only carve as deep as its walls can descend at
+      // the aesthetic slope ceiling — small cells become shallow dimples and deep
+      // pockets are always big. Every wood reference obeys this; slopes past ~65°
+      // read as fractures, not carving. Folded into the pre-blended static multiplier
+      // so it stays C0 across dissolved boundaries.
+      // Conservative: per-edge/crest modifiers can narrow the FINAL wall to ~0.65× this
+      // typical estimate without reducing depth — budgeting against the worst case keeps
+      // the documented ceiling honest while staying per-cell static (C0 requirement; a
+      // pixel-level cap from final w would step across dissolved boundaries).
+      const wTyp = Math.max(0.05, seamDepthBase * inradius[k] * 0.52);
+      staticMul[k] *= Math.min(1, SLOPE_DEPTH_BUDGET * wTyp);
+    }
+    // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
+    // so floors meet walls through a rounded transition. Kept tight (spec: "tighter-radius
+    // fillet") — the reference's floors read flat and its walls rise decisively; a wide
+    // band reads as soft dunes instead of carved cavities.
+    // Wider deceleration band (v22): the wall must FLATTEN before the cushion rises —
+    // the target's transition is a region, not a line.
+    const FILLET_BAND = 0.2;
+    // v16.1 pillow params. The pillow ramps on the UNCAPPED bowl saturation ratio
+    // (bowlTRaw = tw/seamDepth): 1.0 = the floor just saturated, 1.4 = deep interior.
+    // Anchoring on this ratio (not on normDist toward 1) matters — the measured normDist
+    // distribution is concentrated low, so ramps anchored near 1 never fire.
+    const pillowAmt = Number.isFinite(p.pillow) ? Math.max(0, Math.min(1, p.pillow)) : 0;
+    const pillowCoverage = Number.isFinite(p.pillowCoverage)
+      ? Math.max(0, Math.min(1, p.pillowCoverage))
+      : 0.6;
+    // v22 unified profile phases (in saturation-ratio units): the wall bottoms out at
+    // 1.0 through the fillet, HOLDS through a genuine perimeter gutter, then the crown
+    // rises via a G2 smootherstep and finishes flat — one monotonic-then-reversing
+    // profile, not a wall function plus a pasted floor patch.
+    const PILLOW_GUTTER_END = 1.25;
+    // v23 MEMBRANE CUSHIONS: the crown is no longer a function of the boundary distance
+    // (whose level sets kink at the medial axis) — it is a per-cell MEMBRANE solve
+    // (Poisson, unit inflation source, Dirichlet u = 0 clamped at the gutter ring),
+    // relaxed with a fixed number of SOR sweeps for determinism, normalized per cell,
+    // and composed through the quintic smootherstep so the boundary departs with zero
+    // slope and the crown finishes broad and flat. The membrane is smooth everywhere
+    // inside the region: the medial axis cannot appear.
+    const MEMBRANE_SWEEPS = 80;
+    const MEMBRANE_OMEGA = 1.8;
+    // Crown rise ≤ ~25% of ridge-to-gutter depth — perceived through curvature, not
+    // elevation; the crown stays visibly trapped inside the cavity.
+    const PILLOW_AMP = 0.28;
+    // v22 shared panel field: cushion tilt direction, amplitude variation, and coverage
+    // all sample ONE low-frequency field at the site position, so neighboring cells lean
+    // and inflate in related directions (random per-cell warps read as procedural
+    // islands; a shared field reads as flow).
+    const panelFieldGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61);
+    const PANEL_FIELD_FREQ = 0.045;
     const out: number[][] = [];
+    // v23 membrane-cushion buffers (see MEMBRANE_SWEEPS above).
+    const cushA = new Float64Array(rows * cols);
+    const cushOwner = new Int32Array(rows * cols).fill(-1);
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
     for (let j = 0; j < rows; j++) {
       const row: number[] = new Array(cols);
@@ -490,22 +928,15 @@ export class VoronoiReliefGen implements ReliefGenerator {
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
         const x = u * p.meshX;
-        // Per-pixel anisotropy angle when flow is enabled — angle deviates from the global
-        // anisotropyAngle by up to ±90° based on a smooth flow-noise field.
-        let pxCosA = cosA, pxSinA = sinA;
-        if (flowGen && flowAnisotropyAmt > 0) {
-          const flow = flowGen.noise(x * 0.18, y * 0.18);
-          const localAngle = (p.anisotropyAngle + flow * flowAnisotropyAmt * 90) * Math.PI / 180;
-          pxCosA = Math.cos(localAngle); pxSinA = Math.sin(localAngle);
-        }
-        const { f1, f2 } = nearestTwo(sites, x, y, pxCosA, pxSinA, anisotropyScale);
-        // Spatial attractor on intensity — relief amplitude varies with mask.
+        const pixIdx = j * cols + i;
+        const qx = wxArr[pixIdx];
+        const qy = wyArr[pixIdx];
+        const { f1, f2, f3, f4, idx: ownerIdx, idx2, idx3, idx4 } = nearestThree(sites, qx, qy, cosA, sinA, metricScale);
+        // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
           p.attractorRadius, p.attractorFalloff,
         );
-        // Patchy noise modulation — multiplies the smooth attractor mask by a noise field
-        // so dense/intense zones form random blobs rather than a uniform gradient.
         if (attractorNoiseGen && attractorNoiseAmt > 0) {
           const n = attractorNoiseGen.noise(x * attractorNoiseFreq, y * attractorNoiseFreq);
           const modulator = (n + 1) * 0.5;
@@ -513,56 +944,361 @@ export class VoronoiReliefGen implements ReliefGenerator {
           if (mask > 1) mask = 1;
           if (mask < 0) mask = 0;
         }
-        // Cell-size gradient shrinks the effective radius where mask is high. R_field is
-        // already continuous; we just scale it by a continuous function of mask. The result
-        // is still C∞ continuous, so no ownership-boundary discontinuities are introduced.
-        const sizeShrink = 1 - cellSizeGradient * mask * 0.6;
-        const R = Math.max(0.05, Rfield[j * cols + i] * Math.max(0.2, sizeShrink));
-        const dome = domeHeight(p.profile, f1, R);
-        // Seam smoothstep transition width: max of (seamWidth*R) and a pixel-aware floor,
-        // where the floor is itself capped to a fraction of R so it can't grow wider than
-        // the cell it lives in. This is the core anti-aliasing fix: in production resolution
-        // it does nothing (seamWidth*R dominates); in small-cell zones it forces ≥3 pixels
-        // of smoothstep transition so walls render smoothly instead of staircasing along the
-        // grid; at low test resolutions the R-fraction cap prevents the floor from inverting
-        // the dome/seam balance.
-        const cappedFloor = Math.min(pixelMinWidth, R * SEAM_FLOOR_MAX_R_FRACTION);
-        const seamWidthPhysical = Math.max(p.seamWidth * R, cappedFloor);
-        const seam = 1 - smoothstep(0, seamWidthPhysical, f2 - f1);
-        // Combined relief: dome occupies cell interiors; seam carves a V where cells meet.
-        // The (1 - seam) factor on dome ensures seamDepth represents an actual depth instead
-        // of a budget the dome partially consumes.
-        let h = polarity * (dome * (1 - seam) - p.seamDepth * seam);
-
-        const intensityFactor = (1 - intensityStrengthClamped) + intensityStrengthClamped * mask;
-
-        if (p.baseMode === 'wave') {
-          // Low-frequency simplex base that cells transition into. transitionSoftness=0 →
-          // sharp boundary; transitionSoftness=1 → gradual lerp.
-          const base = waveGen.noise(x * WAVE_NOISE_FREQUENCY, y * WAVE_NOISE_FREQUENCY) * WAVE_AMPLITUDE;
-          const cellWeight = Math.pow(mask, transitionExponent);
-          h = base * (1 - cellWeight) + h * cellWeight * intensityFactor;
+        // Focal proximity (real-space) — drives focal expansion and intensity deepening.
+        let gMax = 0;
+        for (let k = 0; k < fociPhys.length; k++) {
+          const dx = x - fociPhys[k].x;
+          const dy = y - fociPhys[k].y;
+          const g = Math.exp(-(dx * dx + dy * dy) * inv2sigma2Radial);
+          if (g > gMax) gMax = g;
+        }
+        // v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
+        // d_b is the exact distance to the SHARED Voronoi boundary (see boundaryDist) —
+        // its level sets are true inset polygons of the cell, so the floor keeps
+        // polygonal ancestry. The wall extent w is normalized per cell against the
+        // measured inradius, so the wall spans the FULL territory from the shared
+        // boundary to the inset floor: every interior point is crest, wall, or floor —
+        // no finite falloff radius, no abandoned neutral surface, and shrinking floors
+        // WIDENS walls instead of retreating the cavity mouth. q = d_b/w: 0 at the
+        // boundary, 1 at the floor edge.
+        // Per-competitor bisector distances (also feed the exact boundary distance).
+        const bis = (fk: number, ik: number): number => (ik >= 0 && Number.isFinite(fk))
+          ? (fk * fk - f1 * f1) / (2 * Math.max(1e-9, siteDist(ownerIdx, ik)))
+          : dbCap;
+        const db2 = bis(f2, idx2);
+        const db3 = bis(f3, idx3);
+        const db4 = bis(f4, idx4);
+        const db = Math.min(db2, db3, db4);
+        const inr = Math.max(0.01, inradius[ownerIdx]);
+        // Scale-free junction proximity: (F3−F1)/(F3+F1) → 0 exactly at three-way corners.
+        // With fewer than three sites there is no junction anywhere — jn stays 0.
+        const jn = Number.isFinite(f3)
+          ? 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1))
+          : 0;
+        const jnS = smoothstep(0.65, 0.98, jn);
+        // v21 PER-EDGE FIELDS. The nearest competitor identifies which shared edge this
+        // pixel's wall belongs to, so every Voronoi edge carries its own parameters
+        // instead of one global rule (the references never render all edges equally):
+        //   edgeSide   (ORDERED a→b)  — this SIDE's wall width: asymmetric walls,
+        //               off-center floors, mouth/floor non-parallelism, pinch-outs.
+        //   edgeShared (unordered)    — crest strength both sides agree on: strong /
+        //               moderate / weak / DISSOLVED boundaries (weak edges melt toward
+        //               floor level and neighbors blend into a shared basin), and the
+        //               per-edge wall profile family.
+        // The fields of the TWO nearest edges are BLENDED by relative bisector distance:
+        // edge identity switches at the corner rays, and unblended per-edge values would
+        // jump there — a 3× wall-width step renders as a cliff along every cell corner.
+        const nb2 = idx2 >= 0 ? idx2 : ownerIdx;
+        const nb3 = idx3 >= 0 ? idx3 : nb2;
+        const e2Side = edgeHash01(ownerIdx, nb2, seed + 59);
+        const e2Shared = edgeHash01(Math.min(ownerIdx, nb2), Math.max(ownerIdx, nb2), seed + 53);
+        const e3Side = edgeHash01(ownerIdx, nb3, seed + 59);
+        const e3Shared = edgeHash01(Math.min(ownerIdx, nb3), Math.max(ownerIdx, nb3), seed + 53);
+        // Symmetric interpolation: bisector distances need not preserve the F2/F3 site
+        // ordering, so the signed ratio must map BOTH ways (a one-sided map left edge-3-
+        // constrained walls stuck at the 50/50 average instead of favoring edge 3).
+        const edgeRatio = (db3 - db2) / Math.max(1e-9, db3 + db2);
+        const edgeMix = edgeRatio >= 0
+          ? 0.5 + 0.5 * smoothstep(0, 0.3, edgeRatio)
+          : 0.5 - 0.5 * smoothstep(0, 0.3, -edgeRatio);
+        const edgeSide = edgeMix * e2Side + (1 - edgeMix) * e3Side;
+        const edgeShared = edgeMix * e2Shared + (1 - edgeMix) * e3Shared;
+        // Dissolution fades to zero near junction corners: the pairwise edge blend is
+        // ill-conditioned where three edges meet (both bisector distances → 0, so the
+        // blend flips between adjacent pixels → crest-to-floor steps), and physically
+        // the references dissolve boundaries MID-EDGE while junction nodes survive.
+        const dissolve = (1 - smoothstep(0.06, 0.3, edgeShared)) * EDGE_DISSOLVE_MAX
+          * (1 - smoothstep(0.45, 0.75, jn));
+        // v21.1: hash-static depth multiplier blended across the nearest edges — owner
+        // weight hits exactly 0.5 on the boundary so both sides agree (see staticMul).
+        const ownerMix = 0.5 + 0.5 * Math.min(1, db / Math.max(1e-6, 0.35 * inr));
+        const nbMul = edgeMix * staticMul[nb2] + (1 - edgeMix) * staticMul[nb3];
+        const staticMulBlended = ownerMix * staticMul[ownerIdx] + (1 - ownerMix) * nbMul;
+        // Tilt must vanish at boundaries for the same reason (its direction is per-cell).
+        const ownerFade = Math.max(0, 2 * ownerMix - 1);
+        // Ridge crest band: a physical plateau on the shared boundary. The plateau width
+        // SWINGS along each edge with the wall-noise field (chunky-to-thin ridges — the
+        // reference's most distinctive wall trait) and widens toward junctions.
+        let crestW = wallFrac * Math.max(0.2, p.cellSize) * 0.5;
+        // Wall extent = seamDepth fraction of the remaining inradius, varied per cell
+        // (asymmetric neighbors), per EDGE SIDE (v21 — the dominant variation), along
+        // each edge (noise), and at junctions (widening). Capped so most cells keep a
+        // floor; per-edge excursions may consume it entirely — the reference's pinch-outs.
+        let wallScale = 0.7 + 0.7 * edgeSide;
+        if (depthVariation > 0) {
+          const hSeam = cellHash01(ownerIdx, seed + 29);
+          wallScale *= 1 + (hSeam - 0.5) * 0.8 * depthVariation;
+        }
+        if (wallNoiseGen) {
+          const wn = wallNoiseGen.noise(x * wallNoiseFreq, y * wallNoiseFreq);
+          wallScale *= Math.max(0.3, 1 + 0.6 * wn + 1.1 * jnS);
+          // Junction DELTAS use a wider gate than the lift term: the plateau starts
+          // flaring well before the corner, forming the bold triangular Y-masses.
+          // Scaled by junctionLift — the documented junction control; 0 disables.
+          const jnW = smoothstep(0.55, 0.95, jn);
+          crestW *= Math.max(0.15, 1 + RIDGE_WIDTH_SWING * wn + JUNCTION_DELTA_GAIN * junctionLift * jnW);
+        }
+        // The flare must never consume the cell (a crest wider than the inradius starves
+        // w and renders a star-shaped tear), and must always leave a RESOLVABLE wall span.
+        crestW = Math.min(crestW, 0.6 * inr, Math.max(0, inr - wallMinPhys));
+        if (cellSizeGradient > 0) {
+          wallScale *= 1 + cellSizeGradient * mask * 0.6;
+        }
+        if (radialGrow > 0 && gMax > 0) {
+          wallScale /= Math.min(FOCAL_EXPAND_CAP, 1 + radialGrow * gMax * FOCAL_EXPAND_GAIN);
+        }
+        // v21.1 sampling floor: a wall narrower than ~2 sample pitches cannot be resolved
+        // by the grid — the full crest-to-floor drop lands inside one pixel and renders as
+        // a shard. Clamp the wall extent to the resolvable minimum.
+        const w = Math.max(wallMinPhys, seamDepthBase * Math.max(0.02, inr - crestW) * wallScale);
+        const bowlTRaw = Math.max(0, (db - crestW) / w);
+        // Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp kink.
+        let bowlT: number;
+        if (bowlTRaw >= 1 + FILLET_BAND) bowlT = 1;
+        else if (bowlTRaw <= 1 - FILLET_BAND) bowlT = bowlTRaw;
+        else {
+          const e = 1 + FILLET_BAND - bowlTRaw;
+          bowlT = 1 - (e * e) / (4 * FILLET_BAND);
+        }
+        // Profile shapes the bowl falloff curve. All profiles have dh/dt = 0 at t=0 so the
+        // wall-to-bowl transition is crease-free. v21: 'cosine' is a per-edge FAMILY, not
+        // one global curve — each edge blends toward a late-power profile (shallow
+        // shoulder, broad descent, steeper lower third) by its own amount, so no two
+        // walls share exactly the same cross-section.
+        let bowlH: number;
+        if (p.profile === 'hemisphere') {
+          const t2 = bowlT * bowlT;
+          bowlH = 1 - Math.sqrt(Math.max(0, 1 - t2));
+        } else if (p.profile === 'cosine') {
+          const cosH = 0.5 - 0.5 * Math.cos(bowlT * Math.PI);
+          // Exponent and mix tempered so the blended profile's PEAK slope stays ≤ ~1.9×
+          // the mean — the resolvability budget is sized to peak slope, not average.
+          const lateH = Math.pow(bowlT, 1.5 + 0.6 * edgeShared);
+          const profMix = 0.15 + 0.45 * edgeSide;
+          bowlH = (1 - profMix) * cosH + profMix * lateH;
         } else {
-          h *= intensityFactor;
+          // 'parabolic'
+          bowlH = bowlT * bowlT;
+        }
+        // Seam sharpness — blend toward a linear ramp for V-groove gutters.
+        if (p.seamSharpness > 0) {
+          const sharp = Math.max(0, Math.min(1, p.seamSharpness));
+          bowlH = (1 - sharp) * bowlH + sharp * bowlT;
+        }
+        // v21 edge dissolution: weak edges melt toward floor level, so the two adjacent
+        // cells blend into one shared basin — the references' boundary hierarchy runs
+        // strong / moderate / weak / gone, never all-equal.
+        if (dissolve > 0) {
+          bowlH += (1 - bowlH) * dissolve;
+        }
+        // v21 perimeter-clamped CUSHION floors ("a sunken cushion with a low perimeter
+        // gutter and broad convex crown"). The ramp runs on the boundary-distance
+        // saturation ratio, so the cushion inherits the floor's inset-polygon footprint
+        // and aspect (loaf in elongated cells, softened triangle in triangular ones) —
+        // never a circular seed bump. The bowl's own minimum at the floor edge becomes
+        // the perimeter gutter; past it the floor rises to a broad flat crown that stays
+        // well below the ridges. SCALE-DEPENDENT: pronounced in the largest cells, absent
+        // in small ones (inflating every floor equally reads as a field of buttons).
+        let cushionAmp = 0;
+        if (pillowAmt > 0 && bowlTRaw > PILLOW_GUTTER_END && p.invertProfile <= 0.5) {
+          const sizeT = smoothstep(0.9, 1.8, inr / Math.max(0.05, medianRadius * 0.5));
+          if (sizeT > 0) {
+            // Shared-field modulation (sampled at the SITE, constant per cell, C0-safe):
+            // coverage is a SMOOTH threshold on the field — inflation emerges gradually
+            // across the panel instead of switching on per cell — and the amplitude
+            // variation follows the same field, so neighboring cushions relate.
+            const fieldV = (panelFieldGen.noise(
+              sites[ownerIdx].x * PANEL_FIELD_FREQ,
+              sites[ownerIdx].y * PANEL_FIELD_FREQ,
+            ) + 1) * 0.5;
+            // Coverage 0 must fully disable cushions (the smooth threshold alone stays
+            // positive for high field values).
+            const covGate = pillowCoverage <= 0
+              ? 0
+              : smoothstep(0.8 - pillowCoverage, 1.2 - pillowCoverage, fieldV);
+            if (covGate > 0) {
+              // v23: record the amplitude chain — the crown SHAPE comes from the
+              // membrane solve after this pass, not from the distance field.
+              const amtVar = 0.55 + 0.45 * fieldV;
+              cushionAmp = pillowAmt * amtVar * PILLOW_AMP * sizeT * covGate;
+            }
+          }
+        }
+        // v19 scooped floors: a per-cell hash direction tilts the pocket so its deepest
+        // point shifts off-center — steep wall on one flank, long ramp on the other (the
+        // reference's pockets are carved directionally, never radially symmetric). The
+        // tilt is purely REDUCTIVE: the deep flank keeps full depth and the shallow flank
+        // ramps up, so max depth never exceeds 1 — deepening instead would drive cells
+        // into the output clamp, whose crease renders as serrated pocket rims. The factor
+        // is 1 at the boundary (bowlH = 0) so ridges and shared walls stay put.
+        if (depthVariation > 0 && bowlH > 0) {
+          // v22: tilt direction comes from the shared panel field (sampled at the site),
+          // not a per-cell hash — adjacent pockets lean in related directions.
+          const tiltAng = panelFieldGen.noise(
+            sites[ownerIdx].x * PANEL_FIELD_FREQ + 37.1,
+            sites[ownerIdx].y * PANEL_FIELD_FREQ + 11.7,
+          ) * Math.PI * 2;
+          const rad = Math.max(0.2, sites[ownerIdx].radius);
+          const tilt = (Math.cos(tiltAng) * (qx - sites[ownerIdx].x)
+            + Math.sin(tiltAng) * (qy - sites[ownerIdx].y)) / rad;
+          const tiltT = (Math.max(-0.9, Math.min(0.9, tilt)) + 0.9) / 1.8;
+          bowlH *= 1 - FLOOR_TILT_GAIN * depthVariation * tiltT * bowlH * ownerFade;
+        }
+        // invertProfile: carve the boundary instead of the interior (domed floors).
+        if (p.invertProfile > 0.5) {
+          bowlH = 1 - bowlH;
         }
 
-        // Void mode applied AFTER the wave/cell blend so the void floor-clamp intent
-        // (-OUTPUT_HEIGHT_CLAMP) isn't diluted by the wave base in transition zones.
-        // Smoothstep transition (not hard threshold) keeps adjacent pixels' h values
-        // close to each other; weightedSmooth at the mesh level cleans the rest.
+        // Intensity scales bowl depth by the attractor mask OR focal proximity (whichever
+        // is stronger) — foci deepen cells on top of the warp elongation.
+        const intensityFactor = (1 - intensityStrengthClamped)
+          + intensityStrengthClamped * Math.max(mask, gMax);
+        // Spatial gating: cells fade out where the mask is low (transitionSoftness shapes
+        // the falloff). With attractorMode 'none' (mask = 1) this is a no-op.
+        const cellWeight = Math.pow(mask, transitionExponent);
+        // v17 depth composition:
+        //   size coupling — bigger cells carve somewhat deeper (per-cell radius from Pass 1)
+        //   iid tier     — per-cell deep/intermediate jitter (asymmetric neighbors)
+        //   suppression  — SPATIAL low-frequency field melts whole NEIGHBORHOODS of cells
+        //                  into calm masses (clustered, not per-cell — critique: "delete
+        //                  several neighboring cells and merge their wall regions")
+        // v21.1: the hash-static parts (size coupling + depth class) come pre-blended
+        // across the nearest edges (staticMulBlended) — C0 at dissolved boundaries. The
+        // suppression field is spatial and continuous, so it multiplies directly.
+        let cellDepthMul = staticMulBlended;
+        if (depthVariation > 0 && suppressGen) {
+          const sn = (suppressGen.noise(x * suppressFreq, y * suppressFreq) + 1) * 0.5;
+          cellDepthMul *= 1 - SUPPRESSION_STRENGTH * depthVariation * smoothstep(0.62, 0.82, sn);
+        }
+        // v20 stretched fans: above grow = 1 the focal zone shallows toward the pinch
+        // point while its polar lattice keeps converging walls — drape-like fan creases
+        // in a calm mass (the reference's center-left region), not a deep starburst.
+        if (radialGrow > 1 && gMax > 0) {
+          cellDepthMul *= 1 - FOCAL_CALM_GAIN * (radialGrow - 1) * gMax;
+        }
+
+        // v16 SUPERPOSITION: the base wave is never attenuated by the cell system — cells
+        // are carved INTO it. Ridge tops (bowlH = 0) sit exactly on the base surface.
+        const base = baseAmplitude > 0
+          ? baseAmplitude * waveGen.noise(x * baseFrequency, y * baseFrequency)
+          : 0;
+        let h = base + polarity * bowlH * cellWeight * intensityFactor * cellDepthMul;
+        if (cushionAmp > 0) {
+          // Full h-space amplitude: the membrane delta rides the same multiplier chain
+          // the bowl does (raising a pocket floor = reducing |bowlH| through the chain).
+          cushA[pixIdx] = cushionAmp * cellWeight * intensityFactor * cellDepthMul;
+          cushOwner[pixIdx] = ownerIdx;
+        }
+        // v17 crest variation: ridge-LOCAL height noise (scaled by (1 − bowlH)^1.5 so it
+        // lives on crests/shoulders only). Fragments the upper envelope into mesas, saddles
+        // and differing adjacent crest heights WITHOUT bending the whole panel through one
+        // macro wave — the critique's "upper envelope too continuous / macro flow dominant".
+        if (crestVariation > 0 && crestGen) {
+          const ridgeMask = Math.pow(1 - bowlH, 1.5);
+          h += crestVariation * CREST_VARIATION_GAIN
+            * crestGen.noise(x * crestFreq, y * crestFreq) * ridgeMask * cellWeight;
+        }
+        // v17 junction lift: tighter gate, lower gain — junctions read as tense nodes and
+        // saddles, not swollen domes (critique: "junctions bulge; reference junctions pull,
+        // pinch, split, and saddle").
+        // Both cell-derived additions are gated by cellWeight so relief cannot reappear
+        // where the attractor has faded the cell system out.
+        if (junctionLift > 0) {
+          h += junctionLift * JUNCTION_LIFT_GAIN * jnS * (1 - bowlH) * cellWeight;
+        }
+        // v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
+        // boundary, blending to the wall shoulder with zero slope at both ends. The bead
+        // follows cellDepthMul only PARTIALLY (floor at 0.35): melted zones keep ghost
+        // creases — the reference's calm masses and fan regions show their converging
+        // wall lines even where pockets have faded out. Gated by cellWeight. v21: also
+        // scaled by the per-edge crest strength (variable crest heights along the graph;
+        // dissolved edges lose their bead entirely).
+        if (wallFrac > 0 && crestW > 1e-6 && db < Math.max(crestW, crownMinPhys)) {
+          const crown = 1 - smoothstep(0, Math.max(crestW, crownMinPhys), db);
+          const crownMul = (0.35 + 0.65 * cellDepthMul) * (0.35 + 0.9 * edgeShared) * (1 - dissolve);
+          h -= polarity * RIDGE_CROWN_GAIN * crown * cellWeight * crownMul;
+        }
+        // v21 stock-plane soft cap (pockets only — domes mode intentionally rises).
+        // Broad crests flatten into plateaus just above the base wave; junction fins
+        // become saddles; the silhouette stays a clean rectangle.
+        if (polarity < 0) {
+          const hp = h - base;
+          if (hp > STOCK_CAP_START) {
+            h = base + STOCK_CAP_START + STOCK_CAP_SPAN * Math.tanh((hp - STOCK_CAP_START) / STOCK_CAP_SPAN);
+          }
+        }
+
+        // Void mode pushes h toward the negative clamp where mask + bowl depth are high —
+        // the cut-through spike-finger zone.
         if (voidStrength > 0) {
-          const voidGate = mask * seam;
+          const voidGate = mask * bowlH;
           const voidEdge0 = 1 - voidStrength;
           const voidEdge1 = 1 - voidStrength * 0.5;
           const voidT = smoothstep(voidEdge0, voidEdge1, voidGate);
           h = h * (1 - voidT) - OUTPUT_HEIGHT_CLAMP * voidT;
         }
 
-        // Clamp to a sane native range — downstream pipeline handles full normalization.
         if (!Number.isFinite(h)) h = 0;
         row[i] = Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, h));
       }
       out.push(row);
+    }
+
+    // v23 membrane cushion pass. Solve one Poisson relaxation over all cushion-region
+    // pixels (u = 0 outside — Dirichlet-clamped at every gutter ring; regions of
+    // different cells are separated by wall corridors, so per-cell normalization is
+    // safe), then lift each floor by amp × smootherstep(u/uMaxCell): zero slope where
+    // the cushion meets the gutter, broad flat crown, no medial-axis trace.
+    let anyCushion = false;
+    for (let i = 0; i < cushA.length; i++) {
+      if (cushA[i] > 0) { anyCushion = true; break; }
+    }
+    if (anyCushion) {
+      const u = new Float64Array(rows * cols);
+      // Symmetric SOR: sweeps alternate forward/reverse traversal — a forward-only
+      // Gauss-Seidel at a fixed sweep count leaves partially converged large cushions
+      // with a bias toward the sweep origin. Still fully deterministic.
+      for (let sweep = 0; sweep < MEMBRANE_SWEEPS; sweep++) {
+        if ((sweep & 1) === 0) {
+          for (let j = 1; j < rows - 1; j++) {
+            const off = j * cols;
+            for (let i = 1; i < cols - 1; i++) {
+              const idx = off + i;
+              if (cushA[idx] <= 0) continue;
+              const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
+              u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
+            }
+          }
+        } else {
+          for (let j = rows - 2; j >= 1; j--) {
+            const off = j * cols;
+            for (let i = cols - 2; i >= 1; i--) {
+              const idx = off + i;
+              if (cushA[idx] <= 0) continue;
+              const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
+              u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
+            }
+          }
+        }
+      }
+      const uMax = new Float64Array(sites.length);
+      for (let i = 0; i < u.length; i++) {
+        const o = cushOwner[i];
+        if (o >= 0 && u[i] > uMax[o]) uMax[o] = u[i];
+      }
+      for (let j = 0; j < rows; j++) {
+        const off = j * cols;
+        for (let i = 0; i < cols; i++) {
+          const idx = off + i;
+          if (cushA[idx] <= 0) continue;
+          const o = cushOwner[idx];
+          if (o < 0 || uMax[o] <= 1e-9) continue;
+          const w = smootherstep(0, 1, u[idx] / uMax[o]);
+          // Pockets (polarity −1): the floor rises toward the surface; domes: recedes.
+          const lifted = out[j][i] - polarity * cushA[idx] * w;
+          out[j][i] = Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, lifted));
+        }
+      }
     }
     return out;
   }
@@ -595,13 +1331,44 @@ export function sampleReliefParamsFromState(
     reliefBaseMode: ReliefBaseMode;
     reliefCellSizeGradient: number;
     reliefVoidStrength: number;
+    reliefInvertProfile: number;
+    reliefSeamSharpness: number;
     reliefAttractorNoise: number;
     reliefAttractorNoiseFreq: number;
-    reliefFlowAnisotropy: number;
+    reliefBaseAmplitude: number;
+    reliefBaseFrequency: number;
+    reliefWallWidth: number;
+    reliefDensityNoise: number;
+    reliefDensityNoiseFreq: number;
+    reliefPillow: number;
+    reliefPillowCoverage: number;
+    reliefDepthVariation: number;
+    reliefJunctionLift: number;
+    reliefCrestVariation: number;
+    reliefRadialFociCount: number;
+    reliefRadialFocus1X: number;
+    reliefRadialFocus1Y: number;
+    reliefRadialFocus2X: number;
+    reliefRadialFocus2Y: number;
+    reliefRadialFocus3X: number;
+    reliefRadialFocus3Y: number;
+    reliefRadialStrength: number;
+    reliefRadialFalloff: number;
+    reliefRadialGrow: number;
+    reliefRadialWarp: number;
+    reliefRadialMode: ReliefRadialMode;
     distortion: number;
     warpFreq: number;
   },
 ): ReliefSampleParams {
+  // Prune the three focus slots down to the active count (0–3). The sampler treats an empty
+  // list as "starburst off" → byte-identical to non-foci output.
+  const fociCount = Math.max(0, Math.min(3, Math.floor(s.reliefRadialFociCount) || 0));
+  const radialFoci = [
+    { x: s.reliefRadialFocus1X, y: s.reliefRadialFocus1Y },
+    { x: s.reliefRadialFocus2X, y: s.reliefRadialFocus2Y },
+    { x: s.reliefRadialFocus3X, y: s.reliefRadialFocus3Y },
+  ].slice(0, fociCount);
   return {
     cols, rows, meshX, meshY, seed,
     cellSize: s.reliefCellSize,
@@ -622,14 +1389,30 @@ export function sampleReliefParamsFromState(
     intensityStrength: s.reliefIntensityStrength,
     transitionSoftness: s.reliefTransitionSoftness,
     baseMode: s.reliefBaseMode,
-    // Wire upstream global noise sliders into relief — restores the warp/distortion
-    // pipeline that was disconnected when the relief sampler bypassed the per-pixel loop.
+    // The global distortion/warpFreq sliders drive the flow component of the space-warp.
     warpDistortion: s.distortion,
     warpFrequency: s.warpFreq,
     cellSizeGradient: s.reliefCellSizeGradient,
     voidStrength: s.reliefVoidStrength,
+    invertProfile: s.reliefInvertProfile,
+    seamSharpness: s.reliefSeamSharpness,
     attractorNoise: s.reliefAttractorNoise,
     attractorNoiseFreq: s.reliefAttractorNoiseFreq,
-    flowAnisotropy: s.reliefFlowAnisotropy,
+    baseAmplitude: s.reliefBaseAmplitude,
+    baseFrequency: s.reliefBaseFrequency,
+    wallWidth: s.reliefWallWidth,
+    densityNoise: s.reliefDensityNoise,
+    densityNoiseFreq: s.reliefDensityNoiseFreq,
+    pillow: s.reliefPillow,
+    pillowCoverage: s.reliefPillowCoverage,
+    depthVariation: s.reliefDepthVariation,
+    junctionLift: s.reliefJunctionLift,
+    crestVariation: s.reliefCrestVariation,
+    radialFoci,
+    radialStrength: s.reliefRadialStrength,
+    radialFalloff: s.reliefRadialFalloff,
+    radialGrow: s.reliefRadialGrow,
+    radialWarp: s.reliefRadialWarp,
+    radialMode: s.reliefRadialMode,
   };
 }
