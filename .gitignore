@@ -56,3 +56,14 @@ sourceTruth/**/*.DS_Store
 # stl-to-sbp working directory (old location, root only)
 /stl-to-sbp/
 verification/
+
+# pr-review Layer 2 (repo memory: mined learnings, finding history, false-positive log)
+# must survive a fresh clone. Git cannot re-include a path whose parent dir is excluded,
+# so the negation walks down and re-ignores siblings at each level. Everything else under
+# .claude/ — settings.local.json, projects/ auto-memory, other skills — stays local-only.
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/pr-review/
+.claude/skills/*/references/.mine-cache/
