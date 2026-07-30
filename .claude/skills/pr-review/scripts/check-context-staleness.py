@@ -45,24 +45,63 @@ PATH_RE = re.compile(
 )
 
 
+class GitError(RuntimeError):
+    """A git command this script needs in order to answer at all has failed."""
+
+
 # argv lists, never `shell=True`: `--base` is caller-supplied and `last_commit_epoch` feeds it
 # repo filenames, so an interpolated command string would let `;`, `$(...)`, or a crafted path
 # execute in the checkout being reviewed. No shell also means no `||`, so the merge-base
 # fallback is an explicit second call in `changed_files`.
-def sh(argv, cwd=None):
+#
+# Failures RAISE by default. Returning "" on a non-zero exit is worse than crashing here: an
+# empty `git diff` is indistinguishable from a clean diff, so a bad ref made the script print
+# "nothing to check" and exit 0 — a staleness checker that reports "no docs owed" because it
+# could not run is the one failure mode that guarantees nobody notices. Only the two calls whose
+# failure is genuinely expected pass `allow_failure`.
+def sh(argv, cwd=None, *, allow_failure=False):
     r = subprocess.run(argv, capture_output=True, text=True, cwd=cwd, check=False)
-    return r.stdout.strip() if r.returncode == 0 else ""
+    if r.returncode != 0:
+        if allow_failure:
+            return ""
+        raise GitError(f"{' '.join(argv)} exited {r.returncode}: {r.stderr.strip()[:300]}")
+    return r.stdout.strip()
+
+
+def resolve_base(root, base):
+    """Validate a caller-supplied base ref before it reaches a revision range.
+
+    Two distinct problems, both of which need solving before interpolation:
+
+    1. A leading `-` makes git read the value as an OPTION, not a revision. argv form stops
+       `;` and `$(...)`, but not `--upload-pack=...` or `--output=...` — argument injection
+       survives the shell being gone, so it has to be rejected by value.
+    2. A ref that simply does not exist would otherwise surface as an empty diff, i.e. as a
+       false "no changes" (see `sh`).
+    """
+    if base.startswith("-"):
+        raise GitError(f"--base {base!r} starts with '-'; refusing to pass it to git as a "
+                       f"revision because git would read it as an option")
+    if not sh(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
+              cwd=root, allow_failure=True):
+        raise GitError(f"--base {base!r} does not resolve to a commit in this repository")
+    return base
 
 
 def changed_files(root, base):
-    if not base:
-        base = (sh(["git", "merge-base", "HEAD", "main"], cwd=root)
-                or sh(["git", "merge-base", "HEAD", "master"], cwd=root)
+    if base:
+        base = resolve_base(root, base)
+    else:
+        # The only expected failure: a repo with neither `main` nor `master`, or a shallow
+        # clone with no common ancestor. Falling back to HEAD (working-tree diffs only) is
+        # correct there, and is a real answer rather than a swallowed error.
+        base = (sh(["git", "merge-base", "HEAD", "main"], cwd=root, allow_failure=True)
+                or sh(["git", "merge-base", "HEAD", "master"], cwd=root, allow_failure=True)
                 or "HEAD")
     out = set()
-    for argv in (["git", "diff", "--name-only", f"{base}...HEAD"],
-                 ["git", "diff", "--name-only"],
-                 ["git", "diff", "--cached", "--name-only"]):
+    for argv in (["git", "diff", "--name-only", f"{base}...HEAD", "--"],
+                 ["git", "diff", "--name-only", "--"],
+                 ["git", "diff", "--cached", "--name-only", "--"]):
         out |= {l for l in sh(argv, cwd=root).splitlines() if l}
     return sorted(out), base
 
@@ -85,7 +124,10 @@ def find_docs(root, doc_roots):
 
 
 def last_commit_epoch(root, path):
-    v = sh(["git", "log", "-1", "--format=%ct", "--", path], cwd=root)
+    # allow_failure here is deliberate and narrow: an untracked or newly added file has no
+    # commit, which is a legitimate 0 rather than an error. The caller already treats 0 as
+    # "unknown" — `newest_code > doc_epoch > 0` refuses to call a doc stale on a 0.
+    v = sh(["git", "log", "-1", "--format=%ct", "--", path], cwd=root, allow_failure=True)
     return int(v) if v.isdigit() else 0
 
 
@@ -172,4 +214,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Exit 2 with a one-line reason, not a traceback: this runs as a review gate, and the
+    # distinction that matters to the caller is "the KB owes nothing" (0) versus "the check
+    # could not run" (2). A traceback blurs that into noise people skim past.
+    try:
+        main()
+    except GitError as e:
+        sys.stderr.write(f"check-context-staleness: {e}\n")
+        sys.exit(2)

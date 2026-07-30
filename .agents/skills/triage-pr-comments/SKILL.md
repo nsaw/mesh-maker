@@ -70,12 +70,26 @@ When `autofix` is present, after completing Phase 6 (deploy to production):
    means Greptile has not yet re-analyzed — do NOT trust it. Re-check up to
    3 times (36 min total wait). If still stale or below 4/5 after 3 re-checks,
    report the score and stop — manual review recommended.
-8. **If NO new unresolved comments AND Greptile confidence >= 4/5 AND score is
-   fresh** (updated_at > push timestamp): Report "All clear after round [N].
-   Greptile confidence: [score]. No new review comments." and stop.
-9. **Safety cap**: Maximum 10 rounds. If round 10 still produces new comments,
-   stop and report: "Reached autofix cap (10 rounds). [N] comments remain
-   unresolved. Greptile confidence: [score]. Manual review recommended."
+8. **Check the PR is actually green** — comments are only one of three things that
+   keep it red, and the other two are invisible to every query above:
+   ```bash
+   gh pr view <number> --json mergeable,mergeStateStatus,statusCheckRollup \
+     --jq '{mergeable, mergeStateStatus, checks: [.statusCheckRollup[]? | select(.conclusion != "SUCCESS") | {name, status, conclusion}]}'
+   ```
+   - `mergeable: CONFLICTING` → merge `origin/main` and resolve (Phase 5 step 5).
+     This is the one that bites, because it appears without anyone touching the PR:
+     a merge to `main` makes a green branch red while you are mid-round.
+   - any check not `SUCCESS` → read the failing run and fix it. A failing gate is a
+     finding whether or not a reviewer commented on it.
+   - Both are round-triggering conditions exactly like a new comment is. Do not
+     report "all clear" off the comment count alone.
+9. **If NO new unresolved comments AND Greptile confidence >= 4/5 AND score is
+   fresh** (updated_at > push timestamp) **AND `mergeable` is not CONFLICTING AND
+   every check is SUCCESS**: Report "All clear after round [N]. Greptile
+   confidence: [score]. Mergeable, all checks green." and stop.
+10. **Safety cap**: Maximum 10 rounds. If round 10 still produces new comments,
+    stop and report: "Reached autofix cap (10 rounds). [N] comments remain
+    unresolved. Greptile confidence: [score]. Manual review recommended."
 
 ### Greptile Confidence Gate
 
@@ -123,7 +137,8 @@ Total comments addressed: [N]
 Total commits: [list]
 Deploys: [N] (meshcraft.sawyerdesign.io)
 Greptile confidence: [score]
-Status: [CLEAN | CAPPED at round N with M remaining | CONFIDENCE_LOW]
+Mergeable: [MERGEABLE | CONFLICTING]  Checks: [N/N SUCCESS]
+Status: [CLEAN | CAPPED at round N with M remaining | CONFIDENCE_LOW | NOT_MERGEABLE | CHECKS_FAILING]
 ```
 
 If `autofix` is NOT in $ARGUMENTS, run a single pass (Phases 0–6) as normal.
@@ -399,8 +414,12 @@ Present a summary table before investigating:
 |---|------|------|----------|--------|----------|---------|
 
 Source values: inline, review-body, details-dropdown, greptile-summary, pr-review.
-Category values: bug, outside-diff, nitpick, additional-comment, security,
+Category values: bug, outside-diff, nitpick, additional-comment, reply, security,
 performance, critical, major, minor, unknown-bucket.
+
+`reply` is a category, not a bookkeeping detail: the completeness gate and the
+coverage table both require replies to prior fixes to appear as findings, so
+without a category value for them they can only be misfiled or dropped.
 
 Reviewer values include `pr-review` alongside `coderabbitai`, `greptile`, and
 `sentry`. `/pr-review` runs under a human account, so the reviewer column is the
@@ -480,6 +499,27 @@ npm run test:relief     # Voronoi relief sampler regressions
 
 ## Phase 4: Reply and Resolve Comments
 
+**Read this ordering note before the first `gh api` call.** Phase 4 is numbered
+before Phase 5 but does not run entirely before it. A fixed finding's reply cites
+`Fixed in <hash>` and its ledger key must not be written until the fix is
+actually committed — so a strict 4-then-5 reading forces you to either invent a
+hash or break the ledger rule. Split Phase 4 at the commit instead:
+
+| Step | When | What |
+|---|---|---|
+| **4a** | before commit | Reply to and resolve every **rejected** finding — FALSE POSITIVE, ALREADY FIXED, NOT APPLICABLE. These cite evidence, not a new hash, so they need nothing from Phase 5. Key rejected embedded findings here, at the moment the rejection is written. |
+| **5** | — | Commit and push the fixes (see Phase 5). |
+| **4b** | after push | Reply to and resolve every **fixed** finding, citing the real hash. Post the consolidated embedded-findings comment and its ledger keys now. |
+
+Rejections are keyed in 4a because their disposition is complete the moment it is
+written — nothing later can change it, and an unkeyed rejection is re-litigated
+every round. Fixes are keyed in 4b because a key written before the commit
+records work that does not exist yet, and it is unrecoverable: the finding is
+never surfaced again, so nobody discovers the gap.
+
+Push before 4b, not just commit. A reply pointing at a hash that exists only in
+your local repo is worse than no reply — it reads as done and cannot be checked.
+
 **Resolution rule**: EVERY comment gets resolved after replying — whether it was
 FIXED, rejected as FALSE POSITIVE, ALREADY FIXED, or NOT APPLICABLE. Resolution
 means "addressed", not "agreed with". A rejection with explanation is a valid
@@ -552,7 +592,8 @@ Two rules that keep this honest:
 
 - A key means **addressed**, not fixed — a rejected finding is keyed too, which
   is the entire point: an unkeyed rejection gets re-litigated every round.
-- Key a finding **only after** the fix is committed or the rejection is written.
+- Key a finding **only after** its disposition is real: a rejection in step 4a,
+  when the explanation is written; a fix in step 4b, after the commit is pushed.
   Keying at parse time marks work addressed that no one did, and it is invisible
   afterward because the finding never gets re-surfaced.
 
@@ -624,7 +665,11 @@ gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "{thre
 
 ### Phase 4 Completeness Check
 
-Before proceeding to Phase 5, verify:
+Run this after step **4b** — i.e. after the push — since the fixed-finding replies
+and their ledger keys do not exist until then. The one item that gates entry to
+Phase 5 is the 4a half: every rejected finding replied to, resolved, and keyed.
+
+Verify:
 - [ ] Every SOURCE 1 thread has a reply AND is resolved (fixed OR rejected)
 - [ ] A consolidated comment covers EVERY actionable CodeRabbit bucket's entries —
       Critical, Major, Minor, Nitpick, Outside-diff, unknown labels (fixed + rejected)
@@ -639,13 +684,34 @@ Before proceeding to Phase 5, verify:
 
 ## Phase 5: Commit and Push
 
+Runs between steps 4a and 4b — the rejections are already replied to and resolved;
+the fixed-finding replies are waiting on the hash this phase produces.
+
 1. Stage only the files changed for fixes (explicit paths, never `git add -A`)
 2. Commit with a descriptive message:
    ```text
    fix: address PR #<number> code review findings
    ```
 3. Push to the current branch
-4. Verify the push succeeded: `gh pr view --json commits --jq '.commits[-1]'`
+4. Verify the push succeeded — compare the remote head to your local HEAD, do not
+   just read the last commit, since a rejected push still leaves a local commit:
+   ```bash
+   git rev-parse HEAD; git rev-parse @{u}
+   gh pr view <number> --json headRefOid --jq '.headRefOid'
+   ```
+5. **Check the PR is mergeable.** A branch behind a moved `main` reports
+   `CONFLICTING`, and no amount of review triage makes the PR green while it does:
+   ```bash
+   gh pr view <number> --json mergeable,mergeStateStatus,statusCheckRollup
+   ```
+   If it conflicts, merge `origin/main` in and resolve before continuing — that is
+   part of getting the PR green, not a separate task. Resolve by writing each path
+   from the blob you intend to keep (`git show <ref>:<path> > <path>`) rather than
+   `git checkout --ours/--theirs`, and re-run every gate afterwards: a conflict
+   resolution is an edit, and it is the edit most likely to silently drop a fix
+   you made earlier in the round.
+6. Return to step **4b**: reply to the fixed findings with the pushed hash, post
+   the consolidated comment, write the ledger keys, resolve those threads.
 
 ## Phase 6: Deploy to Production
 
