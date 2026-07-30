@@ -13,11 +13,17 @@ work from the invariants, hot files, and cohorts below.
 
 ## Source of truth
 
-| Area | Doc |
-|---|---|
-| Repo conventions, commands, architecture, secrets | `.claude/CLAUDE.md` |
-| Voronoi relief target spec | `docs/voronoi-relief-target-spec.md` |
-| Grasshopper native port notes | `grasshopper/VORONOI_RELIEF_NATIVE.md` |
+| Area | Doc | Tracked? |
+|---|---|---|
+| Voronoi relief target spec | `docs/voronoi-relief-target-spec.md` | yes |
+| Grasshopper native port notes | `grasshopper/VORONOI_RELIEF_NATIVE.md` | yes |
+| Parity contract (what "in lockstep" actually means) | `cli/grasshopper-parity.spec.ts` header | yes |
+| Repo conventions, commands, secrets | `.claude/CLAUDE.md` | **no — gitignored** |
+
+`.claude/CLAUDE.md` and `AGENTS.md` are both gitignored, so **neither exists in a fresh clone**
+and neither can be relied on in CI or on another machine. They are useful when present; do not
+route a reviewer to them as the primary source. The tracked source of truth for this repo is the
+specs and dossiers above plus the code itself.
 
 ### Subsystem dossiers — `CONTEXT/greptile/`
 
@@ -43,9 +49,13 @@ code, those win. Verify before citing one as a violation.
   `grasshopper/components/**` implement the same algorithms and are enforced by
   `cli/grasshopper-parity.spec.ts` and `cli/voronoi-relief.spec.ts`. A change to one side
   without the other is the single highest-value finding in this repo.
-- **`grasshopper/builder/meshcraft_builder.py`'s `NOISE_SCRIPT` is regenerated wholesale
-  from `grasshopper/components/noise_gen.py`** — the two must stay byte-identical, enforced
-  by `test:gh-parity`. Editing the embedded copy by hand is a defect.
+- **`meshcraft_builder.py`'s `NOISE_SCRIPT` / `PRESETS_SCRIPT` are HAND-MAINTAINED mirrors**
+  of the canonical `grasshopper/components/*.py`. There is no generator and no regeneration
+  step — do not send an author looking for one. `cli/grasshopper-parity.spec.ts` extracts the
+  embedded triple-quoted literals and asserts an *identical algorithmic core* after stripping
+  platform-specific differences (shebang/header comments, script-end footer, trailing
+  whitespace), so they are equivalent rather than byte-identical. The real fix path for drift is:
+  edit both by hand, then `npm run test:gh-parity`.
 - **IronPython 2.7 single-line `if x: y` guards are an established convention** in
   `grasshopper/components/*.py`. Do NOT flag these as Ruff E701 — Ruff is not in this repo's
   toolchain (ESLint + tsc + `ast.parse` gates).
@@ -60,9 +70,10 @@ code, those win. Verify before citing one as a violation.
 - **Pre-commit hook** runs `npm run lint` + `npm run typecheck` and scans staged files for
   leaked secrets. It does NOT run `typecheck:cli`, so CLI-only type errors escape it —
   verify `npm run typecheck:cli` explicitly when touching `cli/` or `src/sbp/`.
-- **Some values are intentional**: `serializeConfig()` returning `'…'` and
-  `.section-title` using `var(--warn)` are deliberate. Check `references/learnings.md`
-  before flagging an odd-looking constant.
+- **Some values are intentional**: `serializeConfig()` returning `''` — the empty string, meaning
+  "default config, emit no `?c=`" when the only key left is `_v` (`src/state.ts:381-382`) — and
+  `.section-title` using `var(--warn)` are deliberate. Check `references/learnings.md`, then
+  `references/superseded.md`, before flagging an odd-looking constant.
 - **Never validate a build through a pipe** — `cmd | tail` returns tail's exit status, so a
   failing build reports success. Branch on the unmasked exit code.
 
@@ -108,8 +119,11 @@ Phase 3 is not optional. `CONTEXT/greptile/` is a decaying capture (2026-07-19) 
 against — a sampler change that does not update the spec makes the spec a liar.
 
 ```bash
-python3 ~/.claude/skills/pr-review/scripts/check-context-staleness.py \
-  --doc-roots CONTEXT docs grasshopper --base <base-ref>
+# Prefer the copy committed to this repo so the check also runs in a bare checkout or CI,
+# where the user-level skill is not installed. Fall back to the user-level copy otherwise.
+CHECK=.claude/skills/pr-review/scripts/check-context-staleness.py
+[ -f "$CHECK" ] || CHECK="$HOME/.claude/skills/pr-review/scripts/check-context-staleness.py"
+python3 "$CHECK" --doc-roots CONTEXT docs grasshopper --base <base-ref>
 ```
 
 ## Validation commands
@@ -131,5 +145,9 @@ TS/Python mirror.
   intentional" rules — read them before flagging.
 - `references/finding-index.md` — 139 historical findings grouped by file
 - `references/learnings-mined.md` — scraped learnings (superset, noisier; the CSV wins)
+- `references/superseded.md` — settled learnings the code has since moved past. **Read this
+  before citing `learnings.md`**; `learnings.md` is generated and cannot carry corrections.
 - `references/false-positive-log.md` — findings raised and withdrawn. Read before flagging
   in these areas, and append whenever a `/pr-review` finding is rejected, with the reason.
+- `scripts/check-context-staleness.py` — committed here, not only at the user level, so Phase 3
+  runs in a bare checkout or CI.

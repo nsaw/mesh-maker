@@ -12,6 +12,12 @@ The bracketed number is how many reviews used the rule. High counts are broad
 conventions; low counts are narrow, specific knowledge — both matter, but a rule
 applied once may also just be stale, so verify against live code before citing it.
 
+> **This file is generated — do not hand-edit it.** Re-running the importer overwrites
+> it. A learning that has since been overtaken by the code belongs in
+> `superseded.md`, which survives regeneration. **Read `superseded.md` before citing
+> anything here**: a settled rule that the implementation has moved past is worse than
+> no rule, because it makes a reviewer argue for a regression.
+
 ## Area-specific rules (10)
 
 ### grasshopper/components (2)
@@ -42,9 +48,9 @@ applied once may also just be stale, so verify against live code before citing i
 
 ### sourceTruth (1)
 
-- **[0x]** `sourceTruth/meshcraft.html` (PR #7) — In `sourceTruth/meshcraft.html` and `src/interaction.ts` (MeshCraft 3000, plain JS/TypeScript, Vite), `STATE.panX` and `STATE.panY` are intentional screen-space pixel offsets consumed directly by `renderViewport()` as a canvas translation. Scroll/wheel pan and drag pan do NOT apply orbit-angle compensation — screen-space pan is the deliberate design choice. Do not flag the absence of orbit-angle rotation on pan deltas as a bug.
+- **[0x]** `sourceTruth/meshcraft.h` (comment anchored on `sourceTruth/meshcraft.html`) (PR #7) — In `sourceTruth/meshcraft.html` and `src/interaction.ts` (MeshCraft 3000, plain JS/TypeScript, Vite), `STATE.panX` and `STATE.panY` are intentional screen-space pixel offsets consumed directly by `renderViewport()` as a canvas translation. Scroll/wheel pan and drag pan do NOT apply orbit-angle compensation — screen-space pan is the deliberate design choice. Do not flag the absence of orbit-angle rotation on pan deltas as a bug.
 
-### src/mesh.ts (1)
+### src/render.ts (1)
 
-- **[0x]** `src/mesh.ts` (PR #11) — In `src/render.ts` of nsaw/mesh-maker, `setCameraFromState()` always calls `requestRender()` at the end of its body, which schedules an on-demand RAF-based repaint via the `_rafPending` flag. Calling `setCameraFromState()` is therefore sufficient to both update the camera and trigger a redraw — no separate `renderViewport()` call is needed afterward.
+- **[0x]** `src/render.ts` (comment anchored on `src/mesh.ts`) (PR #11) — In `src/render.ts` of nsaw/mesh-maker, `setCameraFromState()` always calls `requestRender()` at the end of its body, which schedules an on-demand RAF-based repaint via the `_rafPending` flag. Calling `setCameraFromState()` is therefore sufficient to both update the camera and trigger a redraw — no separate `renderViewport()` call is needed afterward.
 

@@ -6,11 +6,13 @@ hot-file list have earned extra scrutiny: they broke before, repeatedly.
 
 ## Distribution
 
-**Category:** ⚠️ Potential issue 54, 🎯 Functional Correctness 28, 🧹 Nitpick 12, 📐 Maintainability & Code Quality 5, 🩺 Stability & Availability 4, 🗄️ Data Integrity & Integration 3, 🛠️ Refactor suggestion 2
+**By reviewer:** coderabbit 108, greptile 31 (total 139)
 
-**Severity:** 🟠 Major 69, 🟡 Minor 25, 🔵 Trivial 13, 🔴 Critical 1
+**Category** (CodeRabbit only — 108 of 139 findings; Greptile grades P0/P1/P2 instead and is excluded here): ⚠️ Potential issue 54, 🎯 Functional Correctness 28, 🧹 Nitpick 12, 📐 Maintainability & Code Quality 5, 🩺 Stability & Availability 4, 🗄️ Data Integrity & Integration 3, 🛠️ Refactor suggestion 2
 
-**Placement:** potential_issue 116, nitpick 22, refactor_suggestion 1
+**Severity** (CodeRabbit only — 108 of 139 findings; Greptile grades P0/P1/P2 instead and is excluded here): 🟠 Major 69, 🟡 Minor 25, 🔵 Trivial 13, 🔴 Critical 1
+
+**Placement** (all 139): potential_issue 116, nitpick 22, refactor_suggestion 1
 
 ## Hot files (3+ historical findings)
 
