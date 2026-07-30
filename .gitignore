@@ -66,4 +66,7 @@ verification/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/pr-review/
+!.claude/skills/triage-pr-comments/
+# Keep OS cruft out even where the negations re-include a directory.
+.DS_Store
 .claude/skills/*/references/.mine-cache/
