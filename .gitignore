@@ -66,7 +66,22 @@ verification/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/pr-review/
-.claude/skills/*/references/.mine-cache/
+!.claude/skills/triage-pr-comments/
+# Keep OS cruft and the miner's scratch cache out even where the negations re-include a
+# directory. `.mine-cache/` is unanchored so it applies on every agent surface below.
+.DS_Store
+.mine-cache/
 .claude-cache/captures/
 .claude-cache/investigations/
 
+# The same skills mirrored to the Codex and .agents surfaces (`sync-skills` keeps the three
+# in step). Same walk-down, for the same reason: a bare `!.codex/skills/` cannot re-include
+# anything, because `.codex/` above already excluded the parent and git will not descend into
+# an excluded directory. Unlike `.claude/` these track every skill, not just the two review
+# ones — the mirrors exist to give a fresh clone the full bundle on those surfaces.
+!.codex/
+.codex/*
+!.codex/skills/
+!.agents/
+.agents/*
+!.agents/skills/
