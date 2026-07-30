@@ -85,10 +85,12 @@ When `autofix` is present, after completing Phase 6 (deploy to production):
      finding whether or not a reviewer commented on it.
    - Both are round-triggering conditions exactly like a new comment is. Do not
      report "all clear" off the comment count alone.
-9. **If NO new unresolved comments AND Greptile confidence >= 4/5 AND score is
-   fresh** (updated_at > push timestamp) **AND `mergeable` is not CONFLICTING AND
-   every check is SUCCESS**: Report "All clear after round [N]. Greptile
-   confidence: [score]. Mergeable, all checks green." and stop.
+9. **If NO new unresolved comments AND the head's CodeRabbit status description reads
+   `Review completed` AND Greptile confidence >= 4/5 and fresh (or confirmed
+   UNAVAILABLE per the gate) AND `mergeable` is not CONFLICTING AND every check is
+   SUCCESS**: Report "All clear after round [N]", naming the commit each reviewer
+   actually read, and stop. If the head is `Review rate limited`, you have not
+   finished — wait for the window, request a review, and re-check.
 10. **Safety cap**: Maximum 10 rounds. If round 10 still produces new comments,
     stop and report: "Reached autofix cap (10 rounds). [N] comments remain
     unresolved. Greptile confidence: [score]. Manual review recommended."
@@ -812,8 +814,45 @@ to them, which are in Surface 1).
     inline comment summary. Each is a separate actionable item.
   - Format: `[N inline comments, N additional comments]` at the top
 
+### Did CodeRabbit actually review this commit? (MANDATORY — check before believing a clean round)
+
+**A rate-limited CodeRabbit run is indistinguishable from a clean one on every surface
+this file has told you to read.** It still regenerates its summary comment, still
+updates the `📥 Commits` range to `...and <new-head>`, still lists `📒 Files selected
+for processing (N)` — and posts no findings, because it never ran. Every check above
+then agrees the round is clean.
+
+The truth is only in the `CodeRabbit` **commit status**, whose `description` is either
+`Review completed` or `Review rate limited`:
+
+```bash
+gh api "repos/{owner}/{repo}/commits/<head-sha>/status" \
+  --jq '.statuses[]? | select(.context=="CodeRabbit") | "\(.state) :: \(.description)"'
+```
+
+Note `state` is `success` in BOTH cases — a rate-limited review is not a failed check,
+so `gh pr checks` shows `pass` and the rollup shows `SUCCESS`. Only the description
+distinguishes them. Read the description, never the state.
+
+Verified on PR #18: `768a64e` → `Review completed`, then `8cd4516` and `91c95e8` →
+`Review rate limited`. Two commits carrying every round-2 fix looked reviewed-and-clean
+on the summary comment and had not been read at all.
+
+**Rules:**
+- Run this check on the current head before reporting any round clean. If the
+  description is `Review rate limited`, the round is **NOT** clean — it is unreviewed.
+- Do not report "0 new findings" for a rate-limited commit. Report "not reviewed
+  (rate limited)", which is a different fact and the opposite conclusion.
+- A merge commit may have no CodeRabbit status at all; that is also "not reviewed".
+- To get a real review once the window resets, comment `@coderabbitai review` on the PR
+  and re-check the description until it reads `Review completed`.
+- The same asymmetry applies to Greptile: a summary that regenerates is not a review
+  that ran. Confirm via its `Last reviewed commit` footer, per the Confidence Gate.
+
 ### Completeness Check
 After collecting from all 3 surfaces, verify:
+- The head commit's CodeRabbit status description reads `Review completed`, not
+  `Review rate limited` (see above) — otherwise the round is unreviewed, not clean
 - CodeRabbit's "Actionable comments posted: N" matches the total you found —
   summed across ALL its reviews, since each review reports only its own count
 - Greptile's "[N inline, N additional]" counts match what you extracted
