@@ -65,11 +65,13 @@ When `autofix` is present, after completing Phase 6 (deploy to production):
    ```text
    fix: address PR #<number> round-<N> review findings
    ```
-7. **If NO new unresolved comments BUT Greptile score is stale or < 4/5**: Wait
-   another 12 minutes and re-check. A stale score (updated_at < push timestamp)
-   means Greptile has not yet re-analyzed — do NOT trust it. Re-check up to
-   3 times (36 min total wait). If still stale or below 4/5 after 3 re-checks,
-   report the score and stop — manual review recommended.
+7. **If NO new unresolved comments BUT Greptile score is stale or < 4/5**: first
+   establish whether Greptile re-reviews on this PR at all (see the Greptile
+   Confidence Gate — a single review with a stale `reviewed_commit` means it does
+   not, and every recheck is dead time). If it does, wait another 12 minutes and
+   re-check, up to 3 times (36 min total). If it does not, stop rechecking, record
+   the score as UNAVAILABLE with the commit it describes, and judge the PR on the
+   remaining gates.
 8. **Check the PR is actually green** — comments are only one of three things that
    keep it red, and the other two are invisible to every query above:
    ```bash
@@ -119,14 +121,50 @@ stop/recheck decision:
 4. Only use the score for stop/recheck decisions when `updated_at` > push timestamp,
    confirming Greptile has updated its analysis after the latest commit.
 
+**Greptile does not necessarily re-review on push, and waiting will not make it.**
+This is the trap in the recheck rule above. Its summary footer reads
+`Reviews (N): Last reviewed commit: [...](…/commit/<sha>) | [Re-trigger Greptile](…)`
+— the re-trigger link exists precisely because a new commit does not always start a
+new review. On PR #18 Greptile reviewed **once**, at PR open, and its summary was
+still pinned to that first commit six hours and four pushes later.
+
+So before spending three 12-minute rechecks on a stale score, decide which case
+you are in, using the footer rather than `updated_at` alone:
+
+```bash
+gh api repos/{owner}/{repo}/issues/{number}/comments --paginate \
+  | jq -r '.[] | select(.user.login|test("greptile"))
+           | "reviewed_commit=\(.body|capture("commit/(?<s>[0-9a-f]{7})").s) updated=\(.updated_at)"'
+gh pr view {number} --json commits --jq '.commits | length'   # how many pushes it has had
+```
+
+- `reviewed_commit` == current head → the score is real. Apply the stop condition.
+- `reviewed_commit` != head but Greptile has reviewed **more than once** on this PR
+  → it does re-review; it is just behind. Wait and recheck as described.
+- `reviewed_commit` != head and Greptile has reviewed **exactly once** → it is not
+  going to re-review on its own. Waiting is dead time. Either re-trigger it via the
+  footer link and then wait, or record the score as **UNAVAILABLE (not re-reviewed
+  since `<sha>`)** and stop on the other gates. Do NOT report a score pinned to an
+  old commit as though it described the current head.
+
+A stale score is also frequently a stale *concern*: on PR #18 the 3/5 cited the
+`serializeConfig` typo as the sole blocker, and that had been fixed five commits
+before the score was read. Re-verify a stale score's stated blockers against live
+code before treating the number as a reason the PR is not green.
+
 **Stop condition**: The autofix loop MUST NOT declare "all clear" unless:
-- The Greptile confidence score is **4/5 or 5/5**, AND
-- The score is **fresh** (`updated_at` > latest push timestamp).
-A score of 3/5 or below, or a stale score, means Greptile still has concerns —
-either new comments will appear, or the summary needs manual review.
+- The Greptile confidence score is **4/5 or 5/5** and **fresh** (`reviewed_commit`
+  == head), OR
+- Greptile is confirmed not re-reviewing (single review, stale `reviewed_commit`),
+  its stale concerns have each been re-verified against live code, and the score is
+  reported as UNAVAILABLE rather than as a pass.
+
+A fresh score of 3/5 or below means Greptile still has concerns — either new
+comments will appear, or the summary needs manual review.
 
 **Report the score** in every round completion message and in the final summary,
-including whether it was fresh or stale at the time of the check.
+with which commit it describes and whether that is the current head — not merely
+"fresh/stale", which hides the never-re-reviewed case entirely.
 
 The autofix loop summary should include all rounds:
 
