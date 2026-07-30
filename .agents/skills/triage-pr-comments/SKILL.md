@@ -110,18 +110,26 @@ gh api repos/{owner}/{repo}/issues/{number}/comments --paginate \
 ```
 Parse the comment body for the confidence score pattern (e.g., `\d/5`).
 
-**Staleness guard (MANDATORY)**: Because the summary comment is edited in-place,
-a previous round's score is still visible immediately after a push — before
-Greptile has re-analyzed the latest commit. Before trusting the score for any
-stop/recheck decision:
-1. Record the push timestamp when Phase 5 completes (from the push or commit
-   output, or `gh pr view --json commits --jq '.commits[-1].committedDate'`).
-2. Compare the Greptile comment's `updated_at` against that push timestamp.
-3. **If `updated_at` < push timestamp**, the score is STALE — Greptile has not
-   yet re-analyzed. Treat this the same as "confidence unknown" and wait + recheck
-   (do NOT use the stale score to declare "all clear").
-4. Only use the score for stop/recheck decisions when `updated_at` > push timestamp,
-   confirming Greptile has updated its analysis after the latest commit.
+**Staleness guard (MANDATORY)**: Because the summary comment is edited in-place, a
+previous round's score stays visible after a push, before Greptile has re-analyzed
+anything. Before trusting the score for any stop/recheck decision:
+1. Read the `Last reviewed commit` sha out of the summary footer.
+2. Compare it to the PR's current head sha.
+3. **If they differ**, the score describes older code. Treat it as "confidence
+   unknown" and go to the re-review question below — never use it to declare
+   "all clear".
+4. Only use the score for stop/recheck decisions when the footer's sha **equals**
+   the head sha.
+
+**Do not use `updated_at` for this.** It is the obvious choice and it is wrong in
+both directions, which is why the footer sha is the criterion above:
+- It moves whenever the comment is edited for any reason, so a summary regenerated
+  *without* a re-review reads as fresh. CodeRabbit does exactly this when rate
+  limited (see "Did CodeRabbit actually review this commit?"), and Greptile edits
+  its comment for its own reasons too.
+- It can also sit far behind while the score is perfectly current for the commit it
+  names, producing pointless waiting.
+Only the footer sha states what was actually analyzed.
 
 **Greptile does not necessarily re-review on push, and waiting will not make it.**
 This is the trap in the recheck rule above. Its summary footer reads
@@ -625,7 +633,7 @@ list**, and drop any parsed finding whose key already appears:
 
 ```bash
 gh api repos/{owner}/{repo}/issues/{number}/comments --paginate \
-  --jq '.[].body | scan("triage:v1:addressed key=([^ ]+)")' | sort -u
+  --jq '.[].body | scan("triage:v1:addressed key=([^ ]+)") | .[0]' | sort -u
 ```
 
 Two rules that keep this honest:
@@ -755,7 +763,10 @@ the fixed-finding replies are waiting on the hash this phase produces.
 
 ## Phase 6: Deploy to Production
 
-After Phase 5 succeeds (commit + push verified), deploy to the live site.
+After step 4b completes — commit pushed, fixed findings replied to and resolved —
+deploy to the live site. Not merely after Phase 5: deploying first publishes while the
+PR still has unanswered fixed-finding threads, and a deploy failure then leaves the
+round half-reported.
 
 ```bash
 npm run deploy
@@ -1020,27 +1031,37 @@ OWNER_REPO=<owner>/<repo>
 # Inline findings (SOURCE 1 surface) — one per file:line.
 # Match EVERY marker type. `finding` alone silently drops outside-diff and nitpick
 # findings while the completeness gate below still reports a clean round.
+# Match the HTML-COMMENT form, not the bare string — see below.
 gh api "repos/$OWNER_REPO/pulls/$PR/comments?per_page=100" --paginate \
   --jq '.[] | select(.user.type != "Bot")
-             | select(.body | test("pr-review:v1:(finding|outside-diff|nitpick)"))
+             | select(.body | test("<!-- pr-review:v1:(finding|outside-diff|nitpick)"))
              | {id, path, line, body}'
 
 # Summary / review body (SOURCE 3 surface)
 gh api "repos/$OWNER_REPO/pulls/$PR/reviews?per_page=100" --paginate \
   --jq '.[] | select(.user.type != "Bot")
-             | select(.body | contains("pr-review:v1:summary"))
+             | select(.body | test("<!-- pr-review:v1:summary"))
              | {id, body, submitted_at}'
 ```
 
-**The `.user.type != "Bot"` filter is not redundant** — it is the one author check
-this section still needs, and it guards a real false positive rather than causing
-one. A marker string is just text, so any comment *quoting* the marker contract
-matches: a CodeRabbit review of this very skill file matched
-`pr-review:v1:finding` and `pr-review:v1:summary` from the table below and looked
-like a `/pr-review` round that never happened. `/pr-review` posts under a human
-account and the paid bots do not, so excluding bots keeps every genuine finding
-and drops the quotes. If a match still looks like prose about the markers rather
-than a finding, read it before counting it.
+**Match `<!-- pr-review:v1:…`, never the bare string.** A marker is just text, so any
+comment *discussing* the markers matches a substring query and reads as a finding.
+Two live examples from this PR, and note the second is why the author filter alone is
+not enough:
+
+- A CodeRabbit review **of this skill file** matched `pr-review:v1:finding` and
+  `pr-review:v1:summary` quoted out of the table below, and looked like a `/pr-review`
+  round that never ran. `.user.type != "Bot"` catches that one.
+- A **human** reply on this PR — written by this very skill, explaining the marker
+  contract in prose — also matched. No author filter can catch that, because
+  `/pr-review` posts under the same human account. Requiring the `<!-- ` prefix does:
+  the count went from 4 matches to exactly the 3 real findings.
+
+Keep `.user.type != "Bot"` as well. It is cheap, and it still guards the case where a
+bot quotes an entire finding comment verbatim, prefix included.
+
+If a match still looks like prose about the markers rather than a finding, read it
+before counting it.
 
 ### Markers
 
