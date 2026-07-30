@@ -70,3 +70,5 @@ verification/
 # Keep OS cruft out even where the negations re-include a directory.
 .DS_Store
 .claude/skills/*/references/.mine-cache/
+.claude-cache/captures/
+.claude-cache/investigations/
