@@ -72,3 +72,5 @@ verification/
 .claude/skills/*/references/.mine-cache/
 .claude-cache/captures/
 .claude-cache/investigations/
+!.codex/skills
+!.agents/skills/
