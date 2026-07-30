@@ -67,3 +67,6 @@ verification/
 .claude/skills/*
 !.claude/skills/pr-review/
 .claude/skills/*/references/.mine-cache/
+.claude-cache/captures/
+.claude-cache/investigations/
+
