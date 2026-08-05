@@ -87,3 +87,12 @@ verification/
 !.agents/skills/
 !.*/skills/**
 **/.DS_Store
+
+# Reference exports from the STL-to-SBP pipeline. The binary STL alone is 120 MB, past
+# GitHub's 100 MB hard limit, and all three are regenerable from MeshCraft + Aspire.
+sourceTruth/stl-to-sbp/example/
+
+# SQLite write-ahead log and shared-memory sidecars. Transient per-process state, not data —
+# a stale -wal committed next to a .vtdb makes readers see the wrong database contents.
+*.vtdb-shm
+*.vtdb-wal
