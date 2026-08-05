@@ -85,3 +85,5 @@ verification/
 !.agents/
 .agents/*
 !.agents/skills/
+!.*/skills/**
+**/.DS_Store

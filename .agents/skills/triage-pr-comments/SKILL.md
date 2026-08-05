@@ -285,6 +285,10 @@ Before declaring a round complete, verify:
 - [ ] Every embedded finding recorded in the `triage:v1:addressed` ledger
 - [ ] Sources re-fetched at the END of the round, not only at the start — a
       reviewer that posts mid-round is otherwise invisible until the next one
+- [ ] Every fix applied this round was re-reviewed AS NEW CODE (Phase 2c), not
+      treated as a closed finding — a fix is the most likely source of the next defect
+- [ ] Any file that has produced findings in TWO OR MORE consecutive rounds is named
+      as a repeat offender and read as a whole unit, not patched line by line
 </mandatory-coverage>
 
 <workflow>
@@ -518,6 +522,64 @@ For each VALID BUG and VALID IMPROVEMENT:
    - **Type safety** — `strict: true` in tsconfig, no `any` escape hatches
 3. **Fix pattern proliferation** — if the same bug exists elsewhere, fix all instances
 4. **Fix ripple effects** — update callers, types affected by the change
+
+## Phase 2c: Re-Review Your Own Fixes as New Code (MANDATORY)
+
+**A fix is the most likely source of the next defect. Treat it as unreviewed code,
+not as a closed finding.**
+
+This is not the same check as Phase 2b. Phase 2b asks "what will a reviewer flag?"
+This asks "is the fix I just wrote correct?" — which nobody has reviewed, because
+attention was on *whether the finding was addressed*, not on whether the thing
+addressing it works.
+
+Evidence for why this is a mandatory phase and not advice: in one 2026-08 review
+loop, **four of six defects were introduced by fixes to earlier findings**, all
+inside the same ~60 lines of session-lifecycle code. Each round's fix corrected the
+previous round's finding and introduced a new one:
+
+| round | change | what it broke |
+|---|---|---|
+| 1 | `destroy()` the shared connection | aborted sibling in-flight requests → duplicate sends |
+| 2 | drop the reference instead | nothing closes an unreferenced connection → leaked socket |
+| 3 | `close()` (correct) | the new guard silently turned a no-arg call into a no-op |
+
+### Do this for every fix, every round
+
+1. **Read the fix as if you had never seen the finding.** Does it work on its own
+   terms? What does a second concurrent caller see? What happens on the empty,
+   null, and already-torn-down input?
+2. **Check the comments within a screen of the change.** Round-N prose describing
+   round-(N-1) behaviour is the single most common residue — a docblock two
+   paragraphs above the code that now contradicts it. Three separate docblocks in
+   the loop above described behaviour a later round had already replaced.
+3. **Prefer making the wrong call impossible over documenting it.** A required
+   parameter beats a comment saying "don't call this with no args."
+4. **If you added a test with the fix, negative-control it.** Revert the fix,
+   confirm the test FAILS, restore. A test that passes with the fix removed is
+   worse than no test: it certifies the guard while testing something else. This
+   is not hypothetical — a per-chunk length assertion passed with its guard
+   deleted, because a *different*, pre-existing check was catching the case the
+   mock produced.
+
+### Repeat-offender files
+
+**If the same file produces findings in two or more consecutive rounds, that file
+is the problem — not coincidence, and not a run of bad luck.**
+
+It is almost always shared mutable state reached from concurrent callers, where
+every fix has to reason about a second caller that is mid-flight. Each fix gets one
+aspect of that right and a new one wrong.
+
+When you detect it:
+
+- Say so explicitly in the round's reply. Naming the pattern is what stops it.
+- Widen the read: open the whole unit (the class, the lifecycle, the state
+  machine), not just the flagged lines. Findings this round are evidence the
+  previous round's mental model was wrong.
+- Expect the next fix to be defective too, and budget the re-review accordingly.
+- Consider whether the correct change is structural (make the invalid state
+  unrepresentable) rather than another point fix on the same 60 lines.
 
 ## Phase 3: Validate
 
