@@ -22,8 +22,8 @@ Two sub-registers that were collapsed into one and should not be. Nick caught th
 
 ## Approved exemplar
 
-> **PROVENANCE: written by Claude, marked SHIP by Nick in blind review.** It is a validated target, not corpus evidence. Do not cite it as proof of how Nick writes. Only material marked HIS in `devices.md` and `humor-and-hooks.md` is corpus evidence.
-
+> **PROVENANCE: written by Claude, marked SHIP by Nick in blind review.** It is a validated target, not corpus evidence. Do not cite it as proof of how Nick writes. Corpus evidence is material carrying an explicit `HIS` attribution — the canonical index is `devices.md` and `humor-and-hooks.md`, and a register sheet may also carry HIS-marked lines inline (see "His own lines" below). Anything without an explicit HIS marker is not evidence, whatever file it sits in — that is the rule the agency copy and the Claude-written line both got past.
+>
 > **Oval ash dining table with matched bench.** Commissioned, Portland. Eleven months.
 >
 > Seats eight. White ash, one tree, so the color will move together for the life of the piece instead of drifting apart. Boards selected in sequence so the grain runs continuously around an ellipse that contains no straight line anywhere. The bench follows the same curve, offset four inches, and from across a room the two read as one object.
@@ -48,7 +48,8 @@ Note the structure: object, then material logic, then design reasoning with the 
 
 Longer sentences, burstiness 0.50-0.60, hedges 3-4 per 1k. He is allowed to be earnest here and only here.
 
-His own lines, unused and better than anything generated for him:
+**HIS** — his own lines, unused and better than anything generated for him. Corpus evidence under
+the provenance rule above; quote and imitate freely:
 > "if I stay in the same space too long the plateau becomes the precipice and there is no prize to perfection, only the end of pursuit."
 > "The finest heirlooms aren't things, they're memories, stories, and connections."
 > "Humans speak curves."
@@ -58,7 +59,7 @@ His own lines, unused and better than anything generated for him:
 ## Approved exemplar
 
 > **PROVENANCE: written by Claude, marked SHIP by Nick in blind review.** It is a validated target, not corpus evidence. Do not cite it as proof of how Nick writes. Only material marked HIS in `devices.md` and `humor-and-hooks.md` is corpus evidence.
-
+>
 > Wood does not want to be hollow.
 >
 > The moment you take material out of one face and not the other, you release tension that has been sitting in those fibers since the tree was standing. Scoop a cavity under a tabletop and the top curls like a potato chip inside a week. It is not a defect. It is the board finally getting to do the thing it has wanted to do since it was cut.

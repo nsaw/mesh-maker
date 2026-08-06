@@ -40,12 +40,14 @@ Then: dump at full depth with no simplification, thank them, and **undercut your
 
 **This is a partial excerpt — a cold open plus a mid-script passage, not a complete script.**
 The bookend is still a hard rule for anything complete: the outro must close on the exact
-image the cold open used (here, the barn-versus-garage picture). This excerpt stops before
-that callback, so do NOT imitate its ending. Imitate the opening, the loop it sets up, and
-the register; take the bookend obligation from the Structure section above.
+image the cold open used (here, the barn-versus-garage picture). This excerpt runs from the
+body straight to the sign-off and never returns to that image, so do NOT imitate its ending.
+Imitate the opening, the loop it sets up, and the register; take the bookend obligation from
+the Structure section above, whose "sharp edge and a messy desk" script is the complete
+specimen.
 
 **Cold open:**
-> There's a thing that happens when you tell somebody you build furniture for a living. They picture a barn. Good light, a wall of hand planes, a dog asleep in the sawdust. Nobody pictures a guy in a four hundred square foot garage kind of losing an argument with a robot about whether a curve is actually a curve.
+> There's a thing that happens when you tell somebody you build furniture for a living. They picture a barn. Good light, a wall of hand planes, a dog asleep in the sawdust. Nobody pictures a guy in a four-hundred-square-foot garage kind of losing an argument with a robot about whether a curve is actually a curve.
 >
 > Anyway. This one's a credenza.
 >
@@ -60,9 +62,9 @@ Nick's verdict: "Great relatability, visuals, man-of-the-people, and awesome hoo
 >
 > Because it is a lie. A mitered corner on a hollow case has maybe a sixteenth of an inch of long grain doing the actual work. The rest is end grain pretending. End grain is a bundle of straws, so glue soaks straight in and there's nothing left on the surface to hold onto. The corner looks perfect. It's held together by optimism.
 >
-> Which is why I'm splining it. A spline is a little tongue of wood sitting in a slot across the joint, running the strong direction, and it turns a bad glue surface into a decent one. I'm cutting the slots at forty five degrees in a sled I built for a video three years ago and have not once put away since.
+> Which is why I'm splining it. A spline is a little tongue of wood sitting in a slot across the joint, running the strong direction, and it turns a bad glue surface into a decent one. I'm cutting the slots at forty-five degrees in a sled I built for a video three years ago and have not once put away since.
 >
-> Two things I'd do differently. Your spline stock wants to be quartersawn and mine wasn't, so the grain's running the wrong way and it's weaker than it looks. And cut the slots before glue up. Not after. Unless you enjoy clamping a fifty pound case on edge at chest height, alone, at eleven at night.
+> Two things I'd do differently. Your spline stock wants to be quartersawn and mine wasn't, so the grain's running the wrong way and it's weaker than it looks. And cut the slots before glue-up. Not after. Unless you enjoy clamping a fifty-pound case on edge at chest height, alone, at eleven at night.
 >
 > And look. I'm not a joinery guy. I know what works in my shop, with my wood, at my humidity, in July. Honestly the more of this I do the less sure I get about telling anybody else what to do.
 

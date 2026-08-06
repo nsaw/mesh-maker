@@ -15,7 +15,9 @@ Nick's brief: emails, pitches, commission query responses. He hates corporate or
 - Burstiness runs low, around 0.60, and that is correct. The label structure creates even blocks by design.
 - Hedges present, 12-15 per 1k.
 - Zero profanity. No emoji.
-- **Exactly one joke per email.** His own specimen: "as long as you don't judge the hurricane."
+- **At most one joke per email, and zero is correct too.** His own specimen: "as long as you don't judge the hurricane."
+  
+  Corrected: this read "exactly one", which the approved exemplar below contradicts — Nick marked it "Approved without changes" and it contains no joke at all. A rule that its own SHIP-marked specimen fails is worse than no rule, because it pushes a joke into a register where the approved sample chose restraint. The ceiling is real; the floor is not.
 
 ## Rules
 
@@ -35,7 +37,7 @@ Nick's brief: emails, pitches, commission query responses. He hates corporate or
 ## Approved exemplar
 
 > **PROVENANCE: written by Claude, marked SHIP by Nick in blind review.** It is a validated target, not corpus evidence. Do not cite it as proof of how Nick writes. Only material marked HIS in `devices.md` and `humor-and-hooks.md` is corpus evidence.
-
+>
 > Hi Dana,
 >
 > Thanks for sending the photos, and for being specific about what you want. That makes this easier.
@@ -48,7 +50,7 @@ Nick's brief: emails, pitches, commission query responses. He hates corporate or
 >
 > **The end tables:** Here's the honest version. You'd be paying my rate for something that's mostly repetition, and the second one is never as interesting to build as the first, which means it's never as good. There's a shop in Sellwood doing exactly this work at maybe 60 percent of what I'd have to charge you, and doing it well. I'll send the name if you want it.
 >
-> **Reclaimed barn wood:** You mentioned wanting to use the beams from your grandfather's place. I want to say up front that I'd need to see them before committing. Old fir is often lovely and often full of grit and hardware that eats sixty dollar cutter heads. If they're clean, this becomes the best part of the piece. If they're not, I'd rather build you something honest than something with a story and a bad glue line.
+> **Reclaimed barn wood:** You mentioned wanting to use the beams from your grandfather's place. I want to say up front that I'd need to see them before committing. Old fir is often lovely and often full of grit and hardware that eats sixty-dollar cutter heads. If they're clean, this becomes the best part of the piece. If they're not, I'd rather build you something honest than something with a story and a bad glue line.
 >
 > Happy to get on the phone this week. I'm generally free after four.
 >
