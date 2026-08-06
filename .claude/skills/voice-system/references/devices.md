@@ -30,7 +30,8 @@ All quoted verbatim from Nick. These are the things adjectives cannot capture. U
 > "They call it work, but I call it rest, now watch how I make a Boomerang Desk."
 
 **D5b The stylized move gets acknowledged.** Never let verse or a bit stand unremarked.
-
+> "With that intro poem, I think we've established that I'm a little weird. Glad we got that out of the way."
+>
 > **Narrow exception to the no-signaling rule, and the only one.** `humor-and-hooks.md`
 > forbids announcing, flagging, or taking credit for a joke. D5b is not that: it fires
 > AFTER a *structural* stylistic move (verse, a sustained bit, a format break) has already
@@ -38,7 +39,6 @@ All quoted verbatim from Nick. These are the things adjectives cannot capture. U
 > move as rating your own joke a failure afterward. Announcing a joke before it lands, or
 > claiming credit for one after, remains banned. If the acknowledgement reads as "wasn't
 > that clever," it is a signal and it is wrong.
-> "With that intro poem, I think we've established that I'm a little weird. Glad we got that out of the way."
 
 **D6 Alliterative self-roast**, deployed exactly when he has screwed up.
 > "Part of piss-poor planning prescribes pretentious, prolonged pontification, poorly packaged as profound process."
@@ -86,7 +86,7 @@ The most sophisticated structure in the corpus.
 > "Saber-II is still growing, so that's exciting and terrifying."
 > "Gonna name him Harry (the boy who lived) well, hopefully lol."
 
-**D18 The discernment flatter.** Rank the reader above other readers, and attach the promise to that identity **in the same sentence**. Never grant permission by offering an exit.
+**D18 The discernment flattery.** Rank the reader above other readers, and attach the promise to that identity **in the same sentence**. Never grant permission by offering an exit.
 > "You've made it eleven minutes into a video about a cabinet, so I already know you're the type who wants to hear why this corner is a lie. Most people scroll right past it. You're not going to."
 
 Nick's note on why this works: "flattery and saying that you're assuming they're brilliant and curious is a great hack to keep people interested and say to themselves, yeah, he thinks I'm savvy, therefore I am."

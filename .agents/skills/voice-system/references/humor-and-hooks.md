@@ -4,7 +4,9 @@
 
 The rest of this system can produce a structurally perfect passage full of tired jokes. Rhythm gates measure burstiness and pronouns. They cannot measure whether a pun is exhausted.
 
-**Provenance warning, and it is the reason this sheet exists in its current form.** An earlier version of this file was built on three example lines. One turned out to be brand-agency copy sitting inside Nick's own file, one was written by Claude and then cited back as if it were evidence from his corpus, and the third was analyzed wrongly. Nick caught all three. Every example below is now labeled by source. Trust the ones marked HIS.
+**Provenance warning, and it is the reason this sheet exists in its current form.** An earlier version of this file was built on three example lines. One turned out to be brand-agency copy sitting inside Nick's own file, one was written by Claude and then cited back as if it were evidence from his corpus, and the third was analyzed wrongly. Nick caught all three. Every example used as CORPUS EVIDENCE below is labeled by source — `HIS`, `NOT HIS`, or
+`CONSTRUCTED`. Trust the ones marked HIS. Unlabeled passages in the device walkthroughs are
+explanatory illustration, not evidence, and must not be imitated as if they were his lines.
 
 ---
 
@@ -67,7 +69,10 @@ A decorative joke that costs him nothing, or that costs the audience something, 
 
 ## THE SPECIFICITY FLOOR
 
-**Every joke contains a proper noun, a number, or a physical fact from THIS build.**
+**Every joke contains a proper noun, a number, or a physical fact from THIS build** — or, in the
+registers that have no build (peer replies, DMs, correspondence), from the specific situation being
+answered. The floor is concreteness, not the workshop: a peer joke anchored to the thing the other
+person actually said satisfies it. What it rejects is the portable joke that would work anywhere.
 
 > HIS: "Skoal Vanilla." · "Dustin's basement." · "forty feet of hose past a guy spraying lacquer." · "1,300 pounds on the Janka scale." · "a very specific $10,710."
 

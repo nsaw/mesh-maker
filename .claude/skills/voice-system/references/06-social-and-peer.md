@@ -23,10 +23,10 @@ Nick's note: "I usually try to put an alliteration, a pun, or a hook to get user
 ## Approved exemplar
 
 > **PROVENANCE: written by Claude, marked SHIP by Nick in blind review.** It is a validated target, not corpus evidence. Do not cite it as proof of how Nick writes. Only material marked HIS in `devices.md` and `humor-and-hooks.md` is corpus evidence.
-
+>
 > The door won. Twice.
 >
-> Two months of an eleven month build went to a single panel that would not stay flat. I laminated it, watched it cup. Laminated it again, watched it cup less. Then quietly built a whole second door while telling myself I was "exploring options." 🚪
+> Two months of an eleven-month build went to a single panel that would not stay flat. I laminated it, watched it cup. Laminated it again, watched it cup less. Then quietly built a whole second door while telling myself I was "exploring options." 🚪
 >
 > What I actually took from it: I stopped trying to make the hidden compartment invisible and started making everything around it so boring there was nothing to compare it to.
 >

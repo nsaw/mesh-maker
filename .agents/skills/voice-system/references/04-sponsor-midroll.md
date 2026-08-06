@@ -63,7 +63,7 @@ A read does not fail because it is an ad. **It fails when the brand's deck is th
 ## Approved exemplar
 
 > **PROVENANCE: written by Claude, marked SHIP by Nick in blind review.** It is a validated target, not corpus evidence. Do not cite it as proof of how Nick writes. Only material marked HIS in `devices.md` and `humor-and-hooks.md` is corpus evidence.
-
+>
 > Alright, hold on. I've got to blow this out before I can see what I'm doing.
 >
 > When I was maybe nineteen I worked a summer at a cabinet shop where the compressor lived in a closet behind the finish room, and the only way to clear a joint was to drag forty feet of hose past a guy spraying lacquer. He hated me. I'd probably hate me too.
@@ -85,6 +85,13 @@ Measured: I:you 0.55, you-words 73.8/1k, hedges 14.8/1k, burstiness 0.80.
 > 0.40, which is where the ceiling comes from; a generated read must land at or below 0.5.
 > The cheapest way to close the gap here is the known interaction in `SKILL.md` — push the
 > remaining first-person lines into second person rather than deleting them.
+>
+> **Do NOT edit the reported 0.55 on its own.** The number is the measurement, not the target;
+> changing it converts a known, bounded deviation into a false record. Genuinely resolving the
+> conflict is Nick's call and there are only two honest options: tighten this read's copy into
+> second person until it re-measures at or below 0.5, or raise the gate and re-measure every
+> dependent example. Until he picks one, the gate binds generated copy and this passage stands
+> annotated.
 
 ## Open question, unresolved
 
