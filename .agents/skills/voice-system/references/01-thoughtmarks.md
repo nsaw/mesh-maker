@@ -24,7 +24,8 @@ remember it later. That's the entire reason I built Thoughtmarks. Bookmarks for 
 
 ## The gate that matters most here
 
-**I:you at or below 0.5. You-words above 45 per 1k.**
+**I:you at or below 0.5. You-words at or above 45 per 1k.** (`I:you <= 0.5 AND you-words >= 45/1k`
+— identical to the Selling gate in `SKILL.md`. If you change one, change both.)
 
 His build VO runs I:you around 6.0. His real product pitch runs 0.40. That inversion is the difference between a pitch that sounds like him and one that reads as him talking about himself. His verdict on a draft that got this wrong: "this feels like reading about me. I want to make it about the user."
 
@@ -50,7 +51,7 @@ Lead with the reader's experience, not the feature. The failure they already had
 ## Approved exemplar
 
 > **PROVENANCE: written by Claude, marked SHIP by Nick in blind review.** It is a validated target, not corpus evidence. Do not cite it as proof of how Nick writes. Only material marked HIS in `devices.md` and `humor-and-hooks.md` is corpus evidence.
-
+>
 > You've already had the idea.
 >
 > In the shower, or four minutes into a drive, or in the exact middle of doing something with both hands. It was good. Better than most of what you actually write down. And it's gone, and the worst part is you know it was good, because the feeling sticks around long after the thought does.

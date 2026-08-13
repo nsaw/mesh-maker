@@ -25,10 +25,10 @@ They described his voice with adjectives: "irreverent, design-literate, hands-di
 
 ## Architecture
 
-```
+```text
 LAYER 0  CORE          invariant, never overridden        <- this file
 LAYER 1  MODALITY      spoken vs written diverge hard
-LAYER 2  REGISTER      five surfaces, each a delta on core
+LAYER 2  REGISTER      six surfaces, each a delta on core
 LAYER 3  STRUCTURE     per-register skeletons
 LAYER 4  GATE          mechanical reject before human review
 ```
@@ -99,7 +99,9 @@ This system governs the bottom two rungs. Its job is to stop good premises being
 
 Questions are addressed to himself or the object ("So, where are we headed?"), never to the audience ("Ever think about how to protect what matters most?").
 
-**Locked sign-off — YouTube VO only**, 17 occurrences unchanged over four years: `I'm Nick, and I'll catch you on the next one. Peace.` It closes spoken video scripts and nothing else. Never append it to blog, portfolio, product, email, App Store, correspondence, or social copy. Governed by `references/03-youtube-vo.md`.
+**Locked sign-off — YouTube voiceover ONLY**, 17 occurrences unchanged over four years: `I'm Nick, and I'll catch you on the next one. Peace.` It closes spoken video scripts and nothing else. Never append it to blog, portfolio, product, in-app, email, App Store, correspondence, or social copy. Governed by `references/03-youtube-vo.md`; nothing else may emit it.
+
+Scoping matters here, and it is why the rule carries its own surface list: this section states core rules that apply to every register, but the sign-off is a creator-video convention. Unscoped, it licenses appending "catch you on the next one" to a commission reply, an App Store description or in-app copy — surfaces this skill also routes.
 
 **Spoken-only scaffolding** — invisible in VO, padding on a page. Strip in written registers: `a little bit`, `go ahead and`, `a lot of`, `I'm going to`, `kind of`, `sort of`.
 
@@ -115,7 +117,7 @@ Every routed register maps to exactly one base gate. Do not infer one — look i
 |---|---|---|
 | `03-youtube-vo.md` | Spoken | — |
 | `04-sponsor-midroll.md` | Spoken | Selling |
-| `06-social-and-peer.md` | **Written** | — |
+| `06-social-and-peer.md` | **Written, rhythm gate suspended** | — |
 | `02-sawyer-design.md` | Written | — |
 | `05-correspondence.md` | Written | — |
 | `01-thoughtmarks.md` | Written | Selling **on selling surfaces only** (App Store, ads, pricing, CTAs). Non-selling Thoughtmarks copy — changelogs, docs, support, in-app microcopy — is Written alone. |
@@ -123,15 +125,29 @@ Every routed register maps to exactly one base gate. Do not infer one — look i
 - **Spoken** (delivered aloud): burstiness 0.70-1.10, sentences <=7w at 20-45%, hedges >=5/1k, sentence-initial "And" >=8%
 - **Written** (read on a page): burstiness >=0.55, hedges >=2/1k
 - **Selling** (a specific ask): **I:you <= 0.5 AND you-words >= 45/1k**
+- **Captions and peer text** (`06-social-and-peer.md`): the **rhythm** half of the Written gate — burstiness — is suspended. That sheet says so in as many words: "Rhythm gate suspended. Captions fragment harder than VO and that is correct." The hedge floor still applies and is not the binding constraint; the sheet sets hedges around 20/1k, an order above the Written floor. Anti-corpus, banned phrasebook and device density apply unchanged.
 
-Social is **Written**, not Spoken. Captions, Reddit, and DMs are typed text; holding them to
-spoken burstiness and an 8% sentence-initial "And" produces a transcript impression of
-someone talking, which is not what those surfaces look like. `02-sawyer-design.md` COMMERCIAL
-is the one register where near-zero hedging is correct and the Written hedge floor does not
-apply — that sheet says so explicitly and it wins.
-- **All**: em dashes <=2/1k, zero anti-corpus patterns (A1-A22 are validated), zero hits on the banned phrasebook. **The phrasebook is provisional** — `humor-and-hooks.md` measured it on a partial corpus and Nick has already struck eight entries. A hit is a stop-and-ask, not an automatic reject: if the phrase turns out to be his, it comes off the list.
+- **All**: em dashes <=2/1k, zero anti-corpus patterns (A1-A22 are validated)
+- **Banned phrasebook**: a hit BLOCKS the draft, it does not auto-reject the phrase. The list is
+  explicitly provisional (`humor-and-hooks.md:107` — "measured on a partial corpus and he has
+  already removed eight entries from it. If a banned phrase is actually his, it comes off. Ask
+  rather than assume"). Treating every hit as a confirmed ban rejects his own phrasing before a
+  human ever sees it, which is the failure the provisional note exists to prevent. Rewrite if the
+  phrase is generic; surface it for a decision if it might be his.
 - **Device density**: max 1 signature device per 400 words spoken / 600 written, never the same device twice in a passage
-- **Joke test**: every joke must survive the deletion test in `humor-and-hooks.md`. If removing it costs no information it is decorative — **and decorative is not automatically cut**. Per that file, a decorative joke survives when it *costs him something* (being fat, lazy, broke, wrong four times about one hole). Cut the decorative joke that costs him nothing, or that costs the audience something. Load-bearing is a tiebreaker, not a gate.
+- **Joke test**: apply `humor-and-hooks.md` in its stated order — the **observed vs constructed** test first, then load-bearing as a **tiebreaker**. That file is explicit ("Use load-bearing as a *tiebreaker*, not a gate") and names a confirmed exception: body self-deprecation (D19) is never load-bearing and is always his. Used as a universal gate, the deletion test cuts exactly the jokes Nick confirmed are most his. So: if removing a joke costs no information it is decorative, **and decorative is not automatically cut** — a decorative joke survives when it *costs him something* (being fat, lazy, broke, wrong four times about one hole). Cut the decorative joke that costs him nothing, or that costs the audience something.
+
+Two routing subtleties the table cannot express:
+
+**Social is not Spoken**, whatever the platform. Captions, Reddit, and DMs are typed text;
+holding them to spoken burstiness and an 8% sentence-initial "And" produces a transcript
+impression of someone talking, which is not what those surfaces look like. The exception is
+social that is *performed* — Reels/TikTok/Shorts voiceover is delivered aloud and takes the
+**Spoken** gate even though its copy routes through a social sheet. Gate by how it is
+delivered, not by where it is posted.
+
+**`02-sawyer-design.md` COMMERCIAL** is the one register where near-zero hedging is correct
+and the Written hedge floor does not apply — that sheet says so explicitly and it wins.
 
 Known interaction: broadening a sponsor read's use cases pushes I:you *up* unless the broadening stays in second person. "your keyboard, your car vents," not "the keyboard, the car vents."
 
@@ -143,15 +159,21 @@ Always read `references/devices.md`, `references/anti-corpus.md`, and **`referen
 
 | Surface | Read |
 |---|---|
-| Thoughtmarks site, email, social, App Store, ads | `references/01-thoughtmarks.md` |
+| Thoughtmarks site, **in-app copy**, email, brand-account social, App Store, ads | `references/01-thoughtmarks.md` |
 | sawyerdesign.io portfolio, services, blog, product copy | `references/02-sawyer-design.md` |
 | YouTube voiceover and scripts | `references/youtube-premise.md` **first**, then `references/03-youtube-vo.md` (LAW 3: premise outranks prose — prose cannot save a package-less build) |
 | Sponsor midroll integrations | `references/04-sponsor-midroll.md` |
 | Commission replies, client mail, brand pitches | `references/05-correspondence.md` |
-| Instagram, Reddit, captions, DMs | `references/06-social-and-peer.md` |
+| Instagram, Reddit, captions, DMs — personal account and community replies | `references/06-social-and-peer.md` |
 | Scoping or titling a build, or diagnosing a flop | `references/youtube-premise.md` |
 
-Every register sheet ends with at least one **approved exemplar** — a passage Nick marked SHIP in blind review, with its measured numbers. Imitate the exemplar before inventing.
+`social` appears on two rows on purpose, and the split is by ACCOUNT, not by platform: copy
+published as Thoughtmarks routes to `01`, copy published as Nick routes to `06`. Without that
+distinction a request for "social copy" could select either sheet.
+
+Every register sheet carries at least one **approved exemplar** — a passage Nick marked SHIP in blind review. Imitate the exemplar before inventing.
+
+Two things this contract deliberately does NOT claim, because the sheets do not do them: the exemplar is not always the LAST thing on the sheet (`02-sawyer-design.md`, `03-youtube-vo.md`, `05-correspondence.md` and `06-social-and-peer.md` all continue with guidance after theirs), and not every exemplar carries its own measured numbers — several sheets state the register's targets once at the top instead of per-passage. Read the sheet whole rather than jumping to the bottom.
 
 ---
 
