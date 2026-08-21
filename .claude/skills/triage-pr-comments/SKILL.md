@@ -4,6 +4,26 @@ description: Triages AI code review comments (CodeRabbit, Greptile, Sentry, and 
 argument-hint: "[optional: 'autofix', PR number, e.g. 'autofix', '29', 'autofix 29']"
 ---
 
+<!-- triage-rearchitecture-2026-08-20 -->
+> **READ THE ROOT METHOD FIRST: `~/.claude/skills/triage-pr-comments/SKILL.md`.**
+> It was rewritten on 2026-08-20 and now owns the method: run your own review pass BEFORE
+> fetching the reviewer's findings, gate every push behind a two-pass background review
+> (blind, then verification — never the same agent, never `fork`, unpinned agent type with
+> `model` omitted so parity holds), spawn the next round with `--single-round`, and stop on
+> findings ACCOUNTED at the current head with a 10-round cap.
+>
+> **Two things below this line are DEAD and must not be executed:**
+> 1. **Every Greptile gate.** The subscription is cancelled (usage pricing took it ~$50 →
+>    ~$500/mo). The "confidence >= 4/5 AND fresh" stop condition is unsatisfiable, so the
+>    loop stalls on it. Ignore the score, the `Greptile Review` status check, and the wait.
+> 2. **The foreground chunk-sleep wait.** Replaced by a background reviewer agent plus
+>    resume-on-notification, with a bounded fallback.
+>
+> The rest of this file is still useful as this repo's specifics. Where it conflicts with
+> the root method, **the root method wins** — the opposite of the usual precedence, because
+> this copy is a pre-rewrite duplicate of a method that has since moved upstairs.
+
+
 # mesh-maker PR Comment Triage
 
 <task>
