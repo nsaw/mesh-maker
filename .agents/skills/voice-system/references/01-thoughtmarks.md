@@ -27,6 +27,13 @@ remember it later. That's the entire reason I built Thoughtmarks. Bookmarks for 
 **I:you at or below 0.5. You-words at or above 45 per 1k.** (`I:you <= 0.5 AND you-words >= 45/1k`
 — identical to the Selling gate in `SKILL.md`. If you change one, change both.)
 
+> **Scope: SELLING SURFACES ONLY** — App Store copy, ads, pricing, CTAs. Non-selling Thoughtmarks
+> copy (changelogs, documentation, support, in-app microcopy) is held to the **Written** gate alone
+> and must NOT be failed against the `I:you` and you-words thresholds above. `SKILL.md`'s surface
+> table has always said so; this sheet stated the gate without the qualifier, so copy that this
+> reference legitimately covers could be failed against a gate that does not apply to it.
+> (fix)PR#115 round 8.
+
 His build VO runs I:you around 6.0. His real product pitch runs 0.40. That inversion is the difference between a pitch that sounds like him and one that reads as him talking about himself. His verdict on a draft that got this wrong: "this feels like reading about me. I want to make it about the user."
 
 **But zero first person is equally wrong.** His real pitch keeps I at 19.4 per 1k, embedded as a peer signal, never as the subject:
