@@ -7,7 +7,34 @@ export function setupSponsorModal(): void {
   const backdrop = document.getElementById('sponsorBackdrop')!;
   const sImg = document.getElementById('sponsorImg') as HTMLImageElement;
 
-  function showSponsor(): void { backdrop.classList.add('visible'); }
+  /**
+   * The `sponsorSeen` write lives HERE, at the moment the modal becomes visible.
+   *
+   * It used to run during setup, four seconds before the modal it described. Anyone who
+   * left the page inside those four seconds was recorded as having seen a sponsor modal
+   * that never rendered, and would not be shown one again for the rest of the session.
+   * The flag was counting page loads, not impressions, and it undercounted in exactly the
+   * direction that hides the problem: the shorter the visit, the more certain the miss.
+   *
+   * Every path that makes the modal visible goes through this function -- the 4s timer and
+   * the manual `#btnSponsor` click -- so marking here cannot drift out of step with what
+   * was actually displayed, the way a second call site eventually would.
+   *
+   * The write is best-effort on purpose. `sessionStorage` throws when storage is disabled
+   * or over quota, and showing the sponsor must not depend on our being able to record
+   * that we showed it. There is no telemetry in this module to report the failure to, and
+   * the only consequence of losing the write is that the modal may appear once more later
+   * in the session, which is the harmless direction to fail in.
+   */
+  function showSponsor(): void {
+    backdrop.classList.add('visible');
+    try {
+      sessionStorage.setItem('sponsorSeen', '1');
+    } catch {
+      // Deliberately swallowed; see the note above. Failing to record an impression must
+      // never prevent one.
+    }
+  }
   function hideSponsor(): void { backdrop.classList.remove('visible'); }
 
   document.getElementById('sponsorClose')!.addEventListener('click', hideSponsor);
@@ -32,7 +59,6 @@ export function setupSponsorModal(): void {
   });
 
   if (!sessionStorage.getItem('sponsorSeen')) {
-    sessionStorage.setItem('sponsorSeen', '1');
     sponsorTimeout = setTimeout(() => {
       sponsorTimeout = null;
       showSponsor();
