@@ -65,6 +65,15 @@ work (zero file overlap). If there is ANY file overlap, it goes in the plan.
 ## Plan: write to the session plan, or to the directory this project designates
 ## for agent output. Never write plan output into `.claude/`.
 
+### Decisions
+[The decision round from Risk Closure below, written down. Numbered. Each item carries the
+ question, the answer you recommend, what changes if it goes the other way, and the default
+ the plan executes if the user says nothing. Every section of the plan below must ALREADY be
+ written to those defaults — that is what makes the plan runnable unanswered, and a fix or
+ task that contradicts its own default is a defect, not a choice. When the round was asked
+ interactively, keep the section and replace each default with the answer given, so a later
+ session reading this file can tell a decided scope from an assumed one.]
+
 ### Prerequisites
 [anything that must be true before starting — e.g., branch, env, deploy state]
 
@@ -87,8 +96,9 @@ work (zero file overlap). If there is ANY file overlap, it goes in the plan.
 [which fixes depend on others, or "no dependencies — can be parallelized"]
 
 ### Unknowns / Flags
-[ONLY items that genuinely cannot be resolved without a device or runtime —
- everything else must have been closed before this plan was presented]
+[ONLY the items the Risk Closure gate below admits — everything else must have been
+ closed before this plan was presented, and a decision only the user can make belongs in
+ Decisions, not here]
 [each surviving item needs: what would resolve it, and which phase gates on it]
 </output-format>
 
@@ -106,11 +116,33 @@ surfaced mid-build.
 
 **Rules:**
 - An item survives into Unknowns ONLY if it genuinely requires a device, a
-  runtime, or a third party. "I didn't check" is not a reason.
+  runtime, or a third party. "I didn't check" is not a reason. A decision only the
+  user can make does NOT belong here: it goes in the Decisions round below, where
+  it carries a default and is therefore not unknown.
 - Every surviving item gets a concrete resolution step and the phase that gates on it.
 - Any defect discovered while closing a risk becomes an in-scope work item in
   THIS plan — not a known issue, not a follow-up ticket. Game day: if you found
   it, you fix it.
 - "Sized via telemetry," "verify later on device," and "TBD" are rejected
   phrasings. Resolve or justify.
+
+**Decisions, in one round.** Facts are yours to close from code. Decisions are not:
+scope, product naming, whether a marketing version bumps, whether an old endpoint
+stays for one release. Closing one of those by assumption is how "more like Y"
+quietly becomes "identical to Y."
+
+When the plan is otherwise closed, collect every decision whose prerequisites are
+already settled and ask that whole set in ONE AskUserQuestion call, in the shape the
+`### Decisions` section defines. Four is the cap: with more than four settled, ask the
+four with the widest blast radius and carry the rest into the next round. Then
+recompute, because an answer can settle the prerequisites of a decision that was not
+askable before. The round ends when no settled decision is left unasked; the PLAN is
+finished when the user approves it at ExitPlanMode, not when the questions run out.
+
+Where AskUserQuestion is unavailable (a `claude -p` run has no such tool, and some
+subagents do not either — test for the tool, do not match the example), the same round
+goes in the plan's `### Decisions` section, ahead of Prerequisites, in the shape that
+section defines. Apply each default and then recompute exactly as above: a default can
+settle the prerequisites of a decision that was not askable before, and that decision
+belongs in the block too rather than being silently skipped.
 </risk-closure>
