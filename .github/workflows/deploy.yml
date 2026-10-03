@@ -5,8 +5,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# A manual run deploys whatever ref it is dispatched from, and the deploy step always publishes as
+# --branch=main (production). Only main may reach it. One deploy at a time, never cancelled midway.
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
