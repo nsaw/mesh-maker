@@ -31,7 +31,11 @@
     "vite": "^6.4.2"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "4.2.0",
     "three": "^0.183.2"
+  },
+  "overrides": {
+    "sharp": "^0.35.4",
+    "adm-zip": "^0.6.1"
   }
 }
