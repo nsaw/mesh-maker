@@ -3,9 +3,20 @@ name: Deploy to Cloudflare Pages
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+# A manual run deploys whatever ref it is dispatched from, and the deploy step always publishes as
+# --branch=main (production), so the job below runs only for main. That guard lives in each branch's
+# own copy of this file, so it stops a mistaken dispatch, not a branch that edits it out. The group is
+# per ref: GitHub cancels a pending run when a newer one joins the same group, so a skipped dispatch
+# from another ref must never share main's group and bump a pending main deploy.
+concurrency:
+  group: pages-deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
