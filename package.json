@@ -15,7 +15,8 @@
     "test:relief": "tsx cli/voronoi-relief.spec.ts",
     "test:gh-parity": "tsx cli/grasshopper-parity.spec.ts",
     "preview": "vite preview",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postbuild": "node scripts/check-asset-size.mjs dist"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
