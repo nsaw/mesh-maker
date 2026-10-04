@@ -77,6 +77,12 @@ silently absent from Grasshopper. Run `npm run test:gh-parity` after any such ch
 
 ## Correctness rules specific to this tool
 
+- `@huggingface/transformers` is pinned to exactly `4.2.0`. 4.3.0 ships an onnxruntime wasm of
+  26,861,777 bytes, over Cloudflare Pages' 25 MiB per-file limit, so every deploy would fail.
+  `npm run build` runs `scripts/check-asset-size.mjs` afterwards and fails on any file over the
+  limit. Before moving the pin, build and read that check's output. The `sharp` and `adm-zip`
+  overrides cover transformers' Node-only dependencies, which this browser app never bundles.
+
 Restated from `AGENTS.md` because they are enforcement rules, not description. Output here
 drives a physical machine, so these are not style preferences.
 

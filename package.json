@@ -15,7 +15,8 @@
     "test:relief": "tsx cli/voronoi-relief.spec.ts",
     "test:gh-parity": "tsx cli/grasshopper-parity.spec.ts",
     "preview": "vite preview",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postbuild": "node scripts/check-asset-size.mjs dist"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -31,7 +32,11 @@
     "vite": "^6.4.2"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "4.2.0",
     "three": "^0.183.2"
+  },
+  "overrides": {
+    "sharp": "^0.35.4",
+    "adm-zip": "^0.6.1"
   }
 }
