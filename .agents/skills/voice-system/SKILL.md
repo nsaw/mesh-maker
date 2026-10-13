@@ -13,6 +13,11 @@ description: >
 
 # Nick Sawyer Voice System
 
+**Building a YouTube VO script?** `references/youtube-vo-assembly.md` is the full assembly
+procedure: inventory-first workflow, per-block build order, word-budget math, the sponsor
+bridge protocol, the AI-cadence blacklist and the adversarial pre-delivery checklist. Read
+`references/03-youtube-vo.md` first for how it should sound, then that for how to build it.
+
 A design system for prose. Measured tokens at the core, register themes on top. Built from 26,227 words of Nick's written scripts, 12,748 words of delivered transcripts, a raw dictation-to-camera pair on the same build, peer text messages, and sent mail. Validated over three rounds of blind draft review until every register shipped.
 
 ## Why the old skills produced slop
@@ -166,6 +171,7 @@ Always read `references/devices.md`, `references/anti-corpus.md`, and **`referen
 | Commission replies, client mail, brand pitches | `references/05-correspondence.md` |
 | Instagram, Reddit, captions, DMs — personal account and community replies | `references/06-social-and-peer.md` |
 | Scoping or titling a build, or diagnosing a flop | `references/youtube-premise.md` |
+| Reviewing a delivered cut's VO for a wide audience, retiming after a re-edit, or writing a record list | `references/youtube-vo-review.md` (checklist; run before the record list) |
 
 `social` appears on two rows on purpose, and the split is by ACCOUNT, not by platform: copy
 published as Thoughtmarks routes to `01`, copy published as Nick routes to `06`. Without that

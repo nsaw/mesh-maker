@@ -1,6 +1,6 @@
 # YouTube voiceover
 
-**Read `youtube-premise.md` first.** Premise outranks title outranks thumbnail outranks intro outranks script. A perfect script on a package-less build is a 50k video.
+**Read `youtube-premise.md` first.** When the job is reviewing or retiming an existing cut rather than writing from scratch, read `youtube-vo-review.md` after this sheet. Premise outranks title outranks thumbnail outranks intro outranks script. A perfect script on a package-less build is a 50k video.
 
 Nick's own brief for this register: conversational, not reading a novel. Curiosity loops opening and closing often. Take complicated engineering and make it simple in a technical and inspirational story. They can hate the project and still watch for the shared curiosity.
 
