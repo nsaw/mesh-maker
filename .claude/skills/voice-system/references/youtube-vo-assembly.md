@@ -98,7 +98,7 @@ Audit your output against this list before delivery. If it fails any of these, r
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
 6. Re-VO of things already shot. Always check the transcription first. If it's on camera, it's not VO.
-7. AI-cadence phrases. Run the blacklist below. Replace every hit.
+7. AI-cadence phrases. Run the blacklist below and evaluate each hit under the core provisional-phrase rule; never silently delete phrasing that may be Nick's.
 8. POV consistency loss. Blocks with no "you/we/let's/your." Fix.
 9. Joke density loss when trimming for word budget. Jokes are the LAST thing to cut, not the first.
 10. Replacing self-deprecating qualifiers with confident-sounding rewrites. "By my math" / "I think" / "I reckon" / "kind of" stay.
@@ -262,7 +262,7 @@ Provide alt lines for the spicy vs clean lane on any sensitive button so Nick ca
 
 ## AI-cadence blacklist (scan and replace before delivery)
 
-Run a find-pass against the final document for these phrases and patterns. Each hit must be rewritten or deleted.
+Run a find-pass against the final document for these phrases and patterns. Evaluate each hit under the core provisional-phrase rule. Rewrite generic AI phrasing; if the phrase may be Nick's, surface it for his decision rather than silently deleting it. Confirmed anti-corpus and no-signaling prohibitions still apply.
 
 Exact phrases:
 - "cheaper than it has any right to be"
@@ -330,7 +330,7 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 Before handing over the assembled script, audit against this list. Fix silently. If a fix changes the structure visibly, flag it.
 
 1. Em dash, en dash, emoji scan: zero hits.
-2. AI-cadence blacklist: zero hits, phrases AND patterns.
+2. AI-cadence blacklist: no unaddressed generic hits, phrases AND patterns. Resolve possible Nick phrasing with his decision, as the core provisional-phrase rule requires.
 3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment.
 4. Discourse markers preserved: at least one per ~75 words of VO (alright, well, so, now, anyway, kind of, sort of, I guess, I mean, you know, honestly, actually, real quick, or at least). Zero markers = failed block, rewrite.
 5. Reaction over assessment: where the build earns energy, energy is in the read. Flat assessments ("Looks good.") rewritten as reactions ("That's looking pretty good!") when the moment warrants.
