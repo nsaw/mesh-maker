@@ -29,7 +29,7 @@
     "tsx": "^4.19.0",
     "typescript": "~5.7.0",
     "typescript-eslint": "^8.57.1",
-    "vite": "^6.4.2"
+    "vite": "^6.4.3"
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",
