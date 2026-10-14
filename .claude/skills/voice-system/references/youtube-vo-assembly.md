@@ -93,7 +93,7 @@ Apply the test on every VO block. If you wrote "Pulling the X out of Y," rewrite
 Audit your output against this list before delivery. If it fails any of these, redo the offending block.
 
 1. Sentence polish-creep. Sentences cleaner than the rough draft. Watch for declarative AI-prose replacing Nick's meander.
-2. Aphoristic closers leaking in. "Rare is defensible. Generic is not." style epigrams. Those are advice-mode voice, not script voice. Cut.
+2. Aphoristic closers leaking in. "Rare is defensible. Generic is not." style epigrams. Those are advice-mode voice, not script voice. Cut if generic; surface it for Nick's decision if it might be his.
 3. Over-precision corrections that undercut the craftsman's point. Preserve Nick's voice and rhetorical point without unnecessary pedantry. If a factual claim is false, correct or qualify it in that voice. If the correction changes his argument, surface the contradiction for his decision before locking the script; never hide a known false claim in optional editor notes.
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
@@ -225,7 +225,7 @@ Lead-in runtime cap: 15 seconds. Math at 120 wpm = 30 words max.
 
 Inside the sponsor block:
 - The read stays in Nick's voice. Keep the ass jokes, the "no drama," the "I was shocked," the slang.
-- Contract-required spec phrasing goes in verbatim. Track any delta between the recorded take and the contract reference; it goes in the supplementary output (sponsor contract-delta flags) when Nick asks, and if a delta breaks the contract, ask him before delivering.
+- Contract-required spec phrasing goes in verbatim. Any meaningful delta between the recorded take and the contract reference is surfaced briefly in the response, outside the deliverable, as Step 4 requires; the detailed contract-delta flags go in the supplementary output when Nick asks. If a delta breaks the contract, ask him before delivering.
 - Demo blocks listed in the brief must be visually compliant. Flag if footage may not exist.
 - Sponsor owns only the sponsor block. Phallus, drugs, guns, sex jokes, and anything else stays untouched in the rest of the cut. Never PG the video for the sponsor.
 
@@ -430,9 +430,9 @@ Ask one question at a time. Do not chain clarifying questions. Get to assembly f
 
 ## What this procedure is NOT for
 
-- Non-Sawyer-Design YouTube content, or anyone other than Nick narrating his own builds
+- Non-Sawyer-Design YouTube content, or anyone other than Nick narrating his own builds: out of scope for the whole voice system, which only writes as Nick. Say so and do not apply it.
 - Thoughtmarks marketing copy: `01-thoughtmarks.md`, plus the `brand-guidelines` and `copywriting` skills
 - Furniture commission proposals, client copy and brand pitch email: `05-correspondence.md` (brand pitches also use the `weekly-brand-pitches` skill)
 - Long-form written articles or blog posts: `02-sawyer-design.md`
 
-For any of these, do not use this procedure. Route through the ROUTER in `SKILL.md`; the rest of this skill still applies.
+For the other items, do not use this procedure. Route through the ROUTER in `SKILL.md`; the rest of this skill still applies.
