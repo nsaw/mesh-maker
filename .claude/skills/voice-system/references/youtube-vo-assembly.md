@@ -18,7 +18,7 @@ The polish layer goes ON TOP of Nick's words. It never replaces them. If the ass
 
 ## What Nick will hand you (inputs)
 
-Some combination of these. The skill works even if a piece is missing, but flag what's missing before assembling.
+Some combination of these. The procedure works even if a piece is missing; name what is missing before assembling (see When something is missing).
 
 - A rough rambling narration outline written in Nick's voice (timecodes optional). This is the VOICE SET. Lock to its cadence, slang, sentence shape, and meander. Do not rewrite it cleaner.
 - An AI transcription of on-camera or lav-mic footage. Multi-take, messy, full of false starts. Mine this for design rationale, philosophy beats, lessons monologues, and failure-recovery asides. Anything quotable here is RECORDED content. Do not re-VO it.
@@ -93,7 +93,7 @@ Apply the test on every VO block. If you wrote "Pulling the X out of Y," rewrite
 Audit your output against this list before delivery. If it fails any of these, redo the offending block.
 
 1. Sentence polish-creep. Sentences cleaner than the rough draft. Watch for declarative AI-prose replacing Nick's meander.
-2. Aphoristic closers leaking in. "Rare is defensible. Generic is not." style epigrams. Those are advice-mode voice, not script voice. Cut if generic; surface it for Nick's decision if it might be his.
+2. Aphoristic closers leaking in. "Rare is defensible. Generic is not." style epigrams. Those are advice-mode voice, not script voice. A freestanding aphorism (anti-corpus A1) is always cut. One attached to an object or a failure may be his: surface it for his decision.
 3. Over-precision corrections that undercut the craftsman's point. Preserve Nick's voice and rhetorical point without unnecessary pedantry. If a factual claim is false, correct or qualify it in that voice. If the correction changes his argument, surface the contradiction for his decision before locking the script; never hide a known false claim in optional editor notes.
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
@@ -154,7 +154,7 @@ Use this every time. Keep the math internal; it appears only in supplementary ou
 - Read speed cap: 120 words per minute. Slower is fine. Faster is wrong.
 - Target window fill: 60-70% of available footage time. 100% is wrong, every time. Build sounds, visuals, and breath need air.
 - Math: window seconds * (120/60) * 0.65 = word target. Example: a 51 second window targets ~66 words.
-- Flag word count and read-seconds on every block before the read. Format: `(~XX words, ~YY sec at 120 wpm)`
+- Put word count and read-seconds on every block before the read. Format: `(~XX words, ~YY sec at 120 wpm)`
 - Pre-plan cut points per block: 2-3 trim options, kept internal and delivered only on request.
 
 When trimming for budget: jokes are the LAST thing to cut. Process detail and qualifying clauses go first.
@@ -240,7 +240,7 @@ If the build includes a wood-species explainer, a material story, or any standal
 
 - Split the explainer in half. Front half (hook + accessible curiosity + funny detail) sits in the first third of the video, scored to the first appearance of that material on camera.
 - Back half (the heavier toughness/history/stakes/thesis) bookends the video, immediately before the outro reveal.
-- The thesis line lives at the end, not buried mid-build. ("This isn't just [material]. It's a timestamp.")
+- The thesis line lives at the end, not buried mid-build, and stays attached to the object rather than standing alone as an aphorism (anti-corpus A1).
 
 Front-half ash-style beats (adapt to any subject): unexpected botanical or historical hook, accessible curiosity detail with a funny note, working-tool spec (Janka or equivalent) framed as why it matters to the build.
 
@@ -297,7 +297,7 @@ Exact phrases:
 - "elevate" / "elevates" / "elevation" (when not literal)
 
 Patterns:
-- Aphoristic closers ("X is Y. Z is not." structure). Cut if generic; surface it for Nick's decision if it might be his.
+- Aphoristic closers ("X is Y. Z is not." structure). A freestanding aphorism (anti-corpus A1) is always cut. One attached to an object or a failure may be his: surface it for his decision.
 - "Not just X, it's Y." pattern (overused).
 - Three-beat parallelism for emphasis when the third beat is redundant.
 - Symmetric sentence pairs that feel like ad copy.
@@ -385,7 +385,7 @@ What does NOT appear in the primary deliverable:
 
 All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean.
 
-**Response notices.** Separately from the document, the response carries short notices, and this is the one list of them. Every other rule in this procedure that says flag, surface or ask points here:
+**Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list:
 
 - A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
 - A blacklist hit that might be Nick's.
@@ -394,6 +394,7 @@ All of that is supplementary. Build it internally to ensure the read is right. S
 - A fix that visibly changes the structure.
 - A sponsor demo block whose footage may not exist.
 - A section that would normally be REC when no on-camera transcription was provided.
+- Any other missing input, named before the script, including where the midroll cut goes when there is no sponsor brief.
 
 ## Supplementary outputs (only on request)
 
@@ -430,9 +431,9 @@ When invoked:
 
 ## When something is missing
 
-If Nick hasn't provided one of the inputs, do not invent it. Flag it. Examples:
+If Nick hasn't provided one of the inputs, do not invent it. Name it in a response notice, or ask before assembling where the answer changes the build. Examples:
 - No on-camera transcription provided: assemble what you can from the rough outline, list every section that would normally be REC in a response notice, not as a tag in the deliverable.
-- No sponsor brief: skip the sponsor block, flag where the midroll cut goes.
+- No sponsor brief: skip the sponsor block, and give the midroll location in a response notice.
 - No timecodes: ask whether to estimate windows from word count, or work without budgets.
 - No canonical polished section files: that's fine, on-camera takes are the default anyway.
 
