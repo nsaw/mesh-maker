@@ -164,7 +164,7 @@ When trimming for budget: jokes are the LAST thing to cut. Process detail and qu
 The cold open machine:
 
 - Present tense, viewer-direct, in Nick's voice. Open cold on the hook with no greeting: anti-corpus A7 rejects the warm open ("welcome back to the shop").
-- These budgets are targets computed from the window math. Where any budget or sentence cap in this procedure disagrees with the approved exemplar in `03-youtube-vo.md`, the exemplar wins.
+- These budgets come from the window math. The window math and the 120 wpm cap are physical and never yield. Where a sentence-length cap disagrees with the approved exemplar in `03-youtube-vo.md`, the exemplar wins.
 - Open the unexpected immediately. Not the setup. The reveal.
 - Tease the title number, never explain in the cold open. ("That title? Not clickbait. Stick around.")
 - Comedy via visual juxtaposition with VO straight-faced. Let the cuts do the joke while the read stays deadpan.
@@ -226,7 +226,7 @@ Lead-in runtime cap: 15 seconds. Math at 120 wpm = 30 words max.
 Inside the sponsor block:
 - The read stays in Nick's voice. Keep the ass jokes, the "no drama," the "I was shocked," the slang.
 - Contract-required spec phrasing goes in verbatim. Any meaningful delta between the recorded take and the contract reference is surfaced briefly in the response, outside the deliverable, as Step 4 requires; the detailed contract-delta flags go in the supplementary output when Nick asks. If a delta breaks the contract, ask him before delivering.
-- Demo blocks listed in the brief must be visually compliant. Flag if footage may not exist.
+- Demo blocks listed in the brief must be visually compliant. If footage may not exist, raise it as a response notice (see Response notices).
 - Sponsor owns only the sponsor block. Phallus, drugs, guns, sex jokes, and anything else stays untouched in the rest of the cut. Never PG the video for the sponsor.
 
 Outro callback to sponsor: one short line, ~15-25 words max. Should not feel like the ad is playing twice.
@@ -256,10 +256,10 @@ The closer machine:
 - Comment ask tied to a real prompt. ("Tell me what you would actually hide in here.") Only include "I read every single one" if Nick actually does.
 - Thoughtmarks plug, in voice: "if you can't remember shit, that is the entire reason I built Thoughtmarks. Bookmarks for your brain. App Store or thoughtmarksapp.com." Adapt the qualifier to the build but keep the slangy intro.
 - Sponsor callback (one line, light).
-- Bookend material button if used.
+- Bookend: return to the cold-open image. `03-youtube-vo.md` makes this a hard rule.
 - Sign-off, locked: "I'm Nick, and I'll catch you on the next one. Peace." Use this exact wording, as required by `03-youtube-vo.md`.
 
-Provide alt lines for the spicy vs clean lane on any sensitive button so Nick can pick.
+Provide alt lines for the spicy vs clean lane on any sensitive button as a response notice, so Nick can pick.
 
 ## AI-cadence blacklist (scan before delivery)
 
@@ -328,7 +328,7 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 
 ## Adversarial pre-delivery checklist
 
-Before handing over the assembled script, audit against this list. Fix silently, except a blacklist hit that might be Nick's, which is surfaced for his decision. If a fix changes the structure visibly, flag it.
+Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): a blacklist hit that might be Nick's, or a fix that visibly changes the structure.
 
 1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
 2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision if it might be his. None left unaddressed.
@@ -383,7 +383,17 @@ What does NOT appear in the primary deliverable:
 - Description checklists
 - Footage gap flags
 
-All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean. Separately from the document, the response always carries the brief notices that Step 4 (meaningful sponsor or fact deltas), the blacklist carve-out (hits that might be Nick's) and failure mode 3 (a correction that changes his argument) require.
+All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean.
+
+**Response notices.** Separately from the document, the response carries short notices, and this is the one list of them. Every other rule in this procedure that says flag, surface or ask points here:
+
+- A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
+- A blacklist hit that might be Nick's.
+- A correction that changes his argument (failure mode 3).
+- A sensitive-content choice, with the spicy and clean alt lines for him to pick.
+- A fix that visibly changes the structure.
+- A sponsor demo block whose footage may not exist.
+- A section that would normally be REC when no on-camera transcription was provided.
 
 ## Supplementary outputs (only on request)
 
@@ -411,17 +421,17 @@ When invoked:
 3. Identify the timecode range of every gap that requires VO. These are the only blocks you write copy for.
 4. Use rough draft cadence as voice baseline. Polish goes on top, not over. The refined VO should sound like Nick's rambling notes after a haircut, not after a personality transplant.
 5. Run the adversarial checklist internally before delivering.
-6. Resolve judgment calls silently when the right answer is clear. Surface only the calls where ambiguity itself is informative (sensitive-content choices, sponsor contract deltas, factual claims that contradict Nick's argument).
+6. Resolve judgment calls silently when the right answer is clear. Surface only what the Response notices list names.
 7. Never re-voice something that's already on camera unless Nick explicitly asks.
 8. Never soften sensitive content unless Nick explicitly asks in this message.
 9. Never use the forbidden sponsor lead-in phrasings.
-10. Never insert aphoristic closers.
+10. Never add aphoristic closers of your own. One that might be Nick's follows failure mode 2.
 11. Deliver clean paragraph VO with timecode-range labels per gap. Nothing else unless asked.
 
 ## When something is missing
 
 If Nick hasn't provided one of the inputs, do not invent it. Flag it. Examples:
-- No on-camera transcription provided: assemble what you can from the rough outline, flag every section that would normally be REC as `[VO or REC - confirm with Nick]`.
+- No on-camera transcription provided: assemble what you can from the rough outline, list every section that would normally be REC in a response notice, not as a tag in the deliverable.
 - No sponsor brief: skip the sponsor block, flag where the midroll cut goes.
 - No timecodes: ask whether to estimate windows from word count, or work without budgets.
 - No canonical polished section files: that's fine, on-camera takes are the default anyway.
@@ -434,6 +444,6 @@ Ask one question at a time. Do not chain clarifying questions. Get to assembly f
 - Non-Sawyer-Design YouTube content Nick narrates (a Thoughtmarks promo, for example): not this procedure; route through the ROUTER.
 - Thoughtmarks marketing copy: `01-thoughtmarks.md`, plus the `brand-guidelines` and `copywriting` skills
 - Furniture commission proposals, client copy and brand pitch email: `05-correspondence.md` (brand pitches also use the `weekly-brand-pitches` skill)
-- Long-form written articles or blog posts: `02-sawyer-design.md`
+- Long-form written articles or blog posts: `02-sawyer-design.md` for sawyerdesign.io, `01-thoughtmarks.md` for Thoughtmarks
 
-For the other items, do not use this procedure. Route through the ROUTER in `SKILL.md`; the rest of this skill still applies.
+For the four routed items above, do not use this procedure. Route through the ROUTER in `SKILL.md`; the rest of this skill still applies.

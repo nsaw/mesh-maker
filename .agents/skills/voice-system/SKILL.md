@@ -13,7 +13,7 @@ description: >
 
 # Nick Sawyer Voice System
 
-**Building a YouTube VO script?** `references/youtube-vo-assembly.md` is the full assembly
+**Building a Sawyer Design YouTube VO script?** `references/youtube-vo-assembly.md` is the full assembly
 procedure: inventory-first workflow, per-block build order, word-budget math, the sponsor
 bridge protocol, the AI-cadence blacklist and the adversarial pre-delivery checklist. Read
 `references/youtube-premise.md` first (LAW 3), then `references/03-youtube-vo.md` for how it
@@ -174,6 +174,8 @@ Always read `references/devices.md`, `references/anti-corpus.md`, and **`referen
 | Scoping or titling a build, or diagnosing a flop | `references/youtube-premise.md` |
 | Assembling Sawyer Design gap VO for a cut from outline and on-camera transcript | `references/youtube-premise.md` and `references/03-youtube-vo.md`, then `references/youtube-vo-assembly.md` |
 | Reviewing a delivered cut's VO for a wide audience, retiming after a re-edit, or writing a record list | `references/youtube-vo-review.md` (checklist; run before the record list) |
+
+Someone other than Nick narrating is out of scope for the whole system: say so and do not apply it.
 
 `social` appears on two rows on purpose, and the split is by ACCOUNT, not by platform: copy
 published as Thoughtmarks routes to `01`, copy published as Nick routes to `06`. Without that
