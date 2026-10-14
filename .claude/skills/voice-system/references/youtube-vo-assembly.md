@@ -383,7 +383,7 @@ What does NOT appear in the primary deliverable:
 - Description checklists
 - Footage gap flags
 
-All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean.
+All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean. Separately from the document, the response always carries the brief notices that Step 4 (meaningful sponsor or fact deltas), the blacklist carve-out (hits that might be Nick's) and failure mode 3 (a correction that changes his argument) require.
 
 ## Supplementary outputs (only on request)
 
@@ -430,7 +430,8 @@ Ask one question at a time. Do not chain clarifying questions. Get to assembly f
 
 ## What this procedure is NOT for
 
-- Non-Sawyer-Design YouTube content, or anyone other than Nick narrating his own builds: out of scope for the whole voice system, which only writes as Nick. Say so and do not apply it.
+- Anyone other than Nick narrating: out of scope for the whole voice system. Say so and do not apply it.
+- Non-Sawyer-Design YouTube content Nick narrates (a Thoughtmarks promo, for example): not this procedure; route through the ROUTER.
 - Thoughtmarks marketing copy: `01-thoughtmarks.md`, plus the `brand-guidelines` and `copywriting` skills
 - Furniture commission proposals, client copy and brand pitch email: `05-correspondence.md` (brand pitches also use the `weekly-brand-pitches` skill)
 - Long-form written articles or blog posts: `02-sawyer-design.md`
