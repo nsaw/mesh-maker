@@ -62,6 +62,16 @@ for FILE in $STAGED_FILES; do
   # Strip known-safe CDN URLs to avoid false positives on embedded UUIDs/hashes
   CONTENT=$(echo "$CONTENT" | grep -v 'imagedelivery\.net' || true)
 
+  # Strip GitHub Actions refs pinned to a 40-char commit SHA. The SHA trips the
+  # CLOUDFLARE_API_KEY hex rule below, and pinning is required (issue #17). Only
+  # workflow files, and only lines that are exactly `uses: owner/repo@<sha>` with
+  # an optional trailing `# vX.Y.Z` comment, so nothing else on the line is skipped.
+  case "$FILE" in
+    .github/workflows/*)
+      CONTENT=$(echo "$CONTENT" | grep -vE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}([[:space:]]+#[[:space:]]*v[0-9][0-9.]*)?[[:space:]]*$' || true)
+      ;;
+  esac
+
   # --- Cloud provider keys ---
   scan_for_pattern "AWS_ACCESS_KEY" \
     "AKIA[0-9A-Z]{16}" \
