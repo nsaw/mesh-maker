@@ -11,6 +11,9 @@ on:
       - '.agents/**'
       - '.codex/**'
       - 'CONTEXT/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'AGENTS.md'
   workflow_dispatch:
 
 # A manual run deploys whatever ref it is dispatched from, and the deploy step always publishes as
