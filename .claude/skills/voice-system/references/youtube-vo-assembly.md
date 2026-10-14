@@ -5,8 +5,8 @@
 > invoked and its description was being dropped from the skill listing.
 >
 > This is the **procedure**. `03-youtube-vo.md` in this directory is the **measured voice**:
-> mechanics, narration density, the approved exemplar, the locked sign-off. Read that first
-> for how it should sound, then this for how to build it.
+> mechanics, narration density, the approved exemplar, the locked sign-off. Read
+> `youtube-premise.md` first (LAW 3), then that for how it should sound, then this for how to build it.
 
 ## Purpose
 
@@ -98,7 +98,7 @@ Audit your output against this list before delivery. If it fails any of these, r
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
 6. Re-VO of things already shot. Always check the transcription first. If it's on camera, it's not VO.
-7. AI-cadence phrases. Run the blacklist below under the banned-phrasebook rule in `SKILL.md` (LAYER 4): a hit in words you added is rewritten, zero hits allowed; a hit inside Nick's own transcript or rough draft is surfaced for his decision, never silently deleted.
+7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft; "rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's.
 8. POV consistency loss. Blocks with no "you/we/let's/your." Fix.
 9. Joke density loss when trimming for word budget. Jokes are the LAST thing to cut, not the first.
 10. Replacing self-deprecating qualifiers with confident-sounding rewrites. "By my math" / "I think" / "I reckon" / "kind of" stay.
@@ -164,7 +164,7 @@ When trimming for budget: jokes are the LAST thing to cut. Process detail and qu
 The cold open machine:
 
 - Present tense, viewer-direct, in Nick's voice. Open cold on the hook with no greeting: anti-corpus A7 rejects the warm open ("welcome back to the shop").
-- These budgets are targets computed from the window math. Where they disagree with the approved exemplar in `03-youtube-vo.md`, the exemplar wins.
+- These budgets are targets computed from the window math. Where any budget or sentence cap in this procedure disagrees with the approved exemplar in `03-youtube-vo.md`, the exemplar wins.
 - Open the unexpected immediately. Not the setup. The reveal.
 - Tease the title number, never explain in the cold open. ("That title? Not clickbait. Stick around.")
 - Comedy via visual juxtaposition with VO straight-faced. Let the cuts do the joke while the read stays deadpan.
@@ -225,14 +225,14 @@ Lead-in runtime cap: 15 seconds. Math at 120 wpm = 30 words max.
 
 Inside the sponsor block:
 - The read stays in Nick's voice. Keep the ass jokes, the "no drama," the "I was shocked," the slang.
-- Contract-required spec phrasing goes in verbatim. Surface any delta between the recorded take and the contract reference in editor notes for Nick to decide.
+- Contract-required spec phrasing goes in verbatim. Track any delta between the recorded take and the contract reference; it goes in the supplementary output (sponsor contract-delta flags) when Nick asks, and if a delta breaks the contract, ask him before delivering.
 - Demo blocks listed in the brief must be visually compliant. Flag if footage may not exist.
 - Sponsor owns only the sponsor block. Phallus, drugs, guns, sex jokes, and anything else stays untouched in the rest of the cut. Never PG the video for the sponsor.
 
 Outro callback to sponsor: one short line, ~15-25 words max. Should not feel like the ad is playing twice.
 
-Description requirements (flag at the end of the document if sponsor brief specifies):
-- UTM link, discount code, product link, brand hashtags. Surface these as TO-DO items in editor notes.
+Description requirements (if the sponsor brief specifies them):
+- UTM link, discount code, product link, brand hashtags. Track these for the description checklist in the supplementary output, delivered when Nick asks.
 
 ## Bookend structure (when a long-form subject deserves it)
 
@@ -263,7 +263,7 @@ Provide alt lines for the spicy vs clean lane on any sensitive button so Nick ca
 
 ## AI-cadence blacklist (scan and replace before delivery)
 
-Run a find-pass against the final document for these phrases and patterns, under the banned-phrasebook rule in `SKILL.md` (LAYER 4): a hit in words you added is rewritten, zero hits allowed; a hit inside Nick's own transcript or rough draft is surfaced for his decision, never silently deleted. Confirmed anti-corpus and no-signaling prohibitions still apply.
+Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft; "rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's. Confirmed anti-corpus and no-signaling prohibitions still apply.
 
 Exact phrases:
 - "cheaper than it has any right to be"
@@ -331,7 +331,7 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 Before handing over the assembled script, audit against this list. Fix silently. If a fix changes the structure visibly, flag it.
 
 1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
-2. AI-cadence blacklist, phrases AND patterns: zero hits in words you added; any hit inside Nick's own words surfaced for his decision.
+2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision if it might be his. None left unaddressed.
 3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment.
 4. Discourse markers preserved: at least one per ~75 words of VO (alright, well, so, now, anyway, kind of, sort of, I guess, I mean, you know, honestly, actually, real quick, or at least). Zero markers = failed block, rewrite.
 5. Reaction over assessment: where the build earns energy, energy is in the read. Flat assessments ("Looks good.") rewritten as reactions ("That's looking pretty good!") when the moment warrants.
@@ -347,7 +347,7 @@ Before handing over the assembled script, audit against this list. Fix silently.
 15. Gap labels present: every VO block headed with its timecode range. Word count and read-seconds parenthetical at the end of each block.
 16. Continuous loop braiding: 2-4 loops in flight at any given timecode. Track plant-payoff pairs. Never two closes in a row without an open. Never three opens in a row without a close.
 17. Jargon: every technical term defined within sentence-of-use or swapped to plain language.
-18. CRAFT pillars: one pillar per block at most, surfaced where it lands, and at least three across each build step's blocks.
+18. CRAFT pillars: one pillar per block at most, surfaced where it lands; across a build step, at least three, or one in every block when the step has fewer than three blocks.
 19. Joke density: jokes preserved through trim passes.
 20. Confessional qualifiers preserved ("by my math," "I think," "I reckon," "kind of").
 21. Throat-clearing self-awareness preserved (the disarmer joke at the start of a nerd-out).
