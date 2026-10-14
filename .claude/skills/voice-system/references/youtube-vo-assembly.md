@@ -98,7 +98,7 @@ Audit your output against this list before delivery. If it fails any of these, r
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
 6. Re-VO of things already shot. Always check the transcription first. If it's on camera, it's not VO.
-7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's.
+7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's.
 8. POV consistency loss. Blocks with no "you/we/let's/your." Fix.
 9. Joke density loss when trimming for word budget. Jokes are the LAST thing to cut, not the first.
 10. Replacing self-deprecating qualifiers with confident-sounding rewrites. "By my math" / "I think" / "I reckon" / "kind of" stay.
@@ -263,7 +263,7 @@ Provide alt lines for the spicy vs clean lane on any sensitive button as a respo
 
 ## AI-cadence blacklist (scan before delivery)
 
-Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's. Confirmed anti-corpus and no-signaling prohibitions still apply.
+Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's. Confirmed anti-corpus and no-signaling prohibitions still apply.
 
 Exact phrases:
 - "cheaper than it has any right to be"
@@ -328,7 +328,7 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 
 ## Adversarial pre-delivery checklist
 
-Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): phrasing in Nick's inputs that might be his and that a phrasing rule would rewrite or cut, or a fix that visibly changes the structure.
+Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): a line in Nick's inputs that a phrasing rule flags and that might be his, or a fix that visibly changes the structure.
 
 1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
 2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision as a response notice if it might be his. None left unaddressed.
@@ -388,7 +388,7 @@ All of that is supplementary. Build it internally to ensure the read is right. S
 **Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list or to Supplementary outputs:
 
 - A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
-- Phrasing in Nick's inputs that might be his, which a phrasing rule (the voice lock, the rewrite test, the AI-cadence blacklist, the joke test) would rewrite or cut. Apply these in order. (1) Confirmed bans still win: a freestanding aphorism (A1) and the other confirmed anti-corpus patterns are cut as their own rules say, with no notice. (2) Otherwise the line ships exactly as he wrote it, and the notice asks whether to change it. (3) The window never breaks. If keeping the line puts the block over its word budget or the 120 wpm cap, trim his other material first, in the order Word budget math gives; if it still does not fit, shorten or cut the line itself, and the notice quotes the original for him to restore. Words you drafted, and generic phrasing in his inputs that is plainly not his, are rewritten or cut silently. Compressing his outline (splitting a sentence, cutting process detail) is the haircut (operating rule 4) and stays silent as long as no line that might be his is removed or reworded.
+- A line in Nick's inputs that a phrasing rule flags (the live-POV lock, the rewrite test, the AI-cadence blacklist, the joke test) and that might be his. Apply these in order. (1) Confirmed bans still win: a freestanding aphorism (A1) and the other confirmed anti-corpus patterns are cut as their own rules say, with no notice. (2) Otherwise the flagged wording ships exactly as he wrote it, and the notice asks whether to change it. This is what "a hit BLOCKS the draft" means here: the hit cannot pass silently; delivery does not wait. (3) The window never breaks. If keeping the line puts the block over its word budget or the 120 wpm cap, apply the haircut to the rest of the block first; if it still does not fit, shorten or cut the flagged line itself, and the notice quotes the original for him to restore. Everything else is silent: words you drafted, generic phrasing in his inputs that is plainly not his, and the haircut (operating rule 4), which means splitting long sentences and trimming process detail and qualifying clauses from his outline in the order Word budget math gives.
 - A correction that changes his argument (failure mode 3).
 - A sensitive-content choice, with the spicy and clean alt lines for him to pick.
 - A fix that visibly changes the structure.
