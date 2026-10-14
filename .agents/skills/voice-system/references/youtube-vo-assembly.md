@@ -98,7 +98,7 @@ Audit your output against this list before delivery. If it fails any of these, r
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
 6. Re-VO of things already shot. Always check the transcription first. If it's on camera, it's not VO.
-7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's, except confirmed anti-corpus bans (Response notices, step 1).
+7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete a hit that may be Nick's, except confirmed anti-corpus bans (Response notices, step 1).
 8. POV consistency loss. Blocks with no "you/we/let's/your." Fix.
 9. Joke density loss when trimming for word budget. Jokes are the LAST thing to cut, not the first.
 10. Replacing self-deprecating qualifiers with confident-sounding rewrites. "By my math" / "I think" / "I reckon" / "kind of" stay.
@@ -263,7 +263,7 @@ Provide alt lines for the spicy vs clean lane on any sensitive button as a respo
 
 ## AI-cadence blacklist (scan before delivery)
 
-Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's, except confirmed anti-corpus bans (Response notices, step 1). Confirmed anti-corpus and no-signaling prohibitions still apply.
+Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete a hit that may be Nick's, except confirmed anti-corpus bans (Response notices, step 1). Confirmed anti-corpus and no-signaling prohibitions still apply.
 
 Exact phrases:
 - "cheaper than it has any right to be"
