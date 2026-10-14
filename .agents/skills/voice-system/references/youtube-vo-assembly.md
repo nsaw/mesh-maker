@@ -30,7 +30,7 @@ Some combination of these. The procedure works even if a piece is missing; name 
 
 Nick's voice. Do not drift from these. Ever. The first one is the deepest. Everything else is downstream of it.
 
-LIVE DISCOVERY POV (the deepest lock). Nick is IN the moment, finding out as the camera finds out. He is not summarizing what already happened. The build did already happen, but the narration lives inside the moment of doing. Test every sentence: is the narrator finding out RIGHT NOW, or did they already know? If they already knew, rewrite from inside the moment; in Nick's own transcript or draft, surface it as a response notice instead if it might be his. This is the single largest source of AI sterilization in voice work. Stage direction ("Pulling the door out of clamps. The reveal looks good.") is technically present tense but it is summary POV. Live POV is "Alright, it looks like that laminated door is ready and... that reveal is looking pretty good!" Same event. Different temporal POV. Totally different voice.
+LIVE DISCOVERY POV (the deepest lock). Nick is IN the moment, finding out as the camera finds out. He is not summarizing what already happened. The build did already happen, but the narration lives inside the moment of doing. Test every sentence: is the narrator finding out RIGHT NOW, or did they already know? If they already knew, rewrite from inside the moment; in Nick's inputs, surface it as a response notice instead if it might be his. This is the single largest source of AI sterilization in voice work. Stage direction ("Pulling the door out of clamps. The reveal looks good.") is technically present tense but it is summary POV. Live POV is "Alright, it looks like that laminated door is ready and... that reveal is looking pretty good!" Same event. Different temporal POV. Totally different voice.
 
 Discourse markers are preserved, not deleted. These words ARE the texture: alright, well, so, now, then, anyway, actually, honestly, kind of, sort of, I mean, you know, I guess, I think, I reckon, real quick, or at least, look, listen, okay, oh, and, but, like (sparingly). AI prose deletes these for tightness. Tightness here is the enemy. Aim for at least one discourse marker per ~75 words of VO. If a block has zero, it is sterile. Add them back.
 
@@ -67,7 +67,7 @@ Throat-clearing self-awareness IS the disarmer. Lines like "for the taxonomicall
 
 ## The rewrite test (run this on every block before delivery)
 
-For every block of VO, run this two-question test. If either answer is "summary," rewrite words you drafted; surface Nick's own phrasing as a response notice if it might be his.
+For every block of VO, run this two-question test. If either answer is "summary," rewrite words you drafted and generic phrasing in Nick's inputs that is plainly not his; surface his phrasing as a response notice if it might be his.
 
 Question 1: Is the narrator finding out RIGHT NOW, or did they already know?
 Question 2: Does this sound like a guy at his bench thinking out loud, or a polished narrator reading a finished script?
