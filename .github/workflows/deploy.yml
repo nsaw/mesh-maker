@@ -3,6 +3,14 @@ name: Deploy to Cloudflare Pages
 on:
   push:
     branches: [main]
+    # Agent skill copies and engineering docs do not ship in the site. A push
+    # touching only these must not redeploy production; any push that also
+    # touches site files still deploys. workflow_dispatch is unaffected.
+    paths-ignore:
+      - '.claude/**'
+      - '.agents/**'
+      - '.codex/**'
+      - 'CONTEXT/**'
   workflow_dispatch:
 
 # A manual run deploys whatever ref it is dispatched from, and the deploy step always publishes as
