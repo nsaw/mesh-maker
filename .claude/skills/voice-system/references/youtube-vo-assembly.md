@@ -328,13 +328,13 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 
 ## Adversarial pre-delivery checklist
 
-Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): a blacklist hit that might be Nick's, or a fix that visibly changes the structure.
+Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): Nick's own phrasing that a rule here would rewrite and that might be his, or a fix that visibly changes the structure.
 
 1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
 2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision as a response notice if it might be his. None left unaddressed.
 3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment if generic, surfaced as a response notice if they might be his.
 4. Discourse markers preserved: at least one per ~75 words of VO (alright, well, so, now, anyway, kind of, sort of, I guess, I mean, you know, honestly, actually, real quick, or at least). Zero markers = failed block, rewrite.
-5. Reaction over assessment: where the build earns energy, energy is in the read. Flat assessments ("Looks good.") rewritten as reactions ("That's looking pretty good!") when the moment warrants.
+5. Reaction over assessment: where the build earns energy, energy is in the read. Flat assessments ("Looks good.") rewritten as reactions ("That's looking pretty good!") when the moment warrants, or surfaced as a response notice if the line might be Nick's.
 6. Subjective certainty preserved: "I guess," "I think," "I reckon," "by my math," "looks like," "seems like," "pretty sure" all left intact. No replacements with objective-certainty phrasing ("depends on whether," "is determined by," "the result is").
 7. Trailing thoughts and hyphen-pauses permitted: dot-dot-dot pauses, mid-sentence pivots, doubled observations are encouraged where they fit Nick's actual speech rhythm.
 8. Collaborative framing: blocks read like Nick is at the bench with the viewer, not selling a finished product to them.
@@ -388,7 +388,7 @@ All of that is supplementary. Build it internally to ensure the read is right. S
 **Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list or to Supplementary outputs:
 
 - A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
-- A blacklist hit that might be Nick's.
+- Nick's own phrasing that a rule in this procedure would rewrite (a blacklist hit, summary POV, a flat assessment) and that might be his. Rewrite rules apply silently only to words you drafted.
 - A correction that changes his argument (failure mode 3).
 - A sensitive-content choice, with the spicy and clean alt lines for him to pick.
 - A fix that visibly changes the structure.
