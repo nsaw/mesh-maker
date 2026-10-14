@@ -1,14 +1,14 @@
 ---
 name: voice-system
 description: >
-  Nick Sawyer's language system. A design system for prose: measured idiolect tokens at the
-  core, register themes on top. Use for ANY writing that has to sound like Nick — YouTube VO
-  and scripts, sponsor midroll integrations, sawyerdesign.io portfolio/blog/product copy,
-  Thoughtmarks marketing and app copy, commission replies, client and brand pitch email,
-  Instagram and social captions, YouTube titles and descriptions. Also use when reviewing or
-  rewriting copy meant to sound like Nick, when a draft "doesn't sound like me," when scoping
-  or framing a YouTube build, or when any other skill is about to generate customer-facing
-  copy for Sawyer Design or Thoughtmarks.
+  Use for ANY writing that has to sound like Nick Sawyer: YouTube VO and scripts, gap VO
+  assembly, record lists, retiming VO after a re-edit, sponsor midroll integrations,
+  sawyerdesign.io portfolio/blog/product copy, Thoughtmarks marketing and app copy, commission
+  replies, client and brand pitch email, Instagram and social captions, YouTube titles and
+  descriptions. Also use when reviewing or rewriting copy meant to sound like Nick, when a
+  draft "doesn't sound like me," when scoping or framing a YouTube build, or when any other
+  skill is about to generate customer-facing copy for Sawyer Design or Thoughtmarks. A design
+  system for prose: measured idiolect tokens at the core, register themes on top.
 ---
 
 # Nick Sawyer Voice System
@@ -16,7 +16,8 @@ description: >
 **Building a YouTube VO script?** `references/youtube-vo-assembly.md` is the full assembly
 procedure: inventory-first workflow, per-block build order, word-budget math, the sponsor
 bridge protocol, the AI-cadence blacklist and the adversarial pre-delivery checklist. Read
-`references/03-youtube-vo.md` first for how it should sound, then that for how to build it.
+`references/youtube-premise.md` first (LAW 3), then `references/03-youtube-vo.md` for how it
+should sound, then that for how to build it.
 
 A design system for prose. Measured tokens at the core, register themes on top. Built from 26,227 words of Nick's written scripts, 12,748 words of delivered transcripts, a raw dictation-to-camera pair on the same build, peer text messages, and sent mail. Validated over three rounds of blind draft review until every register shipped.
 
@@ -171,6 +172,7 @@ Always read `references/devices.md`, `references/anti-corpus.md`, and **`referen
 | Commission replies, client mail, brand pitches | `references/05-correspondence.md` |
 | Instagram, Reddit, captions, DMs — personal account and community replies | `references/06-social-and-peer.md` |
 | Scoping or titling a build, or diagnosing a flop | `references/youtube-premise.md` |
+| Assembling gap VO for a cut from outline and on-camera transcript | `references/youtube-premise.md` and `references/03-youtube-vo.md`, then `references/youtube-vo-assembly.md` |
 | Reviewing a delivered cut's VO for a wide audience, retiming after a re-edit, or writing a record list | `references/youtube-vo-review.md` (checklist; run before the record list) |
 
 `social` appears on two rows on purpose, and the split is by ACCOUNT, not by platform: copy
