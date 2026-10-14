@@ -388,7 +388,7 @@ All of that is supplementary. Build it internally to ensure the read is right. S
 **Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list or to Supplementary outputs:
 
 - A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
-- Nick's own phrasing that a phrasing rule would rewrite or cut and that might be his. The phrasing rules are the voice lock, the rewrite test, the AI-cadence blacklist and the joke test. Words you drafted, and generic phrasing in his inputs that is plainly not his, are rewritten or cut silently. Budget trims and sentence splits of his outline are the haircut (operating rule 4) and are silent too.
+- Nick's own phrasing that a phrasing rule would rewrite or cut and that might be his. The phrasing rules are the voice lock, the rewrite test, the AI-cadence blacklist and the joke test. Words you drafted, and generic phrasing in his inputs that is plainly not his, are rewritten or cut silently. Budget trims and sentence splits of his outline are the haircut (operating rule 4) and are silent too, unless a trim removes a whole line or joke that might be his; that is a notice. A line that might be his stays in the delivered script exactly as he wrote it, and the notice asks whether to change it.
 - A correction that changes his argument (failure mode 3).
 - A sensitive-content choice, with the spicy and clean alt lines for him to pick.
 - A fix that visibly changes the structure.
