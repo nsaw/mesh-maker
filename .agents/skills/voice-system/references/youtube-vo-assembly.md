@@ -297,19 +297,19 @@ Exact phrases:
 - "elevate" / "elevates" / "elevation" (when not literal)
 
 Patterns:
-- Aphoristic closers ("X is Y. Z is not." structure). Cut.
+- Aphoristic closers ("X is Y. Z is not." structure). Cut if generic; surface it for Nick's decision if it might be his.
 - "Not just X, it's Y." pattern (overused).
 - Three-beat parallelism for emphasis when the third beat is redundant.
 - Symmetric sentence pairs that feel like ad copy.
 - "When [profession] [verb]" generalizations.
 - Replacement of Nick's confessional qualifiers with confident reframes. ("I think" / "I reckon" / "kind of" / "I guess" / "by my math" / "I'd say" / "pretty sure" / "looks like" / "seems like" all stay.)
 - Stage-direction openers ("Pulling X out of Y." / "Removing the clamps." / "Setting up the cut."). These are summary POV. Rewrite from inside the moment with a discourse marker and live discovery.
-- Objective-certainty sentence closes ("X depends on Y." / "The result is Z." / "This determines whether..."). Replace with subjective hedge or live reaction.
+- Objective-certainty sentence closes ("X depends on Y." / "The result is Z." / "This determines whether..."). Replace with subjective hedge or live reaction if generic; surface it for Nick's decision if it might be his.
 - Sentences that close themselves before the action closes itself. Permit trailing thoughts, dot-dot-dots, and hyphen-pauses.
 - Deletion of discourse markers ("Alright," "Well," "So," "Now," "I guess," "Kind of," "Anyway," "Honestly," "Actually," "You know"). These are texture, not filler. If a block has zero, it failed.
 - Flattening of reactions into assessments ("Looks good." replacing "That's looking pretty good!"). Exclamation and energy stay when the moment earns them.
 - Collapsing recursive looking into single declarations. Doubled observations ("looks like... looking pretty good") are intentional, not redundant.
-- Promotional framings ("Here is how I solved it" / "I'm going to show you" / "The result is"). Replace with collaborative framings ("let's see if this works" / "watch this" / "we'll see").
+- Promotional framings ("Here is how I solved it" / "I'm going to show you" / "The result is"). Replace with collaborative framings ("let's see if this works" / "watch this" / "we'll see") if generic; surface it for Nick's decision if it might be his.
 
 Forbidden punctuation:
 - Em dashes. Use periods, semicolons, or comma-comma.
