@@ -172,7 +172,7 @@ Always read `references/devices.md`, `references/anti-corpus.md`, and **`referen
 | Commission replies, client mail, brand pitches | `references/05-correspondence.md` |
 | Instagram, Reddit, captions, DMs — personal account and community replies | `references/06-social-and-peer.md` |
 | Scoping or titling a build, or diagnosing a flop | `references/youtube-premise.md` |
-| Assembling gap VO for a cut from outline and on-camera transcript | `references/youtube-premise.md` and `references/03-youtube-vo.md`, then `references/youtube-vo-assembly.md` |
+| Assembling Sawyer Design gap VO for a cut from outline and on-camera transcript | `references/youtube-premise.md` and `references/03-youtube-vo.md`, then `references/youtube-vo-assembly.md` |
 | Reviewing a delivered cut's VO for a wide audience, retiming after a re-edit, or writing a record list | `references/youtube-vo-review.md` (checklist; run before the record list) |
 
 `social` appears on two rows on purpose, and the split is by ACCOUNT, not by platform: copy
