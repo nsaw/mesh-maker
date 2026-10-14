@@ -98,7 +98,7 @@ Audit your output against this list before delivery. If it fails any of these, r
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
 6. Re-VO of things already shot. Always check the transcription first. If it's on camera, it's not VO.
-7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft; "rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's.
+7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's.
 8. POV consistency loss. Blocks with no "you/we/let's/your." Fix.
 9. Joke density loss when trimming for word budget. Jokes are the LAST thing to cut, not the first.
 10. Replacing self-deprecating qualifiers with confident-sounding rewrites. "By my math" / "I think" / "I reckon" / "kind of" stay.
@@ -261,9 +261,9 @@ The closer machine:
 
 Provide alt lines for the spicy vs clean lane on any sensitive button so Nick can pick.
 
-## AI-cadence blacklist (scan and replace before delivery)
+## AI-cadence blacklist (scan before delivery)
 
-Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft; "rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's. Confirmed anti-corpus and no-signaling prohibitions still apply.
+Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's. Confirmed anti-corpus and no-signaling prohibitions still apply.
 
 Exact phrases:
 - "cheaper than it has any right to be"
@@ -328,7 +328,7 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 
 ## Adversarial pre-delivery checklist
 
-Before handing over the assembled script, audit against this list. Fix silently. If a fix changes the structure visibly, flag it.
+Before handing over the assembled script, audit against this list. Fix silently, except a blacklist hit that might be Nick's, which is surfaced for his decision. If a fix changes the structure visibly, flag it.
 
 1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
 2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision if it might be his. None left unaddressed.
@@ -393,7 +393,7 @@ If Nick asks for "editor notes," "the scan," "inventory," "budget breakdown," "c
 - Word budget summary (per gap and total)
 - Open-loop tracker (planted -> paid off, with TC of each)
 - CRAFT pillar coverage per build step
-- AI-cadence scan results (any blacklist hits found and replaced)
+- AI-cadence scan results (any blacklist hits found, and whether each was rewritten or surfaced)
 - Sponsor contract-delta flags (recorded take vs canonical reference)
 - Fact-claim confidence notes: high, medium or low for each quantitative or historical claim, with its source
 - Cut-point options per gap (2-3 trim suggestions for runtime flexibility)
