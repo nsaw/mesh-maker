@@ -30,7 +30,7 @@ Some combination of these. The procedure works even if a piece is missing; name 
 
 Nick's voice. Do not drift from these. Ever. The first one is the deepest. Everything else is downstream of it.
 
-LIVE DISCOVERY POV (the deepest lock). Nick is IN the moment, finding out as the camera finds out. He is not summarizing what already happened. The build did already happen, but the narration lives inside the moment of doing. Test every sentence: is the narrator finding out RIGHT NOW, or did they already know? If they already knew, rewrite from inside the moment. This is the single largest source of AI sterilization in voice work. Stage direction ("Pulling the door out of clamps. The reveal looks good.") is technically present tense but it is summary POV. Live POV is "Alright, it looks like that laminated door is ready and... that reveal is looking pretty good!" Same event. Different temporal POV. Totally different voice.
+LIVE DISCOVERY POV (the deepest lock). Nick is IN the moment, finding out as the camera finds out. He is not summarizing what already happened. The build did already happen, but the narration lives inside the moment of doing. Test every sentence: is the narrator finding out RIGHT NOW, or did they already know? If they already knew, rewrite from inside the moment; in Nick's inputs, surface it as a response notice instead if it might be his. This is the single largest source of AI sterilization in voice work. Stage direction ("Pulling the door out of clamps. The reveal looks good.") is technically present tense but it is summary POV. Live POV is "Alright, it looks like that laminated door is ready and... that reveal is looking pretty good!" Same event. Different temporal POV. Totally different voice.
 
 Discourse markers are preserved, not deleted. These words ARE the texture: alright, well, so, now, then, anyway, actually, honestly, kind of, sort of, I mean, you know, I guess, I think, I reckon, real quick, or at least, look, listen, okay, oh, and, but, like (sparingly). AI prose deletes these for tightness. Tightness here is the enemy. Aim for at least one discourse marker per ~75 words of VO. If a block has zero, it is sterile. Add them back.
 
@@ -55,7 +55,7 @@ Viewer in the room. First person, viewer-direct. Every block should have at leas
 
 Tense. Present tense for on-screen action. Past tense ONLY for backstory ("two years ago I couldn't open CAD"). Combined with live discovery POV: present tense + finding out right now.
 
-Sentence shape. Conversational, breath-tested. Sentences over ~20 words get broken. Read it out loud in your head. Short sentences and fragments are fine and often preferred. Sentences that meander are also fine when they meander naturally, mid-thought reversal included.
+Sentence shape. Conversational, breath-tested. Sentences over ~20 words get broken, unless the approved exemplar in `03-youtube-vo.md` carries a longer sentence of the same kind: the exemplar wins over this cap, never over the window math or the 120 wpm cap. Read it out loud in your head. Short sentences and fragments are fine and often preferred. Sentences that meander are also fine when they meander naturally, mid-thought reversal included.
 
 Register. Slightly irreverent, smart-assed, self-deprecating but not self-flagellating. Profanity as flavor not punctuation ("pain in the ass," "if you can't remember shit," "tighten your collets, kids"). French or Latin only where it lands the joke.
 
@@ -67,7 +67,7 @@ Throat-clearing self-awareness IS the disarmer. Lines like "for the taxonomicall
 
 ## The rewrite test (run this on every block before delivery)
 
-For every block of VO, run this two-question test. If either answer is "summary," rewrite.
+For every block of VO, run this two-question test. If either answer is "summary," rewrite words you drafted and generic phrasing in Nick's inputs that is plainly not his; surface his phrasing as a response notice if it might be his.
 
 Question 1: Is the narrator finding out RIGHT NOW, or did they already know?
 Question 2: Does this sound like a guy at his bench thinking out loud, or a polished narrator reading a finished script?
@@ -90,7 +90,7 @@ Apply the test on every VO block. If you wrote "Pulling the X out of Y," rewrite
 
 ## The non-negotiable failure modes (these will happen if you don't guard them)
 
-Audit your output against this list before delivery. If it fails any of these, redo the offending block.
+Audit your output against this list before delivery. If it fails any of these, redo the offending block, except a flagged line that might be Nick's, which follows Response notices.
 
 1. Sentence polish-creep. Sentences cleaner than the rough draft. Watch for declarative AI-prose replacing Nick's meander.
 2. Aphoristic closers leaking in. "Rare is defensible. Generic is not." style epigrams. Those are advice-mode voice, not script voice. A freestanding aphorism (anti-corpus A1) is always cut. One attached to an object or a failure may be his: surface it for his decision.
@@ -98,7 +98,7 @@ Audit your output against this list before delivery. If it fails any of these, r
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
 6. Re-VO of things already shot. Always check the transcription first. If it's on camera, it's not VO.
-7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's.
+7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete a hit that may be Nick's, except confirmed anti-corpus bans (Response notices, step 1).
 8. POV consistency loss. Blocks with no "you/we/let's/your." Fix.
 9. Joke density loss when trimming for word budget. Jokes are the LAST thing to cut, not the first.
 10. Replacing self-deprecating qualifiers with confident-sounding rewrites. "By my math" / "I think" / "I reckon" / "kind of" stay.
@@ -157,14 +157,14 @@ Use this every time. Keep the math internal; it appears only in supplementary ou
 - Put word count and read-seconds on every block before the read. Format: `(~XX words, ~YY sec at 120 wpm)`
 - Pre-plan cut points per block: 2-3 trim options, kept internal and delivered only on request.
 
-When trimming for budget: jokes are the LAST thing to cut. Process detail and qualifying clauses go first.
+When trimming for budget: jokes are the LAST thing to cut. Process detail and qualifying clauses go first, never the confessional qualifiers (checklist 20). A joke the joke test in `SKILL.md` (LAYER 4) already cuts was never in the budget; cut it before trimming anything, unless it might be Nick's own, which goes to a response notice.
 
 ## Hook / cold open patterns (~30 sec, ~36-42 words VO)
 
 The cold open machine:
 
 - Present tense, viewer-direct, in Nick's voice. Open cold on the hook with no greeting: anti-corpus A7 rejects the warm open ("welcome back to the shop").
-- These budgets come from the window math. The window math and the 120 wpm cap are physical and never yield. Where a sentence-length cap disagrees with the approved exemplar in `03-youtube-vo.md`, the exemplar wins.
+- These budgets come from the window math. The window math and the 120 wpm cap are physical and never yield, not even to the exemplar.
 - Open the unexpected immediately. Not the setup. The reveal.
 - Tease the title number, never explain in the cold open. ("That title? Not clickbait. Stick around.")
 - Comedy via visual juxtaposition with VO straight-faced. Let the cuts do the joke while the read stays deadpan.
@@ -263,7 +263,7 @@ Provide alt lines for the spicy vs clean lane on any sensitive button as a respo
 
 ## AI-cadence blacklist (scan before delivery)
 
-Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's. Confirmed anti-corpus and no-signaling prohibitions still apply.
+Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft (it cannot pass silently; see Response notices); "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete a hit that may be Nick's, except confirmed anti-corpus bans (Response notices, step 1). Confirmed anti-corpus and no-signaling prohibitions still apply.
 
 Exact phrases:
 - "cheaper than it has any right to be"
@@ -303,7 +303,7 @@ Patterns:
 - Symmetric sentence pairs that feel like ad copy.
 - "When [profession] [verb]" generalizations.
 - Replacement of Nick's confessional qualifiers with confident reframes. ("I think" / "I reckon" / "kind of" / "I guess" / "by my math" / "I'd say" / "pretty sure" / "looks like" / "seems like" all stay.)
-- Stage-direction openers ("Pulling X out of Y." / "Removing the clamps." / "Setting up the cut."). These are summary POV. Rewrite from inside the moment with a discourse marker and live discovery.
+- Stage-direction openers ("Pulling X out of Y." / "Removing the clamps." / "Setting up the cut."). These are summary POV. Rewrite from inside the moment with a discourse marker and live discovery if generic; surface it for Nick's decision if it might be his.
 - Objective-certainty sentence closes ("X depends on Y." / "The result is Z." / "This determines whether..."). Replace with subjective hedge or live reaction if generic; surface it for Nick's decision if it might be his.
 - Sentences that close themselves before the action closes itself. Permit trailing thoughts, dot-dot-dots, and hyphen-pauses.
 - Deletion of discourse markers ("Alright," "Well," "So," "Now," "I guess," "Kind of," "Anyway," "Honestly," "Actually," "You know"). These are texture, not filler. If a block has zero, it failed.
@@ -328,19 +328,19 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 
 ## Adversarial pre-delivery checklist
 
-Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): a blacklist hit that might be Nick's, or a fix that visibly changes the structure.
+Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): a line in Nick's inputs that a phrasing rule flags and that might be his, or a fix that visibly changes the structure.
 
 1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
-2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision if it might be his. None left unaddressed.
-3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment.
-4. Discourse markers preserved: at least one per ~75 words of VO (alright, well, so, now, anyway, kind of, sort of, I guess, I mean, you know, honestly, actually, real quick, or at least). Zero markers = failed block, rewrite.
-5. Reaction over assessment: where the build earns energy, energy is in the read. Flat assessments ("Looks good.") rewritten as reactions ("That's looking pretty good!") when the moment warrants.
+2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision as a response notice if it might be his. None left unaddressed.
+3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment if generic, surfaced as a response notice if they might be his.
+4. Discourse markers preserved: at least one per ~75 words of VO (alright, well, so, now, anyway, kind of, sort of, I guess, I mean, you know, honestly, actually, real quick, or at least). Zero markers = failed block; add them back.
+5. Reaction over assessment: where the build earns energy, energy is in the read. Where the moment warrants, a generic flat assessment ("Looks good.") is rewritten as a reaction ("That's looking pretty good!"); one that might be Nick's is surfaced as a response notice.
 6. Subjective certainty preserved: "I guess," "I think," "I reckon," "by my math," "looks like," "seems like," "pretty sure" all left intact. No replacements with objective-certainty phrasing ("depends on whether," "is determined by," "the result is").
 7. Trailing thoughts and hyphen-pauses permitted: dot-dot-dot pauses, mid-sentence pivots, doubled observations are encouraged where they fit Nick's actual speech rhythm.
 8. Collaborative framing: blocks read like Nick is at the bench with the viewer, not selling a finished product to them.
 9. POV check: every block contains at least one viewer-direct word (you/we/let's/your).
 10. Tense check: present tense on on-screen action; past tense only for backstory. AND combined with live discovery POV check.
-11. Sentence length: no sentence over ~20 words that isn't broken or breathable.
+11. Sentence length: no sentence over ~20 words that isn't broken or breathable, except where the exemplar carries one (The voice lock, Sentence shape).
 12. Sensitive content: verbatim preserved.
 13. Sponsor lead-in: action-carry, under 15 sec, no forbidden phrasings.
 14. Inventory mapped internally: every section of the running order categorized RECORDED or TO-RECORD before any VO was written.
@@ -385,10 +385,10 @@ What does NOT appear in the primary deliverable:
 
 All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean.
 
-**Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list:
+**Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list or to Supplementary outputs:
 
 - A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
-- A blacklist hit that might be Nick's.
+- A line in Nick's inputs that a phrasing rule flags (the live-POV lock, the rewrite test, the AI-cadence blacklist, the joke test) and that might be his. Apply these in order. (1) Confirmed bans still win: a freestanding aphorism (A1) and the other confirmed anti-corpus patterns are cut as their own rules say, with no notice. (2) Otherwise the flagged wording ships exactly as he wrote it, and the notice asks whether to change it. This is what "a hit BLOCKS the draft" means here: the hit cannot pass silently; delivery does not wait. (3) The window never breaks. If keeping the line puts the block over its word budget or the 120 wpm cap, apply the haircut to the rest of the block first; if it still does not fit, shorten or cut the flagged line itself, and the notice quotes the original for him to restore. Everything else is silent: words you drafted, generic phrasing in his inputs that is plainly not his, and the haircut (operating rule 4), which means splitting long sentences and trimming process detail and qualifying clauses from his outline in the order Word budget math gives.
 - A correction that changes his argument (failure mode 3).
 - A sensitive-content choice, with the spicy and clean alt lines for him to pick.
 - A fix that visibly changes the structure.
@@ -409,7 +409,7 @@ If Nick asks for "editor notes," "the scan," "inventory," "budget breakdown," "c
 - Fact-claim confidence notes: high, medium or low for each quantitative or historical claim, with its source
 - Cut-point options per gap (2-3 trim suggestions for runtime flexibility)
 - Description checklist (UTM, discount code, hashtags, plug links, brand tags)
-- Footage gap flags (any tagged REC where on-camera coverage is uncertain)
+- Footage gap flags (any REC section where on-camera coverage is uncertain)
 
 Default behavior: do not produce these. Produce them only when explicitly asked.
 
@@ -427,7 +427,7 @@ When invoked:
 8. Never soften sensitive content unless Nick explicitly asks in this message.
 9. Never use the forbidden sponsor lead-in phrasings.
 10. Never add aphoristic closers of your own. One that might be Nick's follows failure mode 2.
-11. Deliver clean paragraph VO with timecode-range labels per gap. Nothing else unless asked.
+11. Deliver clean paragraph VO with timecode-range labels per gap. Nothing else in the deliverable unless asked.
 
 ## When something is missing
 
