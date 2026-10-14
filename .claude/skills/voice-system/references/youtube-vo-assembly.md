@@ -55,7 +55,7 @@ Viewer in the room. First person, viewer-direct. Every block should have at leas
 
 Tense. Present tense for on-screen action. Past tense ONLY for backstory ("two years ago I couldn't open CAD"). Combined with live discovery POV: present tense + finding out right now.
 
-Sentence shape. Conversational, breath-tested. Sentences over ~20 words get broken. Read it out loud in your head. Short sentences and fragments are fine and often preferred. Sentences that meander are also fine when they meander naturally, mid-thought reversal included.
+Sentence shape. Conversational, breath-tested. Sentences over ~20 words get broken, unless the approved exemplar in `03-youtube-vo.md` carries a longer sentence of the same kind: the exemplar wins over this cap, never over the window math or the 120 wpm cap. Read it out loud in your head. Short sentences and fragments are fine and often preferred. Sentences that meander are also fine when they meander naturally, mid-thought reversal included.
 
 Register. Slightly irreverent, smart-assed, self-deprecating but not self-flagellating. Profanity as flavor not punctuation ("pain in the ass," "if you can't remember shit," "tighten your collets, kids"). French or Latin only where it lands the joke.
 
@@ -157,14 +157,14 @@ Use this every time. Keep the math internal; it appears only in supplementary ou
 - Put word count and read-seconds on every block before the read. Format: `(~XX words, ~YY sec at 120 wpm)`
 - Pre-plan cut points per block: 2-3 trim options, kept internal and delivered only on request.
 
-When trimming for budget: jokes are the LAST thing to cut. Process detail and qualifying clauses go first.
+When trimming for budget: jokes are the LAST thing to cut. Process detail and qualifying clauses go first. A joke the joke test in `SKILL.md` (LAYER 4) already cuts was never in the budget; cut it before trimming anything.
 
 ## Hook / cold open patterns (~30 sec, ~36-42 words VO)
 
 The cold open machine:
 
 - Present tense, viewer-direct, in Nick's voice. Open cold on the hook with no greeting: anti-corpus A7 rejects the warm open ("welcome back to the shop").
-- These budgets come from the window math. The window math and the 120 wpm cap are physical and never yield. Where a sentence-length cap disagrees with the approved exemplar in `03-youtube-vo.md`, the exemplar wins.
+- These budgets come from the window math. The window math and the 120 wpm cap are physical and never yield, not even to the exemplar.
 - Open the unexpected immediately. Not the setup. The reveal.
 - Tease the title number, never explain in the cold open. ("That title? Not clickbait. Stick around.")
 - Comedy via visual juxtaposition with VO straight-faced. Let the cuts do the joke while the read stays deadpan.
@@ -303,7 +303,7 @@ Patterns:
 - Symmetric sentence pairs that feel like ad copy.
 - "When [profession] [verb]" generalizations.
 - Replacement of Nick's confessional qualifiers with confident reframes. ("I think" / "I reckon" / "kind of" / "I guess" / "by my math" / "I'd say" / "pretty sure" / "looks like" / "seems like" all stay.)
-- Stage-direction openers ("Pulling X out of Y." / "Removing the clamps." / "Setting up the cut."). These are summary POV. Rewrite from inside the moment with a discourse marker and live discovery.
+- Stage-direction openers ("Pulling X out of Y." / "Removing the clamps." / "Setting up the cut."). These are summary POV. Rewrite from inside the moment with a discourse marker and live discovery if generic; surface it for Nick's decision if it might be his.
 - Objective-certainty sentence closes ("X depends on Y." / "The result is Z." / "This determines whether..."). Replace with subjective hedge or live reaction if generic; surface it for Nick's decision if it might be his.
 - Sentences that close themselves before the action closes itself. Permit trailing thoughts, dot-dot-dots, and hyphen-pauses.
 - Deletion of discourse markers ("Alright," "Well," "So," "Now," "I guess," "Kind of," "Anyway," "Honestly," "Actually," "You know"). These are texture, not filler. If a block has zero, it failed.
@@ -331,8 +331,8 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): a blacklist hit that might be Nick's, or a fix that visibly changes the structure.
 
 1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
-2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision if it might be his. None left unaddressed.
-3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment.
+2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision as a response notice if it might be his. None left unaddressed.
+3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment if generic, surfaced as a response notice if they might be his.
 4. Discourse markers preserved: at least one per ~75 words of VO (alright, well, so, now, anyway, kind of, sort of, I guess, I mean, you know, honestly, actually, real quick, or at least). Zero markers = failed block, rewrite.
 5. Reaction over assessment: where the build earns energy, energy is in the read. Flat assessments ("Looks good.") rewritten as reactions ("That's looking pretty good!") when the moment warrants.
 6. Subjective certainty preserved: "I guess," "I think," "I reckon," "by my math," "looks like," "seems like," "pretty sure" all left intact. No replacements with objective-certainty phrasing ("depends on whether," "is determined by," "the result is").
@@ -340,7 +340,7 @@ Before handing over the assembled script, audit against this list. Fix silently,
 8. Collaborative framing: blocks read like Nick is at the bench with the viewer, not selling a finished product to them.
 9. POV check: every block contains at least one viewer-direct word (you/we/let's/your).
 10. Tense check: present tense on on-screen action; past tense only for backstory. AND combined with live discovery POV check.
-11. Sentence length: no sentence over ~20 words that isn't broken or breathable.
+11. Sentence length: no sentence over ~20 words that isn't broken or breathable, except where the exemplar carries one (The voice lock, Sentence shape).
 12. Sensitive content: verbatim preserved.
 13. Sponsor lead-in: action-carry, under 15 sec, no forbidden phrasings.
 14. Inventory mapped internally: every section of the running order categorized RECORDED or TO-RECORD before any VO was written.
@@ -385,7 +385,7 @@ What does NOT appear in the primary deliverable:
 
 All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean.
 
-**Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list:
+**Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list or to Supplementary outputs:
 
 - A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
 - A blacklist hit that might be Nick's.
@@ -409,7 +409,7 @@ If Nick asks for "editor notes," "the scan," "inventory," "budget breakdown," "c
 - Fact-claim confidence notes: high, medium or low for each quantitative or historical claim, with its source
 - Cut-point options per gap (2-3 trim suggestions for runtime flexibility)
 - Description checklist (UTM, discount code, hashtags, plug links, brand tags)
-- Footage gap flags (any tagged REC where on-camera coverage is uncertain)
+- Footage gap flags (any REC section where on-camera coverage is uncertain)
 
 Default behavior: do not produce these. Produce them only when explicitly asked.
 
@@ -427,7 +427,7 @@ When invoked:
 8. Never soften sensitive content unless Nick explicitly asks in this message.
 9. Never use the forbidden sponsor lead-in phrasings.
 10. Never add aphoristic closers of your own. One that might be Nick's follows failure mode 2.
-11. Deliver clean paragraph VO with timecode-range labels per gap. Nothing else unless asked.
+11. Deliver clean paragraph VO with timecode-range labels per gap. Nothing else in the deliverable unless asked.
 
 ## When something is missing
 
