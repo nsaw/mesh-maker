@@ -5,20 +5,20 @@
 > invoked and its description was being dropped from the skill listing.
 >
 > This is the **procedure**. `03-youtube-vo.md` in this directory is the **measured voice**:
-> mechanics, narration density, the approved exemplar, the locked sign-off. Read that first
-> for how it should sound, then this for how to build it.
+> mechanics, narration density, the approved exemplar, the locked sign-off. Read
+> `youtube-premise.md` first (LAW 3), then that for how it should sound, then this for how to build it.
 
-# Sawyer Design YouTube Voiceover Assembly
+## Purpose
 
-This skill exists because Nick has a real voice and AI keeps sanding it off. The job is to assemble a final read-ready voiceover script from a rough rambling outline and on-camera transcription without losing the conversational, irreverent, process-and-philosophy craftsman that 135k people subscribed for.
+This procedure exists because Nick has a real voice and AI keeps sanding it off. The job is to assemble a final read-ready voiceover script from a rough rambling outline and on-camera transcription without losing the conversational, irreverent, process-and-philosophy craftsman that 135k people subscribed for.
 
-## Why this skill exists in one sentence
+## Why this procedure exists in one sentence
 
 The polish layer goes ON TOP of Nick's words. It never replaces them. If the assembled VO sounds cleaner than the rough draft, it failed.
 
 ## What Nick will hand you (inputs)
 
-Some combination of these. The skill works even if a piece is missing, but flag what's missing before assembling.
+Some combination of these. The procedure works even if a piece is missing; name what is missing before assembling (see When something is missing).
 
 - A rough rambling narration outline written in Nick's voice (timecodes optional). This is the VOICE SET. Lock to its cadence, slang, sentence shape, and meander. Do not rewrite it cleaner.
 - An AI transcription of on-camera or lav-mic footage. Multi-take, messy, full of false starts. Mine this for design rationale, philosophy beats, lessons monologues, and failure-recovery asides. Anything quotable here is RECORDED content. Do not re-VO it.
@@ -93,12 +93,12 @@ Apply the test on every VO block. If you wrote "Pulling the X out of Y," rewrite
 Audit your output against this list before delivery. If it fails any of these, redo the offending block.
 
 1. Sentence polish-creep. Sentences cleaner than the rough draft. Watch for declarative AI-prose replacing Nick's meander.
-2. Aphoristic closers leaking in. "Rare is defensible. Generic is not." style epigrams. Those are advice-mode voice, not script voice. Cut.
+2. Aphoristic closers leaking in. "Rare is defensible. Generic is not." style epigrams. Those are advice-mode voice, not script voice. A freestanding aphorism (anti-corpus A1) is always cut. One attached to an object or a failure may be his: surface it for his decision.
 3. Over-precision corrections that undercut the craftsman's point. Preserve Nick's voice and rhetorical point without unnecessary pedantry. If a factual claim is false, correct or qualify it in that voice. If the correction changes his argument, surface the contradiction for his decision before locking the script; never hide a known false claim in optional editor notes.
 4. PG-creep on sensitive content. Phallus, contraband, drugs, guns, anatomy, sex jokes. NEVER softened unless Nick explicitly asks in the current message.
 5. Sponsor-voice creeping into bridges. "Quick word about," "this part of the video is powered by," "thanks to our sponsor." These are forbidden as lead-ins.
 6. Re-VO of things already shot. Always check the transcription first. If it's on camera, it's not VO.
-7. AI-cadence phrases. Run the blacklist below and evaluate each hit under the core provisional-phrase rule; never silently delete phrasing that may be Nick's.
+7. AI-cadence phrases. Run the blacklist below: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's.
 8. POV consistency loss. Blocks with no "you/we/let's/your." Fix.
 9. Joke density loss when trimming for word budget. Jokes are the LAST thing to cut, not the first.
 10. Replacing self-deprecating qualifiers with confident-sounding rewrites. "By my math" / "I think" / "I reckon" / "kind of" stay.
@@ -149,13 +149,13 @@ Surface CRAFT pillars naturally inside the prose. Never label them on screen.
 
 ## Word budget math
 
-Use this every time. Show your work in editor notes.
+Use this every time. Keep the math internal; it appears only in supplementary output when Nick asks (see below).
 
 - Read speed cap: 120 words per minute. Slower is fine. Faster is wrong.
 - Target window fill: 60-70% of available footage time. 100% is wrong, every time. Build sounds, visuals, and breath need air.
 - Math: window seconds * (120/60) * 0.65 = word target. Example: a 51 second window targets ~66 words.
-- Flag word count and read-seconds on every block before the read. Format: `(~XX words, ~YY sec read at 120 wpm)`
-- Pre-plan cut points per block. Show 2-3 trim options so Nick can shorten on the fly.
+- Put word count and read-seconds on every block before the read. Format: `(~XX words, ~YY sec at 120 wpm)`
+- Pre-plan cut points per block: 2-3 trim options, kept internal and delivered only on request.
 
 When trimming for budget: jokes are the LAST thing to cut. Process detail and qualifying clauses go first.
 
@@ -163,7 +163,8 @@ When trimming for budget: jokes are the LAST thing to cut. Process detail and qu
 
 The cold open machine:
 
-- Present tense, viewer-direct, in Nick's voice ("Welcome to the shop. This week, [unexpected hook].")
+- Present tense, viewer-direct, in Nick's voice. Open cold on the hook with no greeting: anti-corpus A7 rejects the warm open ("welcome back to the shop").
+- These budgets come from the window math. The window math and the 120 wpm cap are physical and never yield. Where a sentence-length cap disagrees with the approved exemplar in `03-youtube-vo.md`, the exemplar wins.
 - Open the unexpected immediately. Not the setup. The reveal.
 - Tease the title number, never explain in the cold open. ("That title? Not clickbait. Stick around.")
 - Comedy via visual juxtaposition with VO straight-faced. Let the cuts do the joke while the read stays deadpan.
@@ -224,14 +225,14 @@ Lead-in runtime cap: 15 seconds. Math at 120 wpm = 30 words max.
 
 Inside the sponsor block:
 - The read stays in Nick's voice. Keep the ass jokes, the "no drama," the "I was shocked," the slang.
-- Contract-required spec phrasing goes in verbatim. Surface any delta between the recorded take and the contract reference in editor notes for Nick to decide.
-- Demo blocks listed in the brief must be visually compliant. Flag if footage may not exist.
+- Contract-required spec phrasing goes in verbatim. Any meaningful delta between the recorded take and the contract reference is surfaced briefly in the response, outside the deliverable, as Step 4 requires; the detailed contract-delta flags go in the supplementary output when Nick asks. If a delta breaks the contract, ask him before delivering.
+- Demo blocks listed in the brief must be visually compliant. If footage may not exist, raise it as a response notice (see Response notices).
 - Sponsor owns only the sponsor block. Phallus, drugs, guns, sex jokes, and anything else stays untouched in the rest of the cut. Never PG the video for the sponsor.
 
 Outro callback to sponsor: one short line, ~15-25 words max. Should not feel like the ad is playing twice.
 
-Description requirements (flag at the end of the document if sponsor brief specifies):
-- UTM link, discount code, product link, brand hashtags. Surface these as TO-DO items in editor notes.
+Description requirements (if the sponsor brief specifies them):
+- UTM link, discount code, product link, brand hashtags. Track these for the description checklist in the supplementary output, delivered when Nick asks.
 
 ## Bookend structure (when a long-form subject deserves it)
 
@@ -239,7 +240,7 @@ If the build includes a wood-species explainer, a material story, or any standal
 
 - Split the explainer in half. Front half (hook + accessible curiosity + funny detail) sits in the first third of the video, scored to the first appearance of that material on camera.
 - Back half (the heavier toughness/history/stakes/thesis) bookends the video, immediately before the outro reveal.
-- The thesis line lives at the end, not buried mid-build. ("This isn't just [material]. It's a timestamp.")
+- The thesis line lives at the end, not buried mid-build, and stays attached to the object rather than standing alone as an aphorism (anti-corpus A1).
 
 Front-half ash-style beats (adapt to any subject): unexpected botanical or historical hook, accessible curiosity detail with a funny note, working-tool spec (Janka or equivalent) framed as why it matters to the build.
 
@@ -255,14 +256,14 @@ The closer machine:
 - Comment ask tied to a real prompt. ("Tell me what you would actually hide in here.") Only include "I read every single one" if Nick actually does.
 - Thoughtmarks plug, in voice: "if you can't remember shit, that is the entire reason I built Thoughtmarks. Bookmarks for your brain. App Store or thoughtmarksapp.com." Adapt the qualifier to the build but keep the slangy intro.
 - Sponsor callback (one line, light).
-- Bookend material button if used.
+- Bookend: return to the cold-open image. `03-youtube-vo.md` makes this a hard rule.
 - Sign-off, locked: "I'm Nick, and I'll catch you on the next one. Peace." Use this exact wording, as required by `03-youtube-vo.md`.
 
-Provide alt lines for the spicy vs clean lane on any sensitive button so Nick can pick.
+Provide alt lines for the spicy vs clean lane on any sensitive button as a response notice, so Nick can pick.
 
-## AI-cadence blacklist (scan and replace before delivery)
+## AI-cadence blacklist (scan before delivery)
 
-Run a find-pass against the final document for these phrases and patterns. Evaluate each hit under the core provisional-phrase rule. Rewrite generic AI phrasing; if the phrase may be Nick's, surface it for his decision rather than silently deleting it. Confirmed anti-corpus and no-signaling prohibitions still apply.
+Run a find-pass against the final document for these phrases and patterns, under the same rule: a hit BLOCKS the draft; "Rewrite if the phrase is generic; surface it for a decision if it might be his" (`SKILL.md`, LAYER 4, banned phrasebook). Never silently delete phrasing that may be Nick's. Confirmed anti-corpus and no-signaling prohibitions still apply.
 
 Exact phrases:
 - "cheaper than it has any right to be"
@@ -296,19 +297,19 @@ Exact phrases:
 - "elevate" / "elevates" / "elevation" (when not literal)
 
 Patterns:
-- Aphoristic closers ("X is Y. Z is not." structure). Cut.
+- Aphoristic closers ("X is Y. Z is not." structure). A freestanding aphorism (anti-corpus A1) is always cut. One attached to an object or a failure may be his: surface it for his decision.
 - "Not just X, it's Y." pattern (overused).
 - Three-beat parallelism for emphasis when the third beat is redundant.
 - Symmetric sentence pairs that feel like ad copy.
 - "When [profession] [verb]" generalizations.
 - Replacement of Nick's confessional qualifiers with confident reframes. ("I think" / "I reckon" / "kind of" / "I guess" / "by my math" / "I'd say" / "pretty sure" / "looks like" / "seems like" all stay.)
 - Stage-direction openers ("Pulling X out of Y." / "Removing the clamps." / "Setting up the cut."). These are summary POV. Rewrite from inside the moment with a discourse marker and live discovery.
-- Objective-certainty sentence closes ("X depends on Y." / "The result is Z." / "This determines whether..."). Replace with subjective hedge or live reaction.
+- Objective-certainty sentence closes ("X depends on Y." / "The result is Z." / "This determines whether..."). Replace with subjective hedge or live reaction if generic; surface it for Nick's decision if it might be his.
 - Sentences that close themselves before the action closes itself. Permit trailing thoughts, dot-dot-dots, and hyphen-pauses.
 - Deletion of discourse markers ("Alright," "Well," "So," "Now," "I guess," "Kind of," "Anyway," "Honestly," "Actually," "You know"). These are texture, not filler. If a block has zero, it failed.
 - Flattening of reactions into assessments ("Looks good." replacing "That's looking pretty good!"). Exclamation and energy stay when the moment earns them.
 - Collapsing recursive looking into single declarations. Doubled observations ("looks like... looking pretty good") are intentional, not redundant.
-- Promotional framings ("Here is how I solved it" / "I'm going to show you" / "The result is"). Replace with collaborative framings ("let's see if this works" / "watch this" / "we'll see").
+- Promotional framings ("Here is how I solved it" / "I'm going to show you" / "The result is"). Replace with collaborative framings ("let's see if this works" / "watch this" / "we'll see") if generic; surface it for Nick's decision if it might be his.
 
 Forbidden punctuation:
 - Em dashes. Use periods, semicolons, or comma-comma.
@@ -327,10 +328,10 @@ Default action: preserve verbatim. If unsure, ask Nick. Never silently soften.
 
 ## Adversarial pre-delivery checklist
 
-Before handing over the assembled script, audit against this list. Fix silently. If a fix changes the structure visibly, flag it.
+Before handing over the assembled script, audit against this list. Fix silently, except where a response notice is required (see Response notices): a blacklist hit that might be Nick's, or a fix that visibly changes the structure.
 
-1. Em dash, en dash, emoji scan: zero hits.
-2. AI-cadence blacklist: no unaddressed generic hits, phrases AND patterns. Resolve possible Nick phrasing with his decision, as the core provisional-phrase rule requires.
+1. Em dash, en dash, emoji scan: zero hits, except en dashes in numeric ranges.
+2. AI-cadence blacklist, phrases AND patterns: every hit rewritten if generic, or surfaced for Nick's decision if it might be his. None left unaddressed.
 3. Live discovery POV: every block reads like Nick is finding out right now, not summarizing what already happened. Run the rewrite test on every block. Stage-direction openers ("Pulling X out of Y") rewritten from inside the moment.
 4. Discourse markers preserved: at least one per ~75 words of VO (alright, well, so, now, anyway, kind of, sort of, I guess, I mean, you know, honestly, actually, real quick, or at least). Zero markers = failed block, rewrite.
 5. Reaction over assessment: where the build earns energy, energy is in the read. Flat assessments ("Looks good.") rewritten as reactions ("That's looking pretty good!") when the moment warrants.
@@ -339,14 +340,14 @@ Before handing over the assembled script, audit against this list. Fix silently.
 8. Collaborative framing: blocks read like Nick is at the bench with the viewer, not selling a finished product to them.
 9. POV check: every block contains at least one viewer-direct word (you/we/let's/your).
 10. Tense check: present tense on on-screen action; past tense only for backstory. AND combined with live discovery POV check.
-11. Sentence length: no sentence over ~25 words that isn't broken or breathable.
+11. Sentence length: no sentence over ~20 words that isn't broken or breathable.
 12. Sensitive content: verbatim preserved.
 13. Sponsor lead-in: action-carry, under 15 sec, no forbidden phrasings.
 14. Inventory mapped internally: every section of the running order categorized RECORDED or TO-RECORD before any VO was written.
 15. Gap labels present: every VO block headed with its timecode range. Word count and read-seconds parenthetical at the end of each block.
 16. Continuous loop braiding: 2-4 loops in flight at any given timecode. Track plant-payoff pairs. Never two closes in a row without an open. Never three opens in a row without a close.
 17. Jargon: every technical term defined within sentence-of-use or swapped to plain language.
-18. CRAFT pillars: every build step hits at least three pillars naturally surfaced.
+18. CRAFT pillars: one pillar per block at most, surfaced where it lands; across a build step, at least three, or one in every block when the step has fewer than three blocks.
 19. Joke density: jokes preserved through trim passes.
 20. Confessional qualifiers preserved ("by my math," "I think," "I reckon," "kind of").
 21. Throat-clearing self-awareness preserved (the disarmer joke at the start of a nerd-out).
@@ -378,11 +379,22 @@ What does NOT appear in the primary deliverable:
 - CRAFT pillar coverage notes
 - AI-cadence scan results
 - Sponsor contract-delta flags
-- Fact-claim CI scores
+- Fact-claim confidence notes
 - Description checklists
 - Footage gap flags
 
 All of that is supplementary. Build it internally to ensure the read is right. Surface it only if Nick asks for "editor notes," "scan results," "inventory," "budget summary," or similar. Otherwise the document stays clean.
+
+**Response notices.** Separately from the document, the response carries short notices. Two other parts of the response are not notices: the files-read sentence (Operating rules, rule 1) and pre-assembly clarifying questions (When something is missing). Every other rule in this procedure that says flag, surface or ask points to this list:
+
+- A meaningful sponsor or fact delta (Step 4); a delta that breaks the contract is a question, asked before delivering.
+- A blacklist hit that might be Nick's.
+- A correction that changes his argument (failure mode 3).
+- A sensitive-content choice, with the spicy and clean alt lines for him to pick.
+- A fix that visibly changes the structure.
+- A sponsor demo block whose footage may not exist.
+- A section that would normally be REC when no on-camera transcription was provided.
+- Any other missing input, named before the script, including where the midroll cut goes when there is no sponsor brief.
 
 ## Supplementary outputs (only on request)
 
@@ -392,9 +404,9 @@ If Nick asks for "editor notes," "the scan," "inventory," "budget breakdown," "c
 - Word budget summary (per gap and total)
 - Open-loop tracker (planted -> paid off, with TC of each)
 - CRAFT pillar coverage per build step
-- AI-cadence scan results (any blacklist hits found and replaced)
+- AI-cadence scan results (any blacklist hits found, and whether each was rewritten or surfaced)
 - Sponsor contract-delta flags (recorded take vs canonical reference)
-- Fact-claim CI scores for any quantitative or historical claim
+- Fact-claim confidence notes: high, medium or low for each quantitative or historical claim, with its source
 - Cut-point options per gap (2-3 trim suggestions for runtime flexibility)
 - Description checklist (UTM, discount code, hashtags, plug links, brand tags)
 - Footage gap flags (any tagged REC where on-camera coverage is uncertain)
@@ -410,30 +422,29 @@ When invoked:
 3. Identify the timecode range of every gap that requires VO. These are the only blocks you write copy for.
 4. Use rough draft cadence as voice baseline. Polish goes on top, not over. The refined VO should sound like Nick's rambling notes after a haircut, not after a personality transplant.
 5. Run the adversarial checklist internally before delivering.
-6. Resolve judgment calls silently when the right answer is clear. Surface only the calls where ambiguity itself is informative (sensitive-content choices, sponsor contract deltas, factual claims that contradict Nick's argument).
+6. Resolve judgment calls silently when the right answer is clear. Surface only what the Response notices list names.
 7. Never re-voice something that's already on camera unless Nick explicitly asks.
 8. Never soften sensitive content unless Nick explicitly asks in this message.
 9. Never use the forbidden sponsor lead-in phrasings.
-10. Never insert aphoristic closers.
+10. Never add aphoristic closers of your own. One that might be Nick's follows failure mode 2.
 11. Deliver clean paragraph VO with timecode-range labels per gap. Nothing else unless asked.
 
 ## When something is missing
 
-If Nick hasn't provided one of the inputs, do not invent it. Flag it. Examples:
-- No on-camera transcription provided: assemble what you can from the rough outline, flag every section that would normally be REC as `[VO or REC - confirm with Nick]`.
-- No sponsor brief: skip the sponsor block, flag where the midroll cut goes.
+If Nick hasn't provided one of the inputs, do not invent it. Name it in a response notice, or ask before assembling where the answer changes the build. Examples:
+- No on-camera transcription provided: assemble what you can from the rough outline, list every section that would normally be REC in a response notice, not as a tag in the deliverable.
+- No sponsor brief: skip the sponsor block, and give the midroll location in a response notice.
 - No timecodes: ask whether to estimate windows from word count, or work without budgets.
 - No canonical polished section files: that's fine, on-camera takes are the default anyway.
 
 Ask one question at a time. Do not chain clarifying questions. Get to assembly fast.
 
-## What this skill is NOT for
+## What this procedure is NOT for
 
-- Non-Sawyer-Design YouTube content
-- Thoughtmarks marketing copy (use sawyer-brand-guidelines + copywriting skill)
-- Furniture commission proposals or client copy
-- Brand pitch emails (use weekly-brand-pitches)
-- Long-form written articles or blog posts
-- Anyone other than Nick narrating his own builds
+- Anyone other than Nick narrating: out of scope for the whole voice system. Say so and do not apply it.
+- Non-Sawyer-Design YouTube content Nick narrates (a Thoughtmarks promo, for example): not this procedure; route through the ROUTER.
+- Thoughtmarks marketing copy: `01-thoughtmarks.md`, plus the `brand-guidelines` and `copywriting` skills
+- Furniture commission proposals, client copy and brand pitch email: `05-correspondence.md` (brand pitches also use the `weekly-brand-pitches` skill)
+- Long-form written articles or blog posts: `02-sawyer-design.md` for sawyerdesign.io, `01-thoughtmarks.md` for Thoughtmarks
 
-If the request is for one of the above, decline this skill and route to the correct one.
+For the four routed items above, do not use this procedure. Route through the ROUTER in `SKILL.md`; the rest of this skill still applies.

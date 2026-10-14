@@ -1,6 +1,6 @@
 # YouTube VO review: retiming a delivered cut for a wide audience
 
-**Read after `youtube-premise.md` and `03-youtube-vo.md`.** Those govern how a line sounds. `youtube-vo-assembly.md` governs writing gap VO from scratch; this sheet is its counterpart for the pass that happens after a cut exists. This sheet governs the pass that happens once a cut exists: a DaVinci AI transcript, a worksheet, maybe a prior review, and a target audience where 95% have never woodworked. It is a checklist run before any record list is written.
+**Read after `youtube-premise.md` and `03-youtube-vo.md`.** Those govern how a line sounds. `youtube-vo-assembly.md` governs writing gap VO from scratch; this sheet is its counterpart for the pass that happens once a cut exists: a DaVinci AI transcript, a worksheet, maybe a prior review, and a target audience where 95% have never woodworked. It is a checklist run before any record list is written.
 
 **Provenance:** one build video, the iTable (Apple coffee table), September 2026. Three review passes (Caitlin's notes, a clarity pass, a layman pass) plus Nick's corrections. Everything here was observed once. Treat it as a checklist, not a law, until a second video confirms it.
 
@@ -9,7 +9,7 @@
 Almost nothing that failed in the iTable cut was a sentence. It was what the viewer could picture and what they had been told the names of.
 
 - **Draw it before you name it.** The frame was never in the plan at 1:00, then arrived at 17:44 under five different names. One exploded view with four labels fixed every later mention. If there is one graphic in the video, it is the plan.
-- **Vocabulary budget: four taught nouns per video.** iTable: legs, top and shelf, frame, nubbins. Every other term gets a plain-language apposition at first use ("a bridle joint, which is...") or gets cut. Tool names (helical flush trim compression bit, PantoRouter, Domino, shoulder plane, quarter-twenty cap screws) carry zero information for the 95% and read as a club door.
+- **Vocabulary budget: four taught nouns per video.** iTable: legs, top and shelf, frame, nubbins. Every other term gets a plain-language apposition at first use ("a bridle joint, which is...") or gets cut. Tool names (helical flush trim compression bit, PantoRouter, Domino, shoulder plane, quarter-twenty cap screws) carry zero information for the 95% and read as a club door. For a wide-audience cut this overrides the assembly sheet's "exact part numbers, tools" specificity: keep a tool name only when it is defined on contact (assembly build order, rule 4).
 - **One word per part.** Subframe / skirts and stretchers / the frame and the stretchers / the skirt are one object. Pick the word, say it at first use, never drift. Word collisions on tape are real: "insert" meant steel sleeves and mosaic caps four minutes apart; "shelf" meant the table's shelf and a pocket lift.
 - **No forward references.** "That would have solved this short grain dilemma" at 21:38, with short grain explained at 33:09. Replace with an open loop ("the corner problem I'm about to have") or move the definition.
 - **Define where the stakes are, not where the word first appears.** The bundle-of-straws line (from the `03-youtube-vo.md` exemplar) was proposed at 1:32 as taxonomy and at 33:01 where something was about to snap off. The second placement wins. A graphic covers the first mention.
