@@ -98,22 +98,34 @@ export interface MeshState {
   // Depth map
   depthMap: HTMLImageElement | null;
   depthMapName: string;
-  /** Fabric tension for BLEND (drape) mode: 0 = membrane hugs the form, 1 = bridges concavities. */
+  /** Fabric tension for BLEND (drape) mode: 0 = membrane hugs the form, 1 = bridges between
+   *  supports. Mapped log-linearly to membrane curvature in src/drape.ts. */
   blend: number;
   dmHeightScale: number;
   dmOffset: number;
   dmSmoothing: number;
-  // Drape (BLEND mode) fold controls
-  drapeFoldScale: number;
-  drapeFoldDepth: number;
-  drapeFoldWarp: number;
+  /** Normalized height at or below which the depth map is flattened to the floor (both depth
+   *  modes); the rest is stretched to the full cut. 0 = off. */
+  dmBackgroundCutoff: number;
+  // Drape (BLEND mode) controls, physical units (src/drape.ts)
+  /** Fold crest spacing, inches. */
+  drapeFoldSpacing: number;
+  /** Fold depth (standard deviation of the fold field), inches. */
+  drapeFoldAmp: number;
+  /** Fold streamline half-length as a multiple of the spacing. */
+  drapeFoldLength: number;
+  /** 0 = gravity into the panel (folds radiate from supports), 1 = hanging down the panel. */
+  drapeHang: number;
+  /** In-plane gravity direction, degrees: 0 = down the image, positive = clockwise. */
+  drapeGravityAngle: number;
   drapeThickness: number;
-  /** How much of the underlying form's fine detail transmits through the fabric where the
-   *  membrane is in contact (0 = thick felt, 1 = wet silk). */
+  /** How much fine form detail the fabric follows: 0 = felt (bends over ~0.5 in), 1 = silk. */
   drapeConform: number;
   depthMapAR: number | null;
   aspectLocked: boolean;
   // View
+  /** Surface shading: height color ramp, or a uniform neutral material for judging form. */
+  viewMaterial: 'elevation' | 'neutral';
   orbit: number;
   tilt: number;
   roll: number;
@@ -214,17 +226,21 @@ export const DEFAULTS: MeshState = {
   baseThickness: 0.75,
   depthMap: null,
   depthMapName: '',
-  blend: 0.2,
+  blend: 0.4,
   dmHeightScale: 1.0,
   dmOffset: -0.08,
   dmSmoothing: 7,
-  drapeFoldScale: 12,
-  drapeFoldDepth: 0.12,
-  drapeFoldWarp: 0.35,
+  dmBackgroundCutoff: 0,
+  drapeFoldSpacing: 0.4,
+  drapeFoldAmp: 0.04,
+  drapeFoldLength: 6,
+  drapeHang: 0.75,
+  drapeGravityAngle: 0,
   drapeThickness: 0.03,
   drapeConform: 0.7,
   depthMapAR: null,
   aspectLocked: false,
+  viewMaterial: 'elevation',
   orbit: 235,
   tilt: -25,
   roll: 0,
@@ -274,14 +290,15 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
   'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
-  'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing',
-  'drapeFoldScale', 'drapeFoldDepth', 'drapeFoldWarp', 'drapeThickness', 'drapeConform', 'watertight',
-  'viewMode', 'activePreset', 'activeProfile',
+  'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'dmBackgroundCutoff',
+  'drapeFoldSpacing', 'drapeFoldAmp', 'drapeFoldLength', 'drapeHang', 'drapeGravityAngle',
+  'drapeThickness', 'drapeConform', 'watertight',
+  'viewMode', 'viewMaterial', 'activePreset', 'activeProfile',
 ];
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 12;
+const CURRENT_PAYLOAD_VERSION = 13;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -371,6 +388,12 @@ const LEGACY_V10_DEFAULTS: Partial<MeshState> = {};
 // internals replaced by a unified space-warp. Old links never carry the new keys; the
 // conditional below (not this table) maps old wave-mode links onto the superposition model.
 const LEGACY_V11_DEFAULTS: Partial<MeshState> = {};
+// v12→v13 replaced the Blend drape model (height-phased contour folds over a dilated envelope) with a
+// membrane + gravity-directed folds. The retired keys drapeFoldScale / drapeFoldDepth / drapeFoldWarp
+// have no equivalent and are dropped (they are no longer in URL_SERIALIZABLE_KEYS, so the copy loop
+// ignores them). blend (tension), drapeThickness and drapeConform carry over by value. Links that
+// never set them get the current defaults, same as every other unset key.
+const LEGACY_V12_DEFAULTS: Partial<MeshState> = {};
 export function serializeConfig(): string {
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
@@ -560,6 +583,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         (result as Record<string, unknown>).reliefBaseAmplitude = 0.5;
       }
     }
+    if (payloadVersion < 13) {
+      for (const [k, v] of Object.entries(LEGACY_V12_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -728,13 +758,28 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefDepthVariation' in result) clampField('reliefDepthVariation', 0, 1);
     if ('reliefJunctionLift' in result) clampField('reliefJunctionLift', 0, 1);
     if ('reliefCrestVariation' in result) clampField('reliefCrestVariation', 0, 1);
-    // Drape (BLEND mode) fold controls — foldScale drives a per-pixel sin() phase and
-    // foldDepth a bounded additive term; clamps prevent cosmetic blowouts from crafted links.
-    if ('drapeFoldScale' in result) clampField('drapeFoldScale', 2, 40);
-    if ('drapeFoldDepth' in result) clampField('drapeFoldDepth', 0, 0.5);
-    if ('drapeFoldWarp' in result) clampField('drapeFoldWarp', 0, 1);
+    // Drape (BLEND mode) controls. These bound real work, not just looks: foldSpacing sets the
+    // noise feature size and foldLength x spacing the per-pixel streamline length, so an
+    // unclamped length or a near-zero spacing on a crafted link multiplies the fold pass cost.
+    // Ranges match the sliders.
+    if ('blend' in result) clampField('blend', 0, 1);
+    if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
+    if ('drapeFoldSpacing' in result) clampField('drapeFoldSpacing', 0.25, 3);
+    if ('drapeFoldAmp' in result) clampField('drapeFoldAmp', 0, 0.25);
+    if ('drapeFoldLength' in result) clampField('drapeFoldLength', 1, 12);
+    if ('drapeHang' in result) clampField('drapeHang', 0, 1);
+    if ('drapeGravityAngle' in result) clampField('drapeGravityAngle', -180, 180);
     if ('drapeThickness' in result) clampField('drapeThickness', 0, 0.2);
     if ('drapeConform' in result) clampField('drapeConform', 0, 1);
+    // String enums: an unknown value would leave the UI in a state no control can reach (an
+    // unknown mode hides every sidebar section; an unknown viewMode hides every surface), so
+    // anything outside the literal set falls back to the default.
+    const restrictEnum = (key: keyof MeshState, allowed: readonly string[]): void => {
+      if (key in result && !allowed.includes(String(result[key]))) delete (result as Record<string, unknown>)[key];
+    };
+    restrictEnum('mode', ['noise', 'depthmap', 'blend']);
+    restrictEnum('viewMode', ['solid', 'wireframe', 'both', 'points']);
+    restrictEnum('viewMaterial', ['elevation', 'neutral']);
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
     // they cannot over-amplify the bowl normalization or angular irregularity.

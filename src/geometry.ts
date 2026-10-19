@@ -16,6 +16,72 @@ export function cellTriangleOffsets(
     : [[0, 1, cols], [1, cols + 1, cols]];
 }
 
+/** Rec. 709 luma weights. Depth maps are grayscale (R = G = B, so luma equals the old red-channel
+ *  read bit for bit); color photos keep the detail that a red-only read discarded. */
+const LUMA_R = 0.2126;
+const LUMA_G = 0.7152;
+const LUMA_B = 0.0722;
+
+/** Bilinear sample of RGBA pixels into a rows x cols grid of luma in [0, 1]. Pure (no DOM): the
+ *  canvas read stays with the caller. Bilinear, not nearest: nearest stair-stepped low-res
+ *  sources and forced heavy smoothing.
+ *
+ *  Grid row j is world Y = j / (rows - 1) x meshY in every export (STL/OBJ/3DM vertices, SBP
+ *  toolpaths), and world Y grows away from the machine front. Grid row 0 therefore samples the
+ *  BOTTOM image row: mapping the image's top row to Y = 0 (as before 2026-10-19) carved a
+ *  vertically mirrored copy of every depth map. */
+export function sampleLumaGrid(
+  data: Uint8ClampedArray, imgW: number, imgH: number,
+  cols: number, rows: number,
+): number[][] {
+  const luma = (idx: number): number =>
+    LUMA_R * data[idx] + LUMA_G * data[idx + 1] + LUMA_B * data[idx + 2];
+  const grid: number[][] = [];
+  for (let j = 0; j < rows; j++) {
+    grid[j] = [];
+    const fy = ((rows - 1 - j) / (rows - 1)) * (imgH - 1);
+    const iy0 = Math.min(Math.floor(fy), imgH - 1);
+    const iy1 = Math.min(iy0 + 1, imgH - 1);
+    const ty = fy - iy0;
+    for (let i = 0; i < cols; i++) {
+      const fx = (i / (cols - 1)) * (imgW - 1);
+      const ix0 = Math.min(Math.floor(fx), imgW - 1);
+      const ix1 = Math.min(ix0 + 1, imgW - 1);
+      const tx = fx - ix0;
+      const p00 = luma((iy0 * imgW + ix0) * 4);
+      const p10 = luma((iy0 * imgW + ix1) * 4);
+      const p01 = luma((iy1 * imgW + ix0) * 4);
+      const p11 = luma((iy1 * imgW + ix1) * 4);
+      const top = p00 * (1 - tx) + p10 * tx;
+      const bot = p01 * (1 - tx) + p11 * tx;
+      grid[j][i] = (top * (1 - ty) + bot * ty) / 255;
+    }
+  }
+  return grid;
+}
+
+/** Min-max normalize a grid to [0, 1] in place. A flat grid maps to 0. */
+export function normalizeGrid(grid: number[][], rows: number, cols: number): void {
+  const [mn, mx] = gridMinMax(grid, rows, cols);
+  const range = mx - mn;
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++)
+      grid[j][i] = range > 0 ? (grid[j][i] - mn) / range : 0;
+}
+
+/** Flatten everything at or below `cutoff` (normalized height) to 0 and stretch the rest back to
+ *  [0, 1], so a figure on a deep background claims the cut depth instead of the background step.
+ *  `cutoff <= 0` is the identity (values untouched). Operates in place on a normalized grid. */
+export function applyBackgroundCutoff(grid: number[][], rows: number, cols: number, cutoff: number): void {
+  if (!(cutoff > 0)) return;
+  const c = Math.min(cutoff, 0.99);
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++) {
+      const v = grid[j][i];
+      grid[j][i] = v <= c ? 0 : (v - c) / (1 - c);
+    }
+}
+
 /** Find min and max values in a 2D grid. */
 export function gridMinMax(grid: number[][], rows: number, cols: number): [number, number] {
   let min = Infinity, max = -Infinity;

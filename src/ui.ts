@@ -1,11 +1,12 @@
 import { STATE, DEFAULTS } from './state';
-import { attachValueEdit } from './slider-utils';
+import { attachValueEdit, formatSliderValue } from './slider-utils';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ } from './sbp-export';
 import { updateExportControls } from './toolbar';
 import { estimateDepth } from './depth-estimate';
 import { showToast } from './toast';
+import { applySurfaceMaterial } from './render';
 
 
 const PRESET_GROUPS: [string, string[]][] = [
@@ -105,9 +106,7 @@ function buildSliderLabel(label: string, valueId: string, valueText: string, bad
 function slider(key: string, label: string, min: number, max: number, step: number, badgeText = ''): HTMLDivElement {
   const val = STATE[key as keyof typeof STATE] as number;
   const row = createElement('div', 'control-row');
-  const valueText = typeof val === 'number'
-    ? (Number.isInteger(step) ? String(val) : val.toFixed(2))
-    : String(val);
+  const valueText = typeof val === 'number' ? formatSliderValue(val, step) : String(val);
   const input = createElement('input') as HTMLInputElement;
   input.type = 'range';
   input.id = `sl_${key}`;
@@ -462,20 +461,28 @@ function buildDepthMapSection(): HTMLElement {
   aiBtn.style.marginTop = '6px';
   aiBtn.addEventListener('click', () => { void runDepthEstimation(aiBtn); });
 
+  // Drape (BLEND mode) rows are tagged blend-only and Depth Map Smoothing depthmap-only:
+  // each does nothing in the other mode, and updateSectionVisibility() hides it there.
+  const blendOnly = (row: HTMLDivElement): HTMLDivElement => { row.classList.add('blend-only'); return row; };
+  const depthmapOnly = (row: HTMLDivElement): HTMLDivElement => { row.classList.add('depthmap-only'); return row; };
+
   return buildSection('Depth Map', [
     uploadZone,
     aiBtn,
-    // Drape (BLEND mode): 'blend' is repurposed as fabric tension — 0 hugs the form,
-    // 1 bridges concavities via the morphological-close envelope (src/drape.ts).
-    slider('blend', 'Fabric Tension (0=hug, 1=bridge)', 0, 1, 0.01),
-    slider('drapeFoldScale', 'Fold Count', 2, 40, 1),
-    slider('drapeFoldDepth', 'Fold Depth', 0, 0.5, 0.01),
-    slider('drapeFoldWarp', 'Fold Irregularity', 0, 1, 0.05),
-    slider('drapeThickness', 'Fabric Thickness (in)', 0, 0.2, 0.005),
-    slider('drapeConform', 'Detail Transmission (0=felt, 1=silk)', 0, 1, 0.05),
     slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05),
     slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01),
-    slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1),
+    slider('dmBackgroundCutoff', 'Background Cutoff (0=off)', 0, 0.9, 0.01),
+    depthmapOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)),
+    // Drape model: membrane over the form + gravity-directed folds (src/drape.ts). 'blend' is
+    // fabric tension: 0 hugs every support, 1 bridges between them.
+    blendOnly(slider('blend', 'Fabric Tension (0=hug, 1=bridge)', 0, 1, 0.01)),
+    blendOnly(slider('drapeThickness', 'Fabric Thickness (in)', 0, 0.2, 0.005)),
+    blendOnly(slider('drapeConform', 'Detail Transmission (0=felt, 1=silk)', 0, 1, 0.05)),
+    blendOnly(slider('drapeHang', 'Hang (0=pressed, 1=hanging)', 0, 1, 0.05)),
+    blendOnly(slider('drapeGravityAngle', 'Gravity Angle (deg, 0=down)', -180, 180, 5)),
+    blendOnly(slider('drapeFoldSpacing', 'Fold Spacing (in)', 0.25, 3, 0.05)),
+    blendOnly(slider('drapeFoldAmp', 'Fold Depth (in)', 0, 0.25, 0.005)),
+    blendOnly(slider('drapeFoldLength', 'Fold Length (x spacing)', 1, 12, 0.5)),
   ], false, 'depth-map-only');
 }
 
@@ -487,6 +494,7 @@ function buildViewControlsSection(): HTMLElement {
   note.textContent = 'Left drag = orbit/tilt · Right/Shift drag = pan · Scroll = zoom · Double-click = fit';
 
   return buildSection('View Controls', [
+    enumSelect('viewMaterial', 'Surface Shading', [['elevation', 'Elevation colors'], ['neutral', 'Neutral (judge form)']]),
     slider('orbit', 'Orbit', 0, 360, 1),
     slider('tilt', 'Tilt', -90, 90, 1),
     slider('roll', 'Roll', -180, 180, 1),
@@ -503,7 +511,7 @@ function wireControls(): void {
       const v = parseFloat(sl.value);
       (STATE as unknown as Record<string, unknown>)[key] = v;
       const valEl = document.getElementById('val_' + key);
-      if (valEl) valEl.textContent = Number.isInteger(parseFloat(sl.step)) ? String(v) : v.toFixed(2);
+      if (valEl) valEl.textContent = formatSliderValue(v, parseFloat(sl.step));
 
       // Aspect ratio lock
       if (STATE.aspectLocked && STATE.depthMapAR) {
@@ -591,6 +599,11 @@ function wireControls(): void {
     const key = sel.dataset.key!;
     sel.addEventListener('change', () => {
       (STATE as unknown as Record<string, unknown>)[key] = sel.value;
+      // Shading is view-only: swap the material, keep the mesh and the active preset.
+      if (key === 'viewMaterial') {
+        applySurfaceMaterial();
+        return;
+      }
       // Clear active preset/profile on manual change — same as slider behavior.
       if (STATE.activePreset) {
         STATE.activePreset = null;
@@ -754,6 +767,12 @@ export function updateSectionVisibility(): void {
   document.querySelectorAll<HTMLElement>('.depth-map-only').forEach(el => {
     el.style.display = (mode === 'depthmap' || mode === 'blend') ? 'block' : 'none';
   });
+  document.querySelectorAll<HTMLElement>('.blend-only').forEach(el => {
+    el.style.display = mode === 'blend' ? '' : 'none';
+  });
+  document.querySelectorAll<HTMLElement>('.depthmap-only').forEach(el => {
+    el.style.display = mode === 'depthmap' ? '' : 'none';
+  });
 }
 
 export function fitMeshToAspect(imgW: number, imgH: number): void {
@@ -844,6 +863,7 @@ export function loadDepthMap(file: File): void {
   };
   img.onerror = () => {
     URL.revokeObjectURL(objUrl);
+    showToast('Could not read that image file');
   };
   img.src = objUrl;
 }

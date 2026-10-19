@@ -307,11 +307,13 @@ function exportHeightmapPNG(): Promise<Blob | null> {
   const ctx = c.getContext('2d')!;
   const img = ctx.createImageData(cols, rows);
 
+  // Grid row 0 is world Y = 0 (the bottom edge); PNG row 0 is the top. Write rows top-down so the
+  // heightmap reads the same way as the carving and as the source image.
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const t = (vertices[j][i] - zMin) / zRange;
       const v = Math.round(Math.max(0, Math.min(1, t)) * 255);
-      const idx = (j * cols + i) * 4;
+      const idx = ((rows - 1 - j) * cols + i) * 4;
       img.data[idx] = v;
       img.data[idx+1] = v;
       img.data[idx+2] = v;
