@@ -14,6 +14,8 @@ This module holds the standalone command-line entrypoints and the parity/regress
 | `cli/vtdb-reader.ts` | Vectric `.vtdb` SQLite file | `ToolDef[]` | Tool metadata extraction (used by stl-to-sbp.ts) |
 | `cli/grasshopper-parity.spec.ts` | `grasshopper/builder/meshcraft_builder.py` + `grasshopper/components/*.py` | pass/fail + diff context | Embedded GhPython literals match canonical component files |
 | `cli/voronoi-relief.spec.ts` | `src/noise/voronoi-relief.ts` | pass/fail + diff context | numbered assertion blocks (18+, grown alongside the sampler's v16-v23 iterations) on relief sampler behavior |
+| `cli/drape.spec.ts` (`npm run test:drape`) | `src/drape.ts`, `src/geometry.ts` depth-map helpers, `src/state.ts` share links, the SBP generator | pass/fail + measured values | T1-T17 blocks: no peak inflation, exact thickness clearance at every conform, stock fit, fold orientation/spacing/skew, luma + orientation + flat-image sampling, v12/v13 links and enum guards, machinability, SBP integration, 400x600 timing |
+| `cli/drape-physics.spec.ts` (`npm run test:drape-physics`, minutes, not in CI) | `src/drape.ts` vs `cli/drape-reference-sim.ts` (PBD cloth, Coulomb friction) | pass/fail + sim vs drape metrics | oracle settles (p99 move); fold/contour alignment and hanging direction match the sim; membrane envelope closer to the cloth than the pre-2026-10-19 envelope. Runs at conform 1, so fabric stiffness is covered by `drape.spec.ts`, not here |
 
 ## stl-to-sbp: mesh to toolpath
 
@@ -42,7 +44,7 @@ This spec drives `VoronoiReliefGen.sampleGrid` (`src/noise/voronoi-relief.ts`) d
 - **Structural pipeline effects** (8-11): Lloyd relaxation (`relaxIterations`) must change >10% of values vs. unrelaxed; `warpDistortion` and `warpFrequency` are separately tested (9 and 9b) so a regression that drops the frequency parameter from the site-warp pass still fails even though warp-on/off (test 9) would pass; `voidStrength` must push bottom-band minimums below `-1.0` and deeper than the no-void case; `cellSizeGradient` must materially change output vs. baseline.
 - **Guards against known regressions** (15-17): row 15 checks the asymmetric output range used by the production preset (`seamDepth=0.22`, `polarity=pockets`); row 16 is a named regression test for commit `c40c67b`, where F2-aliasing caused catastrophic pixel-to-pixel jumps (>1.5 out of a ~2.0 total range) — it scans both horizontal and vertical neighbor pairs; row 17 is a 5x5 z-score + absolute-deviation outlier scan (z > 6 and absolute deviation > 0.3) designed to catch isolated single-pixel spikes (F2-ownership/radius-field discontinuities) while ignoring smooth natural dome transitions and tiny clamp-boundary noise.
 
-Both specs are plain scripts with a local `assert()` helper and `failures` counter, not a test-runner integration — they print `ok`/`FAIL` lines to stdout and `process.exit(1)` on any failure, making them CI-friendly without a test framework dependency.
+These specs are plain scripts with a local `assert()` helper and `failures` counter, not a test-runner integration — they print `ok`/`FAIL` lines to stdout and `process.exit(1)` on any failure, making them CI-friendly without a test framework dependency.
 
 ## tsconfig.cli.json
 

@@ -275,6 +275,34 @@ function disposeGroup(obj: THREE.Object3D | null): void {
   });
 }
 
+// Warm white, close to Carrara marble under the scene lights: shading alone carries the form.
+const NEUTRAL_SURFACE_COLOR = 0xe8e2d6;
+
+/** Surface material for the current STATE.viewMaterial. 'elevation' samples the height color ramp
+ *  per pixel (smooth gradients); 'neutral' is one uniform color, because the ramp paints iso-height
+ *  bands that read as contour lines and hide or fake fold structure. */
+function makeSurfaceMaterial(): THREE.MeshPhongMaterial {
+  const neutral = STATE.viewMaterial === 'neutral';
+  return new THREE.MeshPhongMaterial({
+    ...(neutral ? { color: new THREE.Color(NEUTRAL_SURFACE_COLOR) } : { map: getColorRampTexture() }),
+    side: THREE.DoubleSide,
+    shininess: neutral ? 12 : 40,
+    specular: new THREE.Color(neutral ? 0x1a1a1a : 0x222233),
+    polygonOffset: true,       // prevent z-fighting with wireframe overlay
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+}
+
+/** Swap the surface material after a shading change without rebuilding geometry. The shared ramp
+ *  texture is cached module-wide, so only the material itself is disposed. */
+export function applySurfaceMaterial(): void {
+  if (!_surfaceMesh) return;
+  (_surfaceMesh.material as THREE.Material).dispose();
+  _surfaceMesh.material = makeSurfaceMaterial();
+  requestRender();
+}
+
 function buildSurface(
   vertices: number[][], cols: number, rows: number,
   meshX: number, meshY: number,
@@ -344,16 +372,7 @@ function buildSurface(
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geo.setIndex(indices);
 
-  // Texture-based color ramp: sampled per-pixel in fragment shader = smooth gradients
-  _surfaceMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-    map: getColorRampTexture(),
-    side: THREE.DoubleSide,
-    shininess: 40,
-    specular: new THREE.Color(0x222233),
-    polygonOffset: true,       // prevent z-fighting with wireframe overlay
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
-  }));
+  _surfaceMesh = new THREE.Mesh(geo, makeSurfaceMaterial());
   _scene.add(_surfaceMesh);
 
   // Wireframe: grid lines (horizontal + vertical, no triangle diagonals)
@@ -536,6 +555,20 @@ export function updateDimsOverlay(): void {
     spanWarn.className = 'cnc-warn';
     spanWarn.style.marginLeft = '8px';
     spanWarn.textContent = 'EXCEEDS 6" Z';
+    el.appendChild(spanWarn);
+  }
+  // Blend: say when the requested veil did not fit the cut, instead of silently reshaping it.
+  if (STATE.mode === 'blend' && STATE.drapeOverflowIn > 0.001) {
+    const spanWarn = document.createElement('span');
+    spanWarn.className = 'cnc-warn';
+    spanWarn.style.marginLeft = '8px';
+    spanWarn.textContent = `FABRIC ${STATE.drapeOverflowIn.toFixed(3)}" THICKER THAN CUT`;
+    el.appendChild(spanWarn);
+  } else if (STATE.mode === 'blend' && STATE.drapeFoldScaleUsed < 0.99) {
+    const spanWarn = document.createElement('span');
+    spanWarn.className = 'cnc-warn';
+    spanWarn.style.marginLeft = '8px';
+    spanWarn.textContent = `FOLDS AT ${Math.round(STATE.drapeFoldScaleUsed * 100)}% TO FIT CUT`;
     el.appendChild(spanWarn);
   }
 }

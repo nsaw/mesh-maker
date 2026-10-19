@@ -112,7 +112,9 @@ export function setupToolbar(): void {
     STATE.filename = raw.slice(0, 128) || 'meshcraft_export';
     (e.target as HTMLInputElement).value = STATE.filename;
   });
-  document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; renderViewport(); updateStats(); });
+  // Watertight feeds generation (stock floor and the 0.01 in surface floor), so regenerate:
+  // re-rendering alone could export a watertight mesh built without its floor.
+  document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; generateMesh(); });
   document.getElementById('chkBinary')!.addEventListener('change', e => { STATE.binary = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chk3dmPointCloud')!.addEventListener('change', e => { STATE.export3dmAsPointCloud = (e.target as HTMLInputElement).checked; });
 

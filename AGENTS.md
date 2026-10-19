@@ -47,9 +47,17 @@ meshcraft/
 │   ├── types.ts               # Vertex3D, Triangle, MeshData, NoiseGenerator interfaces
 │   ├── noise/
 │   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
-│   │   └── presets.ts         # CNC_PRESETS (15), PROFILES (6)
-│   ├── mesh.ts                # generateMesh, weightedSmooth, debouncedGenerate
-│   ├── render.ts              # Canvas 2D 3D rendering (painter's algo, Gouraud shading)
+│   │   ├── voronoi-relief.ts  # Voronoi Relief sampler (cellular relief, attractors, starburst)
+│   │   └── presets.ts         # CNC_PRESETS, PROFILES
+│   ├── mesh.ts                # generateMesh (noise / depthmap / blend dispatch), debouncedGenerate
+│   ├── geometry.ts            # Pure grid helpers: luma sampling, normalize, background cutoff,
+│   │                          #   weightedSmooth, triangle split + watertight enclosure emitters
+│   ├── drape.ts               # Blend drape: obstacle membrane (PSOR) + gravity/support-directed
+│   │                          #   folds (LIC) + thickness clearance + headroom-safe stock mapping
+│   ├── depth-estimate.ts      # Optional in-browser monocular depth (Depth-Anything-V2-small)
+│   ├── slider-utils.ts        # Click-to-edit slider values, step-aware value formatting
+│   ├── render.ts              # Three.js WebGL viewport: surface, wireframe, points, enclosure,
+│   │                          #   elevation or neutral surface material
 │   ├── export.ts              # STL (binary/ASCII), OBJ, heightmap PNG export dispatcher
 │   ├── sbp-export.ts          # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 │   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets, SBP section
@@ -71,7 +79,13 @@ meshcraft/
 │       └── worker.ts          # Web Worker entry for uploaded STL processing
 ├── cli/
 │   ├── stl-to-sbp.ts          # CLI entry point (tsx/Node)
-│   └── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
+│   ├── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
+│   ├── voronoi-relief.spec.ts # npm run test:relief
+│   ├── grasshopper-parity.spec.ts # npm run test:gh-parity
+│   ├── drape.spec.ts          # npm run test:drape (fast, deterministic)
+│   ├── drape-physics.spec.ts  # npm run test:drape-physics (slow; vs reference cloth sim)
+│   ├── drape-reference-sim.ts # PBD cloth oracle used by the physics spec
+│   └── drape-metrics.ts       # Fold orientation / skew / envelope metrics shared by the specs
 ├── public/
 │   ├── _redirects             # Cloudflare Pages: / -> /index.html
 │   └── monalisa-depthMap.jpeg # Demo depth map
@@ -84,7 +98,7 @@ meshcraft/
 
 ### Key Design Decisions
 
-- **Canvas 2D, not WebGL**: Intentional. Simpler, more portable, no shader compilation. Performance is adequate for CNC mesh resolution (<256x256 grids).
+- **Three.js WebGL renderer** (`src/render.ts`): Phong surface with analytical heightfield normals, an on-demand render loop (renders only when state changes), and an elevation-ramp or neutral surface material. Grids up to 400 columns (~250k cells) render interactively. (An earlier Canvas 2D painter's-algorithm renderer was replaced.)
 - **Typed STATE singleton**: `MeshState` interface with 40+ typed keys. Direct mutation — no reactive/observer pattern. The call graph is explicit (slider → debounce → generate → render).
 - **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar.
 - **Watertight export**: Bottom face + side walls for CNC-ready meshes. Enforces minimum 0.01" material thickness to prevent degenerate triangles.

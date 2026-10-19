@@ -1,5 +1,14 @@
 /** Shared slider UX utilities: click-to-edit value labels, double-click-to-reset. */
 
+/** Format a slider value with as many decimals as its step needs (at least 2 for fractional
+ *  steps). A fixed 2 decimals showed a 0.035 in thickness (step 0.005) as "0.04". */
+export function formatSliderValue(value: number, step: number): string {
+  if (Number.isInteger(step)) return String(value);
+  const dot = String(step).indexOf('.');
+  const stepDecimals = dot < 0 ? 0 : String(step).length - dot - 1;
+  return value.toFixed(Math.min(4, Math.max(2, stepDecimals)));
+}
+
 /** Attach click-to-edit behavior on a value span + slider pair. */
 export function attachValueEdit(valSpan: HTMLElement, sl: HTMLInputElement): void {
   valSpan.style.cursor = 'pointer';

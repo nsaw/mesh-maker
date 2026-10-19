@@ -1,12 +1,12 @@
 import { STATE } from './state';
 import type { Vertex3D, Triangle, MeshData } from './types';
 import { showToast } from './toast';
-import { preferZ00Z11Diagonal, cellTriangleOffsets, emitWatertightTriangles, gridMinMax } from './geometry';
+import { MIN_WATERTIGHT_THICKNESS, preferZ00Z11Diagonal, cellTriangleOffsets, emitWatertightTriangles, gridMinMax } from './geometry';
 import { doSBPExport } from './sbp-export';
 
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
-  const baseThickness = watertight ? Math.max(STATE.baseThickness, 0.01) : STATE.baseThickness;
+  const baseThickness = watertight ? Math.max(STATE.baseThickness, MIN_WATERTIGHT_THICKNESS) : STATE.baseThickness;
   if (!vertices || cols < 2 || rows < 2) return null;
 
   const top: Vertex3D[][] = [];
@@ -307,11 +307,13 @@ function exportHeightmapPNG(): Promise<Blob | null> {
   const ctx = c.getContext('2d')!;
   const img = ctx.createImageData(cols, rows);
 
+  // Grid row 0 is world Y = 0 (the bottom edge); PNG row 0 is the top. Write rows top-down so the
+  // heightmap reads the same way as the carving and as the source image.
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const t = (vertices[j][i] - zMin) / zRange;
       const v = Math.round(Math.max(0, Math.min(1, t)) * 255);
-      const idx = (j * cols + i) * 4;
+      const idx = ((rows - 1 - j) * cols + i) * 4;
       img.data[idx] = v;
       img.data[idx+1] = v;
       img.data[idx+2] = v;

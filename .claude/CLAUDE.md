@@ -38,6 +38,8 @@ npm run lint             # eslint src/ cli/
 npm run lint:fix
 npm run test:relief      # tsx cli/voronoi-relief.spec.ts
 npm run test:gh-parity   # tsx cli/grasshopper-parity.spec.ts
+npm run test:drape       # tsx cli/drape.spec.ts (Blend drape, ~5 s)
+npm run test:drape-physics  # tsx cli/drape-physics.spec.ts (vs reference cloth sim, minutes)
 npm run stl-to-sbp -- <input.stl> [--dry-run]
 npm run deploy           # build, then wrangler pages deploy (needs CF env vars)
 ```
@@ -96,6 +98,11 @@ drives a physical machine, so these are not style preferences.
   watertight is on.
 - ShopBot Desktop MAX ATC limits are hardcoded: 36 x 24 inch bed, 6 inch Z. Do not raise
   them without checking the machine.
+- Grid row `j` is world `Y = j / (rows - 1) * meshY` in every export (STL/OBJ/3DM vertices, SBP
+  toolpaths), and Y grows away from the machine front. Depth-map sampling therefore puts the
+  image's bottom row at `j = 0` (`sampleLumaGrid` in `src/geometry.ts`), and the heightmap PNG
+  export writes rows top-down. Before 2026-10-19 the image's top row went to `Y = 0`, which
+  carved a mirror image. `npm run test:drape` T13b guards it.
 
 `src/sbp/` is shared by the browser worker and the Node CLI. Keep it dependency-free of Node
 built-ins or it breaks the web path at runtime rather than at build time.
@@ -109,8 +116,13 @@ before you claim a change is good:
 npm run lint && npm run typecheck && npm run typecheck:cli
 npm run test:relief
 npm run test:gh-parity
+npm run test:drape
 npm run stl-to-sbp -- <input.stl> --dry-run
 ```
+
+`.github/workflows/ci.yml` runs lint, both typechecks, `test:relief`, `test:gh-parity`,
+`test:drape` and the build on every pull request. `test:drape-physics` takes minutes and is
+not in CI: run it by hand after any change to `src/drape.ts` and paste its numbers in the PR.
 
 Visual and interaction items (view modes, orbit and pinch, responsive under 900px, URL state
 round-trip, depth map upload) are not covered by any suite. If a change touches them, verify
@@ -121,9 +133,12 @@ the voronoi-relief work in May 2026 passed all 22 assertions while being a visib
 
 - Branch from `main`. Do not commit directly to `main`: CI deploys `dist/` to Cloudflare Pages
   on every push to `main`, so a direct push is a production deploy.
-- **Known broken as of 2026-08-05:** the Cloudflare Pages deploy has failed three times,
-  wrangler exiting 1, most recently 2026-08-05. Do not read a green local build as a
-  successful deploy. Check the run.
+- The Cloudflare Pages deploy failed repeatedly in August 2026 (last failure 2026-08-28) and has
+  succeeded on every `main` push since 2026-10-03. A green local build is still not a deploy:
+  check the run with `gh run list --workflow=deploy.yml --limit 5`.
+- Preview a branch on the real CDN without touching production:
+  `npm run build && npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=<branch>`
+  (credentials from `~/.zshenv`). Wrangler prints the preview URL.
 - Review the diff on both surfaces before committing: the browser path and the SBP/CLI path.
 - Never commit `.env`, screenshots, or temp files. `verification/` holds intentional
   screenshots; new ones do not belong there by default.

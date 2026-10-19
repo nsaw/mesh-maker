@@ -14,6 +14,8 @@
     "stl-to-sbp": "tsx cli/stl-to-sbp.ts",
     "test:relief": "tsx cli/voronoi-relief.spec.ts",
     "test:gh-parity": "tsx cli/grasshopper-parity.spec.ts",
+    "test:drape": "tsx cli/drape.spec.ts",
+    "test:drape-physics": "tsx cli/drape-physics.spec.ts",
     "preview": "vite preview",
     "prepare": "husky",
     "postbuild": "node scripts/check-asset-size.mjs dist"
