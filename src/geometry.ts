@@ -16,8 +16,14 @@ export function cellTriangleOffsets(
     : [[0, 1, cols], [1, cols + 1, cols]];
 }
 
-/** Rec. 709 luma weights. Depth maps are grayscale (R = G = B, so luma equals the old red-channel
- *  read bit for bit); color photos keep the detail that a red-only read discarded. */
+/** Minimum material under every surface vertex, and minimum stock, when the export is
+ *  watertight. The exporter builds the bottom face at z=0, so a top vertex at 0 collapses the side
+ *  walls into degenerate triangles. One constant shared by mesh.ts and export.ts: two copies of
+ *  this floor would let the viewport and the exported geometry disagree. */
+export const MIN_WATERTIGHT_THICKNESS = 0.01;
+
+/** Rec. 709 luma weights. Depth maps are grayscale (R = G = B, so luma matches the old red-channel
+ *  read to within float rounding, ~1e-16); color photos keep the detail a red-only read discarded. */
 const LUMA_R = 0.2126;
 const LUMA_G = 0.7152;
 const LUMA_B = 0.0722;
@@ -60,13 +66,18 @@ export function sampleLumaGrid(
   return grid;
 }
 
-/** Min-max normalize a grid to [0, 1] in place. A flat grid maps to 0. */
+// Ranges below this are rounding, not image contrast: luma of a constant gray image varies by
+// ~2e-16 across bilinear samples, and stretching that to [0, 1] carved full relief from a flat
+// input. One 8-bit level is 1/255 = 3.9e-3, so 1e-9 cannot swallow real contrast.
+const FLAT_RANGE_EPS = 1e-9;
+
+/** Min-max normalize a grid to [0, 1] in place. A flat grid (range below FLAT_RANGE_EPS) maps to 0. */
 export function normalizeGrid(grid: number[][], rows: number, cols: number): void {
   const [mn, mx] = gridMinMax(grid, rows, cols);
   const range = mx - mn;
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++)
-      grid[j][i] = range > 0 ? (grid[j][i] - mn) / range : 0;
+      grid[j][i] = range > FLAT_RANGE_EPS ? (grid[j][i] - mn) / range : 0;
 }
 
 /** Flatten everything at or below `cutoff` (normalized height) to 0 and stretch the rest back to

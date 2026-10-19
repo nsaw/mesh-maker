@@ -557,4 +557,18 @@ export function updateDimsOverlay(): void {
     spanWarn.textContent = 'EXCEEDS 6" Z';
     el.appendChild(spanWarn);
   }
+  // Blend: say when the requested veil did not fit the cut, instead of silently reshaping it.
+  if (STATE.mode === 'blend' && STATE.drapeOverflowIn > 0.001) {
+    const spanWarn = document.createElement('span');
+    spanWarn.className = 'cnc-warn';
+    spanWarn.style.marginLeft = '8px';
+    spanWarn.textContent = `FABRIC ${STATE.drapeOverflowIn.toFixed(3)}" THICKER THAN CUT`;
+    el.appendChild(spanWarn);
+  } else if (STATE.mode === 'blend' && STATE.drapeFoldScaleUsed < 0.99) {
+    const spanWarn = document.createElement('span');
+    spanWarn.className = 'cnc-warn';
+    spanWarn.style.marginLeft = '8px';
+    spanWarn.textContent = `FOLDS AT ${Math.round(STATE.drapeFoldScaleUsed * 100)}% TO FIT CUT`;
+    el.appendChild(spanWarn);
+  }
 }

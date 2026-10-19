@@ -475,6 +475,7 @@ function buildDepthMapSection(): HTMLElement {
     depthmapOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)),
     // Drape model: membrane over the form + gravity-directed folds (src/drape.ts). 'blend' is
     // fabric tension: 0 hugs every support, 1 bridges between them.
+    blendOnly(blendPreviewNote()),
     blendOnly(slider('blend', 'Fabric Tension (0=hug, 1=bridge)', 0, 1, 0.01)),
     blendOnly(slider('drapeThickness', 'Fabric Thickness (in)', 0, 0.2, 0.005)),
     blendOnly(slider('drapeConform', 'Detail Transmission (0=felt, 1=silk)', 0, 1, 0.05)),
@@ -484,6 +485,17 @@ function buildDepthMapSection(): HTMLElement {
     blendOnly(slider('drapeFoldAmp', 'Fold Depth (in)', 0, 0.25, 0.005)),
     blendOnly(slider('drapeFoldLength', 'Fold Length (x spacing)', 1, 12, 0.5)),
   ], false, 'depth-map-only');
+}
+
+/** Blend's folds are procedural (direction-field noise), not a cloth simulation; say so where the
+ *  controls are, so the preview is not mistaken for the final drape. */
+function blendPreviewNote(): HTMLDivElement {
+  const note = createElement('div');
+  note.style.margin = '4px 0 8px';
+  note.style.fontSize = '10px';
+  note.style.color = 'var(--text3)';
+  note.textContent = 'Experimental preview: folds are procedural, not a cloth simulation.';
+  return note;
 }
 
 function buildViewControlsSection(): HTMLElement {

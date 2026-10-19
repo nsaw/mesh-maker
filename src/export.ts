@@ -1,12 +1,12 @@
 import { STATE } from './state';
 import type { Vertex3D, Triangle, MeshData } from './types';
 import { showToast } from './toast';
-import { preferZ00Z11Diagonal, cellTriangleOffsets, emitWatertightTriangles, gridMinMax } from './geometry';
+import { MIN_WATERTIGHT_THICKNESS, preferZ00Z11Diagonal, cellTriangleOffsets, emitWatertightTriangles, gridMinMax } from './geometry';
 import { doSBPExport } from './sbp-export';
 
 export function getFullMeshData(): MeshData | null {
   const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
-  const baseThickness = watertight ? Math.max(STATE.baseThickness, 0.01) : STATE.baseThickness;
+  const baseThickness = watertight ? Math.max(STATE.baseThickness, MIN_WATERTIGHT_THICKNESS) : STATE.baseThickness;
   if (!vertices || cols < 2 || rows < 2) return null;
 
   const top: Vertex3D[][] = [];

@@ -1,5 +1,5 @@
 import type { SbpStats } from './sbp/types';
-import { CNC_PRESETS } from './noise/presets';
+import { CNC_PRESETS, PROFILES } from './noise/presets';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 export interface MeshState {
@@ -143,6 +143,12 @@ export interface MeshState {
   activeProfile: string | null;
   // Internal
   vertices: number[][] | null;
+  /** Blend: how far the fabric thickness alone exceeds the cut, inches (infeasible settings; the
+   *  dims overlay warns). Not serialized. */
+  drapeOverflowIn: number;
+  /** Blend: fraction of the requested fold depth that fit inside the cut (dims overlay warns
+   *  below 1). Not serialized. */
+  drapeFoldScaleUsed: number;
   cols: number;
   rows: number;
   genTime: number;
@@ -226,7 +232,8 @@ export const DEFAULTS: MeshState = {
   baseThickness: 0.75,
   depthMap: null,
   depthMapName: '',
-  blend: 0.4,
+  // 0.8 = membrane curvature 0.48/in, the value that matched the reference cloth best (P3).
+  blend: 0.8,
   dmHeightScale: 1.0,
   dmOffset: -0.08,
   dmSmoothing: 7,
@@ -254,6 +261,8 @@ export const DEFAULTS: MeshState = {
   activePreset: null,
   activeProfile: null,
   vertices: null,
+  drapeOverflowIn: 0,
+  drapeFoldScaleUsed: 1,
   cols: 400,
   rows: 267,
   genTime: 0,
@@ -270,6 +279,34 @@ export function setDemoDepthMap(img: HTMLImageElement | null): void {
 }
 
 // URL state serialization — only serialize keys that define a mesh config
+/** Allowed values for every string-enum key a share link can carry. Typed as Record<Union, true>
+ *  so adding or removing a union member without updating this table fails the typecheck. */
+const ENUM_VALUES: {
+  mode: Record<MeshState['mode'], true>;
+  noiseType: Record<MeshState['noiseType'], true>;
+  viewMode: Record<MeshState['viewMode'], true>;
+  viewMaterial: Record<MeshState['viewMaterial'], true>;
+  reliefPolarity: Record<ReliefPolarity, true>;
+  reliefProfile: Record<ReliefProfile, true>;
+  reliefAttractorMode: Record<ReliefAttractorMode, true>;
+  reliefBaseMode: Record<ReliefBaseMode, true>;
+  reliefRadialMode: Record<ReliefRadialMode, true>;
+} = {
+  mode: { noise: true, depthmap: true, blend: true },
+  noiseType: {
+    simplex: true, perlin: true, ridged: true, fbm: true, voronoi: true, value: true, opensimplex2: true,
+    worley: true, billow: true, turbulence: true, hybrid: true, hetero: true, domainwarp: true,
+    gabor: true, wavelet: true, 'voronoi-relief': true,
+  },
+  viewMode: { solid: true, wireframe: true, both: true, points: true },
+  viewMaterial: { elevation: true, neutral: true },
+  reliefPolarity: { pockets: true, domes: true },
+  reliefProfile: { hemisphere: true, cosine: true, parabolic: true },
+  reliefAttractorMode: { none: true, vertical: true, horizontal: true, radial: true, point: true },
+  reliefBaseMode: { flat: true, wave: true },
+  reliefRadialMode: { rays: true, rings: true, spiral: true },
+};
+
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
@@ -391,9 +428,12 @@ const LEGACY_V11_DEFAULTS: Partial<MeshState> = {};
 // v12→v13 replaced the Blend drape model (height-phased contour folds over a dilated envelope) with a
 // membrane + gravity-directed folds. The retired keys drapeFoldScale / drapeFoldDepth / drapeFoldWarp
 // have no equivalent and are dropped (they are no longer in URL_SERIALIZABLE_KEYS, so the copy loop
-// ignores them). blend (tension), drapeThickness and drapeConform carry over by value. Links that
-// never set them get the current defaults, same as every other unset key.
-const LEGACY_V12_DEFAULTS: Partial<MeshState> = {};
+// ignores them). blend (tension), drapeThickness and drapeConform carry over by value. The blend
+// DEFAULT moved 0.2 → 0.8, and serializeConfig omits keys equal to the default, so a v12 link saved
+// at the old default carries no blend key: record 0.2 here so it keeps its tension.
+const LEGACY_V12_DEFAULTS: Partial<MeshState> = {
+  blend: 0.2,
+};
 export function serializeConfig(): string {
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
@@ -707,16 +747,35 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
     // back to DEFAULTS instead of feeding a junk string into the sampler/UI.
-    const clampEnum = (key: keyof MeshState, allowed: readonly string[]): void => {
-      if (!allowed.includes(String(result[key]))) {
+    // String enums. The value must BE a string in the allowed set: a String() coercion let
+    // ["domes"] through (it stringifies to "domes") and then failed every strict === downstream.
+    // An unknown value would also leave the UI unreachable (an unknown mode hides every sidebar
+    // section; an unknown viewMode hides every surface), so anything else falls back to default.
+    // Membership only reads the keys of `allowed`, so any record works (presets map names to configs).
+    const clampEnum = (key: keyof MeshState, allowed: Readonly<Record<string, unknown>>, nullable = false): void => {
+      if (!(key in result)) return;
+      const v = result[key];
+      if (nullable && v === null) return;
+      if (typeof v !== 'string' || !Object.prototype.hasOwnProperty.call(allowed, v)) {
         delete (result as Record<string, unknown>)[key];
       }
     };
-    if ('reliefPolarity' in result) clampEnum('reliefPolarity', ['domes', 'pockets']);
-    if ('reliefProfile' in result) clampEnum('reliefProfile', ['hemisphere', 'cosine', 'parabolic']);
-    if ('reliefAttractorMode' in result) clampEnum('reliefAttractorMode', ['none', 'vertical', 'horizontal', 'radial', 'point']);
-    if ('reliefBaseMode' in result) clampEnum('reliefBaseMode', ['flat', 'wave']);
-    if ('reliefRadialMode' in result) clampEnum('reliefRadialMode', ['rays', 'rings', 'spiral']);
+    clampEnum('mode', ENUM_VALUES.mode);
+    clampEnum('noiseType', ENUM_VALUES.noiseType);
+    clampEnum('viewMode', ENUM_VALUES.viewMode);
+    clampEnum('viewMaterial', ENUM_VALUES.viewMaterial);
+    clampEnum('reliefPolarity', ENUM_VALUES.reliefPolarity);
+    clampEnum('reliefProfile', ENUM_VALUES.reliefProfile);
+    clampEnum('reliefAttractorMode', ENUM_VALUES.reliefAttractorMode);
+    clampEnum('reliefBaseMode', ENUM_VALUES.reliefBaseMode);
+    clampEnum('reliefRadialMode', ENUM_VALUES.reliefRadialMode);
+    clampEnum('activePreset', CNC_PRESETS, true);
+    clampEnum('activeProfile', PROFILES, true);
+    // Booleans must be booleans: "false" is a truthy string, and an array or number would flow
+    // into watertight's floor logic the same way. watertight is the only boolean link key.
+    if ('watertight' in result && typeof result.watertight !== 'boolean') {
+      delete (result as Record<string, unknown>).watertight;
+    }
     // distortion drives the relief space-warp amplitude AND the radius-field padding —
     // an unbounded payload value explodes the padded coarse-grid allocation.
     if ('distortion' in result) clampField('distortion', 0, 2);
@@ -771,15 +830,6 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('drapeGravityAngle' in result) clampField('drapeGravityAngle', -180, 180);
     if ('drapeThickness' in result) clampField('drapeThickness', 0, 0.2);
     if ('drapeConform' in result) clampField('drapeConform', 0, 1);
-    // String enums: an unknown value would leave the UI in a state no control can reach (an
-    // unknown mode hides every sidebar section; an unknown viewMode hides every surface), so
-    // anything outside the literal set falls back to the default.
-    const restrictEnum = (key: keyof MeshState, allowed: readonly string[]): void => {
-      if (key in result && !allowed.includes(String(result[key]))) delete (result as Record<string, unknown>)[key];
-    };
-    restrictEnum('mode', ['noise', 'depthmap', 'blend']);
-    restrictEnum('viewMode', ['solid', 'wireframe', 'both', 'points']);
-    restrictEnum('viewMaterial', ['elevation', 'neutral']);
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
     // they cannot over-amplify the bowl normalization or angular irregularity.

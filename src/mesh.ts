@@ -5,12 +5,8 @@ import type { VoronoiReliefGen } from './noise/voronoi-relief';
 import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
 import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
-import { applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, weightedSmooth } from './geometry';
+import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, weightedSmooth } from './geometry';
 import { composeDrape, drapeToStockHeights } from './drape';
-
-/** Minimum material under every surface vertex when the export is watertight. The exporter puts
- *  the bottom face at z=0, so a top vertex at 0 collapses the side walls into degenerate triangles. */
-const MIN_WATERTIGHT_THICKNESS = 0.01;
 
 function surfaceFloor(): number {
   return STATE.watertight ? MIN_WATERTIGHT_THICKNESS : 0;
@@ -149,6 +145,8 @@ export function generateDepthMapMesh(): void {
           drapeFoldSpacing, drapeFoldAmp, drapeFoldLength, drapeHang, drapeGravityAngle,
           drapeThickness, drapeConform, seed, meshX, meshY, resolution, baseThickness } = STATE;
 
+  STATE.drapeOverflowIn = 0;
+  STATE.drapeFoldScaleUsed = 1;
   if (!depthMap) { STATE.vertices = null; return; }
 
   const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
@@ -177,7 +175,7 @@ export function generateDepthMapMesh(): void {
     const form01 = new Float64Array(rows * cols);
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++) form01[j * cols + i] = sampled[j][i];
-    const { surface } = composeDrape(form01, {
+    const { surface, fitOverflowIn, foldScaleUsed } = composeDrape(form01, {
       cols, rows,
       dxIn: meshX / (cols - 1),
       formDepthIn: cutDepth,
@@ -190,20 +188,22 @@ export function generateDepthMapMesh(): void {
       hang: drapeHang,
       gravityAngleDeg: drapeGravityAngle,
       seed,
-      // Make room for the veil inside the cut instead of shifting the result down: a shift
-      // clipped low background relief (the demo's landscape) against the floor.
+      // Fit the veil inside the cut: the figure is laid at cut - thickness - fold headroom (never
+      // below 0.75 x cut - thickness) and folds shrink if they would still rise past the top. A
+      // downward shift instead clipped low background relief.
       fitDepthIn: cutDepth,
     });
     STATE.vertices = drapeToStockHeights(surface, rows, cols, bt, cutDepth, dmOffset, floorZ);
+    STATE.drapeOverflowIn = fitOverflowIn;
+    STATE.drapeFoldScaleUsed = foldScaleUsed;
   } else {
     // Pure depth map path -- no noise
     const finalVerts = dmSmoothing > 0 ? weightedSmooth(sampled, rows, cols, dmSmoothing, 0.6) : sampled;
-
-    const [nMin, nMax] = gridMinMax(finalVerts, rows, cols);
-    const nRange = nMax - nMin || 1;
+    // Same flat-range rule as the first normalization (geometry.ts), not a second copy of it.
+    normalizeGrid(finalVerts, rows, cols);
     for (let j = 0; j < rows; j++)
       for (let i = 0; i < cols; i++) {
-        const t = (finalVerts[j][i] - nMin) / nRange;
+        const t = finalVerts[j][i];
         const raw = (bt - cutDepth) + t * cutDepth + dmOffset;
         finalVerts[j][i] = Math.max(floorZ, Math.min(bt, raw));
       }
