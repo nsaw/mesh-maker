@@ -1,4 +1,5 @@
 import { STATE } from './state';
+import { reliefPreviewGrid } from './relief-master';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
 import { sampleReliefParamsFromState } from './noise/voronoi-relief';
 import type { VoronoiReliefGen } from './noise/voronoi-relief';
@@ -147,6 +148,7 @@ export function generateDepthMapMesh(): void {
 
   STATE.drapeOverflowIn = 0;
   STATE.drapeFoldScaleUsed = 1;
+  if (STATE.mode === 'depthmap' && STATE.reliefMaster) { generateReliefMasterPreview(); return; }
   if (!depthMap) { STATE.vertices = null; return; }
 
   const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
@@ -211,6 +213,22 @@ export function generateDepthMapMesh(): void {
     STATE.vertices = finalVerts;
   }
 
+  STATE.genTime = performance.now() - t0;
+}
+
+/** Relief master: the size, stock and heights come from the file. STATE.vertices is only a preview
+ *  resample at the Grid Resolution (capped at the master's own); exports read the master itself
+ *  (export.ts getExportSurface), so preview density never changes exported geometry. */
+function generateReliefMasterPreview(): void {
+  const t0 = performance.now();
+  const m = STATE.reliefMaster!;
+  STATE.meshX = m.widthIn;
+  STATE.meshY = m.heightIn;
+  STATE.baseThickness = m.stockIn;
+  const cols = Math.max(2, Math.min(STATE.resolution, m.cols));
+  const rows = Math.max(2, Math.min(m.rows, Math.round((cols - 1) * (m.rows - 1) / (m.cols - 1)) + 1));
+  STATE.cols = cols; STATE.rows = rows;
+  STATE.vertices = reliefPreviewGrid(m, cols, rows);
   STATE.genTime = performance.now() - t0;
 }
 

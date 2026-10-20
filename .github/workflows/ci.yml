@@ -33,4 +33,6 @@ jobs:
       - run: npm run test:relief
       - run: npm run test:gh-parity
       - run: npm run test:drape
+      - run: npm run test:cut
+      - run: npm run test:relief-master
       - run: npm run build
