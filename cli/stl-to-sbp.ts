@@ -1,10 +1,11 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, basename, dirname } from 'path';
 import { parseSTLBinary } from '../src/sbp/stl-parser';
 import { meshToHeightmap } from '../src/sbp/heightmap';
 import { generateSBP } from '../src/sbp/generate';
 import { getDefaultConfig, getEmbeddedTools, findToolByName } from '../src/sbp/tools';
 import { readToolDatabase } from './vtdb-reader';
+import type { ToolDatabaseEntry } from './vtdb-reader';
 import { MATERIAL_PROFILE_VALUES } from '../src/sbp/types';
 import type { ToolDef, MaterialProfile, SbpConfig } from '../src/sbp/types';
 
@@ -38,14 +39,37 @@ Options:
   process.exit(1);
 }
 
+/** First library entry whose name contains `pattern` (case-insensitive), in stored order. A match on
+ *  an unsupported cutter is an error: moving on to the next match, or to the embedded table, would
+ *  emit a toolpath for a different cutter than the one in that ATC pocket. */
+function resolveTool(entries: ToolDatabaseEntry[] | null, tools: ToolDef[], pattern: string, role: string): ToolDef | undefined {
+  if (!entries) return findToolByName(tools, pattern);
+  const lower = pattern.toLowerCase();
+  const entry = entries.find(e => e.name.toLowerCase().includes(lower));
+  if (entry && !entry.tool) {
+    process.stderr.write(`${role} tool "${pattern}" matches "${entry.name}", an unsupported vtdb tool type ${entry.vtdbType}\n`);
+    process.exit(1);
+  }
+  return entry?.tool ?? undefined;
+}
+
 function selectDefaultTool(
+  entries: ToolDatabaseEntry[] | null,
   tools: ToolDef[],
   fallback: ToolDef,
   patterns: string[],
+  role: string,
 ): ToolDef {
   for (const pattern of [fallback.name, ...patterns]) {
-    const match = findToolByName(tools, pattern);
+    const match = resolveTool(entries, tools, pattern, role);
     if (match) return match;
+  }
+  // A loaded library without the default tool: the embedded default would be cut at a pocket the
+  // library says holds something else. Make the user name the tool instead.
+  if (entries) {
+    process.stderr.write(`No ${role.toLowerCase()} tool matching "${fallback.name}" in this library; pass --${role.toLowerCase()}-tool <pattern>\n`);
+    process.stderr.write(`Available: ${tools.map(t => t.name).join(', ')}\n`);
+    process.exit(1);
   }
   return fallback;
 }
@@ -177,33 +201,45 @@ function main(): void {
   );
 
   // Load tools: vtdb or embedded
-  let tools: ToolDef[];
-  let loadedToolDatabase = false;
+  let entries: ToolDatabaseEntry[] | null = null;
   if (opts.vtdbPath) {
     process.stderr.write(`Reading vtdb: ${opts.vtdbPath}\n`);
-    tools = readToolDatabase(resolve(opts.vtdbPath));
-    loadedToolDatabase = true;
-    process.stderr.write(`  ${tools.length} tools loaded\n`);
+    entries = readToolDatabase(resolve(opts.vtdbPath));
   } else {
     // Try default vtdb in sourceTruth
     const scriptDir = dirname(resolve(process.argv[1]));
     const defaultVtdb = resolve(scriptDir, '../sourceTruth/stl-to-sbp/tool-libraries/tooldb-general.vtdb');
-    try {
-      tools = readToolDatabase(defaultVtdb);
-      loadedToolDatabase = true;
-      process.stderr.write(`Using default vtdb: ${defaultVtdb} (${tools.length} tools)\n`);
-    } catch {
+    // Fall back to the embedded tools when the default library is absent, or when the SQLite native
+    // binding cannot load on this machine. A library that is present but unreadable is an error, not
+    // a silent switch of tool tables.
+    if (!existsSync(defaultVtdb)) {
       process.stderr.write('No vtdb found, using embedded tool data\n');
-      tools = getEmbeddedTools(opts.materialProfile);
+    } else {
+      try {
+        entries = readToolDatabase(defaultVtdb);
+        process.stderr.write(`Using default vtdb: ${defaultVtdb}\n`);
+      } catch (e) {
+        const err = e as { code?: string; message?: string };
+        const bindingFailure = err.code === 'ERR_DLOPEN_FAILED' || /bindings|NODE_MODULE_VERSION|better_sqlite3\.node/.test(err.message ?? '');
+        if (!bindingFailure) throw e;
+        process.stderr.write(`SQLite binding unavailable (${err.message ?? ''}); using embedded tool data\n`);
+      }
     }
   }
+  const tools: ToolDef[] = entries ? entries.flatMap(e => (e.tool ? [e.tool] : [])) : getEmbeddedTools(opts.materialProfile);
+  if (entries) process.stderr.write(`  ${tools.length} tools loaded\n`);
+  const loadedToolDatabase = entries !== null;
 
   // Resolve roughing tool
   const config: SbpConfig = getDefaultConfig(opts.materialProfile);
+  // Library defaults only for the passes that run and only where no tool was named explicitly.
   if (loadedToolDatabase) {
-    config.roughingTool = selectDefaultTool(tools, config.roughingTool, ['Chipbreaker']);
-    config.finishingTool = selectDefaultTool(tools, config.finishingTool, ['R1/16-S1/4']);
+    if (!opts.finishingOnly && !opts.roughingPattern)
+      config.roughingTool = selectDefaultTool(entries, tools, config.roughingTool, ['Chipbreaker'], 'Roughing');
+    if (!opts.roughingOnly && !opts.finishingPattern)
+      config.finishingTool = selectDefaultTool(entries, tools, config.finishingTool, ['R1/16-S1/4'], 'Finishing');
   }
+
   config.offsetX = opts.offsetX;
   config.offsetY = opts.offsetY;
   config.safeZ = opts.safeZ;
@@ -214,7 +250,7 @@ function main(): void {
   config.finishingEnabled = !opts.roughingOnly;
 
   if (opts.roughingPattern) {
-    const found = findToolByName(tools, opts.roughingPattern);
+    const found = resolveTool(entries, tools, opts.roughingPattern, 'Roughing');
     if (!found) {
       process.stderr.write(`Roughing tool not found: "${opts.roughingPattern}"\n`);
       process.stderr.write(`Available: ${tools.map(t => t.name).join(', ')}\n`);
@@ -227,7 +263,7 @@ function main(): void {
   }
 
   if (opts.finishingPattern) {
-    const found = findToolByName(tools, opts.finishingPattern);
+    const found = resolveTool(entries, tools, opts.finishingPattern, 'Finishing');
     if (!found) {
       process.stderr.write(`Finishing tool not found: "${opts.finishingPattern}"\n`);
       process.stderr.write(`Available: ${tools.map(t => t.name).join(', ')}\n`);

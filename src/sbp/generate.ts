@@ -81,9 +81,9 @@ export function generateSBP(heightmap: Heightmap, config: SbpConfig): GenerateRe
   // safe Z that diagonal can run through the stock or the finished part.
   if (!(normConfig.homeZ >= normConfig.safeZ))
     throw new Error(`Home Z ${normConfig.homeZ.toFixed(3)} in must be at or above safe Z ${normConfig.safeZ.toFixed(3)} in`);
-  // A flat end mill cannot follow a 3D surface: its tip height jumps as its rim crosses a wall, which
-  // no sampled chord check converges on (1.1 thou under the tip on a wall at 37 deg). Finishing needs
-  // a cutter with a rounded or conical bottom.
+  // Policy, not safety: certified finishing keeps a flat end mill clear of the surface too, but its
+  // flat bottom terraces a 3D relief rather than finishing it, and its tip rises at the full facet
+  // slope at every wall, which drives the certificate to its densest sampling. Finish with a rounded or conical cutter.
   const ft = normConfig.finishingTool;
   if (normConfig.finishingEnabled && (ft.type === ToolType.EndMill || (ft.type === ToolType.Radiused && !(ft.tipRadius > 0))))
     throw new Error(`Finishing tool "${normConfig.finishingTool.name}" is a flat end mill; finish with a ball nose, tapered ball nose, V-bit or radiused cutter`);

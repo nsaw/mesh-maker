@@ -102,8 +102,9 @@ function computeRasterLines(
  * - Exit: retract to safeZ
  *
  * Points sampled at uniform 0.005" spacing along each raster line, each one dropped onto the target
- * surface (createDropCutter), with extra points where the straight move between two would dip
- * below the envelope by more than CHORD_TOLERANCE. No collinear reduction.
+ * surface (createDropCutter). Each straight move between two points is certified against the exact
+ * tip (see emit below) or split, with a provably clear lift-and-cross at the deepest split. No
+ * collinear reduction.
  */
 export function generateFinishing(
   target: Heightmap,

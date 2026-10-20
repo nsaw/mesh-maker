@@ -8,14 +8,15 @@ const MM_S_TO_IPS = 1.0 / 25.4;
 /**
  * Map vtdb tool_type integers to our ToolType enum.
  */
-function mapToolType(vtdbType: number): ToolType {
+function mapToolType(vtdbType: number): ToolType | null {
   switch (vtdbType) {
     case 0: return ToolType.BallNose;
     case 1: return ToolType.EndMill;
     case 2: return ToolType.Radiused;
     case 3: return ToolType.VBit;
     case 5: return ToolType.TaperedBallNose;
-    default: return ToolType.EndMill;
+    // Any other shape (drills, form tools) is not modelled; never cut it as a flat end mill.
+    default: return null;
   }
 }
 
@@ -42,7 +43,11 @@ interface VtdbRow {
  *
  * @param vtdbPath  Path to .vtdb SQLite file
  */
-export function readToolDatabase(vtdbPath: string): ToolDef[] {
+/** One library entry in its stored order. `tool` is null for a cutter shape compensation does not
+ *  model; the entry is kept so a name that matches it is reported, not resolved to the next match. */
+export interface ToolDatabaseEntry { name: string; tool: ToolDef | null; vtdbType: number }
+
+export function readToolDatabase(vtdbPath: string): ToolDatabaseEntry[] {
   const db = new Database(vtdbPath, { readonly: true });
 
   const rows = db.prepare(`
@@ -73,7 +78,15 @@ export function readToolDatabase(vtdbPath: string): ToolDef[] {
 
   db.close();
 
+  // Tools of a shape compensation does not model come back with tool = null (named on stderr): the
+  // rest of the library still loads, and the CLI refuses any name that resolves to one of them.
   return rows.map(row => {
+    const type = mapToolType(row.tool_type);
+    if (type === null) {
+      const label = row.tree_name || row.name_format;
+      process.stderr.write(`  not loading "${label}": unsupported vtdb tool type ${row.tool_type}\n`);
+      return { name: label, tool: null, vtdbType: row.tool_type };
+    }
     // Extract ATC slot from group name: "TOOL N - ..."
     const slotMatch = row.group_name.match(/^TOOL\s+(\d+)/i);
     if (!slotMatch) {
@@ -99,15 +112,15 @@ export function readToolDatabase(vtdbPath: string): ToolDef[] {
       stepover: row.stepover,
     };
 
-    return {
+    return { name, vtdbType: row.tool_type, tool: {
       name,
       atcSlot,
-      type: mapToolType(row.tool_type),
+      type,
       diameter: row.diameter,
       tipRadius: row.tip_radius ?? 0,
       halfAngle: row.included_angle ? (row.included_angle / 2) * DEG_TO_RAD : 0,
       flutes: row.num_flutes ?? 2,
       cutting,
-    };
+    } };
   });
 }

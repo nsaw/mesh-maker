@@ -11,7 +11,7 @@ This module holds the standalone command-line entrypoints and the parity/regress
 | Entrypoint | Input | Output | Verifies |
 |---|---|---|---|
 | `stl-to-sbp.sh` → `cli/stl-to-sbp.ts` | `.stl` mesh + CLI flags | `.sbp` toolpath file | End-to-end mesh→heightmap→toolpath generation |
-| `cli/vtdb-reader.ts` | Vectric `.vtdb` SQLite file | `ToolDef[]` | Tool metadata extraction (used by stl-to-sbp.ts) |
+| `cli/vtdb-reader.ts` | Vectric `.vtdb` SQLite file | `ToolDatabaseEntry[]` (`{ name, tool: ToolDef \| null, vtdbType }`, stored order) | Tool metadata extraction (used by stl-to-sbp.ts) |
 | `cli/grasshopper-parity.spec.ts` | `grasshopper/builder/meshcraft_builder.py` + `grasshopper/components/*.py` | pass/fail + diff context | Embedded GhPython literals match canonical component files |
 | `cli/voronoi-relief.spec.ts` | `src/noise/voronoi-relief.ts` | pass/fail + diff context | numbered assertion blocks (18+, grown alongside the sampler's v16-v23 iterations) on relief sampler behavior |
 | `cli/drape.spec.ts` (`npm run test:drape`) | `src/drape.ts`, `src/geometry.ts` depth-map helpers, `src/state.ts` share links, the SBP generator | pass/fail + measured values | T1-T17 blocks: no peak inflation, exact thickness clearance at every conform, stock fit, fold orientation/spacing/skew, luma + orientation + flat-image sampling, v12/v13 links and enum guards, machinability, SBP integration, 400x600 timing |
@@ -23,12 +23,12 @@ This module holds the standalone command-line entrypoints and the parity/regress
 
 1. Parses CLI flags (`parseArgs`) covering output path, tool database path/patterns/ATC overrides, heightmap resolution, material profile and thickness, workpiece offsets, safe/home Z, stock allowance, finish angle, and roughing/finishing-only toggles. Validates numeric args are finite and rejects `--roughing-only` combined with `--finishing-only`.
 2. Reads the input STL with `readFileSync` and parses it via `parseSTLBinary` (`src/sbp/stl-parser.ts`), reporting triangle count and bounding box to stderr.
-3. Loads tool definitions: if `--vtdb` is given it calls `readToolDatabase`; otherwise it tries the default `sourceTruth/stl-to-sbp/tool-libraries/tooldb-general.vtdb` relative to the script, falling back to `getEmbeddedTools` (`src/sbp/tools.ts`) if no vtdb is found.
-4. Builds an `SbpConfig` via `getDefaultConfig(materialProfile)`, resolving roughing/finishing tools by name pattern (`findToolByName`) with a "Chipbreaker"/"R1/16-S1/4" default match preference when a database was loaded (`selectDefaultTool`).
+3. Loads tool definitions: if `--vtdb` is given it calls `readToolDatabase`; otherwise it reads the default `sourceTruth/stl-to-sbp/tool-libraries/tooldb-general.vtdb` relative to the script, falling back to `getEmbeddedTools` (`src/sbp/tools.ts`) only when that file is absent or the SQLite native binding fails to load. A library that is present but unreadable is an error. With a library loaded, tools are resolved by `resolveTool` against every entry in stored order: a name whose first match is an unsupported cutter is refused, and a default tool the library lacks is an error asking for `--roughing-tool`/`--finishing-tool` (no embedded substitution). Defaults are resolved only for passes that run and only where no tool was named.
+4. Builds an `SbpConfig` via `getDefaultConfig(materialProfile)`, resolving roughing/finishing tools by name pattern (`resolveTool` with a library, `findToolByName` on the embedded table) with a "Chipbreaker"/"R1/16-S1/4" default match when a database was loaded (`selectDefaultTool`; a missing default is an error, see step 3).
 5. Rasterizes the mesh to a heightmap (`meshToHeightmap`, `src/sbp/heightmap.ts`) at the requested cells-per-inch resolution, then sets `config.materialX/Y/Z` from the heightmap dimensions and STL bounds (or the `--material-thickness` override).
 6. Calls `generateSBP(heightmap, config)` (`src/sbp/generate.ts`) to produce the toolpath, prints a stats summary (grid size, Z-shift normalization, move counts per pass, output size/line count, elapsed time), and — unless `--dry-run` — writes the `.sbp` file.
 
-`cli/vtdb-reader.ts` opens the Vectric `.vtdb` SQLite database read-only via `better-sqlite3` and joins `tool_tree_entry`, `tool_geometry`, `tool_entity`, and `tool_cutting_data` to build one row per tool with cutting parameters. It extracts the ATC slot from the parent group's name (`TOOL N - ...` pattern via regex) and converts feed/plunge rates from mm/s to in/s only for the tools flagged `rate_units === 4`, per a documented quirk: the shipped ShopBot libraries store stepdown/stepover in inches even under metric rate_units, so those geometry fields pass through unconverted. Tool type integers are mapped to `ToolType` enum values (0=BallNose, 1=EndMill, 2=Radiused, 3=VBit, 5=TaperedBallNose, default=EndMill).
+`cli/vtdb-reader.ts` opens the Vectric `.vtdb` SQLite database read-only via `better-sqlite3` and joins `tool_tree_entry`, `tool_geometry`, `tool_entity`, and `tool_cutting_data` to build one row per tool with cutting parameters. It extracts the ATC slot from the parent group's name (`TOOL N - ...` pattern via regex) and converts feed/plunge rates from mm/s to in/s only for the tools flagged `rate_units === 4`, per a documented quirk: the shipped ShopBot libraries store stepdown/stepover in inches even under metric rate_units, so those geometry fields pass through unconverted. Tool type integers are mapped to `ToolType` enum values (0=BallNose, 1=EndMill, 2=Radiused, 3=VBit, 5=TaperedBallNose); an entry of any other type is kept with `tool: null` and a stderr note naming it, so it can never be selected or cut as an end mill.
 
 ## grasshopper-parity.spec.ts: embedded script drift guard
 
@@ -57,7 +57,7 @@ When these files or sections are changed, remember to consider these:
 - If `grasshopper/components/noise_gen.py` or `presets.py` changes, update the matching embedded literal (`NOISE_SCRIPT`/`PRESETS_SCRIPT`) in `grasshopper/builder/meshcraft_builder.py` and re-run `npm run test:gh-parity` — the spec does byte-level (whitespace-normalized) comparison, so even a comment change on one side without the other fails it.
 - If `src/noise/voronoi-relief.ts`'s `ReliefSampleParams` fields change (add/rename/remove), update `baseParams()` in `cli/voronoi-relief.spec.ts` — an omitted field silently defaults to `undefined` inside the sampler rather than failing the spec loudly.
 - If the vtdb schema assumptions in `cli/vtdb-reader.ts` (table names, `rate_units` metric flag, `TOOL N` group-name pattern) change in the source Vectric tool library format, `readToolDatabase` will throw or silently mis-map tools; verify against `sourceTruth/stl-to-sbp/tool-libraries/tooldb-general.vtdb`.
-- If `src/sbp/tools.ts`'s `ToolDef`/`ToolType` shape changes, both `cli/vtdb-reader.ts` (which constructs `ToolDef`) and `cli/stl-to-sbp.ts` (which consumes it via `findToolByName`/`getEmbeddedTools`) need matching updates.
+- If `src/sbp/tools.ts`'s `ToolDef`/`ToolType` shape changes, both `cli/vtdb-reader.ts` (which constructs `ToolDef`) and `cli/stl-to-sbp.ts` (which consumes it via `resolveTool`/`selectDefaultTool`, and `getEmbeddedTools` when no library loads) need matching updates.
 - If `src/sbp/generate.ts` output stats (`result.stats.*`) change shape, update the summary printout in `cli/stl-to-sbp.ts`'s `main()`.
 
 ## Important failure modes
@@ -76,7 +76,7 @@ When these files or sections are changed, remember to consider these:
 |---|---|
 | `stl-to-sbp.sh` | Shell wrapper resolving script dir and invoking `tsx cli/stl-to-sbp.ts` |
 | `cli/stl-to-sbp.ts` | Full CLI: arg parsing, STL parse, tool resolution, heightmap rasterization, SBP generation, summary output |
-| `cli/vtdb-reader.ts` | Reads Vectric `.vtdb` SQLite tool libraries into `ToolDef[]` |
+| `cli/vtdb-reader.ts` | Reads Vectric `.vtdb` SQLite tool libraries into `ToolDatabaseEntry[]` |
 | `cli/grasshopper-parity.spec.ts` | Asserts embedded GhPython literals in `meshcraft_builder.py` match canonical `grasshopper/components/*.py` |
 | `cli/voronoi-relief.spec.ts` | 18-block deterministic regression suite for `VoronoiReliefGen.sampleGrid` |
 | `tsconfig.cli.json` | Standalone strict TS config scoping `cli/` and `src/sbp` for independent typechecking |
