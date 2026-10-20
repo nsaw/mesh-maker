@@ -3,44 +3,39 @@
 import { parseSTLBinary } from './stl-parser';
 import { meshToHeightmap } from './heightmap';
 import { generateSBP } from './generate';
-import type { SbpConfig } from './types';
-import type { SbpStats } from './types';
+import type { Heightmap, SbpConfig, SbpStats } from './types';
 
-interface WorkerInput {
-  stlBuffer: ArrayBuffer;
-  config: SbpConfig;
-  resolution: number;
-}
+/** An uploaded STL (rasterized here) or a ready heightmap (the current surface or relief master). */
+export type SbpWorkerInput =
+  | { kind: 'stl'; stlBuffer: ArrayBuffer; config: SbpConfig; resolution: number }
+  | { kind: 'heightmap'; heightmap: Heightmap; config: SbpConfig };
 
-type WorkerOutput =
-  | { type: 'success'; sbpBytes: ArrayBuffer; stats: SbpStats; stlBuffer: ArrayBuffer }
-  | { type: 'error'; message: string; stlBuffer: ArrayBuffer };
+/** `stlBuffer` is handed back so the page can export the same upload again. */
+export type SbpWorkerOutput =
+  | { type: 'success'; sbpBytes: ArrayBuffer; stats: SbpStats; stlBuffer?: ArrayBuffer }
+  | { type: 'error'; message: string; stlBuffer?: ArrayBuffer };
 
-self.onmessage = (e: MessageEvent<WorkerInput>) => {
-  const { stlBuffer, config, resolution } = e.data;
+self.onmessage = (e: MessageEvent<SbpWorkerInput>) => {
+  const input = e.data;
+  const stlBuffer = input.kind === 'stl' ? input.stlBuffer : undefined;
+  const keep: ArrayBuffer[] = stlBuffer ? [stlBuffer] : [];
   try {
-    const { data, count, bounds } = parseSTLBinary(stlBuffer);
-    const heightmap = meshToHeightmap(data, count, bounds, resolution);
-    const effectiveConfig: SbpConfig = {
-      ...config,
-      materialX: heightmap.meshX,
-      materialY: heightmap.meshY,
-    };
-    const result = generateSBP(heightmap, effectiveConfig);
+    let heightmap: Heightmap;
+    let config: SbpConfig;
+    if (input.kind === 'stl') {
+      const { data, count, bounds } = parseSTLBinary(input.stlBuffer);
+      heightmap = meshToHeightmap(data, count, bounds, input.resolution);
+      config = { ...input.config, materialX: heightmap.meshX, materialY: heightmap.meshY };
+    } else {
+      heightmap = input.heightmap;
+      config = input.config;
+    }
+    const result = generateSBP(heightmap, config);
     const sbpBytes = new TextEncoder().encode(result.sbp);
-    const output: WorkerOutput = {
-      type: 'success',
-      sbpBytes: sbpBytes.buffer,
-      stats: result.stats,
-      stlBuffer,
-    };
-    self.postMessage(output, [sbpBytes.buffer, stlBuffer]);
+    const output: SbpWorkerOutput = { type: 'success', sbpBytes: sbpBytes.buffer, stats: result.stats, stlBuffer };
+    self.postMessage(output, [sbpBytes.buffer, ...keep]);
   } catch (err) {
-    const output: WorkerOutput = {
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-      stlBuffer,
-    };
-    self.postMessage(output, [stlBuffer]);
+    const output: SbpWorkerOutput = { type: 'error', message: err instanceof Error ? err.message : String(err), stlBuffer };
+    self.postMessage(output, keep);
   }
 };

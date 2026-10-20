@@ -1,39 +1,11 @@
 import type { Heightmap, SbpConfig, ToolpathSection, ToolpathMove } from './types';
+import { createDropCutter } from './compensate';
 
-/**
- * Bilinear interpolation of the heightmap at arbitrary (x, y) in mesh coordinates.
- */
-function bilinearInterp(
-  z: Float64Array,
-  rows: number,
-  cols: number,
-  cellSize: number,
-  x: number,
-  y: number,
-): number {
-  const col = x / cellSize;
-  const row = y / cellSize;
-
-  const c0 = Math.floor(col);
-  const r0 = Math.floor(row);
-  const c1 = Math.min(c0 + 1, cols - 1);
-  const r1 = Math.min(r0 + 1, rows - 1);
-  const c0c = Math.max(0, c0);
-  const r0c = Math.max(0, r0);
-
-  const fx = col - c0;
-  const fy = row - r0;
-
-  const z00 = z[r0c * cols + c0c];
-  const z10 = z[r0c * cols + c1];
-  const z01 = z[r1 * cols + c0c];
-  const z11 = z[r1 * cols + c1];
-
-  return z00 * (1 - fx) * (1 - fy)
-    + z10 * fx * (1 - fy)
-    + z01 * (1 - fx) * fy
-    + z11 * fx * fy;
-}
+/** Largest the straight move between two emitted points may sit below the exact tip height at its
+ *  quarter points before the move is split. The envelope bends sharply where the steep side of a tapered
+ *  ball nose touches fine detail, so uniform 0.005 in points alone gouged up to 0.007 in there. */
+const CHORD_TOLERANCE = 0.0001;
+const MAX_CHORD_SPLITS = 6;
 
 function pushUniquePoint(
   points: Array<{ x: number; y: number }>,
@@ -122,15 +94,17 @@ function computeRasterLines(
  *   At line ends, traverse boundary at materialZ to next line (no mid-path retracts)
  * - Exit: retract to safeZ
  *
- * Points sampled at uniform 0.005" spacing along each raster line.
- * No collinear reduction -- uniform point density for consistent surface finish.
+ * Points sampled at uniform 0.005" spacing along each raster line, each one dropped onto the target
+ * surface (createDropCutter), with extra points where the straight move between two would dip
+ * below the envelope by more than CHORD_TOLERANCE. No collinear reduction.
  */
 export function generateFinishing(
-  compensated: Heightmap,
+  target: Heightmap,
   config: SbpConfig,
 ): ToolpathSection {
-  const { z, rows, cols, cellSize, meshX, meshY } = compensated;
+  const { meshX, meshY } = target;
   const tool = config.finishingTool;
+  const drop = createDropCutter(target, tool);
   const stepover = tool.cutting.stepover;
   const { materialZ, safeZ, offsetX, offsetY, finishRasterAngle } = config;
 
@@ -146,7 +120,7 @@ export function generateFinishing(
   const firstLine = lines[0];
   const startX = offsetX + firstLine.x0;
   const startY = offsetY + firstLine.y0;
-  const startZ = bilinearInterp(z, rows, cols, cellSize, firstLine.x0, firstLine.y0);
+  const startZ = drop(firstLine.x0, firstLine.y0);
 
   moves.push({ type: 'rapid', x: startX, y: startY, z: safeZ });
   moves.push({ type: 'cut', x: startX, y: startY, z: startZ });
@@ -164,22 +138,39 @@ export function generateFinishing(
 
     const numPoints = Math.max(2, Math.ceil(lineLen / pointSpacing) + 1);
     const linePoints: { x: number; y: number; z: number }[] = [];
+    const at = (t: number): { x: number; y: number; z: number } => {
+      const lx = line.x0 + t * dx, ly = line.y0 + t * dy;
+      return { x: offsetX + lx, y: offsetY + ly, z: drop(lx, ly) };
+    };
+    // Emit [ta, tb). Split while the exact tip at any quarter point sits above the straight move:
+    // the envelope can dip below a chord away from its midpoint (a cliff edge measured 2.35 thou
+    // under the chord at t = 0.3 with the midpoint 3 thou clear). If the last allowed split still
+    // fails, hold the higher end across the short remaining step and drop at its end.
+    const emit = (ta: number, a: { x: number; y: number; z: number }, tb: number,
+      b: { x: number; y: number; z: number }, depth: number): void => {
+      const tm = (ta + tb) / 2, m = at(tm);
+      const over = (t: number, p: { z: number }): boolean => p.z > a.z + (b.z - a.z) * ((t - ta) / (tb - ta)) + CHORD_TOLERANCE;
+      const violated = over(tm, m) || over((ta + tm) / 2, at((ta + tm) / 2)) || over((tm + tb) / 2, at((tm + tb) / 2));
+      if (!violated) {
+        linePoints.push(a);
+      } else if (depth < MAX_CHORD_SPLITS) {
+        emit(ta, a, tm, m, depth + 1);
+        emit(tm, m, tb, b, depth + 1);
+      } else {
+        linePoints.push(a);
+        if (a.z >= b.z) linePoints.push({ x: b.x, y: b.y, z: a.z });
+        else linePoints.push({ x: a.x, y: a.y, z: b.z });
+      }
+    };
 
-    for (let p = 0; p < numPoints; p++) {
-      const t = forward
-        ? p / (numPoints - 1)
-        : 1 - p / (numPoints - 1);
-
-      const lx = line.x0 + t * dx;
-      const ly = line.y0 + t * dy;
-      const lz = bilinearInterp(z, rows, cols, cellSize, lx, ly);
-
-      linePoints.push({
-        x: offsetX + lx,
-        y: offsetY + ly,
-        z: lz,
-      });
+    let tPrev = forward ? 0 : 1, pPrev = at(tPrev);
+    for (let p = 1; p < numPoints; p++) {
+      const t = forward ? p / (numPoints - 1) : 1 - p / (numPoints - 1);
+      const pt = at(t);
+      emit(tPrev, pPrev, t, pt, 0);
+      tPrev = t; pPrev = pt;
     }
+    linePoints.push(pPrev);
 
     // If not the first line, traverse from previous line end to this line start at materialZ
     if (i > 0) {
