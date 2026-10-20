@@ -115,6 +115,7 @@ export function meshToHeightmap(
     originX: bounds.minX,
     originY: bounds.minY,
     cellSize,
+    cellSizeY: cellSize,
     meshX: width,
     meshY: height,
   };
@@ -145,6 +146,9 @@ export function stateToHeightmap(
     originX: 0,
     originY: 0,
     cellSize: meshX / (cols - 1),
+    // MeshCraft grids pick rows = round(cols x meshY / meshX), so the row spacing is generally not
+    // the column spacing. Using one for both misplaced the last row by up to a cell.
+    cellSizeY: meshY / (rows - 1),
     meshX,
     meshY,
   };

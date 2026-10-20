@@ -174,21 +174,3 @@ export interface NoiseGridParams {
   gen: NoiseGenerator;
   warpGen: NoiseGenerator | null;
 }
-
-export interface Vertex3D {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export type Triangle = [Vertex3D, Vertex3D, Vertex3D];
-
-export interface MeshData {
-  top: Vertex3D[][];
-  cols: number;
-  rows: number;
-  meshX: number;
-  meshY: number;
-  baseThickness: number;
-  watertight: boolean;
-}

@@ -1,13 +1,12 @@
 import { STATE } from './state';
 import { attachValueEdit } from './slider-utils';
-import { stateToHeightmap } from './sbp/heightmap';
-import { generateSBP } from './sbp/generate';
+import { getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
 import { updateExportControls } from './toolbar';
 import { showToast } from './toast';
 import type { MaterialProfile, SbpConfig, SbpStats } from './sbp/types';
-import type { GenerateResult } from './sbp/generate';
+import type { SbpWorkerInput, SbpWorkerOutput } from './sbp/worker';
 
 /** Persistent SBP config -- survives sidebar rebuilds */
 interface SbpState {
@@ -138,43 +137,26 @@ function buildSbpToastMessage(stats: SbpStats): string {
   return `SBP exported! ${parts.join(', ')}`;
 }
 
-function handleResult(result: GenerateResult, filename: string, warning?: string): void {
-  const { sbp, stats } = result;
-  STATE.sbpStats = stats;
-  triggerDownload(sbp, filename);
-  updateStats();
-  // If we have a warning, show it alongside the success summary with the longer duration —
-  // a separate showToast() call would be cancelled by this one (synchronous flow, single
-  // event-loop tick before paint), so the user would only ever see one of the two.
-  if (warning) {
-    showToast(`${buildSbpToastMessage(stats)} — ${warning}`, 6000);
-  } else {
-    showToast(buildSbpToastMessage(stats));
-  }
-}
-
-/** Export using current MeshCraft mesh (STATE.vertices) */
+/** Export the current surface: the relief master at full resolution when one is active, otherwise
+ *  the generated grid. Runs in the worker, since a 1201 x 2401 master takes seconds to compensate. */
 function exportFromMesh(): void {
-  const { vertices, rows, cols, meshX, meshY } = STATE;
-  if (!vertices || rows < 2 || cols < 2) {
-    showToast('Generate a mesh first');
-    return;
-  }
-
-  const heightmap = stateToHeightmap(vertices, rows, cols, meshX, meshY);
+  const surface = getExportSurface(true);
+  if (typeof surface === 'string') { showToast(surface, 6000); return; }
+  const heightmap = surfaceHeightmap(surface);
   const config = buildConfig();
+  config.materialX = surface.meshX;
+  config.materialY = surface.meshY;
   // Only emit the seam-rounding warning when finishing is actually enabled. The warning
   // refers to the finishing-pass stepover, which is meaningless for roughing-only exports.
   const reliefWarning = config.finishingEnabled
     ? buildReliefStepoverWarning(config.finishingTool.cutting.stepover)
     : undefined;
-  const result = generateSBP(heightmap, config);
-  handleResult(result, `${STATE.filename}.sbp`, reliefWarning);
+  runSbpWorker({ kind: 'heightmap', heightmap, config }, [heightmap.z.buffer as ArrayBuffer], reliefWarning);
 }
 
 /** Voronoi-relief seams are narrow V-grooves; ball-nose stepover must be ≤ half the seam width
  *  or the cutter rolls over the seam instead of cutting it. Returns a warning string or null
- *  so handleResult can fold it into the export toast — separate toasts in the same tick get
+ *  so runSbpWorker can fold it into the export toast: separate toasts in the same tick get
  *  collapsed to whichever ran last.
  *
  *  Physical seam width derivation: in voronoi-relief.ts, the seam smoothstep gate is
@@ -196,49 +178,50 @@ function buildReliefStepoverWarning(stepoverIn: number): string | undefined {
 
 /** Export using uploaded STL via Web Worker */
 function exportFromSTL(): void {
-  if (sbpWorkerRunning) {
-    showToast('SBP generation already in progress');
-    return;
-  }
   if (!SBP_STATE.stlBuffer || SBP_STATE.stlBuffer.byteLength === 0) {
     showToast('No STL uploaded');
     return;
   }
+  const stlBuffer = SBP_STATE.stlBuffer;
+  runSbpWorker({ kind: 'stl', stlBuffer, config: buildConfig(), resolution: SBP_STATE.resolution }, [stlBuffer]);
+}
 
+function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: string): void {
+  if (sbpWorkerRunning) {
+    showToast('SBP generation already in progress');
+    return;
+  }
   sbpWorkerRunning = true;
-  showToast('Generating SBP from STL...');
+  showToast(`${input.kind === 'stl' ? 'Generating SBP from STL' : 'Generating SBP'}... a full-size relief takes a few minutes`, 600000);
 
   const worker = new Worker(
     new URL('./sbp/worker.ts', import.meta.url),
     { type: 'module' },
   );
 
-  worker.onmessage = (e: MessageEvent) => {
+  worker.onmessage = (e: MessageEvent<SbpWorkerOutput>) => {
     worker.terminate();
     sbpWorkerRunning = false;
-    SBP_STATE.stlBuffer = e.data.stlBuffer;
-    if (e.data.type === 'error') {
-      showToast(`SBP generation failed: ${e.data.message}`, 8000);
+    const out = e.data;
+    if (out.stlBuffer) SBP_STATE.stlBuffer = out.stlBuffer;
+    if (out.type === 'error') {
+      showToast(`SBP generation failed: ${out.message}`, 8000);
       return;
     }
-    STATE.sbpStats = e.data.stats;
-    triggerDownload(e.data.sbpBytes, `${STATE.filename}.sbp`);
+    STATE.sbpStats = out.stats;
+    triggerDownload(out.sbpBytes, `${STATE.filename}.sbp`);
     updateStats();
-    showToast(buildSbpToastMessage(e.data.stats));
+    const summary = buildSbpToastMessage(out.stats);
+    showToast(warning ? `${summary}. ${warning}` : summary, warning ? 6000 : 3000);
   };
 
   worker.onerror = (err) => {
     worker.terminate();
     sbpWorkerRunning = false;
-    showToast(`Worker error: ${err.message}. Re-upload the STL and try again.`, 8000);
+    showToast(`Worker error: ${err.message}.${input.kind === 'stl' ? ' Re-upload the STL and try again.' : ''}`, 8000);
   };
 
-  const stlBuffer = SBP_STATE.stlBuffer;
-  worker.postMessage({
-    stlBuffer,
-    config: buildConfig(),
-    resolution: SBP_STATE.resolution,
-  }, [stlBuffer]);
+  worker.postMessage(input, transfer);
 }
 
 /** Main export entry point -- called from export.ts */

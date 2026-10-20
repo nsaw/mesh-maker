@@ -58,26 +58,32 @@ export interface GenerateResult {
  *
  * 1. Normalize Z (shift negative values up)
  * 2. If roughing: compensate for roughing tool, generate roughing with leave stock
- * 3. If finishing: compensate for finishing tool, generate finishing
+ * 3. If finishing: generate finishing, dropping the cutter onto the target at each point
  * 4. Write SBP string
  */
 export function generateSBP(heightmap: Heightmap, config: SbpConfig): GenerateResult {
   const { heightmap: normHm, config: normConfig, shifted } = normalizeZ(heightmap, config);
+  // Rapids run at safe Z; at or below the stock top they would drive the cutter through material.
+  if (!(normConfig.safeZ > normConfig.materialZ))
+    throw new Error(`Safe Z ${normConfig.safeZ.toFixed(3)} in must be above the stock top ${normConfig.materialZ.toFixed(3)} in`);
 
   const sections: ToolpathSection[] = [];
   let roughingMoves = 0;
   let finishingMoves = 0;
 
   if (normConfig.roughingEnabled) {
-    const roughCompensated = compensateForTool(normHm, normConfig.roughingTool);
+    // Roughing moves node to node along rows, so its tips carry the one-cell segment margin, and
+    // the one-diagonal slack that keeps them clear of the triangulated surface between nodes.
+    const roughCompensated = compensateForTool(normHm, normConfig.roughingTool, normHm.cellSize,
+      Math.hypot(normHm.cellSize, normHm.cellSizeY));
     const roughing = generateRoughing(roughCompensated, normConfig);
     roughingMoves = roughing.moves.length;
     sections.push(roughing);
   }
 
   if (normConfig.finishingEnabled) {
-    const finishCompensated = compensateForTool(normHm, normConfig.finishingTool);
-    const finishing = generateFinishing(finishCompensated, normConfig);
+    // Finishing drops the cutter onto the target at every emitted point (no node interpolation).
+    const finishing = generateFinishing(normHm, normConfig);
     finishingMoves = finishing.moves.length;
     sections.push(finishing);
   }

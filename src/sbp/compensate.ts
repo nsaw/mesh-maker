@@ -1,142 +1,386 @@
 import { ToolType, type ToolDef, type Heightmap } from './types';
 
 /**
- * Compute the Z offset for a tool profile at horizontal distance d from center.
+ * Height of the cutter's surface above its tip at horizontal distance d from the tool axis, in
+ * inches, or Infinity where the cutter has no material at that distance.
  *
- * TBN: ball hemisphere near center, linear taper beyond transition.
- * Ball nose: hemisphere offset = R - sqrt(R^2 - d^2).
- * End mill: offset = 0 within radius (flat bottom).
+ * `halfAngle` is the side angle measured from the tool AXIS (Vectric's "Side Angle", the vtdb
+ * included angle / 2; see tools.ts). A cone with side angle a rises dz/dr = 1 / tan(a), so a 3.58 deg
+ * tapered ball nose climbs about 16 in per in beyond its ball. Before 2026-10-19 this used tan(a), the
+ * slope of an angle measured from the horizontal, which modelled that tool as a nearly flat 1/8 in
+ * disc and a 60 deg V-bit three times too blunt.
+ *
+ * Tapered ball nose and V-bit: a ball of radius R on the tip, tangent to the cone where the ball's
+ * normal is perpendicular to the cone side, at r = R cos(a), height R (1 - sin(a)).
  */
-function toolZOffset(tool: ToolDef, d: number): number {
+export function toolZOffset(tool: ToolDef, d: number): number {
   const R = tool.tipRadius;
-
   switch (tool.type) {
-    case ToolType.TaperedBallNose: {
-      const alpha = tool.halfAngle;
-      const sinA = Math.sin(alpha);
-      const dTransition = R * sinA;
-      if (d <= dTransition) {
-        return R - Math.sqrt(R * R - d * d);
-      }
-      return R * (1 - Math.cos(alpha)) + (d - dTransition) * Math.tan(alpha);
-    }
+    case ToolType.BallNose:
+      return d <= R ? R - Math.sqrt(R * R - d * d) : Infinity;
 
-    case ToolType.BallNose: {
-      if (d >= R) return Infinity;
-      return R - Math.sqrt(R * R - d * d);
-    }
-
+    case ToolType.TaperedBallNose:
     case ToolType.VBit: {
+      // A V-bit's cutting edge ends at its diameter; a tapered ball nose keeps widening to the shank,
+      // and the footprint is bounded by relief depth instead (see compensateForTool).
+      if (tool.type === ToolType.VBit && d > tool.diameter / 2) return Infinity;
+      const a = tool.halfAngle;
+      if (!(a > 0)) return d <= R ? R - Math.sqrt(R * R - d * d) : Infinity;
+      const rTangent = R * Math.cos(a);
+      if (d <= rTangent) return R - Math.sqrt(R * R - d * d);
+      return R * (1 - Math.sin(a)) + (d - rTangent) / Math.tan(a);
+    }
+
+    case ToolType.Radiused: {
       const toolR = tool.diameter / 2;
       if (d > toolR) return Infinity;
-      const alpha = tool.halfAngle;
-      const sinA = Math.sin(alpha);
-      const dTransition = R * sinA;
-      if (d <= dTransition) {
-        return R - Math.sqrt(R * R - d * d);
-      }
-      return R * (1 - Math.cos(alpha)) + (d - dTransition) * Math.tan(alpha);
+      const flatR = toolR - R;
+      if (R <= 0 || d <= flatR) return 0;
+      const dr = d - flatR;
+      return R - Math.sqrt(R * R - dr * dr);
     }
 
     case ToolType.EndMill:
-    case ToolType.Radiused:
-    default: {
-      const toolR = tool.diameter / 2;
-      if (d > toolR) return Infinity;
-      if (tool.type === ToolType.Radiused && R > 0) {
-        // Radiused end mill: flat center, rounded edge
-        const flatR = toolR - R;
-        if (d <= flatR) return 0;
-        const dr = d - flatR;
-        return R - Math.sqrt(R * R - dr * dr);
-      }
-      return 0;
+      return d <= tool.diameter / 2 ? 0 : Infinity;
+
+    default:
+      // A cutter shape this file does not model must stop the export, not be cut as a flat end mill.
+      throw new Error(`Tool "${tool.name}": unsupported tool type ${String(tool.type)} for compensation`);
+  }
+}
+
+interface KernelPoint { di: number; dj: number; offset: number }
+
+/** Every grid offset the cutter can touch, sorted by profile height. Points whose profile height is
+ *  at least the heightmap's Z range can never decide the tip height (their candidate is at most
+ *  zMin, below the centre candidate), so they are dropped; that also bounds the tapered ball nose,
+ *  which has no finite radius in the profile.
+ *
+ *  `segment` > 0 evaluates the profile at sqrt(d^2 - segment^2) instead of d. For a point q on a
+ *  segment ab of that length and any surface point p, one endpoint n (a when p lies behind q along
+ *  ab, b when it lies ahead) has |p - n|^2 <= |p - q|^2 + segment^2. So the larger of the two
+ *  endpoint tips computed this way is at least the exact tip anywhere along the segment. Roughing
+ *  uses this to keep node-to-node moves clear without sampling between nodes.
+ *
+ *  `slack` > 0 first shortens every distance by that much: a surface point inside a grid triangle is
+ *  no higher than the triangle's highest vertex, which lies within one cell diagonal of it, so with
+ *  slack = cell diagonal the node tips also clear the triangulated surface between nodes. */
+function buildKernel(tool: ToolDef, cellX: number, cellY: number, zRange: number, segment: number, slack: number): KernelPoint[] {
+  const kernel: KernelPoint[] = [];
+  const profile = (d: number): number => {
+    const e = Math.max(0, d - slack);
+    return toolZOffset(tool, Math.sqrt(Math.max(0, e * e - segment * segment)));
+  };
+  // Search radius: grow until the profile is out of reach. Profiles rise monotonically with d.
+  let rMax = 0;
+  const step = Math.min(cellX, cellY);
+  while (profile(rMax + step) < zRange && rMax < 6) rMax += step;
+  const ki = Math.ceil(rMax / cellX) + 1, kj = Math.ceil(rMax / cellY) + 1;
+  for (let dj = -kj; dj <= kj; dj++)
+    for (let di = -ki; di <= ki; di++) {
+      const offset = profile(Math.hypot(di * cellX, dj * cellY));
+      if (offset < zRange || (di === 0 && dj === 0)) kernel.push({ di, dj, offset });
     }
-  }
+  kernel.sort((p, q) => p.offset - q.offset);
+  return kernel;
 }
 
-/**
- * Build a 1D kernel profile: Z offsets for distances 0..maxCells from tool center.
- * Returns the offset array and the kernel half-width in cells.
- */
-function buildKernel1D(tool: ToolDef, cellSize: number): { offsets: Float64Array; halfWidth: number } {
-  // Determine the maximum effective radius of the tool
-  let maxRadius: number;
-
-  if (tool.type === ToolType.TaperedBallNose) {
-    // The effective cutting radius is bounded by the physical tool diameter,
-    // not the theoretical taper projection at maxDepth (which diverges for
-    // small taper angles -- e.g. 3.576-deg gives 24" radius at 1.5" depth).
-    maxRadius = tool.diameter / 2;
-  } else if (tool.type === ToolType.BallNose) {
-    maxRadius = tool.tipRadius;
-  } else {
-    maxRadius = tool.diameter / 2;
-  }
-
-  const halfWidth = Math.ceil(maxRadius / cellSize);
-  const offsets = new Float64Array(halfWidth + 1);
-
-  for (let i = 0; i <= halfWidth; i++) {
-    offsets[i] = toolZOffset(tool, i * cellSize);
-  }
-
-  return { offsets, halfWidth };
-}
-
-/**
- * Separable morphological erosion for tool compensation.
- *
- * Two-pass approach:
- * 1. Horizontal pass: for each row, slide kernel across columns
- * 2. Vertical pass: for each column, slide kernel across rows
- *
- * Erosion computes min(z[neighbor] - kernelOffset[distance]) at each cell.
- * This gives the lowest Z the tool center can reach without gouging.
- *
- * Separable approximation error < 0.001" for TBN profiles (verified analytically).
- */
-export function compensateForTool(heightmap: Heightmap, tool: ToolDef): Heightmap {
-  const { z, rows, cols, cellSize } = heightmap;
-
-  const { offsets, halfWidth } = buildKernel1D(tool, cellSize);
-
-  // Pass 1: horizontal (along columns within each row)
-  const temp = new Float64Array(rows * cols);
+/** Horizontal sliding maximum over [c - w, c + w], cells outside the row ignored (van Herk /
+ *  Gil-Werman, O(1) per cell). */
+function slidingRowMax(src: Float64Array, rows: number, cols: number, w: number, out: Float64Array): void {
+  const m = 2 * w + 1;
+  const n = cols + 2 * w;
+  const pad = new Float64Array(n), g = new Float64Array(n), h = new Float64Array(n);
   for (let r = 0; r < rows; r++) {
-    const rowBase = r * cols;
-    for (let c = 0; c < cols; c++) {
-      let minVal = Infinity;
-      const kStart = Math.max(0, c - halfWidth);
-      const kEnd = Math.min(cols - 1, c + halfWidth);
-      for (let k = kStart; k <= kEnd; k++) {
-        const dist = Math.abs(k - c);
-        const offset = offsets[dist];
-        if (offset === Infinity) continue;
-        const val = z[rowBase + k] - offset;
-        if (val < minVal) minVal = val;
-      }
-      temp[rowBase + c] = minVal === Infinity ? z[rowBase + c] : minVal;
-    }
+    pad.fill(-Infinity);
+    pad.set(src.subarray(r * cols, r * cols + cols), w);
+    for (let i = 0; i < n; i++) g[i] = i % m === 0 ? pad[i] : Math.max(g[i - 1], pad[i]);
+    for (let i = n - 1; i >= 0; i--) h[i] = (i % m === m - 1 || i === n - 1) ? pad[i] : Math.max(h[i + 1], pad[i]);
+    for (let c = 0; c < cols; c++) out[r * cols + c] = Math.max(h[c], g[c + 2 * w]);
   }
+}
 
-  // Pass 2: vertical (along rows within each column)
+/** Flat dilation: max of z over the kernel's footprint (a disc, so each kernel row is one chord). */
+function footprintMax(z: Float64Array, rows: number, cols: number, kernel: KernelPoint[]): Float64Array {
+  const halfWidth = new Map<number, number>();
+  for (const { di, dj } of kernel) halfWidth.set(dj, Math.max(halfWidth.get(dj) ?? 0, Math.abs(di)));
+  const byWidth = new Map<number, number[]>();
+  for (const [dj, w] of halfWidth) byWidth.set(w, [...(byWidth.get(w) ?? []), dj]);
+  const out = new Float64Array(rows * cols).fill(-Infinity);
+  const rowMax = new Float64Array(rows * cols);
+  for (const [w, djs] of byWidth) {
+    slidingRowMax(z, rows, cols, w, rowMax);
+    for (const dj of djs)
+      for (let r = Math.max(0, -dj); r < Math.min(rows, rows - dj); r++) {
+        const o = r * cols, s = (r + dj) * cols;
+        for (let c = 0; c < cols; c++) if (rowMax[s + c] > out[o + c]) out[o + c] = rowMax[s + c];
+      }
+  }
+  return out;
+}
+
+/**
+ * Tool compensation: the lowest tip height at each grid node that leaves the cutter clear of the
+ * surface everywhere under it. With the surface H positive up and the cutter's profile f above its
+ * tip, clearance at offset d needs tip + f(d) >= H(x + d), so
+ *
+ *   tip(x) = max over d of (H(x + d) - f(|d|)).
+ *
+ * Before 2026-10-19 this took the MINIMUM (and a separable 1D approximation of it), which put the
+ * tip below the surface: a flat 0.500 in plane with a 0.1 in ball came out at 0.4732 in, and a flat
+ * end mill centred on a 0.5 in peak over a 0.1 in field went to 0.1 in, erasing the peak.
+ *
+ * Exact over the grid with a true radial (2D) kernel. Distances are physical, so a grid whose X and
+ * Y spacing differ is handled. Kernel points are visited in increasing profile height and the loop
+ * stops once even the footprint's highest point could not beat the current best. Cells outside the
+ * grid are treated as empty (nothing to collide with past the panel edge).
+ *
+ * The result is exact AT the nodes only. A move that interpolates linearly between two node tips
+ * can still gouge, because the envelope is not linear between nodes: at a vertical step under a
+ * flat end mill it jumps by the full step height from one node to the next. Roughing therefore
+ * passes `segment` and `slack` and holds each segment at its higher end; finishing does not interpolate node
+ * tips at all and drops the cutter at every emitted point (createDropCutter).
+ */
+export function compensateForTool(heightmap: Heightmap, tool: ToolDef, segment = 0, slack = 0): Heightmap {
+  const { z, rows, cols, cellSize, cellSizeY } = heightmap;
+  let zMin = Infinity, zMax = -Infinity;
+  for (let i = 0; i < z.length; i++) { if (z[i] < zMin) zMin = z[i]; if (z[i] > zMax) zMax = z[i]; }
+  const zRange = zMax - zMin;
+  if (!(zRange > 0)) return { ...heightmap, z: z.slice() };
+
+  const kernel = buildKernel(tool, cellSize, cellSizeY, zRange, segment, slack);
+  const upper = footprintMax(z, rows, cols, kernel);
+  const flat = kernel.every(p => p.offset === 0);
+  if (flat) return { ...heightmap, z: upper };
+
   const result = new Float64Array(rows * cols);
-  for (let c = 0; c < cols; c++) {
-    for (let r = 0; r < rows; r++) {
-      let minVal = Infinity;
-      const kStart = Math.max(0, r - halfWidth);
-      const kEnd = Math.min(rows - 1, r + halfWidth);
-      for (let k = kStart; k <= kEnd; k++) {
-        const dist = Math.abs(k - r);
-        const offset = offsets[dist];
-        if (offset === Infinity) continue;
-        const val = temp[k * cols + c] - offset;
-        if (val < minVal) minVal = val;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const idx = r * cols + c;
+      const bound = upper[idx];
+      let best = z[idx];
+      for (let k = 0; k < kernel.length; k++) {
+        const { di, dj, offset } = kernel[k];
+        if (bound - offset <= best) break;
+        const rr = r + dj, cc = c + di;
+        if (rr < 0 || rr >= rows || cc < 0 || cc >= cols) continue;
+        const cand = z[rr * cols + cc] - offset;
+        if (cand > best) best = cand;
       }
-      result[r * cols + c] = minVal === Infinity ? temp[r * cols + c] : minVal;
+      result[idx] = best;
     }
+  return { ...heightmap, z: result };
+}
+
+/** Radius beyond which the cutter has no material (Infinity for the tapered ball nose, whose cone
+ *  keeps widening to the shank). */
+function finiteRadius(tool: ToolDef): number {
+  switch (tool.type) {
+    case ToolType.BallNose: return tool.tipRadius;
+    case ToolType.TaperedBallNose: return Infinity;
+    default: return tool.diameter / 2;
+  }
+}
+
+/** Radius at which H(p) - profile(|p - q|) peaks along the uphill direction of a plane with slope
+ *  |g|: where profile'(r) = |g|. Flat-bottomed and conical parts have no interior peak below their
+ *  slope, so the peak runs out to `rArc`. */
+function peakRadius(tool: ToolDef, slope: number, rArc: number): number {
+  const R = tool.tipRadius, ball = (R * slope) / Math.sqrt(1 + slope * slope);
+  switch (tool.type) {
+    case ToolType.BallNose: return Math.min(ball, rArc);
+    case ToolType.Radiused: return Math.min(tool.diameter / 2 - R + ball, rArc);
+    case ToolType.TaperedBallNose:
+    case ToolType.VBit: {
+      const a = tool.halfAngle;
+      if (!(a > 0)) return Math.min(ball, rArc);
+      return slope < 1 / Math.tan(a) ? ball : rArc; // ball part, or up the cone to the edge
+    }
+    default: return rArc; // flat end mill
+  }
+}
+
+/** Grid cell diagonal used by the exported mesh (src/mesh-writer.ts): 'shortest' splits each cell
+ *  along its smaller height difference, the same rule as geometry.ts preferZ00Z11Diagonal. */
+function cellUsesZ00Z11(diagonal: Heightmap['diagonal'], z00: number, z10: number, z01: number, z11: number): boolean {
+  if (diagonal === 'z00z11') return true;
+  if (diagonal === 'z10z01') return false;
+  return Math.abs(z00 - z11) < Math.abs(z10 - z01);
+}
+
+/**
+ * Exact tip height at an arbitrary (x, y), in heightmap coordinates, against the TRIANGULATED surface
+ * the export writes (vertices, edges and facets), not just its nodes: the max over every surface point
+ * p in reach of H(p) - profile(|p - (x, y)|).
+ *
+ * Before this change it took the max over node samples only, so on a grid whose cells are
+ * not small against the ball the cutter dropped between nodes: on 0.09 in cells (a 36 in panel at 400
+ * columns) with the 1/16 in radius finishing ball it went 0.089 in below a near-flat ramp.
+ *
+ * Per triangle the objective is concave (a plane minus a convex radial profile), so its maximum is
+ * the plane's interior peak when that lies inside the triangle, else on an edge, found by a golden-
+ * section search. Node samples give a lower bound first; a triangle is solved only if its highest
+ * vertex, minus the profile at its nearest point, could beat that bound.
+ */
+export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: number, y: number) => number {
+  const { z, rows, cols, cellSize: cx, cellSizeY: cy } = heightmap;
+  let zMin = Infinity, zMax = -Infinity;
+  for (let i = 0; i < z.length; i++) { if (z[i] < zMin) zMin = z[i]; if (z[i] > zMax) zMax = z[i]; }
+  const zRange = zMax - zMin;
+  let reach = 0;
+  const step = Math.min(cx, cy) / 4;
+  while (zRange > 0 && toolZOffset(tool, reach + step) < zRange && reach < 6) reach += step;
+  reach += step;
+  const rArc = Math.min(reach, finiteRadius(tool));
+  const f = (r: number): number => toolZOffset(tool, r);
+
+  // Triangle scratch: vertex x, y, h.
+  const tx = new Float64Array(3), ty = new Float64Array(3), th = new Float64Array(3);
+
+  /** Distance from (qx, qy) to the triangle in XY (0 inside). */
+  function distToTri(qx: number, qy: number): number {
+    let inside = true, best = Infinity;
+    for (let e = 0; e < 3; e++) {
+      const ax = tx[e], ay = ty[e], bx = tx[(e + 1) % 3], by = ty[(e + 1) % 3];
+      const ex = bx - ax, ey = by - ay;
+      if (ex * (qy - ay) - ey * (qx - ax) < 0) inside = false;
+      const t = Math.max(0, Math.min(1, ((qx - ax) * ex + (qy - ay) * ey) / (ex * ex + ey * ey)));
+      best = Math.min(best, Math.hypot(ax + t * ex - qx, ay + t * ey - qy));
+    }
+    return inside ? 0 : best;
   }
 
-  return { ...heightmap, z: result };
+  const G = 0.6180339887498949;
+
+  /** Max of H - profile over the triangle in tx/ty/th (counterclockwise), or `best` if it cannot
+   *  beat it. The plane's peak along its uphill direction bounds the whole triangle; when the peak
+   *  lies inside, it is the answer, else the maximum is on an edge. */
+  function triMax(qx: number, qy: number, best: number): number {
+    const x1 = tx[1] - tx[0], y1 = ty[1] - ty[0], x2 = tx[2] - tx[0], y2 = ty[2] - ty[0];
+    const h1 = th[1] - th[0], h2 = th[2] - th[0], det = x1 * y2 - x2 * y1;
+    const gx = (h1 * y2 - h2 * y1) / det, gy = (x1 * h2 - x2 * h1) / det;
+    const slope = Math.hypot(gx, gy);
+    const rp = peakRadius(tool, slope, rArc);
+    const ux = slope > 0 ? gx / slope : 0, uy = slope > 0 ? gy / slope : 0;
+    const px = qx + rp * ux, py = qy + rp * uy;
+    const peak = th[0] + gx * (px - tx[0]) + gy * (py - ty[0]) - f(slope > 0 ? rp : 0);
+    if (peak <= best) return best;
+    let inside = true;
+    for (let e = 0; e < 3 && inside; e++) {
+      const ax = tx[e], ay = ty[e], bx = tx[(e + 1) % 3], by = ty[(e + 1) % 3];
+      if ((bx - ax) * (py - ay) - (by - ay) * (px - ax) < -1e-12) inside = false;
+    }
+    if (inside) return peak;
+    // Edges: the objective restricted to the part of each edge within rArc of q is concave.
+    for (let e = 0; e < 3; e++) {
+      const ax = tx[e], ay = ty[e], ah = th[e];
+      const ex = tx[(e + 1) % 3] - ax, ey = ty[(e + 1) % 3] - ay, eh = th[(e + 1) % 3] - ah;
+      const A = ex * ex + ey * ey, B = 2 * ((ax - qx) * ex + (ay - qy) * ey), C = (ax - qx) ** 2 + (ay - qy) ** 2 - rArc * rArc;
+      const disc = B * B - 4 * A * C;
+      if (disc < 0) continue;
+      const sq = Math.sqrt(disc);
+      let t0 = Math.max(0, (-B - sq) / (2 * A)), t1 = Math.min(1, (-B + sq) / (2 * A));
+      if (t0 > t1 || Math.max(ah, ah + eh) <= best) continue;
+      const ox = ax - qx, oy = ay - qy;
+      // The edge's highest end minus the profile at its nearest point bounds the whole edge.
+      const tn = Math.max(t0, Math.min(t1, -(ox * ex + oy * ey) / A));
+      if (Math.max(ah + t0 * eh, ah + t1 * eh) - f(Math.sqrt((ox + tn * ex) ** 2 + (oy + tn * ey) ** 2)) <= best) continue;
+      const phi = (t: number): number => ah + t * eh - f(Math.sqrt((ox + t * ex) ** 2 + (oy + t * ey) ** 2));
+      best = Math.max(best, phi(t0), phi(t1));
+      let a = t1 - G * (t1 - t0), b = t0 + G * (t1 - t0), fa = phi(a), fb = phi(b);
+      // 32 steps shrink the bracket by 0.618^32 = 2e-7 of a cell edge: below 1e-8 in on 0.05 in cells.
+      for (let it = 0; it < 32; it++) {
+        if (fa < fb) { t0 = a; a = b; fa = fb; b = t0 + G * (t1 - t0); fb = phi(b); }
+        else { t1 = b; b = a; fb = fa; a = t1 - G * (t1 - t0); fa = phi(a); }
+      }
+      best = Math.max(best, fa, fb);
+    }
+    return best;
+  }
+
+  function loadTri(x0: number, y0: number, a: number, ah: number, b: number, bh: number, c: number, ch: number): void {
+    // Corners as bit pairs: bit 0 = +1 column, bit 1 = +1 row.
+    tx[0] = x0 + (a & 1) * cx; ty[0] = y0 + (a >> 1) * cy; th[0] = ah;
+    tx[1] = x0 + (b & 1) * cx; ty[1] = y0 + (b >> 1) * cy; th[1] = bh;
+    tx[2] = x0 + (c & 1) * cx; ty[2] = y0 + (c >> 1) * cy; th[2] = ch;
+  }
+
+  /** Best contact over the two triangles of cell (r, c), or `best` if neither beats it. Triangles
+   *  counterclockwise, matching mesh-writer.ts. */
+  function solveCell(r: number, c: number, x: number, y: number, best: number): number {
+    const k = r * cols + c;
+    const z00 = z[k], z10 = z[k + 1], z01 = z[k + cols], z11 = z[k + cols + 1];
+    const x0 = c * cx, y0 = r * cy;
+    const main = cellUsesZ00Z11(heightmap.diagonal, z00, z10, z01, z11);
+    for (let t = 0; t < 2; t++) {
+      if (main) { if (t === 0) loadTri(x0, y0, 0, z00, 1, z10, 3, z11); else loadTri(x0, y0, 0, z00, 3, z11, 2, z01); }
+      else if (t === 0) loadTri(x0, y0, 0, z00, 1, z10, 2, z01); else loadTri(x0, y0, 1, z10, 3, z11, 2, z01);
+      const triTop = Math.max(th[0], th[1], th[2]);
+      if (triTop <= best) continue;
+      const d = distToTri(x, y);
+      if (d > reach || triTop - f(d) <= best) continue;
+      best = triMax(x, y, best);
+    }
+    return best;
+  }
+
+  // Highest node of every cell, for one-comparison rejection.
+  const cellMax = new Float64Array((rows - 1) * (cols - 1));
+  for (let r = 0; r < rows - 1; r++)
+    for (let c = 0; c < cols - 1; c++) {
+      const k = r * cols + c;
+      cellMax[r * (cols - 1) + c] = Math.max(z[k], z[k + 1], z[k + cols], z[k + cols + 1]);
+    }
+
+  // Highest node within reach + 1.5 cell diagonals of every node: it bounds every surface point a
+  // cutter centred within half a diagonal of that node can touch.
+  const diag = Math.hypot(cx, cy);
+  const localR = reach + 1.5 * diag;
+  const disc: KernelPoint[] = [];
+  for (let dj = -Math.ceil(localR / cy); dj <= Math.ceil(localR / cy); dj++)
+    for (let di = -Math.ceil(localR / cx); di <= Math.ceil(localR / cx); di++)
+      if (Math.hypot(di * cx, dj * cy) <= localR) disc.push({ di, dj, offset: 0 });
+  const localMax = footprintMax(z, rows, cols, disc);
+  const minCell = Math.min(cx, cy);
+
+  /** Lower-bound candidates from the cell's four nodes, then its two triangles if they could win. */
+  function visitCell(r: number, c: number, x: number, y: number, best: number): number {
+    const cm = cellMax[r * (cols - 1) + c];
+    if (cm <= best) return best;
+    const x0 = c * cx, y0 = r * cy;
+    const ddx = Math.max(0, x0 - x, x - x0 - cx), ddy = Math.max(0, y0 - y, y - y0 - cy);
+    const dd = Math.sqrt(ddx * ddx + ddy * ddy);
+    if (dd > reach || cm - f(dd) <= best) return best;
+    for (let v = 0; v < 4; v++) {
+      const rr = r + (v >> 1), cc = c + (v & 1), h = z[rr * cols + cc];
+      if (h <= best) continue;
+      const d = Math.hypot(cc * cx - x, rr * cy - y);
+      if (d <= reach) best = Math.max(best, h - f(d));
+    }
+    return solveCell(r, c, x, y, best);
+  }
+
+  return (x: number, y: number): number => {
+    const gxq = x / cx, gyq = y / cy;
+    const cq = Math.min(cols - 2, Math.max(0, Math.floor(gxq))), rq = Math.min(rows - 2, Math.max(0, Math.floor(gyq)));
+    const zLocal = localMax[Math.min(rows - 1, Math.max(0, Math.round(gyq))) * cols + Math.min(cols - 1, Math.max(0, Math.round(gxq)))];
+    // The cell under the cutter first: on smooth ground its contact is at or near the answer. Then
+    // rings of cells outward, until even the local maximum height minus the profile at the ring's
+    // nearest possible distance cannot beat the best contact found.
+    let best = visitCell(rq, cq, x, y, -Infinity);
+    const kMax = Math.ceil(reach / minCell) + 2;
+    for (let k = 1; k <= kMax; k++) {
+      if (zLocal - f((k - 1) * minCell) <= best) break;
+      for (let r = rq - k; r <= rq + k; r++) {
+        if (r < 0 || r > rows - 2) continue;
+        const edgeRow = r === rq - k || r === rq + k;
+        for (let c = cq - k; c <= cq + k; c += edgeRow ? 1 : 2 * k) {
+          if (c < 0 || c > cols - 2) continue;
+          best = visitCell(r, c, x, y, best);
+        }
+      }
+    }
+    // Only reachable outside the grid; keep the cutter at the nearest edge height rather than -Inf.
+    return best === -Infinity ? z[Math.min(rows - 1, Math.max(0, Math.round(gyq))) * cols + Math.min(cols - 1, Math.max(0, Math.round(gxq)))] : best;
+  };
 }

@@ -1,4 +1,6 @@
-import { STATE, DEFAULTS } from './state';
+import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, noiseDims, reliefMasterActive } from './state';
+import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
+import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
@@ -439,7 +441,7 @@ function buildSmoothingSection(): HTMLElement {
 }
 
 function buildDepthMapSection(): HTMLElement {
-  const uploadZone = createElement('div', `upload-zone${STATE.depthMap ? ' has-image' : ''}`);
+  const uploadZone = createElement('div', `upload-zone${STATE.depthMap || STATE.reliefMaster ? ' has-image' : ''}`);
   uploadZone.id = 'uploadZone';
   uploadZone.tabIndex = 0;
   uploadZone.setAttribute('role', 'button');
@@ -449,7 +451,7 @@ function buildDepthMapSection(): HTMLElement {
   const input = createElement('input') as HTMLInputElement;
   input.type = 'file';
   input.id = 'depthMapInput';
-  input.accept = 'image/*';
+  input.accept = `image/*,${RELIEF_EXTENSION}`;
   uploadZone.append(uploadText, input);
 
   // AI depth estimation — converts the current photo into a real depth map (photos feed
@@ -466,13 +468,18 @@ function buildDepthMapSection(): HTMLElement {
   const blendOnly = (row: HTMLDivElement): HTMLDivElement => { row.classList.add('blend-only'); return row; };
   const depthmapOnly = (row: HTMLDivElement): HTMLDivElement => { row.classList.add('depthmap-only'); return row; };
 
+  // Image-only rows have no meaning for a relief master (its heights are final), so they hide
+  // while one is active; the master's own facts take their place.
+  const imageOnly = (el: HTMLElement): HTMLElement => { el.classList.add('image-only'); return el; };
+
   return buildSection('Depth Map', [
     uploadZone,
-    aiBtn,
-    slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05),
-    slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01),
-    slider('dmBackgroundCutoff', 'Background Cutoff (0=off)', 0, 0.9, 0.01),
-    depthmapOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)),
+    reliefMasterInfo(),
+    imageOnly(aiBtn),
+    imageOnly(slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05)),
+    imageOnly(slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)),
+    imageOnly(slider('dmBackgroundCutoff', 'Background Cutoff (0=off)', 0, 0.9, 0.01)),
+    imageOnly(depthmapOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1))),
     // Drape model: membrane over the form + gravity-directed folds (src/drape.ts). 'blend' is
     // fabric tension: 0 hugs every support, 1 bridges between them.
     blendOnly(blendPreviewNote()),
@@ -485,6 +492,23 @@ function buildDepthMapSection(): HTMLElement {
     blendOnly(slider('drapeFoldAmp', 'Fold Depth (in)', 0, 0.25, 0.005)),
     blendOnly(slider('drapeFoldLength', 'Fold Length (x spacing)', 1, 12, 0.5)),
   ], false, 'depth-map-only');
+}
+
+/** What a loaded relief master is, so the numbers can be checked against its source. */
+function reliefMasterInfo(): HTMLDivElement {
+  const note = createElement('div', 'relief-master-info');
+  note.style.margin = '6px 0 8px';
+  note.style.fontSize = '10px';
+  note.style.color = 'var(--text3)';
+  const m = STATE.reliefMaster;
+  if (!m) { note.style.display = 'none'; return note; }
+  const lines = [
+    `Relief master: ${m.cols} x ${m.rows} samples, ${m.widthIn.toFixed(3)}" x ${m.heightIn.toFixed(3)}", stock ${m.stockIn.toFixed(3)}", backing ${m.backingIn.toFixed(3)}".`,
+    `Heights SHA-256 ${m.header.sha256.heights.slice(0, 12)}... verified. Exports and SBP use these heights at full resolution; Grid Resolution only sets the preview.`,
+  ];
+  if (m.header.license) lines.push(`License: ${m.header.license}.`);
+  for (const text of lines) note.appendChild(createElement('div', undefined, text));
+  return note;
 }
 
 /** Blend's folds are procedural (direction-field noise), not a cloth simulation; say so where the
@@ -520,6 +544,11 @@ function wireControls(): void {
   document.querySelectorAll<HTMLInputElement>('input[type="range"][data-key]').forEach(sl => {
     const key = sl.dataset.key!;
     sl.addEventListener('input', () => {
+      if (reliefMasterActive() && RELIEF_LOCKED_KEYS.has(key)) {
+        sl.value = String(STATE[key as keyof typeof STATE]);
+        showToast('A relief master fixes size, stock and heights. Load an image to change them.', 3000);
+        return;
+      }
       const v = parseFloat(sl.value);
       (STATE as unknown as Record<string, unknown>)[key] = v;
       const valEl = document.getElementById('val_' + key);
@@ -785,6 +814,14 @@ export function updateSectionVisibility(): void {
   document.querySelectorAll<HTMLElement>('.depthmap-only').forEach(el => {
     el.style.display = mode === 'depthmap' ? '' : 'none';
   });
+  const master = reliefMasterActive();
+  document.querySelectorAll<HTMLElement>('.image-only').forEach(el => {
+    if (master) el.style.display = 'none';
+    else if (el.style.display === 'none' && !el.classList.contains('depthmap-only') && !el.classList.contains('blend-only')) el.style.display = '';
+  });
+  document.querySelectorAll<HTMLElement>('.relief-master-info').forEach(el => {
+    el.style.display = master ? '' : 'none';
+  });
 }
 
 export function fitMeshToAspect(imgW: number, imgH: number): void {
@@ -858,10 +895,12 @@ async function runDepthEstimation(btn: HTMLButtonElement): Promise<void> {
 }
 
 export function loadDepthMap(file: File): void {
+  if (file.name.toLowerCase().endsWith(RELIEF_EXTENSION)) { void loadReliefMaster(file); return; }
   const img = new Image();
   const objUrl = URL.createObjectURL(file);
   img.onload = () => {
     URL.revokeObjectURL(objUrl);
+    STATE.reliefMaster = null;
     STATE.depthMap = img;
     STATE.depthMapName = file.name;
     fitMeshToAspect(img.width, img.height);
@@ -878,6 +917,47 @@ export function loadDepthMap(file: File): void {
     showToast('Could not read that image file');
   };
   img.src = objUrl;
+}
+
+/** Load a .mcrelief master (src/relief-master.ts) and switch to DEPTH MAP mode. A file that fails
+ *  any contract check is rejected whole, with the reason, and the current state is kept. */
+async function loadReliefMaster(file: File): Promise<void> {
+  let master: ReliefMaster;
+  try {
+    master = await parseReliefMaster(await file.arrayBuffer());
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : 'Could not read that relief master', 8000);
+    return;
+  }
+  if (STATE.mode === 'noise') {
+    noiseDims.meshX = STATE.meshX;
+    noiseDims.meshY = STATE.meshY;
+    noiseDims.resolution = STATE.resolution;
+  }
+  STATE.mode = 'depthmap';
+  document.body.className = 'mode-depthmap';
+  document.querySelectorAll('.mode-tab').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.mode === 'depthmap'));
+  STATE.reliefMaster = master;
+  STATE.depthMap = null;
+  // Set before the sidebar is rebuilt so its sliders show the master's size and stock.
+  STATE.meshX = master.widthIn;
+  STATE.meshY = master.heightIn;
+  STATE.baseThickness = master.stockIn;
+  STATE.depthMapName = `${file.name} (relief master)`;
+  STATE.depthMapAR = master.widthIn / master.heightIn;
+  STATE.aspectLocked = true;
+  // Preview density: the same cell budget as an image depth map, never above the master's own.
+  const maxGridCells = 250000;
+  STATE.resolution = Math.min(master.cols, 400,
+    Math.max(64, Math.floor(Math.sqrt(maxGridCells / Math.max(0.05, master.heightIn / master.widthIn)))));
+  const zone = document.getElementById('uploadZone');
+  if (zone) {
+    zone.classList.add('has-image');
+    zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
+  }
+  buildSidebar();
+  generateMesh();
+  showToast(`Relief master loaded: ${master.cols} x ${master.rows}, ${master.widthIn.toFixed(2)}" x ${master.heightIn.toFixed(2)}"`, 4000);
 }
 
 export function randomSeed(): void {

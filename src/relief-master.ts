@@ -1,0 +1,199 @@
+/**
+ * MeshCraft relief master (.mcrelief): a finished relief's numerical heights with an explicit data
+ * contract, imported without any of the depth-map processing (no 8-bit canvas read, no
+ * normalization, cutoff or smoothing). Pure: no DOM, shared by the browser and the Node CLI.
+ *
+ * Container, little-endian:
+ *   bytes 0-7   ASCII "MCRELIEF"
+ *   bytes 8-11  uint32 header length L
+ *   12..12+L    UTF-8 JSON header (ReliefHeader)
+ *   padding to the next multiple of 8 from the start of the file
+ *   heights     rows x cols of `dtype`, row-major in the header's row order
+ *   mask        rows x cols uint8 (0 = background), same order, present when header.mask is true
+ *
+ * Heights are measured from the flat back of the panel and include the backing, in `units`.
+ * `width` and `height` are the node-to-node extents: column 0 sits at X = 0 and column cols - 1 at
+ * X = width (endpoints included), likewise for rows. `sha256.heights` is the hex SHA-256 of the
+ * heights bytes exactly as stored; a mismatch rejects the file.
+ */
+
+export const RELIEF_MAGIC = 'MCRELIEF';
+export const RELIEF_EXTENSION = '.mcrelief';
+
+/** Triangle diagonal of every grid cell, named in image terms (row 0 at the top):
+ *  'tr-bl' joins each cell's top-right and bottom-left nodes, 'tl-br' the other pair. */
+export type ReliefDiagonal = 'tr-bl' | 'tl-br';
+
+export interface ReliefHeader {
+  format: 'meshcraft-relief';
+  version: 1;
+  units: 'in' | 'mm' | 'm';
+  cols: number;
+  rows: number;
+  width: number;
+  height: number;
+  dtype: 'float32' | 'float64';
+  rowOrder: 'top-down' | 'bottom-up';
+  heightOrigin: 'panel-back';
+  backing: number;
+  stock: number;
+  triangulation: ReliefDiagonal;
+  mask: boolean;
+  sha256: { heights: string; mask?: string };
+  name?: string;
+  source?: string;
+  license?: string;
+}
+
+/** A parsed master in MeshCraft's grid convention: index j * cols + i, row j = 0 at world Y = 0
+ *  (the image bottom), inches. */
+export interface ReliefMaster {
+  header: ReliefHeader;
+  cols: number;
+  rows: number;
+  widthIn: number;
+  heightIn: number;
+  backingIn: number;
+  stockIn: number;
+  heightsIn: Float64Array;
+  mask: Uint8Array | null;
+  /** True when each cell splits along its (j, i)-(j + 1, i + 1) diagonal in MeshCraft's grid. */
+  diagonalZ00Z11: boolean;
+}
+
+/** Size of one inch in each unit. Values are divided by it (correctly rounded), not multiplied by
+ *  its reciprocal, so a millimetre or metre value converts to the nearest representable inch. */
+const UNITS_PER_IN = { in: 1, mm: 25.4, m: 0.0254 } as const;
+
+/** ShopBot Desktop MAX ATC limits (CLAUDE.md): 36 x 24 in bed, 6 in Z. A master either fits on
+ *  the machine in some orientation or it is rejected. */
+const MAX_BED_LONG_IN = 36;
+const MAX_BED_SHORT_IN = 24;
+const MAX_Z_IN = 6;
+/** Heights stored as float32 metres round up to ~1e-8 in past a stock given as a decimal. */
+const STOCK_TOLERANCE_IN = 1e-6;
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function fail(msg: string): never {
+  throw new Error(`Relief master: ${msg}`);
+}
+
+/** Image-row diagonal to MeshCraft cell diagonal. In MeshCraft's grid z00 = (j, i) is a cell's
+ *  bottom-left in the image and z11 = (j + 1, i + 1) its top-right, so 'tr-bl' is z00-z11. */
+export function diagonalIsZ00Z11(d: ReliefDiagonal): boolean {
+  return d === 'tr-bl';
+}
+
+export async function parseReliefMaster(buf: ArrayBuffer): Promise<ReliefMaster> {
+  const bytes = new Uint8Array(buf);
+  if (bytes.length < 12 || new TextDecoder().decode(bytes.subarray(0, 8)) !== RELIEF_MAGIC)
+    fail('not a .mcrelief file (missing MCRELIEF signature)');
+  const view = new DataView(buf);
+  const hLen = view.getUint32(8, true);
+  if (12 + hLen > bytes.length) fail('header runs past the end of the file');
+  let header: ReliefHeader;
+  try {
+    header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(12, 12 + hLen))) as ReliefHeader;
+  } catch (e) {
+    fail(`header is not valid JSON (${e instanceof Error ? e.message : String(e)})`);
+  }
+  if (header.format !== 'meshcraft-relief' || header.version !== 1) fail('unsupported format or version');
+  if (!(header.units in UNITS_PER_IN)) fail(`unknown units "${String(header.units)}"`);
+  if (header.dtype !== 'float32' && header.dtype !== 'float64') fail(`unknown dtype "${String(header.dtype)}"`);
+  if (header.rowOrder !== 'top-down' && header.rowOrder !== 'bottom-up') fail('rowOrder must be top-down or bottom-up');
+  if (header.heightOrigin !== 'panel-back') fail('heightOrigin must be panel-back');
+  if (header.triangulation !== 'tr-bl' && header.triangulation !== 'tl-br') fail('triangulation must be tr-bl or tl-br');
+  const { cols, rows } = header;
+  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols * rows > 50_000_000)
+    fail(`bad grid size ${cols} x ${rows}`);
+  const k = UNITS_PER_IN[header.units];
+  const widthIn = header.width / k, heightIn = header.height / k;
+  const backingIn = header.backing / k, stockIn = header.stock / k;
+  for (const [label, v] of [['width', widthIn], ['height', heightIn], ['stock', stockIn]] as const)
+    if (!(Number.isFinite(v) && v > 0)) fail(`${label} must be a positive number`);
+  if (!(Number.isFinite(backingIn) && backingIn >= 0 && backingIn < stockIn)) fail('backing must be in [0, stock)');
+  if (Math.max(widthIn, heightIn) > MAX_BED_LONG_IN || Math.min(widthIn, heightIn) > MAX_BED_SHORT_IN || stockIn > MAX_Z_IN)
+    fail(`${widthIn.toFixed(2)} x ${heightIn.toFixed(2)} x ${stockIn.toFixed(2)} in exceeds the 36 x 24 x 6 in machine`);
+
+  const bpv = header.dtype === 'float32' ? 4 : 8;
+  const dataStart = Math.ceil((12 + hLen) / 8) * 8;
+  const n = cols * rows;
+  const maskStart = dataStart + n * bpv;
+  const expected = maskStart + (header.mask ? n : 0);
+  if (bytes.length !== expected) fail(`file is ${bytes.length} bytes, header describes ${expected}`);
+  const heightBytes = bytes.subarray(dataStart, maskStart);
+  if ((await sha256Hex(heightBytes)) !== header.sha256?.heights) fail('heights checksum does not match the header');
+  let maskBytes: Uint8Array | null = null;
+  if (header.mask) {
+    maskBytes = bytes.subarray(maskStart, expected);
+    if ((await sha256Hex(maskBytes)) !== header.sha256.mask) fail('mask checksum missing or does not match the header');
+  }
+
+  const heightsIn = new Float64Array(n);
+  const mask = maskBytes ? new Uint8Array(n) : null;
+  const topDown = header.rowOrder === 'top-down';
+  for (let r = 0; r < rows; r++) {
+    const j = topDown ? rows - 1 - r : r;
+    for (let c = 0; c < cols; c++) {
+      const src = r * cols + c;
+      const v = bpv === 4 ? view.getFloat32(dataStart + src * 4, true) : view.getFloat64(dataStart + src * 8, true);
+      const h = v / k;
+      if (!Number.isFinite(h)) fail(`non-finite height at row ${r}, column ${c}`);
+      if (h < 0 || h > stockIn + STOCK_TOLERANCE_IN) fail(`height ${h.toFixed(5)} in at row ${r}, column ${c} is outside [0, stock]`);
+      heightsIn[j * cols + c] = h;
+      if (mask && maskBytes) mask[j * cols + c] = maskBytes[src] ? 1 : 0;
+    }
+  }
+  return {
+    header, cols, rows, widthIn, heightIn, backingIn, stockIn, heightsIn, mask,
+    diagonalZ00Z11: diagonalIsZ00Z11(header.triangulation),
+  };
+}
+
+/** Build a .mcrelief file. `heights` is row-major in `header.rowOrder`, in `header.units`; the
+ *  checksums are filled in here. */
+export async function encodeReliefMaster(
+  header: Omit<ReliefHeader, 'sha256'>, heights: Float32Array | Float64Array, mask?: Uint8Array,
+): Promise<ArrayBuffer> {
+  const n = header.cols * header.rows;
+  if (heights.length !== n || (mask && mask.length !== n)) throw new Error('Relief master: array size does not match cols x rows');
+  if ((header.dtype === 'float32') !== (heights instanceof Float32Array)) throw new Error('Relief master: dtype does not match the array');
+  const heightBytes = new Uint8Array(heights.buffer, heights.byteOffset, heights.byteLength);
+  const full: ReliefHeader = {
+    ...header,
+    mask: mask !== undefined,
+    sha256: { heights: await sha256Hex(heightBytes), ...(mask ? { mask: await sha256Hex(mask) } : {}) },
+  };
+  const json = new TextEncoder().encode(JSON.stringify(full));
+  const dataStart = Math.ceil((12 + json.length) / 8) * 8;
+  const out = new Uint8Array(dataStart + heightBytes.length + (mask ? n : 0));
+  out.set(new TextEncoder().encode(RELIEF_MAGIC), 0);
+  new DataView(out.buffer).setUint32(8, json.length, true);
+  out.set(json, 12);
+  out.set(heightBytes, dataStart);
+  if (mask) out.set(mask, dataStart + heightBytes.length);
+  return out.buffer;
+}
+
+/** Preview grid for the viewport: `cols` x `rows` bilinear samples of the master, as number[][]
+ *  in MeshCraft order. Display only; exports and toolpaths read the master itself. */
+export function reliefPreviewGrid(m: ReliefMaster, cols: number, rows: number): number[][] {
+  const out: number[][] = [];
+  for (let j = 0; j < rows; j++) {
+    const fy = (j / (rows - 1)) * (m.rows - 1);
+    const j0 = Math.min(Math.floor(fy), m.rows - 2), ty = fy - j0;
+    out[j] = [];
+    for (let i = 0; i < cols; i++) {
+      const fx = (i / (cols - 1)) * (m.cols - 1);
+      const i0 = Math.min(Math.floor(fx), m.cols - 2), tx = fx - i0;
+      const a = m.heightsIn[j0 * m.cols + i0], b = m.heightsIn[j0 * m.cols + i0 + 1];
+      const c = m.heightsIn[(j0 + 1) * m.cols + i0], d = m.heightsIn[(j0 + 1) * m.cols + i0 + 1];
+      out[j][i] = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+    }
+  }
+  return out;
+}

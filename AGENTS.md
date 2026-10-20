@@ -44,7 +44,7 @@ meshcraft/
 ├── src/
 │   ├── main.ts                # Entry point: init, URL state, demo preload
 │   ├── state.ts               # MeshState interface, STATE singleton, URL serialize/deserialize
-│   ├── types.ts               # Vertex3D, Triangle, MeshData, NoiseGenerator interfaces
+│   ├── types.ts               # NoiseGenerator, FBMGenerator, relief and noise-grid parameter types
 │   ├── noise/
 │   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
 │   │   ├── voronoi-relief.ts  # Voronoi Relief sampler (cellular relief, attractors, starburst)
@@ -58,7 +58,10 @@ meshcraft/
 │   ├── slider-utils.ts        # Click-to-edit slider values, step-aware value formatting
 │   ├── render.ts              # Three.js WebGL viewport: surface, wireframe, points, enclosure,
 │   │                          #   elevation or neutral surface material
-│   ├── export.ts              # STL (binary/ASCII), OBJ, heightmap PNG export dispatcher
+│   ├── export.ts              # Export dispatcher: STL (binary/ASCII), OBJ, 3DM, heightmap PNG
+│   ├── export-surface.ts      # The one surface every export and toolpath reads (master or grid)
+│   ├── mesh-writer.ts         # Pure grid -> indexed mesh -> STL/OBJ writers (browser + CLI)
+│   ├── relief-master.ts       # .mcrelief data contract: parse/encode/verify, preview resample
 │   ├── sbp-export.ts          # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 │   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets, SBP section
 │   ├── interaction.ts         # Mouse orbit/pan/zoom, touch pinch, scroll
@@ -71,7 +74,7 @@ meshcraft/
 │       ├── tools.ts           # Embedded ATC tool database + default tool config
 │       ├── stl-parser.ts      # Binary STL parser + bounds validation
 │       ├── heightmap.ts       # STL/STATE vertices -> regular Z grid
-│       ├── compensate.ts      # Tool compensation / erosion
+│       ├── compensate.ts      # Max-envelope tool compensation + exact triangle drop-cutter
 │       ├── roughing.ts        # Roughing toolpath generation
 │       ├── finishing.ts       # Finishing raster toolpath generation
 │       ├── writer.ts          # OpenSBP file builder
@@ -85,7 +88,12 @@ meshcraft/
 │   ├── drape.spec.ts          # npm run test:drape (fast, deterministic)
 │   ├── drape-physics.spec.ts  # npm run test:drape-physics (slow; vs reference cloth sim)
 │   ├── drape-reference-sim.ts # PBD cloth oracle used by the physics spec
-│   └── drape-metrics.ts       # Fold orientation / skew / envelope metrics shared by the specs
+│   ├── drape-metrics.ts       # Fold orientation / skew / envelope metrics shared by the specs
+│   ├── sbp-cut.spec.ts        # npm run test:cut (compensation oracle + emitted-SBP cut replay)
+│   ├── cut-sim.ts             # Independent swept-cutter simulation of an SBP file
+│   ├── relief-master.spec.ts  # npm run test:relief-master (data contract, export fidelity)
+│   ├── relief-roundtrip.ts    # npm run relief-roundtrip (master -> STL [-> SBP -> cut report])
+│   └── png.ts                 # Minimal PNG writer for CLI diagnostics
 ├── public/
 │   ├── _redirects             # Cloudflare Pages: / -> /index.html
 │   └── monalisa-depthMap.jpeg # Demo depth map
@@ -101,7 +109,9 @@ meshcraft/
 - **Three.js WebGL renderer** (`src/render.ts`): Phong surface with analytical heightfield normals, an on-demand render loop (renders only when state changes), and an elevation-ramp or neutral surface material. Grids up to 400 columns (~250k cells) render interactively. (An earlier Canvas 2D painter's-algorithm renderer was replaced.)
 - **Typed STATE singleton**: `MeshState` interface with 40+ typed keys. Direct mutation — no reactive/observer pattern. The call graph is explicit (slider → debounce → generate → render).
 - **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar.
-- **Watertight export**: Bottom face + side walls for CNC-ready meshes. Enforces minimum 0.01" material thickness to prevent degenerate triangles.
+- **Watertight export**: Side walls + a bottom fan from one centre vertex (closed two-manifold, Euler characteristic 2) for CNC-ready meshes. Enforces minimum 0.01" material thickness to prevent degenerate triangles.
+- **Relief master** (`src/relief-master.ts`, `.mcrelief`): a finished relief's float heights with dimensions, units, row order, backing, stock, mask, fixed triangulation and a SHA-256, imported without the image path's 8-bit read, normalization, cutoff or smoothing. The viewport shows a preview resample; every export and toolpath reads the master at full resolution. `scripts/relief/npy_to_mcrelief.py` packages one; `npm run relief-roundtrip` plus `scripts/relief/verify_export.py` (Blender) prove an export reproduces it.
+- **Tool compensation** (`src/sbp/compensate.ts`): tip = max over the cutter footprint of (surface - cutter profile), side angles from the tool axis. Finishing drops the cutter at every emitted point onto the exported triangles (vertex, edge and facet contact) instead of interpolating node tips; roughing carries segment and between-node margins. `npm run test:cut` replays the emitted SBP text through `cli/cut-sim.ts`, which shares no code with `src/sbp/`, on a grid finer than the target, against the triangulated surface.
 - **ShopBot defaults**: 36"x24" max dimensions, 6" Z limit — hardcoded for the ShopBot Desktop Max ATC.
 
 ---
