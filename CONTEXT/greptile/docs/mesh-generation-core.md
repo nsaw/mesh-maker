@@ -68,7 +68,7 @@ When these files or sections are changed, remember to consider these:
 |---|---|---|
 | `STATE.depthMap` is null when `generateDepthMapMesh()` runs | `STATE.vertices` set to `null`, viewport/export show nothing | Explicit early-return check in `mesh.ts` |
 | `cols < 2` or `rows < 2` | `getExportSurface()` returns a reason string and the export shows it as a toast | Guard in `src/export-surface.ts`; `mesh.ts` also floors `resolution` to 2 and `rows` to 4 |
-| `baseThickness` set to 0, or a surface vertex at z=0, with `watertight` true | Zero-height enclosure walls (degenerate triangles) against the z=0 bottom face | `mesh.ts` floors both the stock and every surface vertex, and `export.ts` floors the stock, to the one shared `MIN_WATERTIGHT_THICKNESS` (`src/geometry.ts`) |
+| `baseThickness` set to 0, or a surface vertex at z=0, with `watertight` true | Zero-height enclosure walls (degenerate triangles) against the z=0 bottom face | `mesh.ts` floors both the stock and every surface vertex to the one shared `MIN_WATERTIGHT_THICKNESS` (`src/geometry.ts`); a relief master below it is refused for watertight export by `reliefMasterSurface()` (`src/export-surface.ts`), never raised |
 | `nMax === nMin` (flat noise/depth grid) | Division by zero in normalization | Both `mesh.ts` and `render.ts` use `range || 1` fallback |
 | Domain warp (`distortion > 0`) combined with `voronoi-relief` generator | Would tear cell boundaries | `sampleNoiseGrid` special-cases `gen.kind === 'voronoi-relief'` and skips its own warp path entirely |
 
@@ -80,7 +80,7 @@ When these files or sections are changed, remember to consider these:
 | `src/geometry.ts` | Shared grid-to-triangle math (diagonal selection, triangle offsets, watertight enclosure) and `weightedSmooth`, used by both viewport/export and the drape compositor |
 | `src/drape.ts` | BLEND-mode veil compositor: `solveMembrane` (PSOR obstacle membrane), `foldDirection`/`foldField` (gravity-directed LIC folds), `composeDrape` (incl. fit into the cut), `drapeToStockHeights` |
 | `src/depth-estimate.ts` | Lazy-loaded Depth-Anything-V2 monocular depth inference (`estimateDepth`), timeouts, WebGPU/WASM fallback |
-| `src/types.ts` | Grid/vertex/mesh data contracts (`MeshData`, `Vertex3D`, `NoiseGridParams`, generator interfaces) shared across the pipeline |
+| `src/types.ts` | Noise-pipeline contracts (`NoiseGridParams`, generator interfaces); the export geometry contract is `ExportSurface` in `src/mesh-writer.ts` |
 | `src/render.ts` (`buildSurface`, `buildEnclosure`) | Consumes `STATE.vertices` to build the live Three.js scene; independent re-triangulation from `export.ts` |
 | `src/export-surface.ts`, `src/mesh-writer.ts`, `src/export.ts` | `getExportSurface()` picks the relief master or the grid; `buildIndexedMesh()` and the STL/OBJ writers emit it; `export.ts` dispatches formats |
 | `src/ui.ts` (`loadDepthMap`, `fitMeshToAspect`, `runDepthEstimation`) | Loads user depth-map image into `STATE.depthMap`, optionally runs AI depth estimation, and triggers `generateMesh()` |

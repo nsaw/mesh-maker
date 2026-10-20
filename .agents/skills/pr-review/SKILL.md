@@ -106,9 +106,10 @@ This repo's cohorts are unusually explicit — the parity specs name them.
 - **SBP stages** — `roughing.ts`, `finishing.ts`, `compensate.ts` share config plumbing from
   `src/sbp-export.ts`; a new config field usually needs threading through all of them plus
   `worker.ts`.
-- **Inline vs worker export paths** — `src/sbp-export.ts` runs the pipeline inline for the
-  current mesh and offloads to `src/sbp/worker.ts` for uploaded STLs. These are primary/retry
-  style siblings and diverge easily.
+- **Mesh vs STL export paths**: since 2026-10-19 both run in `src/sbp/worker.ts` through one
+  `runSbpWorker` in `src/sbp-export.ts`; the mesh path builds its heightmap from
+  `getExportSurface(true)` (relief master or grid), the STL path rasterizes in the worker. A
+  change to the job contract (filename, source identity, buffer hand-back) touches both.
 - **Parity specs** — `cli/grasshopper-parity.spec.ts` and `cli/voronoi-relief.spec.ts`
   should both cover any new sampler behavior.
 

@@ -309,6 +309,7 @@ function updateStlUploadUi(): void {
 }
 
 function clearLoadedStl(): void {
+  stlRevision++;
   SBP_STATE.stlBuffer = null;
   SBP_STATE.stlName = '';
   invalidateSbpStats();
@@ -664,9 +665,15 @@ export function wireSBPControls(): void {
 
 }
 
+/** Bumped by every STL upload and by Clear: a read that finishes after a newer upload or a clear
+ *  is discarded, as the depth-map uploads do (ui.ts uploadRevision). */
+let stlRevision = 0;
+
 function loadSTL(file: File): void {
+  const revision = ++stlRevision;
   const reader = new FileReader();
   reader.onload = () => {
+    if (revision !== stlRevision) return;
     SBP_STATE.stlBuffer = reader.result as ArrayBuffer;
     SBP_STATE.stlName = file.name;
     invalidateSbpStats();
@@ -675,7 +682,7 @@ function loadSTL(file: File): void {
     showToast(`STL loaded: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`);
   };
   reader.onerror = () => {
-    showToast('Failed to read STL file');
+    if (revision === stlRevision) showToast('Failed to read STL file');
   };
   reader.readAsArrayBuffer(file);
 }

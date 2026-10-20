@@ -30,6 +30,7 @@ import { buildIndexedMesh, writeBinarySTL } from '../src/mesh-writer';
 import type { ExportSurface } from '../src/mesh-writer';
 import { generateSBP } from '../src/sbp/generate';
 import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
+import { MACHINE_TRAVEL_IN } from '../src/sbp/types';
 import { compareCut, cutAgainstTriangles, parseSbp } from './cut-sim';
 import type { CutComparison } from './cut-sim';
 import { encodePngRgb } from './png';
@@ -135,7 +136,13 @@ async function main(): Promise<void> {
 }
 
 async function cutReport(m: ReliefMaster, surface: ExportSurface, opt: Options): Promise<void> {
-  const config = { ...getDefaultConfig(), materialX: m.widthIn, materialY: m.heightIn, materialZ: m.stockIn,
+  // Safe and home Z follow the master's stock (the defaults assume 0.75 in stock); generateSBP
+  // refuses either beyond the 6 in Z travel rather than this script clamping them.
+  const base = getDefaultConfig();
+  const safeZ = Math.min(MACHINE_TRAVEL_IN.z, Math.max(base.safeZ, m.stockIn + 0.1));
+  const config = { ...base, materialX: m.widthIn, materialY: m.heightIn, materialZ: m.stockIn,
+    // Home Z capped at the Z travel like the browser's slider; never below safe Z.
+    safeZ, homeZ: Math.max(safeZ, Math.min(MACHINE_TRAVEL_IN.z, Math.max(base.homeZ, safeZ + 0.5))),
     offsetX: opt.offset[0], offsetY: opt.offset[1] };
   const t1 = performance.now();
   let sbp: string, stats: unknown = null;

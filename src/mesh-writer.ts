@@ -117,26 +117,40 @@ export function writeBinarySTL(mesh: IndexedMesh): ArrayBuffer {
   return buf;
 }
 
-export function writeAsciiSTL(mesh: IndexedMesh): string {
+/** Facets or lines per joined chunk of a text export. A full-resolution relief master's ASCII STL
+ *  is about 1.6 G characters, three times V8's maximum string length, so text exports are built as
+ *  string chunks for `new Blob(chunks)` and never joined into one string. */
+export const TEXT_CHUNK = 20000;
+
+export function writeAsciiSTL(mesh: IndexedMesh): string[] {
   const { positions: p, triangles: t } = mesh;
-  const parts: string[] = ['solid meshcraft\n'];
+  const chunks: string[] = ['solid meshcraft\n'];
+  let part: string[] = [];
   for (let f = 0; f < t.length / 3; f++) {
     const a = t[f * 3], b = t[f * 3 + 1], c = t[f * 3 + 2];
     const [nx, ny, nz] = normalOf(p, a, b, c);
     const v = (i: number): string => `  vertex ${p[i * 3]} ${p[i * 3 + 1]} ${p[i * 3 + 2]}\n`;
-    parts.push(`facet normal ${nx} ${ny} ${nz}\n outer loop\n${v(a)}${v(b)}${v(c)} endloop\nendfacet\n`);
+    part.push(`facet normal ${nx} ${ny} ${nz}\n outer loop\n${v(a)}${v(b)}${v(c)} endloop\nendfacet\n`);
+    if (part.length === TEXT_CHUNK) { chunks.push(part.join('')); part = []; }
   }
-  parts.push('endsolid meshcraft');
-  return parts.join('');
+  chunks.push(part.join(''), 'endsolid meshcraft');
+  return chunks;
 }
 
-export function writeOBJ(mesh: IndexedMesh): string {
+export function writeOBJ(mesh: IndexedMesh): string[] {
   const { positions: p, triangles: t } = mesh;
-  const parts: string[] = ['# MESHCRAFT - Sawyer Design\n# OBJ Export\n\n'];
-  for (let i = 0; i < p.length / 3; i++)
-    parts.push(`v ${p[i * 3].toFixed(6)} ${p[i * 3 + 1].toFixed(6)} ${p[i * 3 + 2].toFixed(6)}\n`);
-  parts.push('\n');
-  for (let f = 0; f < t.length / 3; f++)
-    parts.push(`f ${t[f * 3] + 1} ${t[f * 3 + 1] + 1} ${t[f * 3 + 2] + 1}\n`);
-  return parts.join('');
+  const chunks: string[] = ['# MESHCRAFT - Sawyer Design\n# OBJ Export\n\n'];
+  let part: string[] = [];
+  const flush = (): void => { if (part.length >= TEXT_CHUNK) { chunks.push(part.join('')); part = []; } };
+  for (let i = 0; i < p.length / 3; i++) {
+    part.push(`v ${p[i * 3].toFixed(6)} ${p[i * 3 + 1].toFixed(6)} ${p[i * 3 + 2].toFixed(6)}\n`);
+    flush();
+  }
+  part.push('\n');
+  for (let f = 0; f < t.length / 3; f++) {
+    part.push(`f ${t[f * 3] + 1} ${t[f * 3 + 1] + 1} ${t[f * 3 + 2] + 1}\n`);
+    flush();
+  }
+  chunks.push(part.join(''));
+  return chunks;
 }

@@ -1,11 +1,18 @@
 import type { Heightmap, SbpConfig, ToolpathSection, ToolpathMove } from './types';
-import { createDropCutter } from './compensate';
+import { createDropCutter, createTipLipschitzField } from './compensate';
 
-/** Largest the straight move between two emitted points may sit below the exact tip height at its
- *  quarter points before the move is split. The envelope bends sharply where the steep side of a tapered
+/** Largest the straight move between two emitted points may sit below the exact tip height at a
+ *  sample before the move is split. The envelope bends sharply where the steep side of a tapered
  *  ball nose touches fine detail, so uniform 0.005 in points alone gouged up to 0.007 in there. */
 const CHORD_TOLERANCE = 0.0001;
 const MAX_CHORD_SPLITS = 6;
+/** Most samples of the exact tip per move before it is split instead. At least eighths are always
+ *  taken on a move that is not already flat to the bound: on a cliff-and-spike surface a rise at
+ *  t = 0.125 went 1.1 thou under quarter-point checks (cli/sbp-cut.spec.ts C8). */
+const MAX_CHORD_SAMPLES = 256;
+/** Most a certified move may pass under the exact tip, inches; under the 0.0005 in the cut specs
+ *  allow, so sampling noise in the check itself cannot reach it. */
+const CERTIFIED_GOUGE = 0.0004;
 
 function pushUniquePoint(
   points: Array<{ x: number; y: number }>,
@@ -110,6 +117,8 @@ export function generateFinishing(
 
   const lines = computeRasterLines(meshX, meshY, stepover, finishRasterAngle);
   const pointSpacing = 0.005; // uniform spacing along each line
+  // Moves are at most pointSpacing long; the field covers every contact of any point on one.
+  const tipSlopeAt = createTipLipschitzField(target, tool, pointSpacing);
   const moves: ToolpathMove[] = [];
 
   // Entry: rapid to start of first line at safeZ
@@ -142,24 +151,36 @@ export function generateFinishing(
       const lx = line.x0 + t * dx, ly = line.y0 + t * dy;
       return { x: offsetX + lx, y: offsetY + ly, z: drop(lx, ly) };
     };
-    // Emit [ta, tb). Split while the exact tip at any quarter point sits above the straight move:
-    // the envelope can dip below a chord away from its midpoint (a cliff edge measured 2.35 thou
-    // under the chord at t = 0.3 with the midpoint 3 thou clear). If the last allowed split still
-    // fails, hold the higher end across the short remaining step and drop at its end.
+    // Emit [ta, tb). A straight move is accepted only when it is certified: the exact tip is sampled
+    // at n evenly spaced points, and between two samples h apart the tip can rise above them by
+    // at most L h / 2 (L from createTipLipschitzField, local to the move). So the move passes under
+    // the tip by at most max(sample excess) + L h / 2, and it must keep that within CERTIFIED_GOUGE.
+    // Otherwise it is split; if the last allowed split still fails, the cutter lifts at a, crosses at
+    // max(a, b) + L |ab| / 2 (no point of the step can need more) and drops at b.
     const emit = (ta: number, a: { x: number; y: number; z: number }, tb: number,
       b: { x: number; y: number; z: number }, depth: number): void => {
       const tm = (ta + tb) / 2, m = at(tm);
-      const over = (t: number, p: { z: number }): boolean => p.z > a.z + (b.z - a.z) * ((t - ta) / (tb - ta)) + CHORD_TOLERANCE;
-      const violated = over(tm, m) || over((ta + tm) / 2, at((ta + tm) / 2)) || over((tm + tb) / 2, at((tm + tb) / 2));
-      if (!violated) {
+      const lineT = (t: number): number => a.z + (b.z - a.z) * ((t - ta) / (tb - ta));
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const L = tipSlopeAt((a.x + b.x) / 2 - offsetX, (a.y + b.y) / 2 - offsetY);
+      // Sample at n evenly spaced points, doubling n (new points only) while the samples are clean
+      // but the bound is not yet met: near steep ground that costs tip evaluations, not emitted points.
+      let excess = Math.max(0, m.z - lineT(tm)), n = 2;
+      while (excess <= CHORD_TOLERANCE && excess + L * (len / n) / 2 > CERTIFIED_GOUGE && n < MAX_CHORD_SAMPLES) {
+        n *= 2;
+        for (let k = 1; k < n && excess <= CHORD_TOLERANCE; k += 2) {
+          const t = ta + ((tb - ta) * k) / n;
+          excess = Math.max(excess, at(t).z - lineT(t));
+        }
+      }
+      if (excess <= CHORD_TOLERANCE && excess + L * (len / n) / 2 <= CERTIFIED_GOUGE) {
         linePoints.push(a);
       } else if (depth < MAX_CHORD_SPLITS) {
         emit(ta, a, tm, m, depth + 1);
         emit(tm, m, tb, b, depth + 1);
       } else {
-        linePoints.push(a);
-        if (a.z >= b.z) linePoints.push({ x: b.x, y: b.y, z: a.z });
-        else linePoints.push({ x: a.x, y: a.y, z: b.z });
+        const hold = Math.max(a.z, b.z) + L * len / 2;
+        linePoints.push(a, { x: a.x, y: a.y, z: hold }, { x: b.x, y: b.y, z: hold });
       }
     };
 

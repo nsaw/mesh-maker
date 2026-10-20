@@ -85,6 +85,40 @@ export function diagonalIsZ00Z11(d: ReliefDiagonal): boolean {
   return d === 'tr-bl';
 }
 
+/** Check every header field's JSON type and value; nothing is coerced. A wrong type (null where a
+ *  number belongs, a string for a boolean, an inherited key like "constructor" for units) is a
+ *  contract violation, reported with the field's name. */
+function validateHeader(raw: unknown): ReliefHeader {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) fail('header must be a JSON object');
+  const h = raw as Record<string, unknown>;
+  const oneOf = (key: string, values: readonly unknown[]): void => {
+    if (!values.includes(h[key])) fail(`${key} must be one of ${values.map(v => JSON.stringify(v)).join(', ')}, got ${JSON.stringify(h[key])}`);
+  };
+  const num = (key: string): void => {
+    const v = h[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) fail(`${key} must be a finite number, got ${JSON.stringify(v)}`);
+  };
+  oneOf('format', ['meshcraft-relief']);
+  oneOf('version', [1]);
+  if (typeof h.units !== 'string' || !Object.prototype.hasOwnProperty.call(UNITS_PER_IN, h.units))
+    fail(`units must be one of "in", "mm", "m", got ${JSON.stringify(h.units)}`);
+  oneOf('dtype', ['float32', 'float64']);
+  oneOf('rowOrder', ['top-down', 'bottom-up']);
+  oneOf('heightOrigin', ['panel-back']);
+  oneOf('triangulation', ['tr-bl', 'tl-br']);
+  for (const key of ['cols', 'rows', 'width', 'height', 'backing', 'stock']) num(key);
+  if (typeof h.mask !== 'boolean') fail(`mask must be true or false, got ${JSON.stringify(h.mask)}`);
+  const sha = h.sha256;
+  if (typeof sha !== 'object' || sha === null || Array.isArray(sha)) fail('sha256 must be an object');
+  const digests = sha as Record<string, unknown>;
+  const hex = /^[0-9a-f]{64}$/;
+  if (typeof digests.heights !== 'string' || !hex.test(digests.heights)) fail('sha256.heights must be a 64-digit lowercase hex string');
+  if (h.mask && (typeof digests.mask !== 'string' || !hex.test(digests.mask))) fail('sha256.mask must be a 64-digit lowercase hex string');
+  for (const key of ['name', 'source', 'license'])
+    if (h[key] !== undefined && typeof h[key] !== 'string') fail(`${key} must be a string when present`);
+  return h as unknown as ReliefHeader;
+}
+
 export async function parseReliefMaster(buf: ArrayBuffer): Promise<ReliefMaster> {
   const bytes = new Uint8Array(buf);
   if (bytes.length < 12 || new TextDecoder().decode(bytes.subarray(0, 8)) !== RELIEF_MAGIC)
@@ -92,18 +126,13 @@ export async function parseReliefMaster(buf: ArrayBuffer): Promise<ReliefMaster>
   const view = new DataView(buf);
   const hLen = view.getUint32(8, true);
   if (12 + hLen > bytes.length) fail('header runs past the end of the file');
-  let header: ReliefHeader;
+  let raw: unknown;
   try {
-    header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(12, 12 + hLen))) as ReliefHeader;
+    raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(12, 12 + hLen)));
   } catch (e) {
     fail(`header is not valid JSON (${e instanceof Error ? e.message : String(e)})`);
   }
-  if (header.format !== 'meshcraft-relief' || header.version !== 1) fail('unsupported format or version');
-  if (!(header.units in UNITS_PER_IN)) fail(`unknown units "${String(header.units)}"`);
-  if (header.dtype !== 'float32' && header.dtype !== 'float64') fail(`unknown dtype "${String(header.dtype)}"`);
-  if (header.rowOrder !== 'top-down' && header.rowOrder !== 'bottom-up') fail('rowOrder must be top-down or bottom-up');
-  if (header.heightOrigin !== 'panel-back') fail('heightOrigin must be panel-back');
-  if (header.triangulation !== 'tr-bl' && header.triangulation !== 'tl-br') fail('triangulation must be tr-bl or tl-br');
+  const header = validateHeader(raw);
   const { cols, rows } = header;
   if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols * rows > 50_000_000)
     fail(`bad grid size ${cols} x ${rows}`);

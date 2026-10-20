@@ -196,11 +196,11 @@ async function _doExportInner(): Promise<void> {
     if (STATE.binary) {
       blob = new Blob([writeBinarySTL(mesh)], { type: 'application/octet-stream' });
     } else {
-      blob = new Blob([writeAsciiSTL(mesh)], { type: 'text/plain' });
+      blob = new Blob(writeAsciiSTL(mesh), { type: 'text/plain' });
     }
     ext = 'stl';
   } else if (fmt === 'obj') {
-    blob = new Blob([writeOBJ(mesh)], { type: 'text/plain' });
+    blob = new Blob(writeOBJ(mesh), { type: 'text/plain' });
     ext = 'obj';
   } else if (fmt === '3dm') {
     try {
@@ -208,7 +208,7 @@ async function _doExportInner(): Promise<void> {
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
     } catch (e: unknown) {
-      blob = new Blob([writeOBJ(mesh)], { type: 'text/plain' });
+      blob = new Blob(writeOBJ(mesh), { type: 'text/plain' });
       ext = 'obj';
       const errMsg = e instanceof Error ? e.message : String(e);
       showToast(`3DM failed (OBJ fallback): ${errMsg}`, 8000);

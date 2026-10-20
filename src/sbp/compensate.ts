@@ -14,10 +14,12 @@ import { ToolType, type ToolDef, type Heightmap } from './types';
  * normal is perpendicular to the cone side, at r = R cos(a), height R (1 - sin(a)).
  */
 export function toolZOffset(tool: ToolDef, d: number): number {
+  // Every square root below is clamped at 0: at the rim, d - flat radius can round a hair past R
+  // (0.020000000000000004 for D 0.25, R 0.02), and the unclamped root wrote NaN Z into the SBP.
   const R = tool.tipRadius;
   switch (tool.type) {
     case ToolType.BallNose:
-      return d <= R ? R - Math.sqrt(R * R - d * d) : Infinity;
+      return d <= R ? R - Math.sqrt(Math.max(0, R * R - d * d)) : Infinity;
 
     case ToolType.TaperedBallNose:
     case ToolType.VBit: {
@@ -25,9 +27,9 @@ export function toolZOffset(tool: ToolDef, d: number): number {
       // and the footprint is bounded by relief depth instead (see compensateForTool).
       if (tool.type === ToolType.VBit && d > tool.diameter / 2) return Infinity;
       const a = tool.halfAngle;
-      if (!(a > 0)) return d <= R ? R - Math.sqrt(R * R - d * d) : Infinity;
+      if (!(a > 0)) return d <= R ? R - Math.sqrt(Math.max(0, R * R - d * d)) : Infinity;
       const rTangent = R * Math.cos(a);
-      if (d <= rTangent) return R - Math.sqrt(R * R - d * d);
+      if (d <= rTangent) return R - Math.sqrt(Math.max(0, R * R - d * d));
       return R * (1 - Math.sin(a)) + (d - rTangent) / Math.tan(a);
     }
 
@@ -37,7 +39,7 @@ export function toolZOffset(tool: ToolDef, d: number): number {
       const flatR = toolR - R;
       if (R <= 0 || d <= flatR) return 0;
       const dr = d - flatR;
-      return R - Math.sqrt(R * R - dr * dr);
+      return R - Math.sqrt(Math.max(0, R * R - dr * dr));
     }
 
     case ToolType.EndMill:
@@ -382,5 +384,48 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
     }
     // Only reachable outside the grid; keep the cutter at the nearest edge height rather than -Inf.
     return best === -Infinity ? z[Math.min(rows - 1, Math.max(0, Math.round(gyq))) * cols + Math.min(cols - 1, Math.max(0, Math.round(gxq)))] : best;
+  };
+}
+
+/**
+ * Local bound L(x, y) on how fast the exact tip height can change per inch of horizontal travel
+ * near (x, y): for points q within `radius` of (x, y), |tip(q) - tip(q')| <= L |q - q'|.
+ *
+ * Shift the contact point along with the cutter: the surface under it changes by at most the
+ * steepest facet slope among the facets the cutter can touch there, so L is the steepest facet
+ * within reach + radius + one cell diagonal. A shifted contact that leaves the panel is projected
+ * back onto it; projection onto the rectangle is non-expansive and every profile is non-decreasing,
+ * so the bound holds at the edges too. A tapered ball nose also obeys
+ * its cone slope 1 / tan(side angle) everywhere (its cone never ends, so it has no rim), so its L is
+ * the smaller of the two. Cutters with a rim or vertical side (ball nose, end mills, a V-bit past its
+ * diameter) use the facet bound alone: their own profile slope is unbounded at the rim.
+ */
+export function createTipLipschitzField(heightmap: Heightmap, tool: ToolDef, radius: number): (x: number, y: number) => number {
+  const { z, rows, cols, cellSize: cx, cellSizeY: cy } = heightmap;
+  // Steepest facet touching each node: a grid triangle's gradient has components no steeper than
+  // its steepest x and y edges.
+  const nodeSlope = new Float64Array(rows * cols);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const k = r * cols + c, h = z[k];
+      const sx = Math.max(c > 0 ? Math.abs(h - z[k - 1]) : 0, c < cols - 1 ? Math.abs(z[k + 1] - h) : 0) / cx;
+      const sy = Math.max(r > 0 ? Math.abs(h - z[k - cols]) : 0, r < rows - 1 ? Math.abs(z[k + cols] - h) : 0) / cy;
+      nodeSlope[k] = Math.hypot(sx, sy);
+    }
+  let zMin = Infinity, zMax = -Infinity;
+  for (let k = 0; k < z.length; k++) { if (z[k] < zMin) zMin = z[k]; if (z[k] > zMax) zMax = z[k]; }
+  let reach = 0;
+  const step = Math.min(cx, cy) / 4;
+  while (zMax > zMin && toolZOffset(tool, reach + step) < zMax - zMin && reach < 6) reach += step;
+  const R = reach + step + radius + 1.5 * Math.hypot(cx, cy);
+  const disc: KernelPoint[] = [];
+  for (let dj = -Math.ceil(R / cy); dj <= Math.ceil(R / cy); dj++)
+    for (let di = -Math.ceil(R / cx); di <= Math.ceil(R / cx); di++)
+      if (Math.hypot(di * cx, dj * cy) <= R) disc.push({ di, dj, offset: 0 });
+  const field = footprintMax(nodeSlope, rows, cols, disc);
+  const cone = tool.type === ToolType.TaperedBallNose && tool.halfAngle > 0 ? 1 / Math.tan(tool.halfAngle) : Infinity;
+  return (x: number, y: number): number => {
+    const c = Math.min(cols - 1, Math.max(0, Math.round(x / cx))), r = Math.min(rows - 1, Math.max(0, Math.round(y / cy)));
+    return Math.min(cone, field[r * cols + c]);
   };
 }

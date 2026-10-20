@@ -11,7 +11,7 @@ The app converts a generated heightfield mesh (or an uploaded STL) into ShopBot 
 ```mermaid
 flowchart TD
   A[export.ts doExport] --> B[sbp-export.ts doSBPExport]
-  B -->|mesh path| C[stateToHeightmap]
+  B -->|mesh path| C[export-surface.ts getExportSurface + surfaceHeightmap, then worker.ts]
   B -->|STL path| D[worker.ts: parseSTLBinary + meshToHeightmap]
   C --> E[generate.ts normalizeZ]
   D --> E
@@ -25,8 +25,8 @@ flowchart TD
 
 `src/export.ts`'s `_doExportInner` checks `STATE.exportFormat`; when it is `'sbp'` it calls `doSBPExport()` from `src/sbp-export.ts` and returns immediately (no shared post-processing with the other export formats). `doSBPExport` picks one of two source paths based on whether an STL was uploaded (`SBP_STATE.stlBuffer`):
 
-- **Mesh path** (`exportFromMesh`): uses the currently generated `STATE.vertices` grid directly, via `stateToHeightmap` in `src/sbp/heightmap.ts`. This assumes `STATE.vertices` is already a regular row/col grid in CNC Z space — no rasterization needed.
-- **STL path** (`exportFromSTL`): spawns a Web Worker from `src/sbp/worker.ts` and posts the raw STL `ArrayBuffer`, the resolved `SbpConfig`, and a heightmap `resolution` (cells per inch). The worker owns the CPU-heavy parse + rasterize + toolpath-generation work off the main thread; `sbp-export.ts` guards against concurrent runs with `sbpWorkerRunning` and re-attaches the transferred `stlBuffer` on both success and error so the UI can retain the uploaded file.
+- **Mesh path** (`exportFromMesh`): reads `getExportSurface(true)` (`src/export-surface.ts`): the full-resolution relief master when one is active in DEPTH MAP mode, else the generated `STATE.vertices` grid. `surfaceHeightmap()` turns it into a `Heightmap` (copy, with row spacing and diagonal) and the job runs in `src/sbp/worker.ts`, like the STL path.
+- **STL path** (`exportFromSTL`): posts the raw STL `ArrayBuffer`, the resolved `SbpConfig`, and a heightmap `resolution` (cells per inch) to the same worker, which parses and rasterizes it first. Both paths share `runSbpWorker`, which guards concurrent runs with `sbpWorkerRunning`, captures the job's filename and source when it starts (a result for a replaced model is downloaded under its own name and not attached to the current one), and hands a transferred `stlBuffer` back only if no newer upload replaced it.
 
 Both paths converge on the same `generateSBP` function (`src/sbp/generate.ts`), so behavior is identical for a given heightmap regardless of source — the worker doesn't get a different pipeline.
 
@@ -36,9 +36,9 @@ Both paths converge on the same `generateSBP` function (`src/sbp/generate.ts`), 
 
 ## Stage 1: getting a heightmap
 
-A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows`/`cols`/`cellSize`/`meshX`/`meshY`. Two producers:
+A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows`/`cols`/`cellSize`/`cellSizeY`/`meshX`/`meshY` and an optional cell `diagonal`. Producers:
 
-- `stateToHeightmap` (`src/sbp/heightmap.ts`) — trivial reshape of `STATE.vertices` (`number[][]`) into the flat grid; `cellSize` is derived as `meshX / (cols - 1)`.
+- `surfaceHeightmap` (`src/export-surface.ts`): copies an `ExportSurface` (the relief master or the generated grid) into a `Heightmap` with `cellSize = meshX / (cols - 1)`, `cellSizeY = meshY / (rows - 1)` and the surface's diagonal. `stateToHeightmap` (`src/sbp/heightmap.ts`) does the same for a `number[][]` grid and is now used by the specs only.
 - `meshToHeightmap` (`src/sbp/heightmap.ts`), fed by `parseSTLBinary` (`src/sbp/stl-parser.ts`) — parses a binary STL into a `Float32Array` (12 floats/triangle: normal + 3 vertices) with bounds tracked in the same pass. `meshToHeightmap` then rasterizes: for each triangle, it walks its XY bounding box in grid cells and barycentrically interpolates Z, keeping the max Z per cell (top-surface wins on overlap). A gap-fill pass expands a nearest-neighbor ring (up to 5 cells) for any cell no triangle touched, falling back to the STL's global minimum Z if nothing is found within that radius.
 
 ## Stage 2: Z normalization
@@ -90,7 +90,7 @@ When these files or sections are changed, remember to consider these:
 | `src/sbp/types.ts` | Canonical shapes: `SbpConfig`, `ToolDef`, `Heightmap`, `ToolpathMove`/`Section`, `SbpStats` |
 | `src/sbp/tools.ts` | Embedded ATC tool table and per-material cutting params; default tool/config resolution |
 | `src/sbp/stl-parser.ts` | Binary STL -> flat `Float32Array` + bounds, single-pass, validated |
-| `src/sbp/heightmap.ts` | Two heightmap producers: STL rasterization (`meshToHeightmap`) and mesh reshape (`stateToHeightmap`) |
+| `src/sbp/heightmap.ts` | STL rasterization (`meshToHeightmap`) and the spec-only grid reshape (`stateToHeightmap`); the app's mesh path uses `surfaceHeightmap` in `src/export-surface.ts` |
 | `src/sbp/generate.ts` | Pipeline orchestrator (`generateSBP`), Z normalization |
 | `src/sbp/compensate.ts` | Exact max-envelope tool compensation (2D radial kernel) and the finishing drop-cutter, per `ToolType` geometry |
 | `src/sbp/roughing.ts` | Z-level serpentine raster roughing toolpath |

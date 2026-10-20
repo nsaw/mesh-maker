@@ -9,6 +9,7 @@
  *   M3  every corrupt or out-of-contract file is rejected, not repaired.
  *   M4  the export surface is the master itself: preview Grid Resolution changes nothing exported.
  *   M8  part plus work offset must fit the 36 x 24 in travel; a 24 x 36 in master is rejected.
+ *   M9  ASCII STL and OBJ are built as chunks (a full master exceeds the JS string limit).
  *   M6  the real-asset cut check (cli/relief-roundtrip.ts) sees a gouge between the master's nodes.
  *   M7  the preview resample lies on the master's declared triangles and reports its error.
  *   M5  the watertight STL is a closed, consistently oriented two-manifold with Euler
@@ -19,9 +20,10 @@ import { encodeReliefMaster, parseReliefMaster, previewErrorIn, reliefPreviewGri
 import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
 import { generateSBP } from '../src/sbp/generate';
 import { stateToHeightmap } from '../src/sbp/heightmap';
+import type { Heightmap } from '../src/sbp/types';
 import { compareCut, cutAgainstTriangles, parseSbp } from './cut-sim';
 import type { ReliefHeader } from '../src/relief-master';
-import { buildIndexedMesh, writeBinarySTL } from '../src/mesh-writer';
+import { TEXT_CHUNK, buildIndexedMesh, writeAsciiSTL, writeBinarySTL, writeOBJ } from '../src/mesh-writer';
 import type { ExportSurface } from '../src/mesh-writer';
 import { getExportSurface, reliefMasterSurface } from '../src/export-surface';
 import { STATE } from '../src/state';
@@ -133,6 +135,22 @@ async function main(): Promise<void> {
     assert(wideOk === '', 'accepts a 36 (X) x 24 (Y) in panel', wideOk);
     await rejects('an unknown triangulation', () => encodeReliefMaster(header({ triangulation: 'x' as never }), h64), /triangulation/);
     await rejects('backing at or above stock', () => encodeReliefMaster(header({ backing: STOCK }), h64), /backing/);
+    // Wrong JSON types are rejected by name, never coerced (null backing used to load as 0, a
+    // boolean height as 1 in, and "constructor" passed the units check).
+    await rejects('a null backing', () => encodeReliefMaster(header({ backing: null as never }), h64), /backing must be a finite number/);
+    await rejects('a boolean height', () => encodeReliefMaster(header({ height: true as never }), h64), /height must be a finite number/);
+    await rejects('a string width', () => encodeReliefMaster(header({ width: '101.6' as never }), h64), /width must be a finite number/);
+    await rejects('an inherited units key', () => encodeReliefMaster(header({ units: 'constructor' as never }), h64), /units must be one of/);
+    const rawHeader = (json: string): ArrayBuffer => {
+      const j = new TextEncoder().encode(json), start = Math.ceil((12 + j.length) / 8) * 8;
+      const out = new Uint8Array(start + 8 * COLS * ROWS);
+      out.set(new TextEncoder().encode('MCRELIEF'), 0);
+      new DataView(out.buffer).setUint32(8, j.length, true);
+      out.set(j, 12);
+      return out.buffer;
+    };
+    await rejects('a null header', async () => rawHeader('null'), /header must be a JSON object/);
+    await rejects('an array header', async () => rawHeader('[]'), /header must be a JSON object/);
   }
 
   process.stdout.write('M4 preview resolution never reaches the export\n');
@@ -226,6 +244,40 @@ async function main(): Promise<void> {
     assert(/travels 36 x 24/.test(run(2, 2, 12, 24)), 'a 12 x 24 in part at offset (2, 2) is refused (Y would reach 26 in)', run(2, 2, 12, 24));
     assert(run(0, 0, 12, 24) === '', 'the same part at offset (0, 0) generates');
     assert(/travels 36 x 24/.test(run(0, 0, 24, 36)), 'a 24 x 36 in part is refused at any offset', run(0, 0, 24, 36));
+    // An STL raster (meshToHeightmap) can run a cell past meshX: the grid's extent is what is cut.
+    const over: Heightmap = { z: new Float64Array(4).fill(0.5), rows: 2, cols: 2, originX: 0, originY: 0,
+      cellSize: 36.004, cellSizeY: 1, meshX: 35.999, meshY: 1 };
+    let overMsg = '';
+    try { generateSBP(over, { ...getDefaultConfig(), materialX: 35.999, materialY: 1, materialZ: 0.75, offsetX: 0, offsetY: 0, roughingEnabled: false }); }
+    catch (e) { overMsg = e instanceof Error ? e.message : String(e); }
+    assert(/reaches X 36\.004/.test(overMsg), 'a grid that runs past meshX is checked at its real extent', overMsg);
+    const zRun = (safeZ: number, homeZ: number): string => {
+      try {
+        generateSBP(stateToHeightmap(v, 5, 5, 2, 2), { ...getDefaultConfig(), materialX: 2, materialY: 2, materialZ: 0.75, offsetX: 0, offsetY: 0, safeZ, homeZ, roughingEnabled: false });
+        return '';
+      } catch (e) { return e instanceof Error ? e.message : String(e); }
+    };
+    assert(/Home Z 7\.500 in is beyond/.test(zRun(1.6, 7.5)) && /Safe Z 7\.200 in is beyond/.test(zRun(7.2, 7.5)),
+      'safe Z or home Z beyond the 6 in Z travel is refused', `${zRun(1.6, 7.5)} / ${zRun(7.2, 7.5)}`);
+  }
+
+  process.stdout.write('M9 text exports are built in chunks and match the mesh\n');
+  {
+    // 121 x 121 nodes: 28,800 top triangles, past TEXT_CHUNK, so chunk boundaries are exercised.
+    const n = 121, zz = new Float64Array(n * n);
+    for (let k = 0; k < zz.length; k++) zz[k] = 0.2 + 0.1 * Math.sin(k * 0.37);
+    const mesh = buildIndexedMesh({ z: zz, cols: n, rows: n, meshX: 3, meshY: 3, diagonal: 'shortest', watertight: true });
+    const stl = writeAsciiSTL(mesh), obj = writeOBJ(mesh);
+    const stlText = stl.join(''), objText = obj.join('');
+    const facets = (stlText.match(/^facet normal /gm) ?? []).length;
+    const faces = (objText.match(/^f /gm) ?? []).length, verts = (objText.match(/^v /gm) ?? []).length;
+    const perChunk = stl.slice(1, -1).map(c => (c.match(/^facet normal /gm) ?? []).length);
+    assert(stlText.startsWith('solid meshcraft\n') && stlText.endsWith('endsolid meshcraft') && facets === mesh.triangles.length / 3,
+      'ASCII STL: every facet present', `${facets} facets`);
+    assert(perChunk.length >= 2 && perChunk.every(c => c <= TEXT_CHUNK), `ASCII STL: split into chunks of at most ${TEXT_CHUNK} facets`,
+      `${perChunk.join(' + ')} facets`);
+    assert(faces === mesh.triangles.length / 3 && verts === mesh.positions.length / 3 && obj.length >= 3,
+      'OBJ: every vertex and face present, in chunks', `${verts} v, ${faces} f, ${obj.length} chunks`);
   }
 
   process.stdout.write('M6 the real-asset cut check sees damage between master nodes\n');

@@ -15,12 +15,19 @@
  *   C5  coarse grids (0.09 in cells): finishing and roughing checked against the triangulated
  *       surface BETWEEN nodes (a node-only drop-cutter went 0.089 in deep on a near-flat ramp).
  *   C6  the drop-cutter equals a dense sampling of the triangulated surface for every cutter type.
+ *   C7  the finishing fallback's hold height, max(ends) + L |ab| / 2, bounds the exact tip between.
+ *   C8  every emitted finishing move stays above the exact tip along its length (16 samples per
+ *       move), on a cliff-and-spike surface and a wall at three raster angles, for every finishing
+ *       cutter type (quarter-point chord checks passed 1.1 thou under it).
+ *   C9  a flat end mill (or radius-0 radiused cutter) is refused for finishing; a home Z below safe Z
+ *       is refused; small-radius radiused cutters finish with finite, non-gouging moves.
  *
  * Every cut is simulated on a grid of at most 0.005 in, finer than the target, and compared with the
  * triangulated surface the export describes (cli/cut-sim.ts triangulatedTarget).
  */
-import { compensateForTool, createDropCutter } from '../src/sbp/compensate';
+import { compensateForTool, createDropCutter, createTipLipschitzField } from '../src/sbp/compensate';
 import { generateSBP } from '../src/sbp/generate';
+import { generateFinishing } from '../src/sbp/finishing';
 import { stateToHeightmap } from '../src/sbp/heightmap';
 import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
 import type { Heightmap, SbpConfig, ToolDef } from '../src/sbp/types';
@@ -267,6 +274,126 @@ process.stdout.write('C6 drop-cutter equals a dense sampling of the triangulated
     const allowHigh = dx * (gMax + side) + 1e-5;
     assert(worstLow <= 1e-9 && worstHigh <= allowHigh, `${tool.name}: drop-cutter matches the triangulated surface`,
       `never below by more than ${worstLow.toExponential(1)} in, above dense sampling by ${worstHigh.toExponential(1)} in (allowed ${allowHigh.toExponential(1)})`);
+  }
+}
+
+// ---------- C7 the finishing fallback's hold height ----------
+process.stdout.write('C7 tip height between two points never exceeds max(ends) + L |ab| / 2, L local\n');
+{
+  // Cliffs, a spike and a ramp: the surfaces where the fallback fires. Steps of 0.005 in down to
+  // 0.00008 in (the last split), at every orientation, away from the panel edge.
+  const rows = 41, cols = 41, size = 0.8;
+  const z = new Float64Array(rows * cols);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const x = c * size / (cols - 1), y = r * size / (rows - 1);
+      z[r * cols + c] = 0.3 + (x + 0.3 * y > 0.45 ? 0.2 : 0) + (r === 20 && c === 12 ? 0.15 : 0) + 0.05 * Math.sin(12 * x * y);
+    }
+  const h = stateToHeightmap(Array.from({ length: rows }, (_, r) => Array.from(z.subarray(r * cols, r * cols + cols))), rows, cols, size, size);
+  for (const tool of [toolOf('R1/16-S1/4'), toolOf('60-deg'), ball, toolOf('Chipbreaker')]) {
+    const drop = createDropCutter(h, tool), field = createTipLipschitzField(h, tool, 0.005);
+    let worst = -Infinity, Lmax = 0;
+    for (let k = 0; k < 400; k++) {
+      const ax = 0.15 + 0.5 * ((k * 0.618034) % 1), ay = 0.15 + 0.5 * ((k * 0.414214) % 1);
+      const len = [0.005, 0.0012, 0.0003, 0.00008][k % 4], ang = k * 2.39996;
+      const bx = ax + len * Math.cos(ang), by = ay + len * Math.sin(ang);
+      const L = field((ax + bx) / 2, (ay + by) / 2);
+      const za = drop(ax, ay), zb = drop(bx, by), bound = Math.max(za, zb) + L * len / 2;
+      Lmax = Math.max(Lmax, L);
+      for (let q = 1; q < 8; q++) worst = Math.max(worst, drop(ax + (bx - ax) * q / 8, ay + (by - ay) * q / 8) - bound);
+    }
+    assert(worst <= 1e-12, `${tool.name}: the hold height bounds every interior point`, `worst excess ${worst.toExponential(2)} in, local L up to ${Lmax.toFixed(2)}`);
+  }
+}
+
+// ---------- C8 every emitted finishing move against the exact tip ----------
+process.stdout.write('C8 emitted finishing moves stay on or above the exact tip along their length\n');
+{
+  // The cliff-and-spike surface of C7 at stepover 0.02 in (blind review, PR #30 round 1): with the
+  // chord checked only at its quarter points, a move passed 1.1 thou under the tip at t = 0.125.
+  const rows = 41, cols = 41, size = 0.8;
+  const v = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => {
+    const x = c * size / (cols - 1), y = r * size / (rows - 1);
+    return 0.3 + (x + 0.3 * y > 0.45 ? 0.2 : 0) + (r === 20 && c === 12 ? 0.15 : 0) + 0.05 * Math.sin(12 * x * y);
+  }));
+  const cliff = stateToHeightmap(v, rows, cols, size, size);
+  // Verification pass, PR #30 round 1: a 0.3 in wall across the raster at 37 deg.
+  const wall = stateToHeightmap(Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => {
+    const x = c * size / (cols - 1), y = r * size / (rows - 1);
+    return 0.25 + (x * Math.cos(0.6) + y * Math.sin(0.6) > 0.5 ? 0.3 : 0);
+  })), rows, cols, size, size);
+  const cases: Array<[string, Heightmap, number]> = [['cliff and spike', cliff, 0], ['cliff and spike', cliff, 45], ['wall', wall, 37]];
+  // Finishing cutters only: generateSBP refuses a flat end mill for finishing (see C9).
+  for (const tool of [toolOf('R1/16-S1/4'), toolOf('60-deg'), ball, radiused])
+    for (const [surface, h, angle] of cases) {
+      const cfg: SbpConfig = { ...getDefaultConfig(), materialX: size, materialY: size, materialZ: 0.75, offsetX: 0, offsetY: 0,
+        finishRasterAngle: angle, finishingTool: { ...tool, cutting: { ...tool.cutting, stepover: 0.02 } } };
+      const { moves } = generateFinishing(h, cfg);
+      const drop = createDropCutter(h, tool);
+      let worst = -Infinity, holds = 0, holdWorst = -Infinity;
+      for (let k = 1; k < moves.length; k++) {
+        const a = moves[k - 1], b = moves[k];
+        if (a.type !== 'cut' || b.type !== 'cut' || (a.x === b.x && a.y === b.y)) continue; // vertical moves cannot pass under
+        if (a.z >= cfg.materialZ - 1e-9 && b.z >= cfg.materialZ - 1e-9) continue; // traverse above the stock
+        let local = -Infinity;
+        for (let q = 1; q < 16; q++) {
+          const t = q / 16;
+          local = Math.max(local, drop(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) - (a.z + (b.z - a.z) * t));
+        }
+        worst = Math.max(worst, local);
+        // A last-resort hold: lift at a, cross at one height. It must clear the tip all the way.
+        const prev = moves[k - 2];
+        if (prev && prev.x === a.x && prev.y === a.y && a.z > prev.z && b.z === a.z && Math.hypot(b.x - a.x, b.y - a.y) < 1e-3) {
+          holds++; holdWorst = Math.max(holdWorst, local);
+        }
+      }
+      assert(worst <= 2 * 0.0001, `${tool.name}, ${surface} at ${angle} deg: no emitted move passes under the exact tip by more than 0.0002 in`,
+        `worst ${worst.toExponential(2)} in over ${moves.length} moves; ${holds} last-resort holds`);
+      if (holds) assert(holdWorst <= 1e-12, `${tool.name}, ${surface} at ${angle} deg: every last-resort hold clears the tip`);
+    }
+}
+
+// ---------- C9 finishing-tool and home-Z refusals ----------
+process.stdout.write('C9 generateSBP refuses a flat end mill for finishing and a home Z below safe Z\n');
+{
+  const flat = stateToHeightmap([[0.5, 0.5], [0.5, 0.5]], 2, 2, 1, 1);
+  const base: SbpConfig = { ...getDefaultConfig(), materialX: 1, materialY: 1, materialZ: 0.75, offsetX: 0, offsetY: 0 };
+  const refuse = (over: Partial<SbpConfig>): string => {
+    try { generateSBP(flat, { ...base, ...over }); return ''; } catch (e) { return e instanceof Error ? e.message : String(e); }
+  };
+  assert(/flat end mill/.test(refuse({ finishingTool: toolOf('Chipbreaker') })), 'end-mill finishing refused', refuse({ finishingTool: toolOf('Chipbreaker') }));
+  assert(refuse({ finishingTool: toolOf('Chipbreaker'), finishingEnabled: false }) === '', 'an end mill still roughs');
+  // Verification pass, PR #30 round 1 (N1): the footer's diagonal J3 to home Z ran 0.45 in into the stock.
+  assert(/Home Z 0\.300 in must be at or above safe Z/.test(refuse({ homeZ: 0.3 })), 'home Z below safe Z refused', refuse({ homeZ: 0.3 }));
+  const flatRadiused: ToolDef = { ...radiused, name: 'probe radiused R0', tipRadius: 0 };
+  assert(/flat end mill/.test(refuse({ finishingTool: flatRadiused })), 'a radiused cutter with radius 0 is refused like an end mill');
+  // Verification pass, PR #30 round 1 (N4): a vtdb-style radiused cutter with a small corner radius
+  // took sqrt of a rounding-negative number at its rim and wrote NaN Z into the SBP.
+  const size = 0.8, n = 41;
+  const wall = stateToHeightmap(Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => {
+    const x = c * size / (n - 1), y = r * size / (n - 1);
+    return 0.25 + (x * Math.cos(0.6) + y * Math.sin(0.6) > 0.5 ? 0.3 : 0);
+  })), n, n, size, size);
+  for (const R of [0.02, 0.005]) {
+    const tool: ToolDef = { ...radiused, name: `probe radiused D0.25 R${R}`, diameter: 0.25, tipRadius: R };
+    const cfg: SbpConfig = { ...base, materialX: size, materialY: size, roughingEnabled: false, finishRasterAngle: 37,
+      finishingTool: { ...tool, cutting: { ...tool.cutting, stepover: 0.02 } } };
+    let sbp = '', msg = '';
+    try { sbp = generateSBP(wall, cfg).sbp; } catch (e) { msg = e instanceof Error ? e.message : String(e); }
+    const nan = (sbp.match(/NaN|Infinity/g) ?? []).length;
+    const { moves } = generateFinishing(wall, cfg);
+    const drop = createDropCutter(wall, tool);
+    let worst = -Infinity;
+    for (let k = 1; k < moves.length; k++) {
+      const a = moves[k - 1], b = moves[k];
+      if (a.type !== 'cut' || b.type !== 'cut' || (a.x === b.x && a.y === b.y) || Math.min(a.z, b.z) >= cfg.materialZ - 1e-9) continue;
+      for (let q = 1; q < 16; q++) {
+        const t = q / 16;
+        worst = Math.max(worst, drop(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) - (a.z + (b.z - a.z) * t));
+      }
+    }
+    assert(msg === '' && nan === 0 && worst <= 0.0002, `${tool.name}: finite SBP, on or above the exact tip`,
+      `${msg || 'generated'}; ${nan} non-finite values; worst ${worst.toExponential(2)} in over ${moves.length} moves`);
   }
 }
 
