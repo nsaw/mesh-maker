@@ -1,5 +1,5 @@
 import { STATE } from './state';
-import { reliefPreviewGrid } from './relief-master';
+import { previewErrorIn, reliefPreviewGrid } from './relief-master';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
 import { sampleReliefParamsFromState } from './noise/voronoi-relief';
 import type { VoronoiReliefGen } from './noise/voronoi-relief';
@@ -229,6 +229,7 @@ function generateReliefMasterPreview(): void {
   const rows = Math.max(2, Math.min(m.rows, Math.round((cols - 1) * (m.rows - 1) / (m.cols - 1)) + 1));
   STATE.cols = cols; STATE.rows = rows;
   STATE.vertices = reliefPreviewGrid(m, cols, rows);
+  STATE.reliefPreviewErrorIn = cols === m.cols && rows === m.rows ? 0 : previewErrorIn(m, STATE.vertices, cols, rows);
   STATE.genTime = performance.now() - t0;
 }
 

@@ -1,4 +1,5 @@
 import type { Heightmap, SbpConfig, SbpStats, ToolpathSection } from './types';
+import { MACHINE_TRAVEL_IN, MACHINE_TRAVEL_TOLERANCE_IN } from './types';
 import { compensateForTool } from './compensate';
 import { generateRoughing } from './roughing';
 import { generateFinishing } from './finishing';
@@ -63,6 +64,12 @@ export interface GenerateResult {
  */
 export function generateSBP(heightmap: Heightmap, config: SbpConfig): GenerateResult {
   const { heightmap: normHm, config: normConfig, shifted } = normalizeZ(heightmap, config);
+  // The part sits at the work offset; part plus offset must stay inside the machine's travel.
+  const T = MACHINE_TRAVEL_TOLERANCE_IN;
+  const reachX = normConfig.offsetX + normHm.meshX, reachY = normConfig.offsetY + normHm.meshY;
+  if (normConfig.offsetX < -T || normConfig.offsetY < -T || reachX > MACHINE_TRAVEL_IN.x + T || reachY > MACHINE_TRAVEL_IN.y + T)
+    throw new Error(`Part plus offset reaches X ${reachX.toFixed(3)}, Y ${reachY.toFixed(3)} in; the machine travels ` +
+      `${MACHINE_TRAVEL_IN.x} x ${MACHINE_TRAVEL_IN.y} in. Reduce Offset X/Y or the part size.`);
   // Rapids run at safe Z; at or below the stock top they would drive the cutter through material.
   if (!(normConfig.safeZ > normConfig.materialZ))
     throw new Error(`Safe Z ${normConfig.safeZ.toFixed(3)} in must be above the stock top ${normConfig.materialZ.toFixed(3)} in`);

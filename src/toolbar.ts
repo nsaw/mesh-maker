@@ -2,7 +2,7 @@ import { STATE, noiseDims, demoDepthMap, serializeConfig } from './state';
 import { generateMesh } from './mesh';
 import { renderViewport, setCameraFromState, resizeCanvas } from './render';
 import { doExport } from './export';
-import { buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
+import { applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
 
@@ -33,8 +33,20 @@ export function setupTabs(): void {
         buildSidebar();
       }
 
+      // A loaded relief master owns DEPTH MAP mode: restore its label, size and stock, and never
+      // let the demo image stand in for it there.
+      if (STATE.mode === 'depthmap' && STATE.reliefMaster) {
+        applyReliefMasterControls(prevMode === 'noise');
+        buildSidebar();
+      } else if (STATE.mode === 'blend' && STATE.reliefMaster && STATE.depthMap && STATE.depthMap === demoDepthMap) {
+        // Blend drapes an image, never the master (loading a master clears the user image, so the
+        // only image Blend can hold here is the demo): label it as such.
+        STATE.depthMapName = 'Mona Lisa (demo)';
+        buildSidebar();
+      }
+
       // Auto-apply demo depth map if switching to depthmap/blend with no user image
-      if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap && demoDepthMap) {
+      if ((STATE.mode === 'blend' || (STATE.mode === 'depthmap' && !STATE.reliefMaster)) && !STATE.depthMap && demoDepthMap) {
         STATE.depthMap = demoDepthMap;
         STATE.depthMapName = 'Mona Lisa (demo)';
         fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
@@ -47,7 +59,7 @@ export function setupTabs(): void {
       }
 
       // Re-fit mesh to depth map aspect only when entering from noise mode
-      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'blend') && STATE.depthMap && !STATE.aspectLocked) {
+      if (prevMode === 'noise' && (STATE.mode === 'blend' || (STATE.mode === 'depthmap' && !STATE.reliefMaster)) && STATE.depthMap && !STATE.aspectLocked) {
         fitMeshToAspect(STATE.depthMap.width, STATE.depthMap.height);
         buildSidebar();
       }

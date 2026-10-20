@@ -1,4 +1,4 @@
-import { STATE } from './state';
+import { STATE, reliefMasterActive } from './state';
 import { attachValueEdit } from './slider-utils';
 import { getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
@@ -192,6 +192,11 @@ function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: 
     return;
   }
   sbpWorkerRunning = true;
+  // The page stays editable while the worker runs, so the job keeps its own identity: the file name
+  // and the source it was built from. A result for a source that has since been replaced is still
+  // delivered under its own name, but never labelled with or attached to the current model.
+  const jobSource = currentSbpSource();
+  const jobFilename = `${STATE.filename}.sbp`;
   showToast(`${input.kind === 'stl' ? 'Generating SBP from STL' : 'Generating SBP'}... a full-size relief takes a few minutes`, 600000);
 
   const worker = new Worker(
@@ -203,15 +208,21 @@ function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: 
     worker.terminate();
     sbpWorkerRunning = false;
     const out = e.data;
-    if (out.stlBuffer) SBP_STATE.stlBuffer = out.stlBuffer;
+    // Hand the transferred STL back only if no newer upload replaced it meanwhile.
+    if (out.stlBuffer && SBP_STATE.stlBuffer === jobSource) SBP_STATE.stlBuffer = out.stlBuffer;
+    const current = currentSbpSource() === jobSource || (out.stlBuffer !== undefined && SBP_STATE.stlBuffer === out.stlBuffer);
     if (out.type === 'error') {
-      showToast(`SBP generation failed: ${out.message}`, 8000);
+      showToast(`SBP generation failed${current ? '' : ' (for an earlier model)'}: ${out.message}`, 8000);
+      return;
+    }
+    triggerDownload(out.sbpBytes, jobFilename);
+    const summary = buildSbpToastMessage(out.stats);
+    if (!current) {
+      showToast(`${jobFilename} was built from the model loaded when the export started, not the current one. ${summary}`, 8000);
       return;
     }
     STATE.sbpStats = out.stats;
-    triggerDownload(out.sbpBytes, `${STATE.filename}.sbp`);
     updateStats();
-    const summary = buildSbpToastMessage(out.stats);
     showToast(warning ? `${summary}. ${warning}` : summary, warning ? 6000 : 3000);
   };
 
@@ -222,6 +233,13 @@ function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: 
   };
 
   worker.postMessage(input, transfer);
+}
+
+/** Identity of what an SBP export is built from: the uploaded STL buffer, else the relief master,
+ *  else the generated grid. Every regeneration or upload replaces the object. */
+function currentSbpSource(): unknown {
+  if (SBP_STATE.stlBuffer) return SBP_STATE.stlBuffer;
+  return reliefMasterActive() ? STATE.reliefMaster : STATE.vertices;
 }
 
 /** Main export entry point -- called from export.ts */

@@ -8,11 +8,18 @@
  *       comes out of the STL writer unmirrored, uninverted, in inches, with the backing once.
  *   M3  every corrupt or out-of-contract file is rejected, not repaired.
  *   M4  the export surface is the master itself: preview Grid Resolution changes nothing exported.
+ *   M8  part plus work offset must fit the 36 x 24 in travel; a 24 x 36 in master is rejected.
+ *   M6  the real-asset cut check (cli/relief-roundtrip.ts) sees a gouge between the master's nodes.
+ *   M7  the preview resample lies on the master's declared triangles and reports its error.
  *   M5  the watertight STL is a closed, consistently oriented two-manifold with Euler
  *       characteristic 2, positive volume equal to the heightfield integral, no zero-area faces,
  *       and the master's declared diagonal in every cell.
  */
-import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
+import { encodeReliefMaster, parseReliefMaster, previewErrorIn, reliefPreviewGrid, triangulatedHeight } from '../src/relief-master';
+import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
+import { generateSBP } from '../src/sbp/generate';
+import { stateToHeightmap } from '../src/sbp/heightmap';
+import { compareCut, cutAgainstTriangles, parseSbp } from './cut-sim';
 import type { ReliefHeader } from '../src/relief-master';
 import { buildIndexedMesh, writeBinarySTL } from '../src/mesh-writer';
 import type { ExportSurface } from '../src/mesh-writer';
@@ -119,6 +126,11 @@ async function main(): Promise<void> {
     const nan = Float64Array.from(h64); nan[7] = NaN;
     await rejects('a NaN height', () => encodeReliefMaster(header(), nan), /non-finite/);
     await rejects('a panel larger than the bed', () => encodeReliefMaster(header({ width: 40 * MM }), h64), /exceeds/);
+    // GPT review finding 1: sorted dimensions fit, but X = 24, Y = 36 overruns the 24 in Y travel.
+    await rejects('a 24 (X) x 36 (Y) in panel', () => encodeReliefMaster(header({ width: 24 * MM, height: 36 * MM }), h64), /exceeds/);
+    let wideOk = '';
+    try { await parseReliefMaster(await encodeReliefMaster(header({ width: 36 * MM, height: 24 * MM }), h64)); } catch (e) { wideOk = String(e); }
+    assert(wideOk === '', 'accepts a 36 (X) x 24 (Y) in panel', wideOk);
     await rejects('an unknown triangulation', () => encodeReliefMaster(header({ triangulation: 'x' as never }), h64), /triangulation/);
     await rejects('backing at or above stock', () => encodeReliefMaster(header({ backing: STOCK }), h64), /backing/);
   }
@@ -200,6 +212,63 @@ async function main(): Promise<void> {
     let differs = 0;
     for (let k = 0; k < mesh.topTriangles * 3; k++) if (shortest.triangles[k] !== t[k]) differs++;
     assert(differs > 0, 'control: the height-chosen diagonal differs on this relief, so the fixed one matters', `${differs} indices differ`);
+  }
+
+  process.stdout.write('M8 part plus work offset must fit the machine\n');
+  {
+    const v = Array.from({ length: 5 }, () => new Array<number>(5).fill(0.5));
+    const run = (offsetX: number, offsetY: number, meshX: number, meshY: number): string => {
+      try {
+        generateSBP(stateToHeightmap(v, 5, 5, meshX, meshY), { ...getDefaultConfig(), materialX: meshX, materialY: meshY, materialZ: 0.75, offsetX, offsetY, roughingEnabled: false });
+        return '';
+      } catch (e) { return e instanceof Error ? e.message : String(e); }
+    };
+    assert(/travels 36 x 24/.test(run(2, 2, 12, 24)), 'a 12 x 24 in part at offset (2, 2) is refused (Y would reach 26 in)', run(2, 2, 12, 24));
+    assert(run(0, 0, 12, 24) === '', 'the same part at offset (0, 0) generates');
+    assert(/travels 36 x 24/.test(run(0, 0, 24, 36)), 'a 24 x 36 in part is refused at any offset', run(0, 0, 24, 36));
+  }
+
+  process.stdout.write('M6 the real-asset cut check sees damage between master nodes\n');
+  {
+    // A 1 x 1 in flat master on 3 x 3 nodes (0.5 in cells), and an SBP that drags the finishing ball
+    // along y = 0.25 in, between node rows, 0.02 in below the surface.
+    const flat = await parseReliefMaster(await encodeReliefMaster({ ...header(), units: 'in', cols: 3, rows: 3, width: 1, height: 1,
+      backing: 0.1, stock: 0.75 }, new Float64Array(9).fill(0.5)));
+    const sbp = ['\'&ToolName = "TBN R1/16-S1/4"', 'J3,0.1,0.25,1.0', 'M3,0.1,0.25,0.48', 'M3,0.9,0.25,0.48', 'J3,0.9,0.25,1.0'].join('\n');
+    const tools = new Map(getEmbeddedTools('general').map(t => [t.name, t]));
+    const at = (factor: number): number => {
+      const r = cutAgainstTriangles(parseSbp(sbp), tools, flat.heightsIn, 3, 3, 1, 1, 'z00z11', 0, 0, 0.75, factor);
+      return compareCut(r.stock, r.target).maxGouge;
+    };
+    const nodesOnly = at(1), fine = at(2);
+    // Stamps fall a quarter fine cell apart along the move, so the measured depth can read a little under 0.02.
+    assert(nodesOnly < 0.0005 && fine > 0.01, 'a between-node gouge is invisible at node spacing and found at the default factor 2',
+      `factor 1: ${nodesOnly.toFixed(4)} in, factor 2: ${fine.toFixed(4)} in`);
+  }
+
+  process.stdout.write('M7 the preview samples and draws the master\'s own triangles\n');
+  {
+    // GPT review finding 5: 2 x 2 master, bottom-up heights [0.125, 0.5, 0.5, 0.125], 'tr-bl'. The
+    // exported centre is 0.125 in (on the z00-z11 diagonal); a height-chosen diagonal drew 0.5.
+    const m = await parseReliefMaster(await encodeReliefMaster({ ...header(), units: 'in', cols: 2, rows: 2, width: 1, height: 1,
+      rowOrder: 'bottom-up', backing: 0.1, stock: 0.75 }, Float64Array.from([0.125, 0.5, 0.5, 0.125])));
+    const centre = triangulatedHeight(m.heightsIn, 2, 2, 1, 1, m.diagonalZ00Z11, 0.5, 0.5);
+    const preview = reliefPreviewGrid(m, 3, 3);
+    assert(Math.abs(centre - 0.125) < 1e-12 && Math.abs(preview[1][1] - 0.125) < 1e-12,
+      'the preview resample lies on the declared triangles', `centre ${centre}, preview ${preview[1][1]}`);
+    const native = reliefPreviewGrid(topDown, COLS, ROWS);
+    const nativeErr = previewErrorIn(topDown, native, COLS, ROWS);
+    assert(nativeErr < 1e-12, 'at native resolution the preview is the master (to float rounding)', `${nativeErr.toExponential(1)} in`);
+    const coarse = reliefPreviewGrid(topDown, 11, 8);
+    const err = previewErrorIn(topDown, coarse, 11, 8);
+    let brute = 0;
+    for (let j = 0; j < ROWS; j++)
+      for (let i = 0; i < COLS; i++) {
+        const flatPrev = Float64Array.from(coarse.flat());
+        const p = triangulatedHeight(flatPrev, 11, 8, 4, 3, true, i * 0.1, j * 0.1);
+        brute = Math.max(brute, Math.abs(p - topDown.heightsIn[j * COLS + i]));
+      }
+    assert(err > 0 && Math.abs(err - brute) < 1e-12, 'a reduced preview reports its measured error', `${err.toFixed(4)} in`);
   }
 
   if (failures === 0) {

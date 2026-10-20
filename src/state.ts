@@ -103,6 +103,10 @@ export interface MeshState {
    *  replaces the image path: the viewport shows a preview resample, and every export and toolpath
    *  reads these full-resolution heights unchanged. Never serialized into share links. */
   reliefMaster: ReliefMaster | null;
+  /** File name the relief master was loaded from (the label shown while it is active). */
+  reliefMasterName: string;
+  /** Largest preview-vs-master height difference at the master's nodes, inches (previewErrorIn). */
+  reliefPreviewErrorIn: number;
   /** Fabric tension for BLEND (drape) mode: 0 = membrane hugs the form, 1 = bridges between
    *  supports. Mapped log-linearly to membrane curvature in src/drape.ts. */
   blend: number;
@@ -238,6 +242,8 @@ export const DEFAULTS: MeshState = {
   depthMap: null,
   depthMapName: '',
   reliefMaster: null,
+  reliefMasterName: '',
+  reliefPreviewErrorIn: 0,
   // 0.8 = membrane curvature 0.48/in, the value that matched the reference cloth best (P3).
   blend: 0.8,
   dmHeightScale: 1.0,

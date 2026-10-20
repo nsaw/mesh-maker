@@ -63,7 +63,8 @@ export function updateStats(): void {
     statData = [
       ['Vertices', verts.toLocaleString()],
       ['Triangles', totalTris.toLocaleString()],
-      ...(master ? [['Preview', `${cols} x ${rows} of ${ec} x ${er}`] as [string, string]] : []),
+      ...(master ? [['Preview', `${cols} x ${rows} of ${ec} x ${er}`] as [string, string],
+        ['Preview error', `${STATE.reliefPreviewErrorIn.toFixed(4)}"`] as [string, string]] : []),
       ['Gen time', `${genTime.toFixed(0)}ms`],
       ['Est. size', formatBytes(estSize)],
     ];

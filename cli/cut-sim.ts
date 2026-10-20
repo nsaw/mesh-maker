@@ -193,3 +193,27 @@ export function triangulatedTarget(
     }
   return { z: out, cols: fc, rows: fr };
 }
+
+export interface TriangleCutCheck {
+  /** Fine sampling grid the stock was simulated on (factor x the master's). */
+  cols: number; rows: number; cellX: number; cellY: number;
+  stock: Float64Array;
+  target: Float64Array;
+  sim: SimResult;
+}
+
+/**
+ * Replay SBP sections on a grid `factor` times finer than the master and return stock and the
+ * master's triangulated surface on that grid, for compareCut. A gouge narrower than one fine cell
+ * can still fall between samples, so callers should report cellX/cellY with the result.
+ */
+export function cutAgainstTriangles(
+  sections: SimSection[], toolsByName: Map<string, ToolDef>,
+  z: Float64Array, cols: number, rows: number, widthIn: number, heightIn: number,
+  diagonal: 'shortest' | 'z00z11' | 'z10z01', originX: number, originY: number, stockTop: number, factor: number,
+): TriangleCutCheck {
+  const fine = triangulatedTarget(z, cols, rows, diagonal, factor);
+  const cellX = widthIn / (fine.cols - 1), cellY = heightIn / (fine.rows - 1);
+  const sim = simulateCut(sections, toolsByName, { cols: fine.cols, rows: fine.rows, originX, originY, cellX, cellY }, stockTop);
+  return { cols: fine.cols, rows: fine.rows, cellX, cellY, stock: sim.stock, target: fine.z, sim };
+}

@@ -42,7 +42,7 @@ npm run test:drape       # tsx cli/drape.spec.ts (Blend drape, ~5 s)
 npm run test:drape-physics  # tsx cli/drape-physics.spec.ts (vs reference cloth sim, minutes)
 npm run test:cut         # tsx cli/sbp-cut.spec.ts (compensation oracles + SBP cut replay, ~7 min)
 npm run test:relief-master  # tsx cli/relief-master.spec.ts (.mcrelief contract, export fidelity)
-npm run relief-roundtrip -- <master.mcrelief> --out <dir> [--crop x0,y0,x1,y1] [--sbp] [--face ...]
+npm run relief-roundtrip -- <master.mcrelief> --out <dir> [--crop ...] [--sbp] [--replay f.sbp] [--sim-factor N] [--offset x,y] [--face ...]
 npm run stl-to-sbp -- <input.stl> [--dry-run]
 npm run deploy           # build, then wrangler pages deploy (needs CF env vars)
 ```

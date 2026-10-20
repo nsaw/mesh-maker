@@ -17,6 +17,8 @@
  * heights bytes exactly as stored; a mismatch rejects the file.
  */
 
+import { MACHINE_TRAVEL_IN, MACHINE_TRAVEL_TOLERANCE_IN } from './sbp/types';
+
 export const RELIEF_MAGIC = 'MCRELIEF';
 export const RELIEF_EXTENSION = '.mcrelief';
 
@@ -65,11 +67,6 @@ export interface ReliefMaster {
  *  its reciprocal, so a millimetre or metre value converts to the nearest representable inch. */
 const UNITS_PER_IN = { in: 1, mm: 25.4, m: 0.0254 } as const;
 
-/** ShopBot Desktop MAX ATC limits (CLAUDE.md): 36 x 24 in bed, 6 in Z. A master either fits on
- *  the machine in some orientation or it is rejected. */
-const MAX_BED_LONG_IN = 36;
-const MAX_BED_SHORT_IN = 24;
-const MAX_Z_IN = 6;
 /** Heights stored as float32 metres round up to ~1e-8 in past a stock given as a decimal. */
 const STOCK_TOLERANCE_IN = 1e-6;
 
@@ -116,8 +113,10 @@ export async function parseReliefMaster(buf: ArrayBuffer): Promise<ReliefMaster>
   for (const [label, v] of [['width', widthIn], ['height', heightIn], ['stock', stockIn]] as const)
     if (!(Number.isFinite(v) && v > 0)) fail(`${label} must be a positive number`);
   if (!(Number.isFinite(backingIn) && backingIn >= 0 && backingIn < stockIn)) fail('backing must be in [0, stock)');
-  if (Math.max(widthIn, heightIn) > MAX_BED_LONG_IN || Math.min(widthIn, heightIn) > MAX_BED_SHORT_IN || stockIn > MAX_Z_IN)
-    fail(`${widthIn.toFixed(2)} x ${heightIn.toFixed(2)} x ${stockIn.toFixed(2)} in exceeds the 36 x 24 x 6 in machine`);
+  // Per axis, as stored: X is width, Y is height. A rotated fit is not a fit; nothing here rotates.
+  const T = MACHINE_TRAVEL_TOLERANCE_IN;
+  if (widthIn > MACHINE_TRAVEL_IN.x + T || heightIn > MACHINE_TRAVEL_IN.y + T || stockIn > MACHINE_TRAVEL_IN.z + T)
+    fail(`${widthIn.toFixed(2)} (X) x ${heightIn.toFixed(2)} (Y) x ${stockIn.toFixed(2)} (Z) in exceeds the ${MACHINE_TRAVEL_IN.x} x ${MACHINE_TRAVEL_IN.y} x ${MACHINE_TRAVEL_IN.z} in machine`);
 
   const bpv = header.dtype === 'float32' ? 4 : 8;
   const dataStart = Math.ceil((12 + hLen) / 8) * 8;
@@ -179,21 +178,47 @@ export async function encodeReliefMaster(
   return out.buffer;
 }
 
-/** Preview grid for the viewport: `cols` x `rows` bilinear samples of the master, as number[][]
- *  in MeshCraft order. Display only; exports and toolpaths read the master itself. */
+/** Height of a grid's triangulated surface at panel position (x, y), inches: the same two triangles
+ *  per cell the export writes (src/mesh-writer.ts), so a sample here lies on the exported surface. */
+export function triangulatedHeight(
+  z: Float64Array, cols: number, rows: number, widthIn: number, heightIn: number, diagonalZ00Z11: boolean,
+  x: number, y: number,
+): number {
+  const fx = Math.min(cols - 1, Math.max(0, (x / widthIn) * (cols - 1)));
+  const fy = Math.min(rows - 1, Math.max(0, (y / heightIn) * (rows - 1)));
+  const i = Math.min(cols - 2, Math.floor(fx)), j = Math.min(rows - 2, Math.floor(fy));
+  const u = fx - i, v = fy - j;
+  const z00 = z[j * cols + i], z10 = z[j * cols + i + 1], z01 = z[(j + 1) * cols + i], z11 = z[(j + 1) * cols + i + 1];
+  if (diagonalZ00Z11) return v <= u ? z00 + u * (z10 - z00) + v * (z11 - z10) : z00 + v * (z01 - z00) + u * (z11 - z01);
+  return u + v <= 1 ? z00 + u * (z10 - z00) + v * (z01 - z00) : z11 + (1 - u) * (z01 - z11) + (1 - v) * (z10 - z11);
+}
+
+/** Preview grid for the viewport: `cols` x `rows` samples of the master's triangulated surface, as
+ *  number[][] in MeshCraft order. At the master's own resolution it is the master exactly; below it,
+ *  measure the loss with previewErrorIn. Display only: exports and toolpaths read the master. */
 export function reliefPreviewGrid(m: ReliefMaster, cols: number, rows: number): number[][] {
   const out: number[][] = [];
   for (let j = 0; j < rows; j++) {
-    const fy = (j / (rows - 1)) * (m.rows - 1);
-    const j0 = Math.min(Math.floor(fy), m.rows - 2), ty = fy - j0;
     out[j] = [];
-    for (let i = 0; i < cols; i++) {
-      const fx = (i / (cols - 1)) * (m.cols - 1);
-      const i0 = Math.min(Math.floor(fx), m.cols - 2), tx = fx - i0;
-      const a = m.heightsIn[j0 * m.cols + i0], b = m.heightsIn[j0 * m.cols + i0 + 1];
-      const c = m.heightsIn[(j0 + 1) * m.cols + i0], d = m.heightsIn[(j0 + 1) * m.cols + i0 + 1];
-      out[j][i] = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
-    }
+    const y = (j / (rows - 1)) * m.heightIn;
+    for (let i = 0; i < cols; i++)
+      out[j][i] = triangulatedHeight(m.heightsIn, m.cols, m.rows, m.widthIn, m.heightIn, m.diagonalZ00Z11, (i / (cols - 1)) * m.widthIn, y);
   }
   return out;
+}
+
+/** Largest height difference, at the master's nodes, between the master and a preview grid drawn
+ *  with the master's diagonal. 0 at native resolution. */
+export function previewErrorIn(m: ReliefMaster, preview: number[][], cols: number, rows: number): number {
+  const flat = new Float64Array(cols * rows);
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) flat[j * cols + i] = preview[j][i];
+  let worst = 0;
+  for (let j = 0; j < m.rows; j++) {
+    const y = (j / (m.rows - 1)) * m.heightIn;
+    for (let i = 0; i < m.cols; i++) {
+      const p = triangulatedHeight(flat, cols, rows, m.widthIn, m.heightIn, m.diagonalZ00Z11, (i / (m.cols - 1)) * m.widthIn, y);
+      worst = Math.max(worst, Math.abs(p - m.heightsIn[j * m.cols + i]));
+    }
+  }
+  return worst;
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { STATE } from './state';
+import { STATE, reliefMasterActive } from './state';
 import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
 
 // --- Module state ---
@@ -356,13 +356,14 @@ function buildSurface(
   }
 
   // Indexed triangles (2 per quad, shortest-diagonal split)
+  // A relief master declares its triangulation; draw the preview with it, as the export does.
+  const fixedDiagonal = reliefMasterActive() && STATE.reliefMaster ? STATE.reliefMaster.diagonalZ00Z11 : null;
   const indices = new Uint32Array((rows - 1) * (cols - 1) * 6);
   let ti = 0;
   for (let j = 0; j < rows - 1; j++)
     for (let i = 0; i < cols - 1; i++) {
       const a = j * cols + i;
-      const [t1, t2] = cellTriangleOffsets(
-        preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
+      const [t1, t2] = cellTriangleOffsets(fixedDiagonal ?? preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
       indices[ti++] = a + t1[0]; indices[ti++] = a + t1[1]; indices[ti++] = a + t1[2];
       indices[ti++] = a + t2[0]; indices[ti++] = a + t2[1]; indices[ti++] = a + t2[2];
     }

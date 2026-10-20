@@ -894,12 +894,18 @@ async function runDepthEstimation(btn: HTMLButtonElement): Promise<void> {
   }
 }
 
+/** Bumped by every upload (image or relief master). A load that finishes after a newer upload
+ *  started is discarded: reads and checksums are asynchronous and need not finish in order. */
+let uploadRevision = 0;
+
 export function loadDepthMap(file: File): void {
-  if (file.name.toLowerCase().endsWith(RELIEF_EXTENSION)) { void loadReliefMaster(file); return; }
+  const revision = ++uploadRevision;
+  if (file.name.toLowerCase().endsWith(RELIEF_EXTENSION)) { void loadReliefMaster(file, revision); return; }
   const img = new Image();
   const objUrl = URL.createObjectURL(file);
   img.onload = () => {
     URL.revokeObjectURL(objUrl);
+    if (revision !== uploadRevision) return;
     STATE.reliefMaster = null;
     STATE.depthMap = img;
     STATE.depthMapName = file.name;
@@ -914,21 +920,48 @@ export function loadDepthMap(file: File): void {
   };
   img.onerror = () => {
     URL.revokeObjectURL(objUrl);
+    if (revision !== uploadRevision) return;
     showToast('Could not read that image file');
   };
   img.src = objUrl;
 }
 
+/** Point the depth-map controls at the loaded relief master: its label, size and stock (set before
+ *  the sidebar is rebuilt so the sliders show them), and on a fresh load a preview density with
+ *  the same cell budget as an image depth map, never above the master's own. Shared by the loader
+ *  and by re-entering DEPTH MAP mode from another tab. */
+export function applyReliefMasterControls(resetPreviewDensity: boolean): void {
+  const master = STATE.reliefMaster;
+  if (!master) return;
+  STATE.depthMapName = STATE.reliefMasterName;
+  STATE.meshX = master.widthIn;
+  STATE.meshY = master.heightIn;
+  STATE.baseThickness = master.stockIn;
+  STATE.depthMapAR = master.widthIn / master.heightIn;
+  STATE.aspectLocked = true;
+  if (resetPreviewDensity) {
+    const maxGridCells = 250000;
+    STATE.resolution = Math.min(master.cols, 400,
+      Math.max(64, Math.floor(Math.sqrt(maxGridCells / Math.max(0.05, master.heightIn / master.widthIn)))));
+  }
+  const zone = document.getElementById('uploadZone');
+  if (zone) {
+    zone.classList.add('has-image');
+    zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
+  }
+}
+
 /** Load a .mcrelief master (src/relief-master.ts) and switch to DEPTH MAP mode. A file that fails
  *  any contract check is rejected whole, with the reason, and the current state is kept. */
-async function loadReliefMaster(file: File): Promise<void> {
+async function loadReliefMaster(file: File, revision: number): Promise<void> {
   let master: ReliefMaster;
   try {
     master = await parseReliefMaster(await file.arrayBuffer());
   } catch (err) {
-    showToast(err instanceof Error ? err.message : 'Could not read that relief master', 8000);
+    if (revision === uploadRevision) showToast(err instanceof Error ? err.message : 'Could not read that relief master', 8000);
     return;
   }
+  if (revision !== uploadRevision) return; // a newer upload owns the state now
   if (STATE.mode === 'noise') {
     noiseDims.meshX = STATE.meshX;
     noiseDims.meshY = STATE.meshY;
@@ -938,23 +971,9 @@ async function loadReliefMaster(file: File): Promise<void> {
   document.body.className = 'mode-depthmap';
   document.querySelectorAll('.mode-tab').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.mode === 'depthmap'));
   STATE.reliefMaster = master;
+  STATE.reliefMasterName = `${file.name} (relief master)`;
   STATE.depthMap = null;
-  // Set before the sidebar is rebuilt so its sliders show the master's size and stock.
-  STATE.meshX = master.widthIn;
-  STATE.meshY = master.heightIn;
-  STATE.baseThickness = master.stockIn;
-  STATE.depthMapName = `${file.name} (relief master)`;
-  STATE.depthMapAR = master.widthIn / master.heightIn;
-  STATE.aspectLocked = true;
-  // Preview density: the same cell budget as an image depth map, never above the master's own.
-  const maxGridCells = 250000;
-  STATE.resolution = Math.min(master.cols, 400,
-    Math.max(64, Math.floor(Math.sqrt(maxGridCells / Math.max(0.05, master.heightIn / master.widthIn)))));
-  const zone = document.getElementById('uploadZone');
-  if (zone) {
-    zone.classList.add('has-image');
-    zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
-  }
+  applyReliefMasterControls(true);
   buildSidebar();
   generateMesh();
   showToast(`Relief master loaded: ${master.cols} x ${master.rows}, ${master.widthIn.toFixed(2)}" x ${master.heightIn.toFixed(2)}"`, 4000);

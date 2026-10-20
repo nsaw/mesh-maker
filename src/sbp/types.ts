@@ -94,3 +94,9 @@ export interface ToolpathSection {
   tool: ToolDef;
   moves: ToolpathMove[];
 }
+
+/** ShopBot Desktop MAX ATC travel (CLAUDE.md): X 36 in, Y 24 in, Z 6 in. Checked per axis: a
+ *  24 x 36 in part does not fit, it would need rotating first. */
+export const MACHINE_TRAVEL_IN = { x: 36, y: 24, z: 6 } as const;
+/** Slack for extents converted from metres or millimetres (12 in arrives as 12.000000000000002). */
+export const MACHINE_TRAVEL_TOLERANCE_IN = 1e-6;

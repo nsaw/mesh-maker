@@ -4,7 +4,12 @@
  * the independent cutter simulation.
  *
  *   npm run relief-roundtrip -- MASTER.mcrelief --out DIR [--no-watertight] [--crop x0,y0,x1,y1]
- *        [--sbp] [--face x0,y0,x1,y1]
+ *        [--sbp] [--replay FILE.sbp] [--sim-factor N] [--offset x,y] [--face x0,y0,x1,y1]
+ *
+ * --sim-factor (default 2) sets how much finer than the master the cut is simulated and compared,
+ * against the master's own triangles. --replay checks an existing SBP instead of generating one
+ * (a known-bad file must come out with a gouge). --offset is the work offset (default 0,0); part
+ * plus offset must fit the machine.
  *
  * Coordinates are panel inches, X right and Y up from the bottom-left (MeshCraft's grid). --crop
  * keeps the master's samples inside the box, unchanged, and moves its corner to the origin (a test
@@ -25,7 +30,7 @@ import { buildIndexedMesh, writeBinarySTL } from '../src/mesh-writer';
 import type { ExportSurface } from '../src/mesh-writer';
 import { generateSBP } from '../src/sbp/generate';
 import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
-import { compareCut, parseSbp, simulateCut } from './cut-sim';
+import { compareCut, cutAgainstTriangles, parseSbp } from './cut-sim';
 import type { CutComparison } from './cut-sim';
 import { encodePngRgb } from './png';
 
@@ -38,14 +43,26 @@ function parseBox(s: string | undefined, flag: string): Box | null {
   return v as Box;
 }
 
-function args(): { master: string; out: string; watertight: boolean; sbp: boolean; crop: Box | null; face: Box | null } {
+interface Options {
+  master: string; out: string; watertight: boolean; sbp: boolean; crop: Box | null; face: Box | null;
+  replay: string | null; simFactor: number; offset: [number, number];
+}
+
+function args(): Options {
   const a = process.argv.slice(2);
   const get = (flag: string): string | undefined => { const i = a.indexOf(flag); return i >= 0 ? a[i + 1] : undefined; };
   const master = a.find(x => x.endsWith('.mcrelief'));
   const out = get('--out');
-  if (!master || !out) throw new Error('usage: relief-roundtrip MASTER.mcrelief --out DIR [--no-watertight] [--crop x0,y0,x1,y1] [--sbp] [--face x0,y0,x1,y1]');
-  return { master, out, watertight: !a.includes('--no-watertight'), sbp: a.includes('--sbp'),
-    crop: parseBox(get('--crop'), '--crop'), face: parseBox(get('--face'), '--face') };
+  if (!master || !out) throw new Error('usage: relief-roundtrip MASTER.mcrelief --out DIR [--no-watertight] [--crop x0,y0,x1,y1] ' +
+    '[--sbp] [--replay FILE.sbp] [--sim-factor N] [--offset x,y] [--face x0,y0,x1,y1]');
+  const simFactor = Number(get('--sim-factor') ?? 2);
+  if (!Number.isInteger(simFactor) || simFactor < 1) throw new Error('--sim-factor needs a positive integer');
+  const offset = (get('--offset') ?? '0,0').split(',').map(Number);
+  if (offset.length !== 2 || !offset.every(Number.isFinite)) throw new Error('--offset needs x,y');
+  const replay = get('--replay') ?? null;
+  return { master, out, watertight: !a.includes('--no-watertight'), sbp: a.includes('--sbp') || replay !== null,
+    crop: parseBox(get('--crop'), '--crop'), face: parseBox(get('--face'), '--face'), replay, simFactor,
+    offset: [offset[0], offset[1]] };
 }
 
 /** The master's samples inside `box`, unchanged, with the box corner moved to the origin. */
@@ -117,38 +134,53 @@ async function main(): Promise<void> {
   await cutReport(m, surface, opt);
 }
 
-async function cutReport(m: ReliefMaster, surface: ExportSurface, opt: ReturnType<typeof args>): Promise<void> {
-  const { cols, rows } = m;
-  const dx = m.widthIn / (cols - 1), dy = m.heightIn / (rows - 1);
-  const config = { ...getDefaultConfig(), materialX: m.widthIn, materialY: m.heightIn, materialZ: m.stockIn };
+async function cutReport(m: ReliefMaster, surface: ExportSurface, opt: Options): Promise<void> {
+  const config = { ...getDefaultConfig(), materialX: m.widthIn, materialY: m.heightIn, materialZ: m.stockIn,
+    offsetX: opt.offset[0], offsetY: opt.offset[1] };
   const t1 = performance.now();
-  const { sbp, stats } = generateSBP(surfaceHeightmap(surface), config);
+  let sbp: string, stats: unknown = null;
+  if (opt.replay) {
+    sbp = readFileSync(opt.replay, 'utf8');
+  } else {
+    ({ sbp, stats } = generateSBP(surfaceHeightmap(surface), config));
+    writeFileSync(join(opt.out, 'relief.sbp'), sbp);
+  }
   const genSeconds = (performance.now() - t1) / 1000;
-  writeFileSync(join(opt.out, 'relief.sbp'), sbp);
   const tools = new Map(getEmbeddedTools(config.materialProfile).map(t => [t.name, t]));
   const t2 = performance.now();
-  const sim = simulateCut(parseSbp(sbp), tools, { cols, rows, originX: config.offsetX, originY: config.offsetY, cellX: dx, cellY: dy }, m.stockIn);
+  // Simulated and compared on a grid opt.simFactor times finer than the master, against the
+  // master's declared triangles, so damage between the master's nodes counts.
+  const fine = cutAgainstTriangles(parseSbp(sbp), tools, m.heightsIn, m.cols, m.rows, m.widthIn, m.heightIn,
+    surface.diagonal, config.offsetX, config.offsetY, m.stockIn, opt.simFactor);
   const simSeconds = (performance.now() - t2) / 1000;
-  const target = m.heightsIn;
-  const regions: Record<string, CutComparison> = { all: compareCut(sim.stock, target) };
-  if (m.mask) { const mask = m.mask; regions.foreground = compareCut(sim.stock, target, k => mask[k] === 1); }
-  if (opt.face) regions.face = compareCut(sim.stock, target, boxMask(opt.face, cols, dx, dy));
+  const { cols, rows, cellX: dx, cellY: dy, stock, target } = fine;
+  const regions: Record<string, CutComparison> = { all: compareCut(stock, target) };
+  if (m.mask) {
+    const mask = m.mask, f = opt.simFactor;
+    regions.foreground = compareCut(stock, target, k => mask[Math.round(Math.floor(k / cols) / f) * m.cols + Math.round((k % cols) / f)] === 1);
+  }
+  if (opt.face) regions.face = compareCut(stock, target, boxMask(opt.face, cols, dx, dy));
   const report = {
-    finishingTool: config.finishingTool.name, roughingTool: config.roughingTool.name,
-    stepoverIn: config.finishingTool.cutting.stepover, stats, rapidCollisions: sim.rapidCollisions,
-    movesSimulated: sim.movesSimulated, sbpBytes: sbp.length, generateSeconds: genSeconds, simulateSeconds: simSeconds,
+    sbp: opt.replay ?? 'generated', finishingTool: config.finishingTool.name, roughingTool: config.roughingTool.name,
+    stepoverIn: config.finishingTool.cutting.stepover, offsetIn: opt.offset, stats, rapidCollisions: fine.sim.rapidCollisions,
+    movesSimulated: fine.sim.movesSimulated, sbpBytes: sbp.length, generateSeconds: genSeconds, simulateSeconds: simSeconds,
+    sampling: {
+      simFactor: opt.simFactor, simCellIn: [dx, dy], masterCellIn: [m.widthIn / (m.cols - 1), m.heightIn / (m.rows - 1)],
+      note: 'Stock and target are compared at every fine sample on the master\'s declared triangles. A gouge narrower than ' +
+        'one fine cell can fall between samples; cutter stamps are spaced a quarter fine cell along each move.',
+    },
     face: opt.face, regions,
   };
   writeFileSync(join(opt.out, 'cut-report.json'), JSON.stringify(report, null, 2));
-  writeFileSync(join(opt.out, 'predicted-stock.f32'), Buffer.from(new Float32Array(sim.stock).buffer));
+  writeFileSync(join(opt.out, 'predicted-stock.f32'), Buffer.from(new Float32Array(stock).buffer));
   writeFileSync(join(opt.out, 'target-lit.png'), encodePngRgb(cols, rows, shade(target, cols, rows, dx, dy)));
-  const lit = shade(sim.stock, cols, rows, dx, dy);
+  const lit = shade(stock, cols, rows, dx, dy);
   writeFileSync(join(opt.out, 'predicted-lit.png'), encodePngRgb(cols, rows, lit));
   // Deviation over the predicted surface: red = gouge (stock below target), blue = stock left.
   const dev = new Uint8Array(lit);
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++) {
-      const k = j * cols + i, d = sim.stock[k] - target[k], o = ((rows - 1 - j) * cols + i) * 3;
+      const k = j * cols + i, d = stock[k] - target[k], o = ((rows - 1 - j) * cols + i) * 3;
       if (d < -0.0005) { dev[o] = 255; dev[o + 1] = 0; dev[o + 2] = 0; }
       else if (d > 0.002) { const w = Math.min(1, d / 0.02); dev[o] = Math.round(dev[o] * (1 - w)); dev[o + 1] = Math.round(dev[o + 1] * (1 - w)); dev[o + 2] = Math.round(dev[o + 2] * (1 - w) + 255 * w); }
     }
