@@ -14,9 +14,13 @@
  * EFFECTOR_ACCEL x (its share of the sheet area) x S / (vertex mass).
  *   - Surface attraction (Blender's FORCE / SURFACE field on the figure, negative strength, falloff power
  *     0): every vertex within `attractReach` of the figure is pulled toward its nearest surface point.
+ *   - Local attraction: the same pull, only on cloth inside a face region of the front view (the
+ *     study's cropped face emitter), with its own strength, reach and timing.
  *   - Wind or pressure on a target region of the front view: a fixed direction (`windMode` 1, Blender
  *     WIND with wind factor 0, as the quartering-wind study used) or along the cloth normal toward the
  *     figure (`windMode` 2, normal pressure).
+ * After the solve, an optional surface fit (the study's Shrinkwrap, nearest-surface method) moves the
+ * cloth inside the face region toward the figure, keeping the collision clearance.
  * Each strength rises from 0 at its start frame to full at its full frame along smoothstep, which is what
  * Blender's default (auto-clamped Bezier) keyframes between a 0 key and a full key evaluate to.
  */
@@ -48,6 +52,12 @@ export interface ClothParams {
   windElevation: number;       // degrees above horizontal the wind comes from
   windX: number; windZ: number; windRadius: number;  // target circle in the front view, scene units
   windStart: number; windFull: number;
+  faceAttractStrength: number; // local attraction inside the face circle (0 = off)
+  faceAttractReach: number;
+  faceStart: number; faceFull: number;
+  faceX: number; faceZ: number; faceRadius: number;  // face circle in the front view, scene units
+  fitStrength: number;         // post-solve surface fit inside the face circle, 0 (off) to 1 (onto the figure)
+  displaySubdivisions: number; // Catmull-Clark levels on the solved cloth before extraction (extraction only)
 }
 
 /** The Blender proof's sheet, pins, frames and timing (5 x 8 units, 100 x 160 quads, 0.012 above the
@@ -64,6 +74,8 @@ export const SILK: ClothParams = {
   attractStrength: 0, attractReach: 0.8, attractStart: 45, attractFull: 100, attractFrictionKeep: 0,
   windMode: 0, windStrength: 0, windAzimuth: 45, windElevation: 0, windX: 0.38, windZ: 0.07, windRadius: 0.55,
   windStart: 100, windFull: 115,
+  faceAttractStrength: 0, faceAttractReach: 0.4, faceStart: 45, faceFull: 100, faceX: -0.1, faceZ: 0.08, faceRadius: 0.63,
+  fitStrength: 0, displaySubdivisions: 2,
 };
 
 /** The gathered silk of the Blender study (scripts/drape, preset silk-gathered, read at frame 120): the
@@ -110,6 +122,8 @@ export function sheetOffsetY(p: ClothParams): number {
 const LAYER_STATIC = 0, LAYER_MOVING = 1;
 /** Voxel size of the nearest-surface field, scene units (the cloth cell is 0.05). */
 const NEAREST_VOXEL = 0.04;
+/** How far from the figure the surface fit still pulls cloth, scene units (12.5 cm life size). */
+const FIT_REACH = 1;
 
 export function simulateCloth(J: Jolt, figurePos: Float32Array, figureTris: Uint32Array, p: ClothParams,
   onFrame?: (frame: number, frames: number) => boolean | void): ClothResult {
@@ -195,33 +209,41 @@ export function simulateCloth(J: Jolt, figurePos: Float32Array, figureTris: Uint
     perStrength[j * cols + i] = free[j * cols + i] ? (EFFECTOR_ACCEL * dx * dy * quads * quadsY / 4) / p.vertexMass : 0;
   }
   const attracting = p.attractStrength > 0 && p.attractReach > 0, blowing = p.windMode > 0 && p.windStrength !== 0 && p.windRadius > 0;
+  const local = p.faceAttractStrength > 0 && p.faceAttractReach > 0 && p.faceRadius > 0, fitting = p.fitStrength > 0 && p.faceRadius > 0;
+  // The fit looks for the figure up to FIT_REACH away; the forces only as far as their reach.
+  const reach = Math.max(attracting ? p.attractReach : 0, local ? p.faceAttractReach : 0, fitting ? FIT_REACH : 0);
   let field: NearestField | null = null;
-  if (attracting) {
+  if (reach > 0) {
     const hang = Math.hypot(p.sheetX / 2, p.sheetY / 2 + Math.abs(oy)) + p.vertexRadius;
     // Every cloth vertex stays within its distance along the sheet (at most `hang`) of the crown pins, and
     // the surface that pulls it within `attractReach` of that (the builder clips this to the figure).
-    const e = hang + p.attractReach;
-    field = buildNearestField(figurePos, figureTris, { x0: -e, x1: e, y0: -e, y1: e, z0: z - e, z1: z + p.attractReach },
-      NEAREST_VOXEL, p.attractReach);
+    const e = hang + reach;
+    field = buildNearestField(figurePos, figureTris, { x0: -e, x1: e, y0: -e, y1: e, z0: z - e, z1: z + reach }, NEAREST_VOXEL, reach);
   }
   const az = (p.windAzimuth * Math.PI) / 180, el = (p.windElevation * Math.PI) / 180;
   const wind = [-Math.sin(az) * Math.cos(el), Math.cos(az) * Math.cos(el), -Math.sin(el)];
   const pos = new Float64Array(nV * 3), q = new Float64Array(3);
   const step = 1 / (p.fps * p.substeps);
+  /** 1 inside the face circle of the front view, fading to 0 over its outer 30%. */
+  const inFace = (x: number, zz: number): number => 1 - ramp(Math.hypot(x - p.faceX, zz - p.faceZ), 0.7 * p.faceRadius, p.faceRadius);
   const applyForces = (frame: number): void => {
     const sA = attracting ? p.attractStrength * ramp(frame, p.attractStart, p.attractFull) : 0;
+    const sL = local ? p.faceAttractStrength * ramp(frame, p.faceStart, p.faceFull) : 0;
     const sW = blowing ? p.windStrength * ramp(frame, p.windStart, p.windFull) : 0;
-    if (sA === 0 && sW === 0) return;
+    if (sA === 0 && sL === 0 && sW === 0) return;
     read(pos);
     const H = J.HEAPF32;
     for (let k = 0; k < nV; k++) {
       if (!perStrength[k]) continue;
       const x = pos[k * 3], y = pos[k * 3 + 1], zz = pos[k * 3 + 2];
       let ax = 0, ay = 0, azz = 0;
-      if (sA && field) {
+      if ((sA || sL) && field) {
         const d = nearestPoint(field, x, y, zz, q);
-        if (d > 1e-9 && d <= p.attractReach) {
-          const s = (sA * perStrength[k]) / d;
+        let pull = 0;
+        if (sA && d <= p.attractReach) pull += sA;
+        if (sL && d <= p.faceAttractReach) pull += sL * inFace(x, zz);
+        if (pull && d > 1e-9) {
+          const s = (pull * perStrength[k]) / d;
           ax += (q[0] - x) * s; ay += (q[1] - y) * s; azz += (q[2] - zz) * s;
         }
       }
@@ -275,6 +297,20 @@ export function simulateCloth(J: Jolt, figurePos: Float32Array, figureTris: Uint
   for (let k = 0; k < cur.length; k += 3) {
     const m = Math.hypot(cur[k] - prev[k], cur[k + 1] - prev[k + 1], cur[k + 2] - prev[k + 2]);
     if (!(m <= lastMotion)) lastMotion = m;
+  }
+  // Surface fit: each free vertex inside the face circle moves `fitStrength` of the way to the point that
+  // keeps the collision clearance from its nearest figure point (Shrinkwrap, nearest surface point).
+  if (fitting && field) {
+    for (let k = 0; k < nV; k++) {
+      if (!free[k]) continue;
+      const x = cur[k * 3], y = cur[k * 3 + 1], zz = cur[k * 3 + 2];
+      const w = p.fitStrength * inFace(x, zz);
+      if (!w) continue;
+      const d = nearestPoint(field, x, y, zz, q);
+      if (!(d > 1e-9 && d <= FIT_REACH)) continue;
+      const t = w * (1 - p.vertexRadius / d);                          // fraction of the way to the surface
+      cur[k * 3] = x + (q[0] - x) * t; cur[k * 3 + 1] = y + (q[1] - y) * t; cur[k * 3 + 2] = zz + (q[2] - zz) * t;
+    }
   }
   bodies.RemoveBody(cloth.GetID()); bodies.DestroyBody(cloth.GetID());
   J.destroy(jolt);

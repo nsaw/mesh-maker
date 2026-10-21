@@ -23,11 +23,14 @@ export interface DrapeSettings {
   drapeAttract: number; drapeAttractReach: number; drapeAttractStart: number; drapeAttractFull: number;
   drapeWind: number; drapeWindFrom: number; drapeWindElevation: number;
   drapeWindX: number; drapeWindY: number; drapeWindRadius: number; drapeWindStart: number; drapeWindFull: number;
+  drapeFaceAttract: number; drapeFaceReach: number; drapeFaceStart: number; drapeFaceFull: number;
+  drapeFaceX: number; drapeFaceY: number; drapeFaceRadius: number; drapeFit: number;
+  drapeSubsteps: number; drapeIterations: number; drapeSubdivisions: number;
   drapeReliefDepth: number;
 }
 
 export type DrapeKey = keyof DrapeSettings;
-export type DrapeGroup = 'figure' | 'cloth' | 'attraction' | 'wind' | 'carve';
+export type DrapeGroup = 'figure' | 'cloth' | 'attraction' | 'face' | 'wind' | 'solver' | 'carve';
 
 export interface DrapeControl { key: DrapeKey; label: string; min: number; max: number; step: number; group: DrapeGroup }
 
@@ -50,6 +53,14 @@ export const DRAPE_CONTROLS: readonly DrapeControl[] = [
   { key: 'drapeAttractReach', label: 'Attraction Reach (cm)', min: 1, max: 25, step: 0.5, group: 'attraction' },
   { key: 'drapeAttractStart', label: 'Attraction Starts (frame)', min: 1, max: 240, step: 1, group: 'attraction' },
   { key: 'drapeAttractFull', label: 'Attraction Full (frame)', min: 1, max: 240, step: 1, group: 'attraction' },
+  { key: 'drapeFaceAttract', label: 'Local Attraction Strength (0 = off)', min: 0, max: 3000, step: 50, group: 'face' },
+  { key: 'drapeFaceReach', label: 'Local Attraction Reach (cm)', min: 0.5, max: 25, step: 0.5, group: 'face' },
+  { key: 'drapeFaceStart', label: 'Local Attraction Starts (frame)', min: 1, max: 240, step: 1, group: 'face' },
+  { key: 'drapeFaceFull', label: 'Local Attraction Full (frame)', min: 1, max: 240, step: 1, group: 'face' },
+  { key: 'drapeFit', label: 'Surface Fit after the solve (0 = off, 1 = onto the figure)', min: 0, max: 1, step: 0.05, group: 'face' },
+  { key: 'drapeFaceX', label: 'Face Region X on the carve (in from left)', min: 0, max: PANEL_WIDTH_IN, step: 0.1, group: 'face' },
+  { key: 'drapeFaceY', label: 'Face Region Y on the carve (in from top)', min: 0, max: PANEL_HEIGHT_IN, step: 0.1, group: 'face' },
+  { key: 'drapeFaceRadius', label: 'Face Region Radius (in)', min: 0.25, max: 8, step: 0.05, group: 'face' },
   { key: 'drapeWind', label: 'Strength', min: 0, max: 3000, step: 50, group: 'wind' },
   { key: 'drapeWindFrom', label: 'Comes From (deg, 0 = you, 90 = your right)', min: -180, max: 180, step: 1, group: 'wind' },
   { key: 'drapeWindElevation', label: 'Comes From Above (deg)', min: -60, max: 60, step: 1, group: 'wind' },
@@ -58,6 +69,9 @@ export const DRAPE_CONTROLS: readonly DrapeControl[] = [
   { key: 'drapeWindRadius', label: 'Target Radius (in)', min: 0.25, max: 8, step: 0.05, group: 'wind' },
   { key: 'drapeWindStart', label: 'Starts (frame)', min: 1, max: 240, step: 1, group: 'wind' },
   { key: 'drapeWindFull', label: 'Full (frame)', min: 1, max: 240, step: 1, group: 'wind' },
+  { key: 'drapeSubsteps', label: 'Solver Steps per Frame (accuracy)', min: 2, max: 32, step: 1, group: 'solver' },
+  { key: 'drapeIterations', label: 'Solver Iterations per Step (accuracy)', min: 2, max: 32, step: 1, group: 'solver' },
+  { key: 'drapeSubdivisions', label: 'Display Subdivision (smoothing levels)', min: 0, max: 3, step: 1, group: 'solver' },
   { key: 'drapeReliefDepth', label: 'Relief Depth (in)', min: 0.05, max: 3.95, step: 0.005, group: 'carve' },
 ];
 
@@ -89,7 +103,7 @@ const r2 = (v: number): number => Math.round(v * 100) / 100;
 
 /** Controls for a solver preset, in the units above. */
 function settingsFrom(p: ClothParams, wind: Partial<DrapeSettings> = {}): DrapeSettings {
-  const dy = PANEL_WINDOW.zTop;
+  const dy = PANEL_WINDOW.zTop;                                    // the panel's top edge, scene z
   return {
     drapeTilt: 25, drapeTurn: 0, drapeLean: 0,
     drapeClothWidth: p.sheetX * CM_PER_UNIT, drapeClothLength: p.sheetY * CM_PER_UNIT, drapeClothRes: p.cellsX,
@@ -101,6 +115,11 @@ function settingsFrom(p: ClothParams, wind: Partial<DrapeSettings> = {}): DrapeS
     drapeWind: 250, drapeWindFrom: p.windAzimuth, drapeWindElevation: p.windElevation,
     drapeWindX: r2((p.windX - PANEL_WINDOW.x0) * IN_PER_UNIT), drapeWindY: r2((dy - p.windZ) * IN_PER_UNIT),
     drapeWindRadius: r2(p.windRadius * IN_PER_UNIT), drapeWindStart: p.windStart, drapeWindFull: p.windFull,
+    drapeFaceAttract: p.faceAttractStrength, drapeFaceReach: p.faceAttractReach * CM_PER_UNIT,
+    drapeFaceStart: p.faceStart, drapeFaceFull: p.faceFull,
+    drapeFaceX: r2((p.faceX - PANEL_WINDOW.x0) * IN_PER_UNIT), drapeFaceY: r2((dy - p.faceZ) * IN_PER_UNIT),
+    drapeFaceRadius: r2(p.faceRadius * IN_PER_UNIT), drapeFit: p.fitStrength,
+    drapeSubsteps: p.substeps, drapeIterations: p.iterations, drapeSubdivisions: p.displaySubdivisions,
     drapeReliefDepth: 0.625,
     ...wind,
   };
@@ -139,6 +158,11 @@ export function drapeJob(s: DrapeSettings, windMode: DrapeWindMode): { pose: Fig
     windAzimuth: s.drapeWindFrom, windElevation: s.drapeWindElevation,
     windX: PANEL_WINDOW.x0 + s.drapeWindX / IN_PER_UNIT, windZ: PANEL_WINDOW.zTop - s.drapeWindY / IN_PER_UNIT,
     windRadius: s.drapeWindRadius / IN_PER_UNIT, windStart: s.drapeWindStart, windFull: s.drapeWindFull,
+    faceAttractStrength: s.drapeFaceAttract, faceAttractReach: s.drapeFaceReach / CM_PER_UNIT,
+    faceStart: s.drapeFaceStart, faceFull: s.drapeFaceFull,
+    faceX: PANEL_WINDOW.x0 + s.drapeFaceX / IN_PER_UNIT, faceZ: PANEL_WINDOW.zTop - s.drapeFaceY / IN_PER_UNIT,
+    faceRadius: s.drapeFaceRadius / IN_PER_UNIT, fitStrength: s.drapeFit,
+    substeps: Math.round(s.drapeSubsteps), iterations: Math.round(s.drapeIterations), displaySubdivisions: Math.round(s.drapeSubdivisions),
   };
   return { pose: { tiltDeg: s.drapeTilt, turnDeg: s.drapeTurn, leanDeg: s.drapeLean }, params };
 }

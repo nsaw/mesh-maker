@@ -10,7 +10,7 @@ import initJolt from 'jolt-physics/wasm-compat';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
-import { bareDepth, offsetTowardViewer, PANEL_WINDOW, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
+import { bareDepth, offsetTowardViewer, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, nearestPoint } from '../src/drape-sim/nearest';
 import { DRAPE_PRESETS, drapeCarveFor, drapeJob, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
@@ -262,6 +262,17 @@ async function main(): Promise<void> {
     const lifted = simulateCloth(J, plane, farTris, { ...small, attractStrength: hold, attractReach: 0.8, attractStart: 0, attractFull: 0 });
     assert(Math.abs(drop(lifted) - drop(still)) < 0.01, 'attraction toward a surface above, of the same strength, balances it the same way',
       `drop ${drop(lifted).toFixed(4)} units`);
+    // Local attraction only inside the face circle: a circle round the probe holds it, one beside it
+    // does not; the regions are in the front view (x, z), so the sheet's y does not matter.
+    const px = still.positions[probe - 2];
+    const inside = simulateCloth(J, plane, farTris, { ...small, faceAttractStrength: hold, faceAttractReach: 0.8, faceStart: 0, faceFull: 0, faceX: px, faceZ: 1, faceRadius: 3 });
+    const beside = simulateCloth(J, plane, farTris, { ...small, faceAttractStrength: hold, faceAttractReach: 0.8, faceStart: 0, faceFull: 0, faceX: px + 4, faceZ: 1, faceRadius: 1 });
+    assert(Math.abs(drop(inside) - drop(still)) < 0.01 && Math.abs(drop(beside) - drop(fall)) < 1e-9,
+      'local attraction acts inside its face region and nowhere else', `drop inside ${drop(inside).toFixed(4)}, beside ${drop(beside).toFixed(4)} units`);
+    // Surface fit: full strength puts the region's cloth at the clearance from the plane above.
+    const fit = simulateCloth(J, plane, farTris, { ...small, fitStrength: 1, faceX: px, faceZ: 1, faceRadius: 3 });
+    assert(Math.abs(fit.positions[probe] - (1.4 - SILK.vertexRadius)) < 0.005, 'a full surface fit moves the cloth onto the figure, keeping the clearance',
+      `z ${fit.positions[probe].toFixed(4)} (figure 1.4, clearance ${SILK.vertexRadius})`);
     const odd = { ...small, cellsX: 20, cellsY: 20, frontShare: 0.7 };
     const oy = sheetOffsetY(odd);
     assert(Math.abs(oy + 0.2) < 1e-12, 'a 70% front share moves the sheet 0.2 of its length toward the viewer, on the cell grid', `offset ${oy}`);
@@ -278,16 +289,24 @@ async function main(): Promise<void> {
     };
     const ok = [false, true].every(flip => offsetTowardViewer(grid(flip), 5, 5, 0.01).every((v, k) => k % 3 === 1 ? Math.abs(v + 0.01) < 1e-12 : v === grid(flip)[k]));
     assert(ok, 'fabric thickness offsets the cloth surface toward the viewer by exactly its thickness, whichever way the sheet is wound');
+    // Display subdivision: levels change what is carved, not the solve (a bent grid reads differently).
+    const bent = new Float64Array(5 * 5 * 3);
+    for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) { const k = (j * 5 + i) * 3; bent[k] = i * 0.1; bent[k + 1] = -1 - ((i + j) % 2) * 0.05; bent[k + 2] = 1 - j * 0.1; }
+    const w: DepthWindow = { x0: 0, x1: 0.4, zTop: 1, zBottom: 0.6, cols: 41, rows: 41 };
+    const none = emptyDepth(w), d0 = veiledDepth(none, bent, 5, 5, w, 0, 0).depth, d2 = veiledDepth(none, bent, 5, 5, w, 0, 2).depth;
+    let diff = 0; for (let k = 0; k < d0.length; k++) if (Number.isFinite(d0[k]) && Number.isFinite(d2[k])) diff = Math.max(diff, Math.abs(d0[k] - d2[k]));
+    assert(diff > 0.005, 'display subdivision levels change the carved cloth surface', `max depth change ${diff.toFixed(4)} units`);
   }
 
   // ---------- D13 controls ----------
   process.stdout.write('D13 controls\n');
   {
     const g = drapeJob(DRAPE_PRESETS.gathered.settings, 'off'), sk = drapeJob(DRAPE_PRESETS.silk.settings, 'off');
-    // Wind settings are inert while the wind mode is off (the sliders keep a strength ready); the pin
-    // radius is rounded to 0.01 cm, which pins the same vertices (checked below).
+    // Wind settings are inert while the wind mode is off (the sliders keep a strength ready); region
+    // centres and radii are rounded to 0.01 in on the carve, and the pin radius to 0.01 cm, which pins
+    // the same vertices (checked below).
     const differs = (a: ClothParams, b: ClothParams): string[] => (Object.keys(b) as (keyof ClothParams)[])
-      .filter(k => k !== 'pinRadius' && !k.startsWith('wind') && Math.abs(a[k] - b[k]) > 1e-12 * Math.max(1, Math.abs(b[k])));
+      .filter(k => k !== 'pinRadius' && !/^(wind|face[XZR])/.test(k) && Math.abs(a[k] - b[k]) > 1e-12 * Math.max(1, Math.abs(b[k])));
     assert(differs(g.params, SILK_GATHERED).length === 0, 'the Gathered preset\'s controls give the solver the gathered parameters', differs(g.params, SILK_GATHERED).join(',') || 'all equal');
     assert(differs(sk.params, SILK).length === 0, 'the Silk preset\'s controls give the solver the proof\'s parameters', differs(sk.params, SILK).join(',') || 'all equal');
     const pins = (p: ClothParams): number => { let n = 0; const dx = p.sheetX / p.cellsX; for (let i = 0; i <= p.cellsX; i++) for (let j = 0; j <= p.cellsY; j++) if (Math.abs(-p.sheetX / 2 + i * dx) < p.pinRadius && Math.abs(sheetOffsetY(p) - p.sheetY / 2 + j * dx) < p.pinRadius) n++; return n; };

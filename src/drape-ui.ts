@@ -282,7 +282,9 @@ export function generateDrape(): void {
   if (!figure || !figureFile || worker) return;
   const rev = revision, name = STATE.drapeFigureName, fig = figure;
   const { pose, params } = drapeJob(STATE, STATE.drapeWindMode);
-  const label = `${poseText(pose)}, ${params.attractStrength > 0 ? 'gathered' : 'silk'}${params.windMode ? (params.windMode === 1 ? ', wind' : ', pressure') : ''}, frame ${params.frames}`;
+  const extras = [params.faceAttractStrength > 0 ? 'local attraction' : '', params.fitStrength > 0 ? 'surface fit' : '',
+    params.windMode === 1 ? 'wind' : params.windMode === 2 ? 'pressure' : ''].filter(Boolean);
+  const label = [poseText(pose), params.attractStrength > 0 ? 'gathered' : 'silk', ...extras, `frame ${params.frames}`].join(', ');
   const w = new Worker(new URL('./drape-sim/worker.ts', import.meta.url), { type: 'module' });
   worker = w; syncButtons();
   const t0 = performance.now();
