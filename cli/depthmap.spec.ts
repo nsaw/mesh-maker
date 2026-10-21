@@ -11,7 +11,7 @@
  */
 
 import { applyBackgroundCutoff, normalizeGrid, sampleLumaGrid } from '../src/geometry';
-import { STATE, deserializeConfig, serializeConfig, stockTopIn } from '../src/state';
+import { STATE, deserializeConfig, restoreNoiseDims, saveNoiseDims, serializeConfig, stockTopIn } from '../src/state';
 import type { ReliefMaster } from '../src/relief-master';
 
 let failures = 0;
@@ -153,6 +153,18 @@ process.stdout.write('T15 share links\n');
     Object.assign(STATE, keep);
     assert(withMaster === 0.75 && noise === 2, 'the stock top is the master\'s while it drives the heights, Material Thickness otherwise',
       `drape ${withMaster}, noise ${noise}`);
+  }
+  // NOISE keeps its board, material thickness included, while DEPTH MAP (or a relief master) takes over
+  // the shared controls (a 0.75 in master used to leave NOISE at 0.75 in).
+  {
+    const keep = { ...STATE };
+    Object.assign(STATE, { meshX: 30, meshY: 20, resolution: 300, baseThickness: 1.5 });
+    saveNoiseDims();
+    Object.assign(STATE, { meshX: 12, meshY: 16, resolution: 400, baseThickness: 0.75, aspectLocked: true });
+    restoreNoiseDims();
+    const back = [STATE.meshX, STATE.meshY, STATE.resolution, STATE.baseThickness, STATE.aspectLocked];
+    Object.assign(STATE, keep);
+    assert(JSON.stringify(back) === JSON.stringify([30, 20, 300, 1.5, false]), 'NOISE gets its own size and material thickness back after DEPTH MAP', JSON.stringify(back));
   }
   // v15 made the gathered silk the default: a v14 drape link was the plain silk proof and stays it.
   const v14 = deserializeConfig(enc({ _v: 14, mode: 'drape', drapeTilt: 30 }));

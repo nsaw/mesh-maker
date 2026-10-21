@@ -1,4 +1,4 @@
-import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, noiseDims, reliefMasterActive } from './state';
+import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, reliefMasterActive, saveNoiseDims } from './state';
 import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, drapeControlEffect, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
@@ -583,9 +583,11 @@ function buildDrapeSections(): HTMLElement[] {
       const { drapeReliefDepth: _carve, ...settings } = preset.settings;
       Object.assign(STATE, settings, { drapeWindMode: preset.windMode });
       buildSidebar();
+      // One toast: the cancel notice (if a drape was running) would be replaced by the preset's at once.
+      const wasRunning = drapeControls().running;
       onDrapePoseChanged(`the ${preset.label} preset was applied`);
       onDrapeClothChanged();
-      showToast(`${preset.label}: ${preset.about} Press Generate Drape.`, 4000);
+      showToast(`${wasRunning ? 'Drape cancelled. ' : ''}${preset.label}: ${preset.about} Press Generate Drape.`, wasRunning ? 6000 : 4000);
     });
     presetRow.append(b);
   }
@@ -828,6 +830,15 @@ function wireControls(): void {
   wireSectionCollapse();
 }
 
+/** Show STATE.aspectLocked on the lock button (also when code, not a click, changes it). */
+export function syncAspectLockButton(): void {
+  const lockBtn = document.getElementById('btnAspectLock');
+  if (!lockBtn) return;
+  lockBtn.classList.toggle('locked', STATE.aspectLocked);
+  lockBtn.textContent = STATE.aspectLocked ? '\u{1F512}' : '\u{1F513}';
+  lockBtn.title = STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio';
+}
+
 const isMobile = (): boolean => window.matchMedia('(max-width: 900px)').matches;
 
 /** Wire accordion collapse/expand on a single section. Exported for SBP profile rebuild. */
@@ -897,9 +908,7 @@ function wireSectionCollapse(): void {
   if (lockBtn) {
     lockBtn.addEventListener('click', () => {
       STATE.aspectLocked = !STATE.aspectLocked;
-      lockBtn.classList.toggle('locked', STATE.aspectLocked);
-      lockBtn.textContent = STATE.aspectLocked ? '\u{1F512}' : '\u{1F513}';
-      lockBtn.title = STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio';
+      syncAspectLockButton();
     });
   }
 
@@ -1129,11 +1138,7 @@ async function loadReliefMaster(file: File, revision: number): Promise<void> {
     return;
   }
   if (revision !== uploadRevision) return; // a newer upload owns the state now
-  if (STATE.mode === 'noise') {
-    noiseDims.meshX = STATE.meshX;
-    noiseDims.meshY = STATE.meshY;
-    noiseDims.resolution = STATE.resolution;
-  }
+  if (STATE.mode === 'noise') saveNoiseDims();
   // Leaving DRAPE this way skips the tab switch: hand back the sizes DRAPE took over first.
   if (STATE.mode === 'drape') restoreSizeAfterDrape();
   STATE.mode = 'depthmap';

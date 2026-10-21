@@ -301,7 +301,23 @@ export const RELIEF_LOCKED_KEYS: ReadonlySet<string> = new Set([
   'meshX', 'meshY', 'baseThickness', 'dmHeightScale', 'dmOffset', 'dmBackgroundCutoff', 'dmSmoothing',
 ]);
 
-export const noiseDims = { meshX: 36, meshY: 24, resolution: 400 };
+/** NOISE's own board, kept while another tab (DEPTH MAP, a relief master, DRAPE) takes over the size
+ *  controls: it shares meshX, meshY, resolution and baseThickness with DEPTH MAP, so leaving NOISE
+ *  saves them here and coming back restores them (saveNoiseDims / restoreNoiseDims). */
+export const noiseDims = { meshX: 36, meshY: 24, resolution: 400, baseThickness: 0.75 };
+
+/** Leaving NOISE: remember its board. */
+export function saveNoiseDims(): void {
+  noiseDims.meshX = STATE.meshX; noiseDims.meshY = STATE.meshY;
+  noiseDims.resolution = STATE.resolution; noiseDims.baseThickness = STATE.baseThickness;
+}
+
+/** Back on NOISE: its board as it was, unlocked (the aspect lock belongs to an image). */
+export function restoreNoiseDims(): void {
+  STATE.meshX = noiseDims.meshX; STATE.meshY = noiseDims.meshY;
+  STATE.resolution = noiseDims.resolution; STATE.baseThickness = noiseDims.baseThickness;
+  STATE.aspectLocked = false;
+}
 
 export let demoDepthMap: HTMLImageElement | null = null;
 export function setDemoDepthMap(img: HTMLImageElement | null): void {

@@ -7,6 +7,9 @@ import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
 import { ensureDrapeFigure } from './drape-ui';
 
+/** A share link that set the board size: the demo image must not refit it on load. */
+let linkSetSize = false;
+
 function preloadDemoDepthMap(): void {
   const img = new Image();
   img.crossOrigin = 'anonymous';
@@ -15,7 +18,9 @@ function preloadDemoDepthMap(): void {
     if (STATE.mode === 'depthmap' && !STATE.depthMap && !STATE.reliefMaster) {
       STATE.depthMap = img;
       STATE.depthMapName = 'Mona Lisa (demo)';
-      fitMeshToAspect(img.width, img.height);
+      // A DEPTH MAP link carries its own size; only a page without one is sized to the demo image.
+      if (linkSetSize) STATE.depthMapAR = img.width / img.height;
+      else fitMeshToAspect(img.width, img.height);
       const zone = document.getElementById('uploadZone');
       if (zone) {
         zone.classList.add('has-image');
@@ -37,6 +42,7 @@ function init(): void {
   // string, the hash, OR a malformed path (`meshcraft.sawyerdesign.io/=eyJ...`) that some
   // copy-paste flows produce on iOS.
   const urlConfig = deserializeConfig(window.location);
+  linkSetSize = 'meshX' in urlConfig || 'meshY' in urlConfig;
   for (const [key, value] of Object.entries(urlConfig)) {
     (STATE as unknown as Record<string, unknown>)[key] = value;
   }

@@ -9,6 +9,7 @@
 import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
 import { syncSbpSafeZIfStockMoved } from './sbp-export';
+import { syncAspectLockButton } from './ui';
 import { DRAPE_CARVE_PENDING, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
 import { triggerDownload } from './export';
@@ -120,6 +121,7 @@ function syncSizeControls(m: ReliefMaster): void {
     const val = document.getElementById(`val_${key}`);
     if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : String(Math.round(v * 100) / 100);
   }
+  syncAspectLockButton();
   // Safe Z follows the stock top when it moves; a new drape on the same stock keeps the user's Safe Z.
   syncSbpSafeZIfStockMoved();
 }
@@ -220,7 +222,7 @@ export function ensureDrapeFigure(fromMode: typeof STATE.mode | null = null): Pr
     sizeBeforeDrape = fromMode
       ? { meshX, meshY, resolution, baseThickness, aspectLocked, depthMapAR, ...view }
       : { meshX: noiseDims.meshX, meshY: noiseDims.meshY, resolution: noiseDims.resolution,
-          baseThickness: DEFAULTS.baseThickness, aspectLocked: false, depthMapAR: DEFAULTS.depthMapAR,
+          baseThickness: noiseDims.baseThickness, aspectLocked: false, depthMapAR: DEFAULTS.depthMapAR,
           orbit: DEFAULTS.orbit, tilt: DEFAULTS.tilt, roll: DEFAULTS.roll, zoom: DEFAULTS.zoom, panX: DEFAULTS.panX, panY: DEFAULTS.panY };
     modeBeforeDrape = fromMode;
     setDrapeFrontView();
@@ -231,7 +233,9 @@ export function ensureDrapeFigure(fromMode: typeof STATE.mode | null = null): Pr
   }
   if (!demoLoading) {
     demoLoading = (async () => {
+      // A retry after a failed fetch says it is loading again rather than keep the old error up.
       bareError = null;
+      setStatus(drapeStatusText());
       try {
         const res = await fetch(DEMO_FIGURE_URL);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
