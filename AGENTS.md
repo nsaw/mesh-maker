@@ -49,11 +49,18 @@ meshcraft/
 │   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
 │   │   ├── voronoi-relief.ts  # Voronoi Relief sampler (cellular relief, attractors, starburst)
 │   │   └── presets.ts         # CNC_PRESETS, PROFILES
-│   ├── mesh.ts                # generateMesh (noise / depthmap / blend dispatch), debouncedGenerate
+│   ├── mesh.ts                # generateMesh (noise / depthmap / drape dispatch), debouncedGenerate
 │   ├── geometry.ts            # Pure grid helpers: luma sampling, normalize, background cutoff,
 │   │                          #   weightedSmooth, triangle split + watertight enclosure emitters
-│   ├── drape.ts               # Blend drape: obstacle membrane (PSOR) + gravity/support-directed
-│   │                          #   folds (LIC) + thickness clearance + headroom-safe stock mapping
+│   ├── drape-ui.ts            # Drape tab: figure (bundled bust or upload), bare preview, Worker
+│   │                          #   runs, result as an in-memory relief master (activeMaster())
+│   ├── drape-sim/             # Silk drape over a 3D figure (pure, browser Worker + Node):
+│   │   ├── figure.ts          #   .mcfig container, tilt, uploaded-mesh placement
+│   │   ├── cloth.ts           #   Jolt Physics soft-body cloth; SILK = calibrated Blender-proof values
+│   │   ├── raster.ts          #   frontmost depth along +Y (the relief's front view)
+│   │   ├── subdiv.ts          #   Catmull-Clark smoothing of the solved cloth grid
+│   │   ├── pipeline.ts        #   figure -> drape -> 12 x 16 in relief heights
+│   │   └── worker.ts          #   Worker entry (messages.ts)
 │   ├── depth-estimate.ts      # Optional in-browser monocular depth (Depth-Anything-V2-small)
 │   ├── slider-utils.ts        # Click-to-edit slider values, step-aware value formatting
 │   ├── render.ts              # Three.js WebGL viewport: surface, wireframe, points, enclosure,
@@ -85,10 +92,11 @@ meshcraft/
 │   ├── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
 │   ├── voronoi-relief.spec.ts # npm run test:relief
 │   ├── grasshopper-parity.spec.ts # npm run test:gh-parity
-│   ├── drape.spec.ts          # npm run test:drape (fast, deterministic)
-│   ├── drape-physics.spec.ts  # npm run test:drape-physics (slow; vs reference cloth sim)
-│   ├── drape-reference-sim.ts # PBD cloth oracle used by the physics spec
-│   ├── drape-metrics.ts       # Fold orientation / skew / envelope metrics shared by the specs
+│   ├── depthmap.spec.ts       # npm run test:depthmap (luma, orientation, cutoff, share links)
+│   ├── drape.spec.ts          # npm run test:drape (fast: figure, tilt, extraction, short cloth run)
+│   ├── drape-parity.spec.ts   # npm run test:drape-parity (~1 min: web drape vs the Blender proof)
+│   ├── drape-run.ts           # npm run drape-run (one web drape in Node, arrays for comparison)
+│   ├── fixtures/drape-silk-tilt25/ # Blender proof reference (every 4th node) + provenance
 │   ├── sbp-cut.spec.ts        # npm run test:cut (compensation oracle + emitted-SBP cut replay)
 │   ├── cut-sim.ts             # Independent swept-cutter simulation of an SBP file
 │   ├── relief-master.spec.ts  # npm run test:relief-master (data contract, export fidelity)
@@ -111,6 +119,7 @@ meshcraft/
 - **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar.
 - **Watertight export**: Side walls + a bottom fan from one centre vertex (closed two-manifold, Euler characteristic 2) for CNC-ready meshes. Enforces minimum 0.01" material thickness to prevent degenerate triangles.
 - **Relief master** (`src/relief-master.ts`, `.mcrelief`): a finished relief's float heights with dimensions, units, row order, backing, stock, mask, fixed triangulation and a SHA-256, imported without the image path's 8-bit read, normalization, cutoff or smoothing. The viewport shows a preview resample; every export and toolpath reads the master at full resolution. `scripts/relief/npy_to_mcrelief.py` packages one; `npm run relief-roundtrip` plus `scripts/relief/verify_export.py` (Blender) prove an export reproduces it.
+- **Drape** (`src/drape-sim/`, `src/drape-ui.ts`): a silk veil simulated over a complete 3D figure with Jolt Physics in a Worker, then seen from the front as a 12 x 16 in relief (0.125 in backing + 0.625 in relief) that becomes the active relief master. It reproduces the Blender proof in `scripts/drape/` (the local workflow: `python3 scripts/drape/workflow.py FIGURE --preset silk-tilt25|silk-tilt35|silk-tilt25-cling --out DIR`). Figures are `.mcfig` (written by `scripts/drape/export_figure.py`) or STL/OBJ/glTF placed with units, up axis and turn. Parity with Blender is gated by `npm run test:drape-parity`; the browser and Node runs produce identical heights.
 - **Tool compensation** (`src/sbp/compensate.ts`): tip = max over the cutter footprint of (surface - cutter profile), side angles from the tool axis. Finishing drops the cutter at every emitted point onto the exported triangles (vertex, edge and facet contact) instead of interpolating node tips; roughing carries segment and between-node margins. `npm run test:cut` replays the emitted SBP text through `cli/cut-sim.ts`, which shares no code with `src/sbp/`, on a grid finer than the target, against the triangulated surface.
 - **ShopBot defaults**: 36"x24" max dimensions, 6" Z limit — hardcoded for the ShopBot Desktop Max ATC.
 
@@ -180,7 +189,8 @@ When modifying the codebase, verify:
 |----------|-----|----------|
 | Google Fonts | `fonts.googleapis.com` | System fonts (Ubuntu → sans-serif) |
 | Logo image | `imagedelivery.net/...` | Hidden via `onerror` attribute |
-| Demo depth map | `imagedelivery.net/.../w=800` (Mona Lisa) | Null (user uploads their own) |
+| Demo depth map | `imagedelivery.net/.../w=800` (Mona Lisa, Depth Map tab) | Null (user uploads their own) |
+| Demo drape figure | `/demo/venus-de-milo.mcfig` (bundled, CC0, Drape tab) | Status line asks for an upload |
 
 All external resources have graceful fallbacks. The tool is fully functional offline except for font loading.
 

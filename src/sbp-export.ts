@@ -1,4 +1,4 @@
-import { STATE, reliefMasterActive } from './state';
+import { STATE, activeMaster } from './state';
 import { attachValueEdit } from './slider-utils';
 import { getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
@@ -239,7 +239,7 @@ function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: 
  *  else the generated grid. Every regeneration or upload replaces the object. */
 function currentSbpSource(): unknown {
   if (SBP_STATE.stlBuffer) return SBP_STATE.stlBuffer;
-  return reliefMasterActive() ? STATE.reliefMaster : STATE.vertices;
+  return activeMaster() ?? STATE.vertices;
 }
 
 /** Main export entry point -- called from export.ts */

@@ -1,0 +1,45 @@
+{
+ "description": "Blender 5.2.2 silk drape over the Venus de Milo bust, tilt 25 deg, frame 100: the proof accepted on 2026-10-20, as the web drape parity reference",
+ "produced_by": "python3 scripts/drape/workflow.py venus-de-milo-smk.glb --preset silk-tilt25 --azimuth -45 --scale 8 --pose scripts/drape/venus-de-milo-pose.json",
+ "figure_source_sha256_hex_upper": "54662281AD0314BDFE5430B8F756E060B0BCFC6254C8F12094B0E905E3CA2EEA",
+ "blender": "5.2.2 LTS",
+ "silk_preset_sha256_hex_upper": "8A78BF288DC4D1EA4949CB4162D66C5608468C0D4573D8A5ED613F63CA487080",
+ "window": {
+  "x": [
+   -2.1,
+   2.1
+  ],
+  "z": [
+   -4.4,
+   1.2
+  ],
+  "cols": 1201,
+  "rows": 1601,
+  "row_order": "top-down",
+  "col_order": "camera-right"
+ },
+ "stride": 4,
+ "shape": [
+  401,
+  301
+ ],
+ "units": "scene units (1/8 m), depth toward the camera, NaN = no hit, rows top-down",
+ "blender_self_variation": {
+  "note": "same drape, Blender vs Blender, full resolution",
+  "frame100_vs_frame400": {
+   "veil_iou": 0.8724,
+   "depth_diff_mm_p50": 4.09,
+   "envelope_diff_mm_p50": 2.04
+  },
+  "thread_and_setup_order": {
+   "veil_iou": 0.9576,
+   "depth_diff_mm_p50": 3.88,
+   "envelope_diff_mm_p50": 2.61
+  },
+  "self_collision_off": {
+   "veil_iou": 0.9713,
+   "depth_diff_mm_p50": 1.69,
+   "envelope_diff_mm_p50": 1.24
+  }
+ }
+}

@@ -1,4 +1,4 @@
-import { STATE, reliefMasterActive } from './state';
+import { STATE, activeMaster } from './state';
 import { MIN_WATERTIGHT_THICKNESS } from './geometry';
 import type { ExportSurface } from './mesh-writer';
 import type { ReliefMaster } from './relief-master';
@@ -9,9 +9,9 @@ import type { Heightmap } from './sbp/types';
  *  the generated grid. Returns a reason string when there is nothing exportable. `forToolpath`
  *  skips the watertight-only checks. */
 export function getExportSurface(forToolpath = false): ExportSurface | string {
-  const m = STATE.reliefMaster;
+  const m = activeMaster();
   // Toolpaths cut the top surface only, so the watertight enclosure's floor rule does not apply.
-  if (m && reliefMasterActive()) return reliefMasterSurface(m, forToolpath ? false : STATE.watertight);
+  if (m) return reliefMasterSurface(m, forToolpath ? false : STATE.watertight);
   const { vertices, cols, rows, meshX, meshY } = STATE;
   if (!vertices) return 'Generate a mesh first';
   if (cols < 2 || rows < 2) return 'Mesh too small to export (need at least 2\u00d72 grid)';

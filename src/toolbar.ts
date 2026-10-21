@@ -5,6 +5,7 @@ import { doExport } from './export';
 import { applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
+import { ensureDrapeFigure } from './drape-ui';
 
 export function setupTabs(): void {
   // Mode tabs
@@ -18,7 +19,7 @@ export function setupTabs(): void {
       updateSectionVisibility();
 
       // Save noise dimensions before depth map overwrites them
-      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'blend')) {
+      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'drape')) {
         noiseDims.meshX = STATE.meshX;
         noiseDims.meshY = STATE.meshY;
         noiseDims.resolution = STATE.resolution;
@@ -38,15 +39,13 @@ export function setupTabs(): void {
       if (STATE.mode === 'depthmap' && STATE.reliefMaster) {
         applyReliefMasterControls(prevMode === 'noise');
         buildSidebar();
-      } else if (STATE.mode === 'blend' && STATE.reliefMaster && STATE.depthMap && STATE.depthMap === demoDepthMap) {
-        // Blend drapes an image, never the master (loading a master clears the user image, so the
-        // only image Blend can hold here is the demo): label it as such.
-        STATE.depthMapName = 'Mona Lisa (demo)';
-        buildSidebar();
       }
 
-      // Auto-apply demo depth map if switching to depthmap/blend with no user image
-      if ((STATE.mode === 'blend' || (STATE.mode === 'depthmap' && !STATE.reliefMaster)) && !STATE.depthMap && demoDepthMap) {
+      // DRAPE works on a 3D figure, not an image: load the bundled bust (once) and show it bare.
+      if (STATE.mode === 'drape') void ensureDrapeFigure();
+
+      // Auto-apply demo depth map if switching to depthmap with no user image
+      if (STATE.mode === 'depthmap' && !STATE.reliefMaster && !STATE.depthMap && demoDepthMap) {
         STATE.depthMap = demoDepthMap;
         STATE.depthMapName = 'Mona Lisa (demo)';
         fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
@@ -59,7 +58,9 @@ export function setupTabs(): void {
       }
 
       // Re-fit mesh to depth map aspect only when entering from noise mode
-      if (prevMode === 'noise' && (STATE.mode === 'blend' || (STATE.mode === 'depthmap' && !STATE.reliefMaster)) && STATE.depthMap && !STATE.aspectLocked) {
+      // ...and when leaving DRAPE, whose relief locks the size to 12 x 16 in.
+      if (prevMode === 'drape' && STATE.mode === 'depthmap' && !STATE.reliefMaster) STATE.aspectLocked = false;
+      if ((prevMode === 'noise' || prevMode === 'drape') && STATE.mode === 'depthmap' && !STATE.reliefMaster && STATE.depthMap && !STATE.aspectLocked) {
         fitMeshToAspect(STATE.depthMap.width, STATE.depthMap.height);
         buildSidebar();
       }

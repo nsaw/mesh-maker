@@ -4,13 +4,14 @@ import { setupTabs, setupToolbar, setupResize, updateExportControls } from './to
 import { setupInteraction } from './interaction';
 import { setupSponsorModal } from './sponsor';
 import { generateMesh } from './mesh';
+import { ensureDrapeFigure } from './drape-ui';
 
 function preloadDemoDepthMap(): void {
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => {
     setDemoDepthMap(img);
-    if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap && !STATE.reliefMaster) {
+    if (STATE.mode === 'depthmap' && !STATE.depthMap && !STATE.reliefMaster) {
       STATE.depthMap = img;
       STATE.depthMapName = 'Mona Lisa (demo)';
       fitMeshToAspect(img.width, img.height);
@@ -59,6 +60,7 @@ function init(): void {
   setupSponsorModal();
   generateMesh();
   preloadDemoDepthMap();
+  if (STATE.mode === 'drape') void ensureDrapeFigure();
 }
 
 document.addEventListener('DOMContentLoaded', init);

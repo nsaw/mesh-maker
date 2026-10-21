@@ -15,7 +15,9 @@
     "test:relief": "tsx cli/voronoi-relief.spec.ts",
     "test:gh-parity": "tsx cli/grasshopper-parity.spec.ts",
     "test:drape": "tsx cli/drape.spec.ts",
-    "test:drape-physics": "tsx cli/drape-physics.spec.ts",
+    "test:drape-parity": "tsx cli/drape-parity.spec.ts",
+    "test:depthmap": "tsx cli/depthmap.spec.ts",
+    "drape-run": "tsx cli/drape-run.ts",
     "test:cut": "tsx cli/sbp-cut.spec.ts",
     "test:relief-master": "tsx cli/relief-master.spec.ts",
     "relief-roundtrip": "tsx cli/relief-roundtrip.ts",
@@ -38,6 +40,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",
+    "jolt-physics": "1.1.0",
     "three": "^0.183.2"
   },
   "overrides": {

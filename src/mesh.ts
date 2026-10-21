@@ -1,4 +1,4 @@
-import { STATE } from './state';
+import { STATE, activeMaster } from './state';
 import { previewErrorIn, reliefPreviewGrid } from './relief-master';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
 import { sampleReliefParamsFromState } from './noise/voronoi-relief';
@@ -7,7 +7,6 @@ import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
 import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
 import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, weightedSmooth } from './geometry';
-import { composeDrape, drapeToStockHeights } from './drape';
 
 function surfaceFloor(): number {
   return STATE.watertight ? MIN_WATERTIGHT_THICKNESS : 0;
@@ -142,13 +141,9 @@ export function generateNoiseMesh(): void {
 
 export function generateDepthMapMesh(): void {
   const t0 = performance.now();
-  const { depthMap, blend, dmHeightScale, dmOffset, dmSmoothing,
-          drapeFoldSpacing, drapeFoldAmp, drapeFoldLength, drapeHang, drapeGravityAngle,
-          drapeThickness, drapeConform, seed, meshX, meshY, resolution, baseThickness } = STATE;
+  const { depthMap, dmHeightScale, dmOffset, dmSmoothing, meshX, meshY, resolution, baseThickness } = STATE;
 
-  STATE.drapeOverflowIn = 0;
-  STATE.drapeFoldScaleUsed = 1;
-  if (STATE.mode === 'depthmap' && STATE.reliefMaster) { generateReliefMasterPreview(); return; }
+  if (activeMaster()) { generateReliefMasterPreview(); return; }
   if (!depthMap) { STATE.vertices = null; return; }
 
   const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
@@ -165,63 +160,32 @@ export function generateDepthMapMesh(): void {
   const cutDepth = Math.min(dmHeightScale, bt);
   const floorZ = surfaceFloor();
 
-  // Luma, normalized, then the background cutoff, in both modes (cutoff 0 is the identity).
+  // Luma, normalized, then the background cutoff (cutoff 0 is the identity).
   const sampled = sampleLumaGrid(imgData.data, depthMap.width, depthMap.height, cols, rows);
   normalizeGrid(sampled, rows, cols);
   applyBackgroundCutoff(sampled, rows, cols, STATE.dmBackgroundCutoff);
 
-  if (STATE.mode === 'blend') {
-    // DRAPE compositor (src/drape.ts): membrane over the form, gravity/support-directed folds,
-    // thickness as clearance. dmSmoothing is not applied here: the fabric's bend length
-    // (Detail Transmission) is what limits how much fine form detail the veil follows.
-    const form01 = new Float64Array(rows * cols);
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++) form01[j * cols + i] = sampled[j][i];
-    const { surface, fitOverflowIn, foldScaleUsed } = composeDrape(form01, {
-      cols, rows,
-      dxIn: meshX / (cols - 1),
-      formDepthIn: cutDepth,
-      thicknessIn: drapeThickness,
-      tension: blend,
-      conform: drapeConform,
-      foldSpacingIn: drapeFoldSpacing,
-      foldAmpIn: drapeFoldAmp,
-      foldLength: drapeFoldLength,
-      hang: drapeHang,
-      gravityAngleDeg: drapeGravityAngle,
-      seed,
-      // Fit the veil inside the cut: the figure is laid at cut - thickness - fold headroom (never
-      // below 0.75 x cut - thickness) and folds shrink if they would still rise past the top. A
-      // downward shift instead clipped low background relief.
-      fitDepthIn: cutDepth,
-    });
-    STATE.vertices = drapeToStockHeights(surface, rows, cols, bt, cutDepth, dmOffset, floorZ);
-    STATE.drapeOverflowIn = fitOverflowIn;
-    STATE.drapeFoldScaleUsed = foldScaleUsed;
-  } else {
-    // Pure depth map path -- no noise
-    const finalVerts = dmSmoothing > 0 ? weightedSmooth(sampled, rows, cols, dmSmoothing, 0.6) : sampled;
-    // Same flat-range rule as the first normalization (geometry.ts), not a second copy of it.
-    normalizeGrid(finalVerts, rows, cols);
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++) {
-        const t = finalVerts[j][i];
-        const raw = (bt - cutDepth) + t * cutDepth + dmOffset;
-        finalVerts[j][i] = Math.max(floorZ, Math.min(bt, raw));
-      }
-
-    STATE.vertices = finalVerts;
-  }
+  const finalVerts = dmSmoothing > 0 ? weightedSmooth(sampled, rows, cols, dmSmoothing, 0.6) : sampled;
+  // Same flat-range rule as the first normalization (geometry.ts), not a second copy of it.
+  normalizeGrid(finalVerts, rows, cols);
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++) {
+      const t = finalVerts[j][i];
+      const raw = (bt - cutDepth) + t * cutDepth + dmOffset;
+      finalVerts[j][i] = Math.max(floorZ, Math.min(bt, raw));
+    }
+  STATE.vertices = finalVerts;
 
   STATE.genTime = performance.now() - t0;
 }
 
-/** Relief master: the size, stock and heights come from the file. STATE.vertices is only a preview
- *  resample at the Grid Resolution (capped at the master's own); exports read the master itself
- *  (export.ts getExportSurface), so preview density never changes exported geometry. */
+/** Relief master (a loaded .mcrelief, or the drape result): the size, stock and heights come from
+ *  it. STATE.vertices is only a preview resample at the Grid Resolution (capped at the master's
+ *  own); exports read the master itself (export-surface.ts getExportSurface), so preview density
+ *  never changes exported geometry. */
 function generateReliefMasterPreview(): void {
   const t0 = performance.now();
-  const m = STATE.reliefMaster!;
+  const m = activeMaster()!;
   STATE.meshX = m.widthIn;
   STATE.meshY = m.heightIn;
   STATE.baseThickness = m.stockIn;
@@ -243,9 +207,11 @@ export function generateMesh(): void {
         generateNoiseMesh();
       } else if (STATE.mode === 'depthmap') {
         generateDepthMapMesh();
+      } else if (STATE.drapeMaster) {
+        // DRAPE: the figure (bare or draped) is a relief master built by src/drape-ui.ts.
+        generateReliefMasterPreview();
       } else {
-        if (STATE.depthMap) generateDepthMapMesh();
-        else generateNoiseMesh();
+        STATE.vertices = null;   // the figure is still loading
       }
       STATE.sbpStats = null;
       renderViewport();
@@ -255,7 +221,6 @@ export function generateMesh(): void {
   });
 }
 
-// weightedSmooth moved to geometry.ts (shared with drape.ts, no import cycle).
 
 // Debounced generation — moved here to avoid circular dependency with stats.ts
 const VIEW_ONLY_KEYS = new Set(['orbit','tilt','roll','zoom']);

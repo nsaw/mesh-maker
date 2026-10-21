@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { STATE, reliefMasterActive } from './state';
+import { STATE, activeMaster } from './state';
 import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
 
 // --- Module state ---
@@ -357,7 +357,8 @@ function buildSurface(
 
   // Indexed triangles (2 per quad, shortest-diagonal split)
   // A relief master declares its triangulation; draw the preview with it, as the export does.
-  const fixedDiagonal = reliefMasterActive() && STATE.reliefMaster ? STATE.reliefMaster.diagonalZ00Z11 : null;
+  const master = activeMaster();
+  const fixedDiagonal = master ? master.diagonalZ00Z11 : null;
   const indices = new Uint32Array((rows - 1) * (cols - 1) * 6);
   let ti = 0;
   for (let j = 0; j < rows - 1; j++)
@@ -596,20 +597,6 @@ export function updateDimsOverlay(): void {
     spanWarn.className = 'cnc-warn';
     spanWarn.style.marginLeft = '8px';
     spanWarn.textContent = 'EXCEEDS 6" Z';
-    el.appendChild(spanWarn);
-  }
-  // Blend: say when the requested veil did not fit the cut, instead of silently reshaping it.
-  if (STATE.mode === 'blend' && STATE.drapeOverflowIn > 0.001) {
-    const spanWarn = document.createElement('span');
-    spanWarn.className = 'cnc-warn';
-    spanWarn.style.marginLeft = '8px';
-    spanWarn.textContent = `FABRIC ${STATE.drapeOverflowIn.toFixed(3)}" THICKER THAN CUT`;
-    el.appendChild(spanWarn);
-  } else if (STATE.mode === 'blend' && STATE.drapeFoldScaleUsed < 0.99) {
-    const spanWarn = document.createElement('span');
-    spanWarn.className = 'cnc-warn';
-    spanWarn.style.marginLeft = '8px';
-    spanWarn.textContent = `FOLDS AT ${Math.round(STATE.drapeFoldScaleUsed * 100)}% TO FIT CUT`;
     el.appendChild(spanWarn);
   }
 }

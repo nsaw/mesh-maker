@@ -27,7 +27,7 @@ flowchart TD
         Main["main.ts (wiring / render loop)"]
         Depth["depth-estimate.ts"]
         Geometry["geometry.ts"]
-        Drape["drape.ts"]
+        Drape["drape-sim/"]
         Mesh["mesh.ts"]
         Render["render.ts"]
         Export["export.ts"]
@@ -102,7 +102,7 @@ sequenceDiagram
 
 - **SBP** — the ShopBot CNC toolpath file format produced by `src/sbp/writer.ts` for milling the generated relief.
 - **Voronoi relief** — a procedural noise/relief algorithm (`src/noise/voronoi-relief.ts`) with a native port in Grasshopper (`voronoi_relief_native.py`), verified for parity via `cli/voronoi-relief.spec.ts`.
-- **Drape** — the process (`src/drape.ts`) of conforming generated geometry to a base surface/heightfield.
+- **Drape**: a silk veil simulated over a 3D figure (`src/drape-sim/`, Jolt Physics) and extracted as a front relief.
 - **GH** — shorthand for Grasshopper, the Rhino visual-programming plugin ported in `grasshopper/`.
 - **Parity spec** — a CLI test (`cli/grasshopper-parity.spec.ts`) asserting the TS and Python/Grasshopper noise implementations produce equivalent output.
 
@@ -114,7 +114,7 @@ sequenceDiagram
 
 ## Routing table
 
-- `src/depth-estimate.ts`, `src/geometry.ts`, `src/mesh.ts`, `src/drape.ts`, `src/types.ts` -> [docs/mesh-generation-core.md](docs/mesh-generation-core.md)
+- `src/depth-estimate.ts`, `src/geometry.ts`, `src/mesh.ts`, `src/drape-sim/`, `src/drape-ui.ts`, `src/types.ts` -> [docs/mesh-generation-core.md](docs/mesh-generation-core.md)
 - `src/noise/**`, `docs/voronoi-relief-target-spec.md` -> [docs/noise-and-relief-system.md](docs/noise-and-relief-system.md)
 - `grasshopper/builder/**`, `grasshopper/components/**`, `grasshopper/VORONOI_RELIEF_NATIVE.md`, `grasshopper/mesh-maker.gh` -> [docs/grasshopper-integration.md](docs/grasshopper-integration.md)
 - `cli/**`, `stl-to-sbp.sh`, `tsconfig.cli.json` -> [docs/cli-tools.md](docs/cli-tools.md)
