@@ -21,6 +21,9 @@
  *       cutter type (quarter-point chord checks passed 1.1 thou under it).
  *   C9  a flat end mill (or radius-0 radiused cutter) is refused for finishing; a home Z below safe Z
  *       is refused; small-radius radiused cutters finish with finite, non-gouging moves.
+ *   C10 cli/stl-to-sbp.ts does not look up a tool named for a pass that is switched off (an unknown
+ *       --finishing-tool with --roughing-only exported nothing and exited 1), and still refuses one
+ *       for a pass that runs.
  *
  * Every cut is simulated on a grid of at most 0.005 in, finer than the target, and compared with the
  * triangulated surface the export describes (cli/cut-sim.ts triangulatedTarget).
@@ -32,6 +35,10 @@ import { stateToHeightmap } from '../src/sbp/heightmap';
 import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
 import type { Heightmap, SbpConfig, ToolDef } from '../src/sbp/types';
 import { compareCut, cutterProfile, parseSbp, simulateCut, triangulatedTarget } from './cut-sim';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -394,6 +401,30 @@ process.stdout.write('C9 generateSBP refuses a flat end mill for finishing and a
     }
     assert(msg === '' && nan === 0 && worst <= 0.0002, `${tool.name}: finite SBP, on or above the exact tip`,
       `${msg || 'generated'}; ${nan} non-finite values; worst ${worst.toExponential(2)} in over ${moves.length} moves`);
+  }
+}
+
+// ---------- C10 stl-to-sbp skips the tool lookup for a pass that does not run ----------
+process.stdout.write('C10 stl-to-sbp and switched-off passes\n');
+{
+  // A 2 x 1 in plate, 0.25 in thick at the top face: two triangles, binary STL.
+  const tris = [[0, 0, 0.25, 2, 0, 0.25, 2, 1, 0.25], [0, 0, 0.25, 2, 1, 0.25, 0, 1, 0.25]];
+  const buf = Buffer.alloc(84 + tris.length * 50);
+  buf.writeUInt32LE(tris.length, 80);
+  tris.forEach((t, i) => { const o = 84 + i * 50 + 12; t.forEach((v, k) => buf.writeFloatLE(v, o + k * 4)); });
+  const dir = mkdtempSync(join(tmpdir(), 'stl-to-sbp-'));
+  try {
+    const stl = join(dir, 'plate.stl');
+    writeFileSync(stl, buf);
+    const run = (...args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', 'cli/stl-to-sbp.ts', stl, '--dry-run', '--resolution', '40', ...args], { encoding: 'utf8' });
+    const off = run('--roughing-only', '--finishing-tool', 'no-such-tool-c10');
+    assert(off.status === 0 && /ignored: --roughing-only/.test(off.stderr), 'a --finishing-tool with --roughing-only is ignored, not fatal', `exit ${off.status}`);
+    const on = run('--finishing-tool', 'no-such-tool-c10');
+    assert(on.status === 1 && /Finishing tool not found/.test(on.stderr), 'the same unknown tool still fails when finishing runs', `exit ${on.status}`);
+    const offR = run('--finishing-only', '--roughing-tool', 'no-such-tool-c10');
+    assert(offR.status === 0 && /ignored: --finishing-only/.test(offR.stderr), 'a --roughing-tool with --finishing-only is ignored, not fatal', `exit ${offR.status}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
