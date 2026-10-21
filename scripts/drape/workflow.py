@@ -3,9 +3,11 @@
     python3 scripts/drape/workflow.py FIGURE.glb --preset silk-tilt25 --out DIR [options]
 
 Presets (one change at a time from the drape accepted on 2026-10-20):
+    silk-gathered      softer bending, smaller gap, timed gathering; bake 150, read 120, wind off
     silk-tilt25        face tipped back 25 deg, Blender Silk preset, crown-pinned, gravity only
     silk-tilt35        the same, 35 deg ("more tilt")
     silk-tilt25-cling  25 deg plus wet cling: an attraction field toward the figure's surface (art convention)
+Optional --left-quarter-wind STRENGTH adds the calibrated anatomical-left field (tested 250, 750).
 Options override a preset: --tilt DEG, --cling STRENGTH (negative attracts), --cling-reach UNITS.
 Figure placement: --azimuth DEG (turn about Z so the face looks toward -Y), --scale (scene units per source
 unit; pick it so the head is about 2.4 units tall), --pose JSON (measured 3x3 'rigid_pose_rotation_rows'
@@ -19,35 +21,84 @@ unless --no-stl. Needs Blender 5.2 (--blender PATH), Python 3 with numpy and Pil
 """
 import argparse, json, subprocess, sys, time
 from pathlib import Path
-import numpy as np
+from quartering_wind import finite, validate_profile
 
 REPO = Path(__file__).resolve().parents[2]
 PRESETS = {
+    'silk-gathered': dict(tilt_deg=25.0, cling_strength=-1000.0, cling_reach=0.8),
     'silk-tilt25': dict(tilt_deg=25.0, cling_strength=0.0, cling_reach=0.0),
     'silk-tilt35': dict(tilt_deg=35.0, cling_strength=0.0, cling_reach=0.0),
     'silk-tilt25-cling': dict(tilt_deg=25.0, cling_strength=-100.0, cling_reach=1.0),
 }
 IN = 0.0254; BACK, SPAN = 0.125 * IN, 0.625 * IN
 
-def main():
+def parse_args(argv=None):
     a = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     a.add_argument('figure'); a.add_argument('--preset', choices=sorted(PRESETS), required=True); a.add_argument('--out', required=True)
     a.add_argument('--tilt', type=float); a.add_argument('--cling', type=float); a.add_argument('--cling-reach', type=float)
     a.add_argument('--azimuth', type=float, default=0.0); a.add_argument('--scale', type=float, default=1.0); a.add_argument('--pose')
     a.add_argument('--head-height', type=float, default=2.6); a.add_argument('--frame-width', type=float, default=4.2)
-    a.add_argument('--frames', type=int, default=120); a.add_argument('--frame', type=int, default=100)
+    a.add_argument('--frames', type=int); a.add_argument('--frame', type=int)
+    a.add_argument('--threads', type=int, help='Blender threads; default 4 for silk-gathered (as in its study), else all cores (as before)')
+    a.add_argument('--left-quarter-wind', type=float, default=0.0, metavar='STRENGTH', help='Opt-in local wind, calibrated on silk-gathered (tested: 250, 750)')
+    a.add_argument('--wind-profile', help='Editable force-volume JSON; default is the measured Venus region')
     a.add_argument('--blender', default='/Applications/Blender.app/Contents/MacOS/Blender'); a.add_argument('--no-stl', action='store_true')
-    o = a.parse_args()
-    out = Path(o.out).resolve(); out.mkdir(parents=True, exist_ok=True); t0 = time.time()
+    return a.parse_args(argv)
+
+def build_config(o):
+    out = Path(o.out).resolve()
     p = dict(PRESETS[o.preset])
     if o.tilt is not None: p['tilt_deg'] = o.tilt
     if o.cling is not None: p['cling_strength'] = o.cling
     if o.cling_reach is not None: p['cling_reach'] = o.cling_reach
-    if p['cling_strength'] and p['cling_reach'] <= 0: sys.exit('--cling needs a positive --cling-reach')
+    if p['cling_strength'] and p['cling_reach'] <= 0: raise ValueError('--cling needs a positive --cling-reach')
+    pose_rows = None
+    if o.pose:
+        pose_data = json.loads(Path(o.pose).read_text())
+        if not isinstance(pose_data, dict) or 'rigid_pose_rotation_rows' not in pose_data:
+            raise ValueError('pose JSON must contain rigid_pose_rotation_rows')
+        pose_rows = pose_data['rigid_pose_rotation_rows']
     args = dict(input=str(Path(o.figure).resolve()), out=str(out), azimuth_deg=o.azimuth, scale=o.scale, head_height=o.head_height,
-                pose_rows=json.loads(Path(o.pose).read_text())['rigid_pose_rotation_rows'] if o.pose else None,
-                frames=o.frames, frame=o.frame, frame_width=o.frame_width, preset=o.preset, **p)
-    r = subprocess.run([o.blender, '-b', '--factory-startup', '--python-exit-code', '1', '--python', str(Path(__file__).with_name('blender_drape.py')),
+                pose_rows=pose_rows,
+                frames=o.frames if o.frames is not None else (150 if o.preset == 'silk-gathered' else 120),
+                frame=o.frame if o.frame is not None else (120 if o.preset == 'silk-gathered' else 100),
+                frame_width=o.frame_width, threads=o.threads if o.threads is not None else (4 if o.preset == 'silk-gathered' else None), preset=o.preset, **p)
+    for key in ('azimuth_deg', 'scale', 'head_height', 'frame_width', 'tilt_deg', 'cling_strength', 'cling_reach'):
+        if not finite(args[key]): raise ValueError(f'{key} must be finite')
+    for key in ('scale', 'head_height', 'frame_width'):
+        if args[key] <= 0: raise ValueError(f'{key} must be positive')
+    if args['cling_reach'] < 0: raise ValueError('cling reach cannot be negative')
+    if not 2 <= args['frame'] <= args['frames']: raise ValueError('require 2 <= frame <= frames')
+    if args['threads'] is not None and not 1 <= args['threads'] <= 64: raise ValueError('threads must be between 1 and 64')
+    pose = args['pose_rows']
+    if pose is not None and (not isinstance(pose, list) or len(pose) != 3 or any(not isinstance(row, list) or len(row) != 3 or not all(map(finite, row)) for row in pose)):
+        raise ValueError('pose must be a finite 3x3 matrix')
+    if not finite(o.left_quarter_wind) or o.left_quarter_wind < 0:
+        raise ValueError('left-quarter-wind must be finite and nonnegative')
+    if o.wind_profile and not o.left_quarter_wind: raise ValueError('--wind-profile requires positive --left-quarter-wind')
+    args['quartering_wind'] = None
+    if o.left_quarter_wind:
+        if o.preset != 'silk-gathered': raise ValueError('left-quarter-wind is calibrated only for silk-gathered')
+        if args['frame'] <= 100 or args['frames'] < 150: raise ValueError('wind requires frame > 100 and frames >= 150')
+        path = Path(o.wind_profile) if o.wind_profile else Path(__file__).with_name('venus-left-quarter-wind.json')
+        profile = json.loads(path.read_text())
+        validate_profile(profile, args)
+        args['quartering_wind'] = dict(strength=o.left_quarter_wind, profile=profile)
+    return args
+
+def main():
+    import numpy as np
+    o = parse_args()
+    try:
+        args = build_config(o)
+    except (ValueError, KeyError, OSError) as error:
+        sys.exit(str(error))
+    if not Path(args['input']).is_file(): sys.exit('figure file does not exist')
+    out = Path(args['out']); out.mkdir(parents=True, exist_ok=True); t0 = time.time()
+    (out / 'run-config.json').write_text(json.dumps(args, indent=2, allow_nan=False) + '\n')
+    # Without --threads Blender uses every core: the setting the original presets' references were made with.
+    threads = ['--threads', str(args['threads'])] if args['threads'] is not None else []
+    r = subprocess.run([o.blender, '-b', *threads, '--factory-startup', '--python-exit-code', '1', '--python', str(Path(__file__).with_name('blender_drape.py')),
                         '--', json.dumps(args)], capture_output=True, text=True)
     (out / 'blender.log').write_text(r.stdout + r.stderr)
     if r.returncode != 0 or 'DRAPE_DONE' not in r.stdout:
@@ -76,11 +127,12 @@ def main():
     meta['relief'] = dict(panel_in=[12, 16], backing_in=0.125, relief_in=0.625, depth_range_units=[lo, hi],
                           depth_compression_vs_xy=((hi - lo) / 0.625) / (o.frame_width / 12), stl=None if o.no_stl else str(out / 'relief.stl'))
     meta['total_seconds'] = round(time.time() - t0, 1)
-    (out / 'drape.json').write_text(json.dumps(meta, indent=1))
+    (out / 'drape.json').write_text(json.dumps(meta, indent=1, allow_nan=False))
     print(json.dumps(dict(out=str(out), preset=o.preset, seconds=meta['total_seconds'], mcrelief=str(out / 'veiled.mcrelief'),
                           stl=meta['relief']['stl'])))
 
 def preview(h, path):
+    import numpy as np
     from PIL import Image, ImageDraw
     z = h / IN; dx = 12 / (h.shape[1] - 1); zx = np.gradient(z, dx, axis=1); zy = -np.gradient(z, dx, axis=0); n = np.sqrt(zx ** 2 + zy ** 2 + 1)
     tiles = []
