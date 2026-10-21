@@ -133,8 +133,12 @@ for j in range(R):
         if c: veiled[j, i] = -min(c); front[j, i] = yv is not None and (yf is None or yv <= yf)
 np.save(OUT / 'veiled-depth.npy', veiled); np.save(OUT / 'bare-depth.npy', bare); np.save(OUT / 'cloth-front.npy', front)
 
+def finite_or_none(x):
+    """A diverged solve leaves NaN nodes; JSON has no NaN, so the report records null instead."""
+    return x if math.isfinite(x) else None
+
 rep = dict(args=A, blender=bpy.app.version_string, blender_build=bpy.app.build_hash.decode(), threads=sc.render.threads,
-           max_node_motion_units={str(frame): float(np.linalg.norm(samples[str(frame)]-samples[str(frame-1)], axis=1).max())
+           max_node_motion_units={str(frame): finite_or_none(float(np.linalg.norm(samples[str(frame)]-samples[str(frame-1)], axis=1).max()))
                                   for frame in (A['frame'], A['frames'])}, silk_preset=str(PRESET), silk_preset_sha256=hashlib.sha256(PRESET.read_bytes()).hexdigest(),
            workflow_sha256=CODE_HASHES,
            input_sha256=hashlib.sha256(src.read_bytes()).hexdigest(), figure_vertices=len(V), veil_vertices=len(PV), pinned=pins,
@@ -170,4 +174,4 @@ for name, loc, aim, size in (('front', (0, -11, -.3), target, W),
     cam.location = loc; cam.rotation_euler = (aim - cam.location).to_track_quat('-Z', 'Y').to_euler(); cam.data.ortho_scale = size
     sc.render.filepath = str(OUT / f'{name}.png'); bpy.ops.render.render(write_still=True)
 rep['seconds'] = round(time.time() - t0, 1)
-(OUT / 'drape.json').write_text(json.dumps(rep, indent=1)); print('DRAPE_DONE', json.dumps(dict(out=str(OUT), seconds=rep['seconds'])), flush=True)
+(OUT / 'drape.json').write_text(json.dumps(rep, indent=1, allow_nan=False)); print('DRAPE_DONE', json.dumps(dict(out=str(OUT), seconds=rep['seconds'])), flush=True)

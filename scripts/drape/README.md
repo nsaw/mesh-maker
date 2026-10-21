@@ -68,6 +68,22 @@ established the sheet size and attachment; they were not variables in the wind c
 sheet has no Solidify thickness. Transparency was not used to reveal the face. Gathering at the
 neck emerges under the declared global attraction; there is no neck drawstring or hidden neck pin.
 
+## How strong a field is
+
+Measured in Blender 5.2.2, not taken from the source: on Silk cloth (quality 12, cell 0.05 units,
+mass 0.15), a SURFACE force field of strength 1000 accelerates a vertex at 13.89 units/s², about 1.4 g.
+The acceleration grows with the cloth area per vertex and falls with its mass, does not change with
+distance inside the reach (falloff power 0 is Blender's default), and a WIND field with wind factor 0
+(what `quartering_wind.py` creates) gives the identical push. So the gathered attraction of -1000 pulls
+harder than gravity, and wind 250 or 750 is a third to a whole g on the target cloth.
+
+Blender's cloth friction against the figure is an impulse proportional to the cloth's approach speed
+(`blenkernel/intern/collision.cc`), so cloth resting under a steady attraction keeps sliding: in the
+gathered run the front half of the veil slides into a rope beside the neck.
+
+The gathered veil is still moving fast at frame 120 (0.15 units per frame); frame 150 differs from it
+more (veil footprint IoU 0.67) than a different thread count does (0.94).
+
 ## Editable wind region
 
 `venus-left-quarter-wind.json` stores the exact five finite panels measured around the preferred

@@ -27,7 +27,7 @@ used = np.unique(T); remap = -np.ones(len(P), np.int64); remap[used] = np.arange
 hdr = dict(format='meshcraft-figure', version=1, units='scene', up='+Z', facing='-Y', crown=[0, 0, 1], head_centre=hc.tolist(), head_height=A['head_height'],
            vertices=int(len(P)), triangles=int(len(T)), name=A.get('name'), source=A.get('source'), license=A.get('license'),
            placement=dict(azimuth_deg=A['azimuth_deg'], scale=A['scale'], pose=A.get('pose'), crop_z=A['crop_z']), source_sha256_hex_upper=hashlib.sha256(src.read_bytes()).hexdigest().upper())
-hj = json.dumps(hdr, separators=(',', ':')).encode(); start = -(-(12 + len(hj)) // 8) * 8
+hj = json.dumps(hdr, separators=(',', ':'), allow_nan=False).encode(); start = -(-(12 + len(hj)) // 8) * 8
 with open(A['out'], 'wb') as f:
     f.write(b'MCFIG\0\0\0' + struct.pack('<I', len(hj)) + hj + b'\0' * (start - 12 - len(hj)) + P.astype('<f4').tobytes() + T.astype('<u4').tobytes())
 print('FIG', json.dumps({k: hdr[k] for k in ('vertices', 'triangles', 'head_centre')}), Path(A['out']).stat().st_size)

@@ -28,7 +28,7 @@ def validate_profile(profile, config):
         raise ValueError('wind profile has missing or unknown fields')
     vertices, triangles = profile['vertices'], profile['triangles']
     if not isinstance(vertices, list) or not 3 <= len(vertices) <= 10000:
-        raise ValueError('wind profile needs 3–10000 vertices')
+        raise ValueError('wind profile needs 3 to 10000 vertices')
     if any(not isinstance(v, list) or len(v) != 3 or not all(map(finite, v)) for v in vertices):
         raise ValueError('wind vertices must be finite XYZ vectors')
     direction = profile['wind_world']
@@ -45,7 +45,7 @@ def validate_profile(profile, config):
     if support_min_x <= 0:
         raise ValueError('wind direct support must stay wholly on anatomical left (+X)')
     if not isinstance(triangles, list) or not 1 <= len(triangles) <= 20000:
-        raise ValueError('wind profile needs 1–20000 triangles')
+        raise ValueError('wind profile needs 1 to 20000 triangles')
     used = set()
     for tri in triangles:
         if not isinstance(tri, list) or len(tri) != 3 or any(type(i) is not int or not 0 <= i < len(vertices) for i in tri):

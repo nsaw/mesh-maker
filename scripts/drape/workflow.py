@@ -95,7 +95,7 @@ def main():
         sys.exit(str(error))
     if not Path(args['input']).is_file(): sys.exit('figure file does not exist')
     out = Path(args['out']); out.mkdir(parents=True, exist_ok=True); t0 = time.time()
-    (out / 'run-config.json').write_text(json.dumps(args, indent=2) + '\n')
+    (out / 'run-config.json').write_text(json.dumps(args, indent=2, allow_nan=False) + '\n')
     r = subprocess.run([o.blender, '-b', '--threads', str(o.threads), '--factory-startup', '--python-exit-code', '1', '--python', str(Path(__file__).with_name('blender_drape.py')),
                         '--', json.dumps(args)], capture_output=True, text=True)
     (out / 'blender.log').write_text(r.stdout + r.stderr)
@@ -125,7 +125,7 @@ def main():
     meta['relief'] = dict(panel_in=[12, 16], backing_in=0.125, relief_in=0.625, depth_range_units=[lo, hi],
                           depth_compression_vs_xy=((hi - lo) / 0.625) / (o.frame_width / 12), stl=None if o.no_stl else str(out / 'relief.stl'))
     meta['total_seconds'] = round(time.time() - t0, 1)
-    (out / 'drape.json').write_text(json.dumps(meta, indent=1))
+    (out / 'drape.json').write_text(json.dumps(meta, indent=1, allow_nan=False))
     print(json.dumps(dict(out=str(out), preset=o.preset, seconds=meta['total_seconds'], mcrelief=str(out / 'veiled.mcrelief'),
                           stl=meta['relief']['stl'])))
 
