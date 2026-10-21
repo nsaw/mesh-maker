@@ -15,8 +15,8 @@ import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED,
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
 import { STATE } from '../src/state';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
-import { drapeCarvePending, getExportSurface } from '../src/export-surface';
-import { buildConfig, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
+import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface } from '../src/export-surface';
+import { buildConfig, doSBPExport, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MAX_CLOTH_QUADS, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
 let failures = 0;
@@ -355,7 +355,9 @@ async function main(): Promise<void> {
   process.stdout.write('D14 export safety\n');
   {
     // syncSbpSafeZ updates the sidebar if there is one; in Node there is none.
-    (globalThis as unknown as { document: unknown }).document = { getElementById: () => null, querySelector: () => null };
+    // The toast element records what the user would be told.
+    const toast = { textContent: '', style: { display: '' }, classList: { add: () => undefined, remove: () => undefined } };
+    (globalThis as unknown as { document: unknown }).document = { getElementById: (id: string) => (id === 'toast' ? toast : null), querySelector: () => null };
     const IN = 0.0254;
     const master = async (stockIn: number, backingIn: number) => parseReliefMaster(await encodeReliefMaster({
       format: 'meshcraft-relief', version: 1, units: 'm', cols: 3, rows: 3, width: 12 * IN, height: 16 * IN, dtype: 'float32',
@@ -368,6 +370,14 @@ async function main(): Promise<void> {
     const pending = getExportSurface(true);
     assert(drapeCarvePending() && typeof pending === 'string' && /remapped/.test(pending),
       'while the relief is being remapped to a new carve, every export refuses', typeof pending === 'string' ? pending : 'exported');
+    // SBP from an uploaded STL takes the stock top too, so it waits as well (it never reaches its worker).
+    SBP_STATE.stlBuffer = new ArrayBuffer(84);
+    toast.textContent = '';
+    let sbpThrew = '';
+    try { doSBPExport(); } catch (e) { sbpThrew = e instanceof Error ? e.message : String(e); }
+    SBP_STATE.stlBuffer = null;
+    assert(toast.textContent === DRAPE_CARVE_PENDING && !sbpThrew, 'SBP from an uploaded STL refuses too while the carve is pending',
+      sbpThrew || toast.textContent.slice(0, 40));
     // The remap landed: the master is the 2 in one, and SBP cuts its stock top.
     Object.assign(STATE, { drapeMaster: thick, baseThickness: 0.5 });
     const ok = getExportSurface(true);
