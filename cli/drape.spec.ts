@@ -373,6 +373,9 @@ async function main(): Promise<void> {
     const ok = getExportSurface(true);
     assert(!drapeCarvePending() && typeof ok !== 'string' && buildConfig().materialZ === 2,
       'once it lands, export proceeds and SBP material Z is the master\'s stock top', `materialZ ${buildConfig().materialZ}`);
+    // Relief Depth alone (same stock top, new backing) is a pending carve too.
+    Object.assign(STATE, { drapeMaster: thick, drapeStock: 2, drapeReliefDepth: 1.0 });
+    assert(drapeCarvePending() && typeof getExportSurface(true) === 'string', 'a Relief Depth change alone also holds exports until its remap lands');
     // Safe Z follows the stock top when it moves, and keeps a raised value when it does not.
     Object.assign(STATE, { drapeMaster: thin, drapeStock: 0.75, drapeReliefDepth: 0.625 });
     syncSbpSafeZ();

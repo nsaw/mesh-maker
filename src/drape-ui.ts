@@ -9,7 +9,7 @@
 import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
 import { syncSbpSafeZIfStockMoved } from './sbp-export';
-import { drapeCarvePending, masterOffCarve } from './export-surface';
+import { DRAPE_CARVE_PENDING, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
@@ -345,7 +345,7 @@ export function cancelDrape(announce = true): void {
 export async function downloadDrapeRelief(): Promise<void> {
   const m = STATE.drapeMaster;
   if (!m) return;
-  if (drapeCarvePending()) { showToast('The drape relief is still being remapped to the new carve: download again in a moment.', 4000); return; }
+  if (drapeCarvePending()) { showToast(DRAPE_CARVE_PENDING, 6000); return; }
   const heights = new Float32Array(m.cols * m.rows);
   // Back to the file layout: metres, rows top-down (MeshCraft's grid has row 0 at the bottom).
   for (let j = 0; j < m.rows; j++) for (let i = 0; i < m.cols; i++)

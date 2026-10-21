@@ -1,6 +1,6 @@
 import { STATE, activeMaster, stockTopIn } from './state';
 import { attachValueEdit } from './slider-utils';
-import { getExportSurface, surfaceHeightmap } from './export-surface';
+import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
 import { updateExportControls } from './toolbar';
@@ -256,6 +256,9 @@ function currentSbpSource(): unknown {
 
 /** Main export entry point -- called from export.ts */
 export function doSBPExport(): void {
+  // Material Z comes from the stock top (stockTopIn), so an uploaded STL waits for a pending drape
+  // carve remap too, like every surface export (getExportSurface).
+  if (drapeCarvePending()) { showToast(DRAPE_CARVE_PENDING, 6000); return; }
   if (SBP_STATE.stlBuffer) {
     exportFromSTL();
   } else {

@@ -11,7 +11,7 @@ import type { Heightmap } from './sbp/types';
  *  skips the watertight-only checks. */
 export function getExportSurface(forToolpath = false): ExportSurface | string {
   const m = activeMaster();
-  if (drapeCarvePending()) return 'The drape relief is still being remapped to the new Material Thickness or Relief Depth: export again in a moment.';
+  if (drapeCarvePending()) return DRAPE_CARVE_PENDING;
   // Toolpaths cut the top surface only, so the watertight enclosure's floor rule does not apply.
   if (m) return reliefMasterSurface(m, forToolpath ? false : STATE.watertight);
   const { vertices, cols, rows, meshX, meshY } = STATE;
@@ -28,6 +28,8 @@ export function masterOffCarve(m: ReliefMaster): boolean {
   const c = drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth);
   return Math.abs(m.stockIn - c.stockIn) > 1e-6 || Math.abs(m.backingIn - c.backingIn) > 1e-6;
 }
+
+export const DRAPE_CARVE_PENDING = 'The drape relief is still being remapped to the new Material Thickness or Relief Depth: export again in a moment (if this persists, the remap failed: see the Drape status and set the carve again).';
 
 /** On the DRAPE tab, Material Thickness and Relief Depth are applied by rebuilding the relief master,
  *  debounced. Until that lands (or if it fails) the master's stock top and heights are not the ones
