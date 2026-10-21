@@ -29,7 +29,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIsNone(self.config(preset=name)['threads'])
         self.assertEqual(self.config('--threads', '8', preset='silk-tilt25')['threads'], 8)
 
-    def test_existing_presets_keep_their_material_and_frame_controls(self):
+    def test_existing_presets_keep_their_tilt_cling_and_frame_controls(self):
         for name, tilt, strength, reach in [('silk-tilt25', 25, 0, 0),
                 ('silk-tilt35', 35, 0, 0), ('silk-tilt25-cling', 25, -100, 1)]:
             with self.subTest(name=name):
