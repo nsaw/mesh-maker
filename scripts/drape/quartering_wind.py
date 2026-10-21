@@ -29,8 +29,9 @@ def validate_profile(profile, config):
     vertices, triangles = profile['vertices'], profile['triangles']
     if not isinstance(vertices, list) or not 3 <= len(vertices) <= 10000:
         raise ValueError('wind profile needs 3 to 10000 vertices')
-    if any(not isinstance(v, list) or len(v) != 3 or not all(map(finite, v)) for v in vertices):
-        raise ValueError('wind vertices must be finite XYZ vectors')
+    # Blender stores mesh coordinates as float32, and the normals below square them: stay well inside both.
+    if any(not isinstance(v, list) or len(v) != 3 or not all(map(finite, v)) or any(abs(x) > 1e6 for x in v) for v in vertices):
+        raise ValueError('wind vertices must be finite XYZ vectors within 1e6 scene units')
     direction = profile['wind_world']
     if not isinstance(direction, list) or len(direction) != 3 or not all(map(finite, direction)):
         raise ValueError('wind direction must be a finite XYZ vector')
@@ -53,7 +54,7 @@ def validate_profile(profile, config):
         a, b, c = (vertices[i] for i in tri)
         normal = cross([b[i]-a[i] for i in range(3)], [c[i]-a[i] for i in range(3)])
         area2 = math.sqrt(sum(v*v for v in normal))
-        if area2 <= 1e-10 or sum(normal[i]*direction[i] for i in range(3))/area2 < .99999:
+        if not math.isfinite(area2) or area2 <= 1e-10 or not sum(normal[i]*direction[i] for i in range(3))/area2 >= .99999:
             raise ValueError('wind triangles must be nondegenerate and face the declared wind direction')
         used.update(tri)
     if len(used) != len(vertices):

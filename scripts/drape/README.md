@@ -37,7 +37,8 @@ and attribute every change to wind.
 | `silk-tilt35` | Original setup with 35° tilt |
 | `silk-tilt25-cling` | Original setup with constant surface attraction of -100, reach 1 |
 
-Overrides: `--tilt`, `--cling`, `--cling-reach`, `--frames`, `--frame`, `--threads` (default 4).
+Overrides: `--tilt`, `--cling`, `--cling-reach`, `--frames`, `--frame`, `--threads` (default: 4 for
+`silk-gathered`, as in its study; every core for the other presets, as their references were made).
 The gathered attraction keys are fixed at frames 1/45/100/150, with values 0/0/-1000/-1000;
 `--cling` changes the last two values. Extending the cache does not retime those keys.
 
@@ -71,7 +72,10 @@ neck emerges under the declared global attraction; there is no neck drawstring o
 ## How strong a field is
 
 Measured in Blender 5.2.2, not taken from the source: on Silk cloth (quality 12, cell 0.05 units,
-mass 0.15), a SURFACE force field of strength 1000 accelerates a vertex at 13.89 units/s², about 1.4 g.
+mass 0.15, 24 fps), a SURFACE force field of strength 1000 moves a free vertex 1.416 times as far as
+gravity does over the first frames, so it pulls with 1.416 g (13.89 units/s² against gravity's 9.81).
+That ratio is the measurement; the absolute displacement per frame² also carries Blender's integrator
+(gravity alone moves the vertex 6.63 units/s² by finite difference at frame 2).
 The acceleration grows with the cloth area per vertex and falls with its mass, does not change with
 distance inside the reach (falloff power 0 is Blender's default), and a WIND field with wind factor 0
 (what `quartering_wind.py` creates) gives the identical push. So the gathered attraction of -1000 pulls

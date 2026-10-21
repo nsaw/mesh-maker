@@ -39,7 +39,7 @@ def parse_args(argv=None):
     a.add_argument('--azimuth', type=float, default=0.0); a.add_argument('--scale', type=float, default=1.0); a.add_argument('--pose')
     a.add_argument('--head-height', type=float, default=2.6); a.add_argument('--frame-width', type=float, default=4.2)
     a.add_argument('--frames', type=int); a.add_argument('--frame', type=int)
-    a.add_argument('--threads', type=int, default=4)
+    a.add_argument('--threads', type=int, help='Blender threads; default 4 for silk-gathered (as in its study), else all cores (as before)')
     a.add_argument('--left-quarter-wind', type=float, default=0.0, metavar='STRENGTH', help='Opt-in local wind, calibrated on silk-gathered (tested: 250, 750)')
     a.add_argument('--wind-profile', help='Editable force-volume JSON; default is the measured Venus region')
     a.add_argument('--blender', default='/Applications/Blender.app/Contents/MacOS/Blender'); a.add_argument('--no-stl', action='store_true')
@@ -62,14 +62,14 @@ def build_config(o):
                 pose_rows=pose_rows,
                 frames=o.frames if o.frames is not None else (150 if o.preset == 'silk-gathered' else 120),
                 frame=o.frame if o.frame is not None else (120 if o.preset == 'silk-gathered' else 100),
-                frame_width=o.frame_width, threads=o.threads, preset=o.preset, **p)
+                frame_width=o.frame_width, threads=o.threads if o.threads is not None else (4 if o.preset == 'silk-gathered' else None), preset=o.preset, **p)
     for key in ('azimuth_deg', 'scale', 'head_height', 'frame_width', 'tilt_deg', 'cling_strength', 'cling_reach'):
         if not finite(args[key]): raise ValueError(f'{key} must be finite')
     for key in ('scale', 'head_height', 'frame_width'):
         if args[key] <= 0: raise ValueError(f'{key} must be positive')
     if args['cling_reach'] < 0: raise ValueError('cling reach cannot be negative')
     if not 2 <= args['frame'] <= args['frames']: raise ValueError('require 2 <= frame <= frames')
-    if not 1 <= o.threads <= 64: raise ValueError('threads must be between 1 and 64')
+    if args['threads'] is not None and not 1 <= args['threads'] <= 64: raise ValueError('threads must be between 1 and 64')
     pose = args['pose_rows']
     if pose is not None and (not isinstance(pose, list) or len(pose) != 3 or any(not isinstance(row, list) or len(row) != 3 or not all(map(finite, row)) for row in pose)):
         raise ValueError('pose must be a finite 3x3 matrix')
@@ -96,7 +96,9 @@ def main():
     if not Path(args['input']).is_file(): sys.exit('figure file does not exist')
     out = Path(args['out']); out.mkdir(parents=True, exist_ok=True); t0 = time.time()
     (out / 'run-config.json').write_text(json.dumps(args, indent=2, allow_nan=False) + '\n')
-    r = subprocess.run([o.blender, '-b', '--threads', str(o.threads), '--factory-startup', '--python-exit-code', '1', '--python', str(Path(__file__).with_name('blender_drape.py')),
+    # Without --threads Blender uses every core: the setting the original presets' references were made with.
+    threads = ['--threads', str(args['threads'])] if args['threads'] is not None else []
+    r = subprocess.run([o.blender, '-b', *threads, '--factory-startup', '--python-exit-code', '1', '--python', str(Path(__file__).with_name('blender_drape.py')),
                         '--', json.dumps(args)], capture_output=True, text=True)
     (out / 'blender.log').write_text(r.stdout + r.stderr)
     if r.returncode != 0 or 'DRAPE_DONE' not in r.stdout:
