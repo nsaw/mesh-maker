@@ -255,6 +255,10 @@ function cellUsesZ00Z11(diagonal: Heightmap['diagonal'], z00: number, z10: numbe
   return Math.abs(z00 - z11) < Math.abs(z10 - z01);
 }
 
+/** Margin on the tangent-plane bound, inches: far above its rounding error (~1e-15), far below
+ *  any tolerance in the toolpath (CHORD_TOLERANCE and the gouge checks are 1e-4 and up). */
+const TRI_BOUND_SLACK = 1e-9;
+
 /**
  * Exact tip height at an arbitrary (x, y), in heightmap coordinates, against the TRIANGULATED surface
  * the export writes (vertices, edges and facets), not just its nodes: the max over every surface point
@@ -269,10 +273,6 @@ function cellUsesZ00Z11(diagonal: Heightmap['diagonal'], z00: number, z10: numbe
  * section search. Node samples give a lower bound first; a triangle is solved only if its highest
  * vertex, minus the profile at its nearest point, could beat that bound.
  */
-/** Margin on the tangent-plane bound, inches: far above its rounding error (~1e-15), far below
- *  any tolerance in the toolpath (CHORD_TOLERANCE and the gouge checks are 1e-4 and up). */
-const TRI_BOUND_SLACK = 1e-9;
-
 export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: number, y: number) => number {
   const { z, rows, cols, cellSize: cx, cellSizeY: cy } = heightmap;
   let zMin = Infinity, zMax = -Infinity;
@@ -421,7 +421,6 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
       if (Math.hypot(di * cx, dj * cy) <= localR) disc.push({ di, dj, offset: 0 });
   const localMax = footprintMax(z, rows, cols, disc);
   const minCell = Math.min(cx, cy);
-
 
   /** Lower-bound candidates from the cell's four nodes, then its two triangles if they could win. */
   function visitCell(r: number, c: number, x: number, y: number, best: number): number {

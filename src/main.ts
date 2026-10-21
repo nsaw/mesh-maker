@@ -7,9 +7,10 @@ import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
 import { ensureDrapeFigure } from './drape-ui';
 
-/** A DEPTH MAP share link that set the board size: the demo image must not refit it when it loads
- *  while that link's tab is still showing. Any tab switch clears it (the board is then the tab's own). */
-let linkSetSize = false;
+/** The board size a DEPTH MAP share link set, or null. The demo image keeps it (instead of refitting
+ *  the board to its own aspect) as long as the board still is that size when the image arrives,
+ *  whatever tabs were visited meanwhile; a board the user or another tab changed is fitted. */
+let linkSize: { meshX: number; meshY: number } | null = null;
 
 function preloadDemoDepthMap(): void {
   const img = new Image();
@@ -20,7 +21,7 @@ function preloadDemoDepthMap(): void {
       STATE.depthMap = img;
       STATE.depthMapName = 'Mona Lisa (demo)';
       // A DEPTH MAP link carries its own size; only a page without one is sized to the demo image.
-      if (linkSetSize) STATE.depthMapAR = img.width / img.height;
+      if (linkSize && STATE.meshX === linkSize.meshX && STATE.meshY === linkSize.meshY) STATE.depthMapAR = img.width / img.height;
       else fitMeshToAspect(img.width, img.height);
       const zone = document.getElementById('uploadZone');
       if (zone) {
@@ -43,10 +44,12 @@ function init(): void {
   // string, the hash, OR a malformed path (`meshcraft.sawyerdesign.io/=eyJ...`) that some
   // copy-paste flows produce on iOS.
   const urlConfig = deserializeConfig(window.location);
-  linkSetSize = urlConfig.mode === 'depthmap' && ('meshX' in urlConfig || 'meshY' in urlConfig);
+
   for (const [key, value] of Object.entries(urlConfig)) {
     (STATE as unknown as Record<string, unknown>)[key] = value;
   }
+
+  if (urlConfig.mode === 'depthmap' && ('meshX' in urlConfig || 'meshY' in urlConfig)) linkSize = { meshX: STATE.meshX, meshY: STATE.meshY };
 
   // Sync body class with potentially URL-overridden mode
   document.body.className = 'mode-' + STATE.mode;
@@ -61,7 +64,6 @@ function init(): void {
 
   buildSidebar();
   setupTabs();
-  document.querySelectorAll('.mode-tab').forEach(b => b.addEventListener('click', () => { linkSetSize = false; }));
   setupToolbar();
   updateExportControls();
   setupInteraction();
