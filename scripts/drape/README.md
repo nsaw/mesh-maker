@@ -94,7 +94,9 @@ and are hidden from renders; inspect them as wire geometry in Blender.
 All panel vertices have X ≥ 0.295; the maximum reach bounds direct loading to X > 0.075.
 With the documented pose, +X is anatomical left (viewer right). The calibrated region stops
 above the jaw/neck. The connected cloth can transmit motion beyond the region directly loaded.
-Blender projects wind onto cloth face normals; this is a force-field approximation, not fluid simulation.
+With wind factor 0 (what `quartering_wind.py` creates) Blender applies the field as a plain force in the
+wind direction, not projected onto the cloth normals: a probe blowing along a flat patch moved it along its
+own plane. It is a force-field approximation, not fluid simulation.
 
 The profile records the figure filename and placement. Mismatched pose, scale, tilt, head reference
 or gathering controls are rejected. Filename matching does not verify asset identity; the actual
