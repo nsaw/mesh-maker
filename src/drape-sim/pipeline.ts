@@ -18,7 +18,8 @@ export const PANEL_WIDTH_IN = 12;
 export const PANEL_HEIGHT_IN = 16;
 export const RELIEF_BACKING_IN = 0.125;
 export const RELIEF_SPAN_IN = 0.625;
-/** Display subdivision levels applied to the solved cloth before extraction (as in the proof). */
+/** Display subdivision levels applied to the solved cloth before extraction (as in the proof); the
+ *  Drape tab's Display Subdivision control overrides it per run. */
 export const CLOTH_SUBDIVISIONS = 2;
 
 export interface ReliefArrays {
@@ -39,9 +40,9 @@ export function bareDepth(figPos: Float32Array, tris: Uint32Array, w: DepthWindo
  *  `thickness` above 0 moves the cloth surface that much along its normal toward the viewer (the
  *  fabric's outer face; the solve treats it as a sheet). */
 export function veiledDepth(bare: Float64Array, cloth: Float64Array, rows: number, cols: number, w: DepthWindow = PANEL_WINDOW,
-  thickness = 0): { depth: Float64Array; veil: Uint8Array } {
+  thickness = 0, subdivisions = CLOTH_SUBDIVISIONS): { depth: Float64Array; veil: Uint8Array } {
   let g = { rows, cols, pos: cloth };
-  for (let k = 0; k < CLOTH_SUBDIVISIONS; k++) g = subdivideGrid(g);
+  for (let k = 0; k < subdivisions; k++) g = subdivideGrid(g);
   if (thickness > 0) g = { ...g, pos: offsetTowardViewer(g.pos, g.rows, g.cols, thickness) };
   const depth = bare.slice(), veil = new Uint8Array(w.cols * w.rows);
   rasterizeFrontmost(g.pos, gridTriangles(g.rows, g.cols), w, depth, veil, 1);
@@ -99,7 +100,7 @@ export function drapeFigure(J: Jolt, fig: Figure, pose: FigurePose, params: Clot
     return true;
   });
   const bare = bareDepth(pos, fig.triangles);
-  const { depth, veil } = veiledDepth(bare, res.positions, res.rows, res.cols, PANEL_WINDOW, params.fabricThickness);
+  const { depth, veil } = veiledDepth(bare, res.positions, res.rows, res.cols, PANEL_WINDOW, params.fabricThickness, params.displaySubdivisions);
   return { relief: reliefHeights(depth, bare, veil), cloth: res.positions, clothRows: res.rows, clothCols: res.cols,
     bare, veiled: depth, seconds: res.seconds, lastFrameMotion: res.lastFrameMotion, completed };
 }
