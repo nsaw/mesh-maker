@@ -250,10 +250,10 @@ export function setDrapeFrontView(): void {
   STATE.orbit = 270; STATE.tilt = -90; STATE.roll = 0; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0;
 }
 
-/** Pose slider moved: drop a drape made in another pose and show the bare figure in the new one. */
+/** Pose slider moved (or a preset applied): drop the drape and show the bare figure in the current pose. */
 let poseTimer: ReturnType<typeof setTimeout> | null = null;
-export function onDrapePoseChanged(): void {
-  if (worker) { cancelDrape(false); showToast('Drape cancelled: the figure pose changed. Generate again in the new pose.', 4000); }
+export function onDrapePoseChanged(why = 'the figure pose changed'): void {
+  if (worker) { cancelDrape(false); showToast(`Drape cancelled: ${why}. Generate again.`, 4000); }
   revision++;
   setStatus(drapeStatusText());
   if (poseTimer) clearTimeout(poseTimer);

@@ -583,7 +583,7 @@ function buildDrapeSections(): HTMLElement[] {
       const { drapeReliefDepth: _carve, ...settings } = preset.settings;
       Object.assign(STATE, settings, { drapeWindMode: preset.windMode });
       buildSidebar();
-      onDrapePoseChanged();
+      onDrapePoseChanged(`the ${preset.label} preset was applied`);
       onDrapeClothChanged();
       showToast(`${preset.label}: ${preset.about} Press Generate Drape.`, 4000);
     });

@@ -90,9 +90,10 @@ export const SILK: ClothParams = {
 export const SILK_GATHERED: ClothParams = { ...SILK, frames: 120, attractStrength: 1000 };
 
 /** Acceleration of a Blender cloth vertex per unit field strength x cloth area / vertex mass. Measured in
- *  Blender 5.2.2 (Silk, quality 12, no gravity or air damping; a 21 x 21 patch over a SURFACE field):
- *  strength 1000 moves the centre vertex 1.416 times as far as gravity 9.81 does over the first four
- *  frames at cell 0.05 and mass 0.15, so 13.89 units/s^2. Quadrupling the cell area quadrupled it,
+ *  Blender 5.2.2 (Silk, quality 12, no air damping; a 21 x 21 patch over a SURFACE field): strength 1000
+ *  moves the centre vertex 1.416 times as far as gravity does over the first four frames at cell 0.05 and
+ *  mass 0.15. The ratio is the measurement (both pass through Blender's integrator), so here, where
+ *  gravity is exactly 9.81, it is 1.416 x 9.81 = 13.89 units/s^2. Quadrupling the cell area quadrupled it,
  *  quadrupling the mass quartered it, the height above the field (falloff power 0) did not change it,
  *  and a WIND field (wind factor 0) gave the identical displacement. */
 export const EFFECTOR_ACCEL = 13.89 * 0.15 / (0.05 * 0.05 * 1000);

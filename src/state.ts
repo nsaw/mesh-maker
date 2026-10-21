@@ -1,7 +1,7 @@
 import type { SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
-import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, type DrapeSettings, type DrapeWindMode } from './drape-controls';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, type DrapeSettings, type DrapeWindMode } from './drape-controls';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 /** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
@@ -863,6 +863,11 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // crafted link must not raise them past the sliders.
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
+    // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same way).
+    if ('drapeReliefDepth' in result) {
+      const stock = typeof result.drapeStock === 'number' ? result.drapeStock : DEFAULTS.drapeStock;
+      clampField('drapeReliefDepth', 0.05, Math.max(0.05, stock - MIN_DRAPE_BACKING_IN));
+    }
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
     // they cannot over-amplify the bowl normalization or angular irregularity.

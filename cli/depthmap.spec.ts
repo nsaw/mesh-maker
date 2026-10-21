@@ -127,6 +127,9 @@ process.stdout.write('T15 share links\n');
     drapeReliefDepth: 'x', drapeWindMode: 'tornado' }));
   assert(heavy.drapeClothRes === 200 && heavy.drapeFrames === 240 && heavy.drapeAttract === 0 && heavy.drapeStock === 4
     && !('drapeReliefDepth' in heavy) && !('drapeWindMode' in heavy), 'crafted DRAPE controls clamp to their sliders or drop', JSON.stringify(heavy));
+  const thin = deserializeConfig(enc({ _v: 15, mode: 'drape', drapeStock: 0.25, drapeReliefDepth: 3.95 }));
+  assert(Math.abs(Number(thin.drapeReliefDepth) - 0.2) < 1e-9, 'a link\'s Relief Depth is capped to its material, keeping the minimum backing',
+    `depth ${String(thin.drapeReliefDepth)} in 0.25 in`);
   // v15 made the gathered silk the default: a v14 drape link was the plain silk proof and stays it.
   const v14 = deserializeConfig(enc({ _v: 14, mode: 'drape', drapeTilt: 30 }));
   assert(v14.drapeTilt === 30 && v14.drapeAttract === 0 && v14.drapeFrames === 100, 'a v14 drape link opens as the silk proof at its tilt',
