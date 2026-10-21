@@ -175,7 +175,7 @@ function copyFallback(text: string): void {
   } finally {
     document.body.removeChild(ta);
   }
-  showToast(ok ? 'Link copied!' : 'Copy failed: select the address bar and press Ctrl+C');
+  showToast(ok ? 'Link copied!' : 'Copy failed: this browser blocked the clipboard');
 }
 
 
