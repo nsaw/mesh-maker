@@ -32,7 +32,7 @@ Both paths converge on the same `generateSBP` function (`src/sbp/generate.ts`), 
 
 ## Config resolution
 
-`buildConfig()` in `sbp-export.ts` starts from `getDefaultConfig(profile)` (`src/sbp/tools.ts`), then layers in UI state: enable flags, `STATE.baseThickness` as `materialZ`, offsets, safe/home Z, leave-stock, raster angle, and per-parameter overrides (feed rate, plunge rate, RPM, stepdown, stepover) the user dragged from the profile default. `src/sbp/tools.ts` embeds a fixed ATC tool table (`EMBEDDED_TOOLS`) with geometry (type, diameter, tip radius, half-angle) and per-`MaterialProfile` (`general`/`mdf`/`hardwood`) cutting params sourced from Vectric `.vtdb` exports; `resolveCutting` falls back to `general` then the first available profile. Default roughing tool is the "Chipbreaker" end mill; default finishing tool is "TBN R1/16-S1/4" (tapered ball nose).
+`buildConfig()` in `sbp-export.ts` starts from `getDefaultConfig(profile)` (`src/sbp/tools.ts`), then layers in UI state: enable flags, `stockTopIn()` (`src/state.ts`: the active relief master's stock, else `STATE.baseThickness`) as `materialZ`, offsets, safe/home Z, leave-stock, raster angle, and per-parameter overrides (feed rate, plunge rate, RPM, stepdown, stepover) the user dragged from the profile default. `src/sbp/tools.ts` embeds a fixed ATC tool table (`EMBEDDED_TOOLS`) with geometry (type, diameter, tip radius, half-angle) and per-`MaterialProfile` (`general`/`mdf`/`hardwood`) cutting params sourced from Vectric `.vtdb` exports; `resolveCutting` falls back to `general` then the first available profile. Default roughing tool is the "Chipbreaker" end mill; default finishing tool is "TBN R1/16-S1/4" (tapered ball nose).
 
 ## Stage 1: getting a heightmap
 
@@ -77,6 +77,7 @@ When these files or sections are changed, remember to consider these:
 | STL with degenerate XY bounds (zero width/height) | `meshToHeightmap` throws `Degenerate STL bounds` | `src/sbp/heightmap.ts` bounds check before rasterizing |
 | STL buffer truncated or corrupted | `parseSTLBinary` throws on size mismatch or zero-triangle count | `src/sbp/stl-parser.ts` validates header + expected byte length up front |
 | Large gaps (>5 cells) in triangle coverage after rasterization | Gap cells fall back to global STL min Z, potentially cutting far too shallow/deep in that region | `MAX_GAP_RADIUS` ring search in `src/sbp/heightmap.ts`, silently falls through rather than erroring |
+| A DRAPE carve change (Material Thickness, Relief Depth) is still being remapped when the user exports | stock top from one carve, heights from another | `getExportSurface` refuses while `drapeCarvePending()` (`src/export-surface.ts`); `.mcrelief` download does too; `npm run test:drape` D14 |
 | `materialZ` drops below the compensated surface between normalization and finishing traverse | `generateFinishing` throws `Finishing traverse requires materialZ to be above the surface` | explicit check in `src/sbp/finishing.ts` before emitting boundary-traverse moves |
 | Second STL export triggered while worker still running | Blocked with a toast, no queued retry | `sbpWorkerRunning` flag in `src/sbp-export.ts` |
 | Worker throws during parse/generate (e.g. bad STL) | `postMessage` returns an `{type:'error'}` payload; STL buffer is returned so UI doesn't lose the upload | try/catch in `src/sbp/worker.ts`'s `onmessage` |

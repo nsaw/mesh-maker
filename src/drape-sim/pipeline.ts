@@ -9,7 +9,7 @@
  * mapping), so every height lies in [backing, backing + span].
  */
 import { simulateCloth, type ClothParams, type Jolt } from './cloth';
-import { tiltFigure, type Figure } from './figure';
+import { poseFigure, type Figure, type FigurePose } from './figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from './raster';
 import { gridTriangles, subdivideGrid } from './subdiv';
 
@@ -18,7 +18,8 @@ export const PANEL_WIDTH_IN = 12;
 export const PANEL_HEIGHT_IN = 16;
 export const RELIEF_BACKING_IN = 0.125;
 export const RELIEF_SPAN_IN = 0.625;
-/** Display subdivision levels applied to the solved cloth before extraction (as in the proof). */
+/** Display subdivision levels applied to the solved cloth before extraction (as in the proof); the
+ *  Drape tab's Display Subdivision control overrides it per run. */
 export const CLOTH_SUBDIVISIONS = 2;
 
 export interface ReliefArrays {
@@ -35,14 +36,33 @@ export function bareDepth(figPos: Float32Array, tris: Uint32Array, w: DepthWindo
   const d = emptyDepth(w); rasterizeFrontmost(figPos, tris, w, d); return d;
 }
 
-/** Frontmost depth of the figure and the subdivided cloth; `veil` marks nodes the cloth owns. */
-export function veiledDepth(bare: Float64Array, cloth: Float64Array, rows: number, cols: number, w: DepthWindow = PANEL_WINDOW):
-  { depth: Float64Array; veil: Uint8Array } {
+/** Frontmost depth of the figure and the subdivided cloth; `veil` marks nodes the cloth owns. A
+ *  `thickness` above 0 moves the cloth surface that much along its normal toward the viewer (the
+ *  fabric's outer face; the solve treats it as a sheet). */
+export function veiledDepth(bare: Float64Array, cloth: Float64Array, rows: number, cols: number, w: DepthWindow = PANEL_WINDOW,
+  thickness = 0, subdivisions = CLOTH_SUBDIVISIONS): { depth: Float64Array; veil: Uint8Array } {
   let g = { rows, cols, pos: cloth };
-  for (let k = 0; k < CLOTH_SUBDIVISIONS; k++) g = subdivideGrid(g);
+  for (let k = 0; k < subdivisions; k++) g = subdivideGrid(g);
+  if (thickness > 0) g = { ...g, pos: offsetTowardViewer(g.pos, g.rows, g.cols, thickness) };
   const depth = bare.slice(), veil = new Uint8Array(w.cols * w.rows);
   rasterizeFrontmost(g.pos, gridTriangles(g.rows, g.cols), w, depth, veil, 1);
   return { depth, veil };
+}
+
+/** Grid nodes moved `t` along their normal, turned to face the viewer (-Y). */
+export function offsetTowardViewer(pos: Float64Array, rows: number, cols: number, t: number): Float64Array {
+  const out = pos.slice();
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const k = j * cols + i;
+    const l = k - (i > 0 ? 1 : 0), r = k + (i < cols - 1 ? 1 : 0), d = k - (j > 0 ? cols : 0), u = k + (j < rows - 1 ? cols : 0);
+    const ax = pos[r * 3] - pos[l * 3], ay = pos[r * 3 + 1] - pos[l * 3 + 1], az = pos[r * 3 + 2] - pos[l * 3 + 2];
+    const bx = pos[u * 3] - pos[d * 3], by = pos[u * 3 + 1] - pos[d * 3 + 1], bz = pos[u * 3 + 2] - pos[d * 3 + 2];
+    const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+    const len = Math.hypot(nx, ny, nz) * (ny > 0 ? -1 : 1);
+    if (!len) continue;
+    out[k * 3] += (nx / len) * t; out[k * 3 + 1] += (ny / len) * t; out[k * 3 + 2] += (nz / len) * t;
+  }
+  return out;
 }
 
 /** Linear relief: `lo` (the deepest visible point, figure or veil) to the frontmost point spans
@@ -69,18 +89,18 @@ export interface DrapeRun {
   seconds: number; lastFrameMotion: number; completed: boolean;
 }
 
-/** Drape the figure tipped back by `tiltDeg` and extract its relief. `onFrame` may return false to stop
- *  (the result is then marked incomplete and should be discarded by the caller). */
-export function drapeFigure(J: Jolt, fig: Figure, tiltDeg: number, params: ClothParams,
+/** Drape the figure in `pose` and extract its relief. `onFrame` may return false to stop (the result is
+ *  then marked incomplete and should be discarded by the caller). */
+export function drapeFigure(J: Jolt, fig: Figure, pose: FigurePose, params: ClothParams,
   onFrame?: (frame: number, frames: number) => boolean | void): DrapeRun {
-  const pos = tiltFigure(fig, tiltDeg);
+  const pos = poseFigure(fig, pose);
   let completed = true;
   const res = simulateCloth(J, pos, fig.triangles, params, (f, n) => {
     if (onFrame && onFrame(f, n) === false) { completed = false; return false; }
     return true;
   });
   const bare = bareDepth(pos, fig.triangles);
-  const { depth, veil } = veiledDepth(bare, res.positions, res.rows, res.cols);
+  const { depth, veil } = veiledDepth(bare, res.positions, res.rows, res.cols, PANEL_WINDOW, params.fabricThickness, params.displaySubdivisions);
   return { relief: reliefHeights(depth, bare, veil), cloth: res.positions, clothRows: res.rows, clothCols: res.cols,
     bare, veiled: depth, seconds: res.seconds, lastFrameMotion: res.lastFrameMotion, completed };
 }

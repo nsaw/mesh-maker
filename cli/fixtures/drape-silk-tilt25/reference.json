@@ -3,6 +3,7 @@
  "produced_by": "python3 scripts/drape/workflow.py venus-de-milo-smk.glb --preset silk-tilt25 --azimuth -45 --scale 8 --pose scripts/drape/venus-de-milo-pose.json",
  "figure_source_sha256_hex_upper": "54662281AD0314BDFE5430B8F756E060B0BCFC6254C8F12094B0E905E3CA2EEA",
  "blender": "5.2.2 LTS",
+ "threads": "Blender default (every core: 28 on the producing Mac); workflow.py passes no --threads for this preset",
  "silk_preset_sha256_hex_upper": "8A78BF288DC4D1EA4949CB4162D66C5608468C0D4573D8A5ED613F63CA487080",
  "window": {
   "x": [

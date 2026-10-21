@@ -1,22 +1,28 @@
 /**
- * Parity of the web drape (src/drape-sim, Jolt) with the Blender proof accepted on 2026-10-20: the
- * bundled Venus bust, tilt 25 deg, silk, frame 100. The reference (cli/fixtures/drape-silk-tilt25,
- * every 4th node of the Blender extraction) and its provenance are in reference.json.
- * Run: npm run test:drape-parity  (about 70 s: one full cloth simulation)
+ * Parity of the web drape (src/drape-sim, Jolt) with the Blender drapes of the bundled Venus bust at
+ * tilt 25 deg: the silk proof accepted on 2026-10-20 (frame 100, cli/fixtures/drape-silk-tilt25) and
+ * the gathered silk of the 2026-10-21 study (surface attraction, frame 120,
+ * cli/fixtures/drape-silk-gathered). Each reference is every 4th node of the Blender extraction; its
+ * provenance and Blender's own variation are in its reference.json.
+ * Run: npm run test:drape-parity  (about 2.5 min: two full cloth simulations)
  *
  * Gates come from Blender's own variation on the same drape, not from what the web run happens to
- * reach: frame 100 vs frame 400 keeps veil footprint IoU 0.87; Blender variants keep the fold
- * wavelength within +11%. Fold positions are chaotic (Blender moves them with thread count), so the
- * pointwise depth and blurred-envelope differences are reported, not gated.
+ * reach. Silk: frame 100 vs frame 400 keeps veil footprint IoU 0.87; Blender variants keep the fold
+ * wavelength within +11%. Gathered: the veil is still sliding at frame 120 (frame 150 keeps IoU 0.67
+ * and has 1.47x the veil area), so its footprint gate is that IoU. Its area gate (25%) is tighter than
+ * that drift and was checked for what it rejects (drape-run probes, 2026-10-21): the calibrated run
+ * scores IoU 0.786 / area 1.18 and passes; half the attraction (0.717 / 1.34), the attraction ramped in
+ * 35 frames late (0.685 / 1.39), a quarter of it (0.62 / 1.57) and none (0.53 / 1.75) all fail. Fold
+ * positions are chaotic (Blender moves them with thread count), so pointwise depth differences are
+ * reported, not gated.
  */
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import initJolt from 'jolt-physics/wasm-compat';
 import { parseFigure } from '../src/drape-sim/figure';
-import { SILK } from '../src/drape-sim/cloth';
+import { SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { drapeFigure, PANEL_WINDOW } from '../src/drape-sim/pipeline';
 
-const DIR = 'cli/fixtures/drape-silk-tilt25';
 const STRIDE = 4, UNITS_PER_MM = 8 / 1000;
 const ROWS = Math.ceil(PANEL_WINDOW.rows / STRIDE), COLS = Math.ceil(PANEL_WINDOW.cols / STRIDE);
 
@@ -25,8 +31,8 @@ function assert(condition: boolean, label: string, detail = ''): void {
   if (condition) process.stdout.write(`  ok  ${label}${detail ? ` (${detail})` : ''}\n`);
   else { process.stdout.write(`  FAIL ${label}${detail ? `: ${detail}` : ''}\n`); failures++; }
 }
-const f32 = (name: string): Float32Array => { const b = gunzipSync(readFileSync(`${DIR}/${name}`)); return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
-const u8 = (name: string): Uint8Array => new Uint8Array(gunzipSync(readFileSync(`${DIR}/${name}`)));
+const f32 = (dir: string, name: string): Float32Array => { const b = gunzipSync(readFileSync(`${dir}/${name}`)); return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
+const u8 = (dir: string, name: string): Uint8Array => new Uint8Array(gunzipSync(readFileSync(`${dir}/${name}`)));
 function strided<T extends Float64Array | Uint8Array>(a: T, make: (n: number) => T): T {
   const out = make(ROWS * COLS);
   for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) out[j * COLS + i] = a[(j * STRIDE) * PANEL_WINDOW.cols + i * STRIDE];
@@ -60,13 +66,20 @@ function foldWavelengthMm(d: ArrayLike<number>, veil: ArrayLike<number>): number
   return num / den / UNITS_PER_MM;
 }
 
-async function main(): Promise<void> {
-  const ref = { veiled: f32('veiled-depth.f32.gz'), bare: f32('bare-depth.f32.gz'), veil: u8('veil.u8.gz') };
+interface Case { name: string; dir: string; params: ClothParams; minIou: number; iouWhy: string; maxAreaDev: number }
+
+const CASES: Case[] = [
+  { name: 'silk (proof, frame 100)', dir: 'cli/fixtures/drape-silk-tilt25', params: SILK, minIou: 0.87,
+    iouWhy: "Blender's own frame 100 vs frame 400 (0.87)", maxAreaDev: 0.1 },
+  { name: 'gathered silk (study, frame 120)', dir: 'cli/fixtures/drape-silk-gathered', params: SILK_GATHERED, minIou: 0.67,
+    iouWhy: "Blender's own frame 120 vs frame 150 (0.67)", maxAreaDev: 0.25 },
+];
+
+async function runCase(J: Awaited<ReturnType<typeof initJolt>>, fig: ReturnType<typeof parseFigure>, c: Case): Promise<void> {
+  process.stdout.write(`\n== ${c.name}\n`);
+  const ref = { veiled: f32(c.dir, 'veiled-depth.f32.gz'), bare: f32(c.dir, 'bare-depth.f32.gz'), veil: u8(c.dir, 'veil.u8.gz') };
   if (ref.veiled.length !== ROWS * COLS) throw new Error('reference size does not match the panel');
-  const b = readFileSync('public/demo/venus-de-milo.mcfig');
-  const fig = parseFigure(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
-  const J = await initJolt();
-  const run = drapeFigure(J, fig, 25, SILK, f => { if (f % 25 === 0) process.stdout.write(`  frame ${f}\n`); });
+  const run = drapeFigure(J, fig, { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }, c.params, f => { if (f % 25 === 0) process.stdout.write(`  frame ${f}\n`); });
   const web = { veiled: strided(run.veiled, n => new Float64Array(n)), bare: strided(run.bare, n => new Float64Array(n)), veil: strided(run.relief.veil, n => new Uint8Array(n)) };
   process.stdout.write(`drape: ${run.seconds.toFixed(1)} s, last-frame motion ${run.lastFrameMotion.toFixed(4)} units\n`);
 
@@ -84,14 +97,19 @@ async function main(): Promise<void> {
   process.stdout.write('P1 same figure, same placement\n');
   assert(pct(bareDiff, 0.99) < 0.05, 'the bare figure matches the Blender extraction', `p99 ${pct(bareDiff, 0.99).toFixed(4)} mm`);
   process.stdout.write('P2 same drape\n');
-  assert(iou >= 0.87, 'veil footprint IoU at least Blender\'s own frame-100 vs frame-400 (0.87)', iou.toFixed(4));
-  assert(area >= 0.9 && area <= 1.1, 'veil area within 10%', `web / Blender ${area.toFixed(3)}`);
+  assert(iou >= c.minIou, `veil footprint IoU at least ${c.iouWhy}`, iou.toFixed(4));
+  assert(Math.abs(area - 1) <= c.maxAreaDev, `veil area within ${Math.round(c.maxAreaDev * 100)}%`, `web / Blender ${area.toFixed(3)}`);
   assert(Math.abs(bias) <= 2, 'no depth bias where both have veil (median within 2 mm)', `${bias.toFixed(2)} mm`);
   assert(wlWeb / wlRef >= 0.85 && wlWeb / wlRef <= 1.15, 'fold wavelength within 15% (Blender variants: up to +11%)',
     `web ${wlWeb.toFixed(1)} mm, Blender ${wlRef.toFixed(1)} mm`);
-  process.stdout.write(`  report: pointwise |depth| difference p50 ${pct(abs, 0.5).toFixed(2)} mm, p90 ${pct(abs, 0.9).toFixed(2)} mm `
-    + '(Blender vs Blender: p50 3.9-4.1 mm); fold positions differ\n');
+  process.stdout.write(`  report: pointwise |depth| difference p50 ${pct(abs, 0.5).toFixed(2)} mm, p90 ${pct(abs, 0.9).toFixed(2)} mm; fold positions differ\n`);
+}
 
+async function main(): Promise<void> {
+  const b = readFileSync('public/demo/venus-de-milo.mcfig');
+  const fig = parseFigure(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  const J = await initJolt();
+  for (const c of CASES) await runCase(J, fig, c);
   process.stdout.write(failures ? `\n${failures} FAILURE(S)\n` : '\nALL OK\n');
   process.exit(failures ? 1 : 0);
 }

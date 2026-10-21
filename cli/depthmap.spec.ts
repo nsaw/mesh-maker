@@ -11,7 +11,8 @@
  */
 
 import { applyBackgroundCutoff, normalizeGrid, sampleLumaGrid } from '../src/geometry';
-import { STATE, deserializeConfig, serializeConfig } from '../src/state';
+import { STATE, deserializeConfig, serializeConfig, stockTopIn } from '../src/state';
+import type { ReliefMaster } from '../src/relief-master';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -118,10 +119,51 @@ process.stdout.write('T15 share links\n');
   const retired = ['blend', 'drapeFoldScale', 'drapeFoldDepth', 'drapeFoldWarp', 'drapeFoldSpacing', 'drapeFoldAmp', 'drapeFoldLength',
     'drapeHang', 'drapeGravityAngle', 'drapeThickness', 'drapeConform'].filter(k => k in v12 || k in v13);
   assert(retired.length === 0, 'retired procedural-drape keys are dropped from v12 and v13 links', retired.join(',') || 'none survived');
-  const crafted = deserializeConfig(enc({ _v: 14, drapeTilt: 1e9, dmBackgroundCutoff: 5, viewMaterial: 'chrome', mode: 'evil', viewMode: 'x' }));
-  assert(crafted.drapeTilt === 45 && crafted.dmBackgroundCutoff === 0.9, 'crafted numeric values clamp to slider ranges', JSON.stringify(crafted));
-  assert(deserializeConfig(enc({ _v: 14, drapeTilt: -3 })).drapeTilt === 0, 'a negative tilt clamps to 0');
-  assert(!('drapeTilt' in deserializeConfig(enc({ _v: 14, drapeTilt: 'NaN' }))), 'a non-numeric tilt is dropped');
+  const crafted = deserializeConfig(enc({ _v: 15, drapeTilt: 1e9, dmBackgroundCutoff: 5, viewMaterial: 'chrome', mode: 'evil', viewMode: 'x' }));
+  assert(crafted.drapeTilt === 60 && crafted.dmBackgroundCutoff === 0.9, 'crafted numeric values clamp to slider ranges', JSON.stringify(crafted));
+  assert(deserializeConfig(enc({ _v: 15, drapeTilt: -300 })).drapeTilt === -20, 'a tilt below the slider clamps to -20');
+  assert(!('drapeTilt' in deserializeConfig(enc({ _v: 15, drapeTilt: 'NaN' }))), 'a non-numeric tilt is dropped');
+  // Every DRAPE control is clamped to its slider: resolution and frames set the solver's work.
+  const heavy = deserializeConfig(enc({ _v: 15, mode: 'drape', drapeClothRes: 1e6, drapeFrames: 1e6, drapeAttract: -5, drapeStock: 40,
+    drapeReliefDepth: 'x', drapeWindMode: 'tornado' }));
+  assert(heavy.drapeClothRes === 200 && heavy.drapeFrames === 240 && heavy.drapeAttract === 0 && heavy.drapeStock === 4
+    && heavy.drapeReliefDepth === 0.625 && !('drapeWindMode' in heavy), 'crafted DRAPE controls clamp to their sliders or drop (a junk depth falls back to the default, capped to the stock)', JSON.stringify(heavy));
+  const thin = deserializeConfig(enc({ _v: 15, mode: 'drape', drapeStock: 0.25, drapeReliefDepth: 3.95 }));
+  assert(Math.abs(Number(thin.drapeReliefDepth) - 0.2) < 1e-9, 'a link\'s Relief Depth is capped to its material, keeping the minimum backing',
+    `depth ${String(thin.drapeReliefDepth)} in 0.25 in`);
+  const thinOnly = deserializeConfig(enc({ _v: 15, mode: 'drape', drapeStock: 0.25 }));
+  assert(Math.abs(Number(thinOnly.drapeReliefDepth) - 0.2) < 1e-9, 'a thin-stock link without a depth gets the default depth capped too',
+    `depth ${String(thinOnly.drapeReliefDepth)}`);
+  // v15 changed only DRAPE keys: a v14 link that matches an old starburst fingerprint is already current
+  // and must load as saved (main did not migrate v14 links); an older one still migrates.
+  const polar = { mode: 'noise', reliefRadialFociCount: 2, reliefCellSize: 3.5, reliefRadialStrength: 1.8, reliefRadialFalloff: 0.5,
+    reliefRadialGrow: 0.7, reliefRadialWarp: 0.35, baseThickness: 1.0, meshX: 10, meshY: 10 };
+  const v14star = deserializeConfig(enc({ _v: 14, ...polar })), v13star = deserializeConfig(enc({ _v: 13, ...polar }));
+  assert(v14star.baseThickness === 1.0 && v14star.meshX === 10 && v14star.activePreset === undefined,
+    'a v14 starburst-fingerprint link loads as saved', JSON.stringify({ bt: v14star.baseThickness, x: v14star.meshX, preset: v14star.activePreset }));
+  assert(v13star.activePreset === 'relief-starburst', 'an older starburst-fingerprint link still migrates to the current preset (control)');
+  // SBP takes its stock top from the relief master while one drives the heights, so a Material
+  // Thickness change that is still being remapped cannot pair a new stock top with old heights.
+  {
+    const keep = { mode: STATE.mode, drapeMaster: STATE.drapeMaster, baseThickness: STATE.baseThickness };
+    Object.assign(STATE, { mode: 'drape', drapeMaster: { stockIn: 0.75 } as unknown as ReliefMaster, baseThickness: 2 });
+    const withMaster = stockTopIn();
+    Object.assign(STATE, { mode: 'noise' });
+    const noise = stockTopIn();
+    Object.assign(STATE, keep);
+    assert(withMaster === 0.75 && noise === 2, 'the stock top is the master\'s while it drives the heights, Material Thickness otherwise',
+      `drape ${withMaster}, noise ${noise}`);
+  }
+  // v15 made the gathered silk the default: a v14 drape link was the plain silk proof and stays it.
+  const v14 = deserializeConfig(enc({ _v: 14, mode: 'drape', drapeTilt: 30 }));
+  assert(v14.drapeTilt === 30 && v14.drapeAttract === 0 && v14.drapeFrames === 100, 'a v14 drape link opens as the silk proof at its tilt',
+    `tilt ${String(v14.drapeTilt)}, attraction ${String(v14.drapeAttract)}, frames ${String(v14.drapeFrames)}`);
+  assert(!('drapeAttract' in deserializeConfig(enc({ _v: 14, mode: 'noise', frequency: 0.2 }))), 'a v14 noise link gets no drape keys');
+  Object.assign(STATE, { mode: 'drape', drapeWindMode: 'wind', drapeClothRes: 140, drapeStock: 2.5, drapeReliefDepth: 1.75, drapeAttract: 1500 });
+  const dl = deserializeConfig('?c=' + serializeConfig());
+  assert(dl.drapeWindMode === 'wind' && dl.drapeClothRes === 140 && dl.drapeStock === 2.5 && dl.drapeReliefDepth === 1.75 && dl.drapeAttract === 1500,
+    'DRAPE controls round-trip through a share link');
+  Object.assign(STATE, saved);
   assert(!('viewMaterial' in crafted) && !('mode' in crafted) && !('viewMode' in crafted), 'unknown enum values fall back to defaults');
   // GPT review: ["blend"] stringifies to "blend" and passed a String()-coerced check, then failed
   // every strict comparison downstream. Every string-enum key must reject non-strings.

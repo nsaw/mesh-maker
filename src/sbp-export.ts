@@ -1,6 +1,6 @@
-import { STATE, activeMaster } from './state';
+import { STATE, activeMaster, stockTopIn } from './state';
 import { attachValueEdit } from './slider-utils';
-import { getExportSurface, surfaceHeightmap } from './export-surface';
+import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
 import { updateExportControls } from './toolbar';
@@ -29,7 +29,8 @@ interface SbpState {
   stlName: string;
 }
 
-const SBP_STATE: SbpState = {
+/** The SBP sidebar settings. Exported for cli/drape.spec.ts. */
+export const SBP_STATE: SbpState = {
   roughingEnabled: true,
   finishingEnabled: true,
   materialProfile: 'general',
@@ -51,9 +52,19 @@ const SBP_STATE: SbpState = {
 
 let sbpWorkerRunning = false;
 
-/** Sync SBP safe/home Z to current material thickness. Called when baseThickness changes. */
+/** The stock top Safe Z was last synced to (null before the first sync). */
+let safeZSyncedStock: number | null = null;
+
+/** Sync Safe Z only when the stock top moved since the last sync, so a rebuild or a new drape on the
+ *  same stock keeps a Safe Z the user raised. */
+export function syncSbpSafeZIfStockMoved(): void {
+  if (safeZSyncedStock === null || Math.abs(stockTopIn() - safeZSyncedStock) > 1e-9) syncSbpSafeZ();
+}
+
+/** Sync SBP safe/home Z to the stock top (stockTopIn). Called when it changes. */
 export function syncSbpSafeZ(): void {
-  const safeZ = Math.min(6, Math.max(0.5, parseFloat((STATE.baseThickness + 0.1).toFixed(1))));
+  safeZSyncedStock = stockTopIn();
+  const safeZ = Math.min(6, Math.max(0.5, parseFloat((stockTopIn() + 0.1).toFixed(1))));
   SBP_STATE.safeZ = safeZ;
   if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, Math.max(1.0, parseFloat((safeZ + 0.5).toFixed(1))));
 
@@ -74,11 +85,12 @@ export function syncSbpSafeZ(): void {
   if (homeVal) homeVal.textContent = SBP_STATE.homeZ.toFixed(1);
 }
 
-function buildConfig(): SbpConfig {
+/** The SBP job settings from the sidebar and the stock top. Exported for cli/drape.spec.ts. */
+export function buildConfig(): SbpConfig {
   const base = getDefaultConfig(SBP_STATE.materialProfile);
   base.roughingEnabled = SBP_STATE.roughingEnabled;
   base.finishingEnabled = SBP_STATE.finishingEnabled;
-  base.materialZ = STATE.baseThickness;
+  base.materialZ = stockTopIn();
   base.offsetX = SBP_STATE.offsetX;
   base.offsetY = SBP_STATE.offsetY;
   base.safeZ = SBP_STATE.safeZ;
@@ -244,6 +256,9 @@ function currentSbpSource(): unknown {
 
 /** Main export entry point -- called from export.ts */
 export function doSBPExport(): void {
+  // Material Z comes from the stock top (stockTopIn), so an uploaded STL waits for a pending drape
+  // carve remap too, like every surface export (getExportSurface).
+  if (drapeCarvePending()) { showToast(DRAPE_CARVE_PENDING, 6000); return; }
   if (SBP_STATE.stlBuffer) {
     exportFromSTL();
   } else {

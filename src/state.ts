@@ -1,9 +1,11 @@
 import type { SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, type DrapeSettings, type DrapeWindMode } from './drape-controls';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
-export interface MeshState {
+/** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
+export interface MeshState extends DrapeSettings {
   mode: 'noise' | 'depthmap' | 'drape';
   viewMode: 'solid' | 'wireframe' | 'both' | 'points';
   exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp';
@@ -113,15 +115,20 @@ export interface MeshState {
   /** Normalized height at or below which the depth map is flattened to the floor (both depth
    *  modes); the rest is stretched to the full cut. 0 = off. */
   dmBackgroundCutoff: number;
-  // DRAPE mode (src/drape-sim): a silk veil simulated over a 3D figure, extracted as a relief.
-  /** How far the figure's face is tipped back before the drape, degrees (0 = face vertical). */
-  drapeTilt: number;
+  // DRAPE mode (src/drape-sim): a silk veil simulated over a 3D figure, extracted as a relief. Its
+  // numeric controls (pose, cloth, forces, carve depth) come from DrapeSettings.
+  /** Wind or normal pressure on a target region of the front view, or neither. */
+  drapeWindMode: DrapeWindMode;
+  /** Material thickness of the drape carve, inches. Material Thickness sets it on the DRAPE tab, where
+   *  baseThickness follows it; the other tabs keep their own baseThickness. */
+  drapeStock: number;
   /** The relief DRAPE mode shows and exports: the bare figure until a drape is generated, then the
    *  draped figure. Built in memory as a relief master (src/relief-master.ts). Never serialized. */
   drapeMaster: ReliefMaster | null;
-  /** 'bare' = the figure before draping, 'draped' = a generated drape at drapeMasterTilt. */
+  /** 'bare' = the figure before draping, 'draped' = a generated drape (drapeMasterLabel). */
   drapeMasterKind: 'bare' | 'draped' | null;
-  drapeMasterTilt: number;
+  /** What the shown relief is (pose and setup), for the status line. */
+  drapeMasterLabel: string;
   /** Label of the figure being draped. */
   drapeFigureName: string;
   depthMapAR: number | null;
@@ -236,11 +243,13 @@ export const DEFAULTS: MeshState = {
   dmOffset: -0.08,
   dmSmoothing: 7,
   dmBackgroundCutoff: 0,
-  // 25 deg is the tilt of the Blender proof accepted on 2026-10-20 (scripts/drape, silk-tilt25).
-  drapeTilt: 25,
+  // The gathered silk of the 2026-10-21 Blender study (tilt 25 deg, as the proof accepted on 2026-10-20).
+  ...DRAPE_PRESETS.gathered.settings,
+  drapeWindMode: 'off',
+  drapeStock: 0.75,
   drapeMaster: null,
   drapeMasterKind: null,
-  drapeMasterTilt: 0,
+  drapeMasterLabel: '',
   drapeFigureName: '',
   depthMapAR: null,
   aspectLocked: false,
@@ -274,6 +283,13 @@ export function activeMaster(): ReliefMaster | null {
   return null;
 }
 
+/** The stock top the exported surface is cut from, inches: the active relief master's own stock when a
+ *  master drives the heights (Material Thickness can move ahead of a pending remap of it), else Material
+ *  Thickness. SBP material Z and Safe Z read this, never baseThickness directly. */
+export function stockTopIn(): number {
+  return activeMaster()?.stockIn ?? STATE.baseThickness;
+}
+
 /** True when a relief master drives the mesh (see activeMaster). */
 export function reliefMasterActive(): boolean {
   return activeMaster() !== null;
@@ -300,6 +316,7 @@ const ENUM_VALUES: {
   noiseType: Record<MeshState['noiseType'], true>;
   viewMode: Record<MeshState['viewMode'], true>;
   viewMaterial: Record<MeshState['viewMaterial'], true>;
+  drapeWindMode: Record<DrapeWindMode, true>;
   reliefPolarity: Record<ReliefPolarity, true>;
   reliefProfile: Record<ReliefProfile, true>;
   reliefAttractorMode: Record<ReliefAttractorMode, true>;
@@ -314,6 +331,7 @@ const ENUM_VALUES: {
   },
   viewMode: { solid: true, wireframe: true, both: true, points: true },
   viewMaterial: { elevation: true, neutral: true },
+  drapeWindMode: { off: true, wind: true, pressure: true },
   reliefPolarity: { pockets: true, domes: true },
   reliefProfile: { hemisphere: true, cosine: true, parabolic: true },
   reliefAttractorMode: { none: true, vertical: true, horizontal: true, radial: true, point: true },
@@ -342,13 +360,16 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'dmBackgroundCutoff',
-  'drapeTilt', 'watertight',
+  ...DRAPE_CONTROLS.map(c => c.key), 'drapeWindMode', 'drapeStock', 'watertight',
   'viewMode', 'viewMaterial', 'activePreset', 'activeProfile',
 ];
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 14;
+const CURRENT_PAYLOAD_VERSION = 15;
+/** The payload version from which starburst links already hold the current preset values (the version
+ *  current when the starburst migration was last due); later bumps that touch other keys leave it. */
+const STARBURST_CURRENT_SINCE = 14;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -449,6 +470,10 @@ const LEGACY_V11_DEFAULTS: Partial<MeshState> = {};
 // drapeGravityAngle, drapeThickness, drapeConform) has an equivalent: they left
 // URL_SERIALIZABLE_KEYS, so the copy loop drops them and older drape links open with the defaults.
 const LEGACY_V12_DEFAULTS: Partial<MeshState> = {};
+// v14→v15 added the DRAPE controls (src/drape-controls.ts) and made the gathered silk the default. A
+// v14 drape link (or an older blend link, which v14 opened with its defaults) was the plain silk proof
+// at its tilt: it opens with the silk preset's controls.
+const { drapeTilt: _silkTilt, ...LEGACY_V14_DRAPE_DEFAULTS } = DRAPE_PRESETS.silk.settings;
 export function serializeConfig(): string {
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
@@ -645,6 +670,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         }
       }
     }
+    if (payloadVersion < 15 && (parsed.mode === 'drape' || parsed.mode === 'blend')) {
+      for (const [k, v] of Object.entries(LEGACY_V14_DRAPE_DEFAULTS)) {
+        if (!(k in parsed)) {
+          (result as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -683,13 +715,14 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       // verbatim from CNC_PRESETS['relief-starburst'] below, so this never drifts from the
       // shipped preset), so users opening older saved links see the latest starburst
       // rendering rather than a mix of stale param values reinterpreted under the current
-      // sampler. The migration runs on payloadVersion < CURRENT_PAYLOAD_VERSION and detects
+      // sampler. The migration runs on payloadVersion < STARBURST_CURRENT_SINCE and detects
       // the known starburst signatures produced by each prior shipped version. Non-starburst
       // links (fociCount = 0) pass through untouched. Links with custom/manually-tuned values
       // that don't match any known signature ALSO pass through untouched — their author
       // tuned them deliberately.
       const fociCount = toFiniteNumber(result.reliefRadialFociCount);
-      if (payloadVersion >= CURRENT_PAYLOAD_VERSION || fociCount === null || fociCount <= 0) return;
+      // v15 changed only DRAPE keys: links saved at v14 already carry the current starburst values.
+      if (payloadVersion >= STARBURST_CURRENT_SINCE || fociCount === null || fociCount <= 0) return;
       const matchesV7PolarDefaults =
         approximately(result.reliefCellSize, 3.5)
         && approximately(result.reliefRadialStrength, 1.8)
@@ -781,6 +814,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     clampEnum('noiseType', ENUM_VALUES.noiseType);
     clampEnum('viewMode', ENUM_VALUES.viewMode);
     clampEnum('viewMaterial', ENUM_VALUES.viewMaterial);
+    clampEnum('drapeWindMode', ENUM_VALUES.drapeWindMode);
     clampEnum('reliefPolarity', ENUM_VALUES.reliefPolarity);
     clampEnum('reliefProfile', ENUM_VALUES.reliefProfile);
     clampEnum('reliefAttractorMode', ENUM_VALUES.reliefAttractorMode);
@@ -836,7 +870,17 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefCrestVariation' in result) clampField('reliefCrestVariation', 0, 1);
     // Ranges match the sliders.
     if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
-    if ('drapeTilt' in result) clampField('drapeTilt', 0, 45);
+    // DRAPE controls: the slider ranges. Cloth resolution and frames set the solver's work, so a
+    // crafted link must not raise them past the sliders.
+    for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
+    if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
+    // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same way).
+    // (a link with a thin stock and no depth gets the default depth capped the same way).
+    if ('drapeReliefDepth' in result || 'drapeStock' in result) {
+      const stock = typeof result.drapeStock === 'number' ? result.drapeStock : DEFAULTS.drapeStock;
+      if (!('drapeReliefDepth' in result)) (result as Record<string, unknown>).drapeReliefDepth = DEFAULTS.drapeReliefDepth;
+      clampField('drapeReliefDepth', 0.05, Math.max(0.05, stock - MIN_DRAPE_BACKING_IN));
+    }
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
     // they cannot over-amplify the bowl normalization or angular irregularity.

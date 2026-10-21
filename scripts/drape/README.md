@@ -4,8 +4,12 @@ Drape a sheet over a complete upright 3D figure, then extract the front as a `.m
 for MeshCraft or an STL for Aspire. The preferred gathered version is now a named preset.
 Quartering wind is an optional flag, off by default.
 
-The browser's existing Jolt parity benchmark covers `silk-tilt25` only. These new gathered
-and wind controls run in Blender; they have not been ported to the web solver.
+The Drape tab in MeshCraft runs the same drapes in the browser (Jolt Physics, `src/drape-sim/`),
+with its own controls for the variables below, except the air-damping ramp and the separate object and self
+collision gaps (Jolt has one cloth radius and no cloth self-collision). `npm run test:drape-parity` checks it against two of
+these runs: `silk-tilt25` at frame 100 and `silk-gathered` at frame 120 (fixtures in `cli/fixtures/`).
+The quartering wind exists in both, with a circular target region on the web instead of the measured
+panels, and is not parity-checked.
 
 ## Run the preferred gathered drape
 
@@ -83,7 +87,8 @@ harder than gravity, and wind 250 or 750 is a third to a whole g on the target c
 
 Blender's cloth friction against the figure is an impulse proportional to the cloth's approach speed
 (`blenkernel/intern/collision.cc`), so cloth resting under a steady attraction keeps sliding: in the
-gathered run the front half of the veil slides into a rope beside the neck.
+gathered run the front half of the veil slides into a rope beside the neck. The web solver's friction
+grows with the load instead, so it releases friction as the attraction ramps in.
 
 The gathered veil is still moving fast at frame 120 (0.15 units per frame); frame 150 differs from it
 more (veil footprint IoU 0.67) than a different thread count does (0.94).

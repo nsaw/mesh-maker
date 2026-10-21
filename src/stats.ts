@@ -1,5 +1,6 @@
 import { STATE, activeMaster } from './state';
 import { setCameraFromState } from './render';
+import { setDrapeFrontView } from './drape-ui';
 import { gridMinMax } from './geometry';
 
 export function zoomExtents(): void {
@@ -16,6 +17,8 @@ export function zoomExtents(): void {
   STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85));
   STATE.panX = 0; STATE.panY = 0;
   STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
+  // DRAPE looks straight at the carve; its default zoom frames the 12 x 16 in panel.
+  if (STATE.mode === 'drape') setDrapeFrontView();
 
   ['orbit','tilt','roll','zoom'].forEach(k => {
     const sl = document.getElementById('sl_' + k) as HTMLInputElement | null;
