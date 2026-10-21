@@ -9,8 +9,10 @@
  * Gates come from Blender's own variation on the same drape, not from what the web run happens to
  * reach. Silk: frame 100 vs frame 400 keeps veil footprint IoU 0.87; Blender variants keep the fold
  * wavelength within +11%. Gathered: the veil is still sliding at frame 120 (frame 150 keeps IoU 0.67
- * and has 1.47x the veil area), so its footprint gate is that IoU and its area gate 25%; the web run
- * with the attraction off scores IoU 0.53 against it, so the gate does see the attraction. Fold
+ * and has 1.47x the veil area), so its footprint gate is that IoU. Its area gate (25%) is tighter than
+ * that drift and was checked for what it rejects (drape-run probes, 2026-10-21): the calibrated run
+ * scores IoU 0.786 / area 1.18 and passes; half the attraction (0.717 / 1.34), the attraction ramped in
+ * 35 frames late (0.685 / 1.39), a quarter of it (0.62 / 1.57) and none (0.53 / 1.75) all fail. Fold
  * positions are chaotic (Blender moves them with thread count), so pointwise depth differences are
  * reported, not gated.
  */

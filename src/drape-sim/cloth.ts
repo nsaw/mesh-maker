@@ -19,6 +19,8 @@
  *   - Wind or pressure on a target region of the front view: a fixed direction (`windMode` 1, Blender
  *     WIND with wind factor 0, as the quartering-wind study used) or along the cloth normal toward the
  *     figure (`windMode` 2, normal pressure).
+ * The regions are circles in the front view acting on the cloth in front of the crown (y < 0), so cloth
+ * hanging behind the head inside the same circle is left alone.
  * After the solve, an optional surface fit (the study's Shrinkwrap, nearest-surface method) moves the
  * cloth inside the face region toward the figure, keeping the collision clearance.
  * Each strength rises from 0 at its start frame to full at its full frame along smoothstep, which is what
@@ -72,7 +74,7 @@ export const SILK: ClothParams = {
   vertexMass: 0.15, compliance: 3e-5, shearCompliance: 3e-5, bendCompliance: 1e5, iterations: 8,
   linearDamping: 1.0, friction: 0.5, vertexRadius: 0.005, fabricThickness: 0, frames: 100, fps: 24, substeps: 8,
   attractStrength: 0, attractReach: 0.8, attractStart: 45, attractFull: 100, attractFrictionKeep: 0,
-  windMode: 0, windStrength: 0, windAzimuth: 45, windElevation: 0, windX: 0.38, windZ: 0.07, windRadius: 0.55,
+  windMode: 0, windStrength: 0, windAzimuth: 45, windElevation: 0, windX: 0.38, windZ: 0.07, windRadius: 0.37,
   windStart: 100, windFull: 115,
   faceAttractStrength: 0, faceAttractReach: 0.4, faceStart: 45, faceFull: 100, faceX: -0.1, faceZ: 0.08, faceRadius: 0.63,
   fitStrength: 0, displaySubdivisions: 2,
@@ -195,8 +197,7 @@ export function simulateCloth(J: Jolt, figurePos: Float32Array, figureTris: Uint
   // move once the body exists, and SoftBodyVertexTraits gives the field offsets. HEAPF32 is re-read
   // every time because a growing heap replaces it.
   const base = J.getPointer(verts.at(0)) / 4, stride = (J.getPointer(verts.at(1)) - J.getPointer(verts.at(0))) / 4;
-  const traits = J.SoftBodyVertexTraits.prototype as unknown as { mPositionOffset: number; mVelocityOffset: number };
-  const po = traits.mPositionOffset / 4, vo = traits.mVelocityOffset / 4;
+  const po = J.SoftBodyVertexTraits.prototype.mPositionOffset / 4, vo = J.SoftBodyVertexTraits.prototype.mVelocityOffset / 4;
   const read = (out: Float64Array): void => {
     const H = J.HEAPF32;
     for (let k = 0; k < rows * cols; k++) { const a = base + k * stride + po; out[k * 3] = H[a]; out[k * 3 + 1] = H[a + 1]; out[k * 3 + 2] = H[a + 2]; }
@@ -224,8 +225,9 @@ export function simulateCloth(J: Jolt, figurePos: Float32Array, figureTris: Uint
   const wind = [-Math.sin(az) * Math.cos(el), Math.cos(az) * Math.cos(el), -Math.sin(el)];
   const pos = new Float64Array(nV * 3), q = new Float64Array(3);
   const step = 1 / (p.fps * p.substeps);
-  /** 1 inside the face circle of the front view, fading to 0 over its outer 30%. */
-  const inFace = (x: number, zz: number): number => 1 - ramp(Math.hypot(x - p.faceX, zz - p.faceZ), 0.7 * p.faceRadius, p.faceRadius);
+  /** 1 inside the face circle of the front view, fading to 0 over its outer 30%; 0 behind the crown. */
+  const inFace = (x: number, y: number, zz: number): number =>
+    y < 0 ? 1 - ramp(Math.hypot(x - p.faceX, zz - p.faceZ), 0.7 * p.faceRadius, p.faceRadius) : 0;
   const applyForces = (frame: number): void => {
     const sA = attracting ? p.attractStrength * ramp(frame, p.attractStart, p.attractFull) : 0;
     const sL = local ? p.faceAttractStrength * ramp(frame, p.faceStart, p.faceFull) : 0;
@@ -241,13 +243,13 @@ export function simulateCloth(J: Jolt, figurePos: Float32Array, figureTris: Uint
         const d = nearestPoint(field, x, y, zz, q);
         let pull = 0;
         if (sA && d <= p.attractReach) pull += sA;
-        if (sL && d <= p.faceAttractReach) pull += sL * inFace(x, zz);
+        if (sL && d <= p.faceAttractReach) pull += sL * inFace(x, y, zz);
         if (pull && d > 1e-9) {
           const s = (pull * perStrength[k]) / d;
           ax += (q[0] - x) * s; ay += (q[1] - y) * s; azz += (q[2] - zz) * s;
         }
       }
-      if (sW) {
+      if (sW && y < 0) {
         const r = Math.hypot(x - p.windX, zz - p.windZ);
         if (r < p.windRadius) {
           const s = sW * perStrength[k] * (1 - ramp(r, 0.7 * p.windRadius, p.windRadius));
@@ -304,7 +306,7 @@ export function simulateCloth(J: Jolt, figurePos: Float32Array, figureTris: Uint
     for (let k = 0; k < nV; k++) {
       if (!free[k]) continue;
       const x = cur[k * 3], y = cur[k * 3 + 1], zz = cur[k * 3 + 2];
-      const w = p.fitStrength * inFace(x, zz);
+      const w = p.fitStrength * inFace(x, y, zz);
       if (!w) continue;
       const d = nearestPoint(field, x, y, zz, q);
       if (!(d > 1e-9 && d <= FIT_REACH)) continue;

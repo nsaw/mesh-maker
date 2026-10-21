@@ -5,7 +5,8 @@ for MeshCraft or an STL for Aspire. The preferred gathered version is now a name
 Quartering wind is an optional flag, off by default.
 
 The Drape tab in MeshCraft runs the same drapes in the browser (Jolt Physics, `src/drape-sim/`),
-with its own controls for every variable below. `npm run test:drape-parity` checks it against two of
+with its own controls for the variables below, except the air-damping ramp and the separate object and self
+collision gaps (Jolt has one cloth radius and no cloth self-collision). `npm run test:drape-parity` checks it against two of
 these runs: `silk-tilt25` at frame 100 and `silk-gathered` at frame 120 (fixtures in `cli/fixtures/`).
 The quartering wind exists in both, with a circular target region on the web instead of the measured
 panels, and is not parity-checked.

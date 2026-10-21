@@ -58,15 +58,15 @@ export const DRAPE_CONTROLS: readonly DrapeControl[] = [
   { key: 'drapeFaceStart', label: 'Local Attraction Starts (frame)', min: 1, max: 240, step: 1, group: 'face' },
   { key: 'drapeFaceFull', label: 'Local Attraction Full (frame)', min: 1, max: 240, step: 1, group: 'face' },
   { key: 'drapeFit', label: 'Surface Fit after the solve (0 = off, 1 = onto the figure)', min: 0, max: 1, step: 0.05, group: 'face' },
-  { key: 'drapeFaceX', label: 'Face Region X on the carve (in from left)', min: 0, max: PANEL_WIDTH_IN, step: 0.1, group: 'face' },
-  { key: 'drapeFaceY', label: 'Face Region Y on the carve (in from top)', min: 0, max: PANEL_HEIGHT_IN, step: 0.1, group: 'face' },
-  { key: 'drapeFaceRadius', label: 'Face Region Radius (in)', min: 0.25, max: 8, step: 0.05, group: 'face' },
+  { key: 'drapeFaceX', label: 'Face Region X on the carve (in from left)', min: 0, max: PANEL_WIDTH_IN, step: 0.01, group: 'face' },
+  { key: 'drapeFaceY', label: 'Face Region Y on the carve (in from top)', min: 0, max: PANEL_HEIGHT_IN, step: 0.01, group: 'face' },
+  { key: 'drapeFaceRadius', label: 'Face Region Radius (in)', min: 0.25, max: 8, step: 0.01, group: 'face' },
   { key: 'drapeWind', label: 'Strength', min: 0, max: 3000, step: 50, group: 'wind' },
   { key: 'drapeWindFrom', label: 'Comes From (deg, 0 = you, 90 = your right)', min: -180, max: 180, step: 1, group: 'wind' },
   { key: 'drapeWindElevation', label: 'Comes From Above (deg)', min: -60, max: 60, step: 1, group: 'wind' },
-  { key: 'drapeWindX', label: 'Target X on the carve (in from left)', min: 0, max: PANEL_WIDTH_IN, step: 0.1, group: 'wind' },
-  { key: 'drapeWindY', label: 'Target Y on the carve (in from top)', min: 0, max: PANEL_HEIGHT_IN, step: 0.1, group: 'wind' },
-  { key: 'drapeWindRadius', label: 'Target Radius (in)', min: 0.25, max: 8, step: 0.05, group: 'wind' },
+  { key: 'drapeWindX', label: 'Target X on the carve (in from left)', min: 0, max: PANEL_WIDTH_IN, step: 0.01, group: 'wind' },
+  { key: 'drapeWindY', label: 'Target Y on the carve (in from top)', min: 0, max: PANEL_HEIGHT_IN, step: 0.01, group: 'wind' },
+  { key: 'drapeWindRadius', label: 'Target Radius (in)', min: 0.25, max: 8, step: 0.01, group: 'wind' },
   { key: 'drapeWindStart', label: 'Starts (frame)', min: 1, max: 240, step: 1, group: 'wind' },
   { key: 'drapeWindFull', label: 'Full (frame)', min: 1, max: 240, step: 1, group: 'wind' },
   { key: 'drapeSubsteps', label: 'Solver Steps per Frame (accuracy)', min: 2, max: 32, step: 1, group: 'solver' },
@@ -127,7 +127,7 @@ function settingsFrom(p: ClothParams, wind: Partial<DrapeSettings> = {}): DrapeS
 
 export interface DrapePreset { label: string; settings: DrapeSettings; windMode: DrapeWindMode; about: string }
 
-/** One-click setups. 'gathered' is the default. */
+/** One-click setups. 'gathered' is the default. Applying one leaves the carve (Relief Depth) alone. */
 export const DRAPE_PRESETS: Record<'gathered' | 'silk' | 'quartering', DrapePreset> = {
   gathered: { label: 'Gathered', settings: settingsFrom(SILK_GATHERED), windMode: 'off',
     about: 'The preferred Blender study: attraction toward the figure gathers the veil at the neck (frame 120).' },
@@ -167,10 +167,12 @@ export function drapeJob(s: DrapeSettings, windMode: DrapeWindMode): { pose: Fig
   return { pose: { tiltDeg: s.drapeTilt, turnDeg: s.drapeTurn, leanDeg: s.drapeLean }, params };
 }
 
-/** Whether a control changes the simulation (and so needs Generate), the figure placement (rebuilt
- *  at once), or only how the relief is carved (remapped at once). */
+/** Whether a DRAPE control changes the simulation (and so needs Generate), the figure placement
+ *  (rebuilt at once), or only how the relief is carved (remapped at once); null for every other key.
+ *  Material Thickness (baseThickness) is not one: it is shared with the other tabs, and the Drape tab
+ *  handles it before asking (src/ui.ts). */
 export function drapeControlEffect(key: string): 'pose' | 'carve' | 'cloth' | null {
   if (key === 'drapeTilt' || key === 'drapeTurn' || key === 'drapeLean') return 'pose';
-  if (key === 'drapeReliefDepth' || key === 'baseThickness') return 'carve';
+  if (key === 'drapeReliefDepth') return 'carve';
   return DRAPE_CONTROLS.some(c => c.key === key) ? 'cloth' : null;
 }

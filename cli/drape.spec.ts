@@ -12,8 +12,8 @@ import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-s
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
 import { bareDepth, offsetTowardViewer, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
-import { buildNearestField, closestOnTriangle, nearestPoint } from '../src/drape-sim/nearest';
-import { DRAPE_PRESETS, drapeCarveFor, drapeJob, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
+import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -235,6 +235,9 @@ async function main(): Promise<void> {
       const d = nearestPoint(f, px, py, pz, q);
       worst = Math.max(worst, d - best); checked++;
     }
+    const big = buildNearestField(pos, demo.triangles, { x0: -20, x1: 20, y0: -20, y1: 20, z0: -20, z1: 20 }, 0.04, 5);
+    assert(big.nx * big.ny * big.nz <= MAX_FIELD_VOXELS && big.h > 0.04, 'a huge box gets coarser voxels instead of more memory',
+      `${(big.nx * big.ny * big.nz / 1e6).toFixed(1)}M voxels at ${big.h.toFixed(3)}`);
     assert(checked > 20 && worst >= -1e-9 && worst < 0.01, 'within reach, the field\'s distance is the brute-force nearest within 0.01 units (a quarter voxel)',
       `${checked} points, worst excess ${worst.toFixed(5)}`);
   }
@@ -248,8 +251,9 @@ async function main(): Promise<void> {
     const J = await initJolt();
     const hold = 9.81 * SILK.vertexMass / (EFFECTOR_ACCEL * 0.05 * 0.05);
     const far = new Float32Array([-0.1, 0, -40, 0.1, 0, -40, 0, 0.1, -40]), farTris = new Uint32Array([0, 1, 2]);
-    const small: ClothParams = { ...SILK, sheetX: 1, sheetY: 1, cellsX: 20, cellsY: 20, frames: 12 };
-    const probe = ((10 + 5) * 21 + 10 + 5) * 3 + 2;                     // an interior vertex off the pins
+    // 90% of the sheet in front of the crown: wind, pressure and the face region act on cloth at y < 0.
+    const small: ClothParams = { ...SILK, sheetX: 1, sheetY: 1, cellsX: 20, cellsY: 20, frames: 12, frontShare: 0.9 };
+    const probe = (8 * 21 + 15) * 3 + 2;                                // an interior vertex off the pins, at y = -0.5
     const still = simulateCloth(J, far, farTris, { ...small, windMode: 1, windStrength: hold, windElevation: -90, windX: 0, windZ: 1, windRadius: 50, windStart: 0, windFull: 0 });
     const fall = simulateCloth(J, far, farTris, small);
     const z0 = 1 + SILK.liftZ;
@@ -269,6 +273,15 @@ async function main(): Promise<void> {
     const beside = simulateCloth(J, plane, farTris, { ...small, faceAttractStrength: hold, faceAttractReach: 0.8, faceStart: 0, faceFull: 0, faceX: px + 4, faceZ: 1, faceRadius: 1 });
     assert(Math.abs(drop(inside) - drop(still)) < 0.01 && Math.abs(drop(beside) - drop(fall)) < 1e-9,
       'local attraction acts inside its face region and nowhere else', `drop inside ${drop(inside).toFixed(4)}, beside ${drop(beside).toFixed(4)} units`);
+    // The same wind on a sheet hanging wholly behind the crown (y >= 0) leaves it alone.
+    const behind = { ...small, frontShare: 0 }, probeBehind = (8 * 21 + 15) * 3 + 2;     // y = +0.4
+    const backWind = simulateCloth(J, far, farTris, { ...behind, windMode: 1, windStrength: hold, windElevation: -90, windX: 0, windZ: 1, windRadius: 50, windStart: 0, windFull: 0 });
+    const backFall = simulateCloth(J, far, farTris, behind);
+    // (Cloth by the crown swings a little in front as the sheet falls and is pushed; the sheet passes
+    // that on, so allow 5% of the effect the same wind has on cloth in front.)
+    const backEffect = Math.abs(backWind.positions[probeBehind] - backFall.positions[probeBehind]), frontEffect = drop(fall) - drop(still);
+    assert(backEffect < 0.05 * frontEffect, 'wind and pressure leave the cloth behind the crown alone',
+      `effect behind ${backEffect.toFixed(4)} units, in front ${frontEffect.toFixed(4)}`);
     // Surface fit: full strength puts the region's cloth at the clearance from the plane above.
     const fit = simulateCloth(J, plane, farTris, { ...small, fitStrength: 1, faceX: px, faceZ: 1, faceRadius: 3 });
     assert(Math.abs(fit.positions[probe] - (1.4 - SILK.vertexRadius)) < 0.005, 'a full surface fit moves the cloth onto the figure, keeping the clearance',
@@ -309,7 +322,11 @@ async function main(): Promise<void> {
       .filter(k => k !== 'pinRadius' && !/^(wind|face[XZR])/.test(k) && Math.abs(a[k] - b[k]) > 1e-12 * Math.max(1, Math.abs(b[k])));
     assert(differs(g.params, SILK_GATHERED).length === 0, 'the Gathered preset\'s controls give the solver the gathered parameters', differs(g.params, SILK_GATHERED).join(',') || 'all equal');
     assert(differs(sk.params, SILK).length === 0, 'the Silk preset\'s controls give the solver the proof\'s parameters', differs(sk.params, SILK).join(',') || 'all equal');
-    const pins = (p: ClothParams): number => { let n = 0; const dx = p.sheetX / p.cellsX; for (let i = 0; i <= p.cellsX; i++) for (let j = 0; j <= p.cellsY; j++) if (Math.abs(-p.sheetX / 2 + i * dx) < p.pinRadius && Math.abs(sheetOffsetY(p) - p.sheetY / 2 + j * dx) < p.pinRadius) n++; return n; };
+    const pins = (p: ClothParams): number => { let n = 0; const dx = p.sheetX / p.cellsX, dy = p.sheetY / p.cellsY; for (let i = 0; i <= p.cellsX; i++) for (let j = 0; j <= p.cellsY; j++) if (Math.abs(-p.sheetX / 2 + i * dx) < p.pinRadius && Math.abs(sheetOffsetY(p) - p.sheetY / 2 + j * dy) < p.pinRadius) n++; return n; };
+    // Material Thickness is shared with NOISE and DEPTH MAP, which must regenerate on it: it is not a
+    // drape control (the Drape tab handles it itself). Every table key is one.
+    assert(['baseThickness', 'meshX', 'frequency', 'dmHeightScale'].every(k => drapeControlEffect(k) === null)
+      && DRAPE_CONTROLS.every(c => drapeControlEffect(c.key) !== null), 'only DRAPE controls are routed to the drape; Material Thickness regenerates the mesh elsewhere');
     const qw = drapeJob(DRAPE_PRESETS.quartering.settings, DRAPE_PRESETS.quartering.windMode).params;
     assert(qw.windMode === 1 && qw.windStrength === 250 && qw.windAzimuth === 45 && Math.abs(qw.windX - SILK.windX) < 0.004
       && Math.abs(qw.windZ - SILK.windZ) < 0.004 && Math.abs(qw.windRadius - SILK.windRadius) < 0.004 && qw.windStart === 100 && qw.windFull === 115,

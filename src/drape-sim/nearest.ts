@@ -51,17 +51,26 @@ export function closestOnTriangle(px: number, py: number, pz: number, t: ArrayLi
   out[0] = ax + abx * v + acx * w; out[1] = ay + aby * v + acy * w; out[2] = az + abz * v + acz * w;
 }
 
-/** Build the field over `box` (clipped to the figure's bounds grown by `reach`) at voxel size `h`. */
-export function buildNearestField(pos: Float32Array, tris: Uint32Array, box: Box, h: number, reach: number): NearestField {
+/** Most voxels a field may hold (16 bytes each: about 128 MB). A larger box gets coarser voxels. */
+export const MAX_FIELD_VOXELS = 8_000_000;
+
+/** Build the field over `box` (clipped to the figure's bounds grown by `reach`) at voxel size `h`, or
+ *  coarser where that would exceed MAX_FIELD_VOXELS. */
+export function buildNearestField(pos: Float32Array, tris: Uint32Array, box: Box, h0: number, reach: number): NearestField {
   let fx0 = Infinity, fy0 = Infinity, fz0 = Infinity, fx1 = -Infinity, fy1 = -Infinity, fz1 = -Infinity;
   for (let i = 0; i < pos.length; i += 3) {
     if (pos[i] < fx0) fx0 = pos[i]; if (pos[i] > fx1) fx1 = pos[i];
     if (pos[i + 1] < fy0) fy0 = pos[i + 1]; if (pos[i + 1] > fy1) fy1 = pos[i + 1];
     if (pos[i + 2] < fz0) fz0 = pos[i + 2]; if (pos[i + 2] > fz1) fz1 = pos[i + 2];
   }
+  let h = h0;
   const x0 = Math.max(box.x0, fx0 - reach) - h, y0 = Math.max(box.y0, fy0 - reach) - h, z0 = Math.max(box.z0, fz0 - reach) - h;
   const x1 = Math.min(box.x1, fx1 + reach) + h, y1 = Math.min(box.y1, fy1 + reach) + h, z1 = Math.min(box.z1, fz1 + reach) + h;
-  const nx = Math.max(2, Math.ceil((x1 - x0) / h) + 1), ny = Math.max(2, Math.ceil((y1 - y0) / h) + 1), nz = Math.max(2, Math.ceil((z1 - z0) / h) + 1);
+  const dims = (): [number, number, number] =>
+    [Math.max(2, Math.ceil((x1 - x0) / h) + 1), Math.max(2, Math.ceil((y1 - y0) / h) + 1), Math.max(2, Math.ceil((z1 - z0) / h) + 1)];
+  h = Math.max(h, Math.cbrt(((x1 - x0) * (y1 - y0) * (z1 - z0)) / MAX_FIELD_VOXELS));
+  while (dims().reduce((a, b) => a * b) > MAX_FIELD_VOXELS) h *= 1.02;
+  const [nx, ny, nz] = dims();
   const n = nx * ny * nz;
   const points = new Float32Array(n * 3).fill(NaN), d2 = new Float32Array(n).fill(Infinity);
   const q = new Float64Array(3);

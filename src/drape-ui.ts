@@ -40,9 +40,13 @@ let sizeBeforeDrape: Pick<typeof STATE, 'meshX' | 'meshY' | 'resolution' | 'base
   | 'orbit' | 'tilt' | 'roll' | 'zoom' | 'panX' | 'panY'> | null = null;
 /** The relief last built (bare or draped) in the standard mapping (RELIEF_BACKING_IN + RELIEF_SPAN_IN),
  *  kept so a carve change can remap it. */
-let lastRelief: { heightsM: Float32Array; mask: Uint8Array; name: string; fig: Figure; kind: 'bare' | 'draped'; label: string } | null = null;
-/** True once a cloth or force control moved after the shown drape was made. */
-let settingsChanged = false;
+let lastRelief: { heightsM: Float32Array; mask: Uint8Array; name: string; fig: Figure; kind: 'bare' | 'draped'; label: string; jobKey?: string } | null = null;
+
+/** The solver settings the controls describe now (the pose and carve are not in it: a pose change
+ *  discards the drape, a carve change remaps it). A shown drape made with another key is out of date. */
+function currentJobKey(): string {
+  return JSON.stringify(drapeJob(STATE, STATE.drapeWindMode).params);
+}
 /** The tab the user came from (null when the page opened on DRAPE). */
 let modeBeforeDrape: typeof STATE.mode | null = null;
 
@@ -81,7 +85,7 @@ export function drapeStatusText(): string {
   if (bareError && !STATE.drapeMaster) return bareError;
   if (STATE.drapeMasterKind === 'draped') {
     return `Draped (${STATE.drapeMasterLabel}). Exports use this drape at full resolution.`
-      + (settingsChanged ? ' Cloth or force settings changed since: Generate Drape again to apply them.' : '');
+      + (lastRelief?.jobKey !== undefined && lastRelief.jobKey !== currentJobKey() ? ' Cloth or force settings changed since: Generate Drape again to apply them.' : '');
   }
   return `Bare figure (${poseText(currentPose())}). Press Generate Drape to simulate the veil (1-4 minutes in this tab; longer at a higher cloth resolution).`;
 }
@@ -120,7 +124,9 @@ function syncSizeControls(m: ReliefMaster): void {
 function present(m: ReliefMaster, kind: 'bare' | 'draped', label: string): void {
   bareError = null;
   STATE.drapeMaster = m; STATE.drapeMasterKind = kind; STATE.drapeMasterLabel = label;
-  if (kind === 'draped') settingsChanged = false;
+  // A carve change made while this master was being built: remap it to the carve the controls show.
+  const c = drapeCarve();
+  if (Math.abs(m.stockIn - c.stockIn) > 1e-6 || Math.abs(m.backingIn - c.backingIn) > 1e-6) onDrapeCarveChanged();
   setStatus(drapeStatusText());
   if (STATE.mode !== 'drape') return;
   syncSizeControls(m);
@@ -257,7 +263,6 @@ export function onDrapePoseChanged(): void {
 /** A cloth or force control moved: the shown drape stays (and stays exportable) but is marked as made
  *  with earlier settings. */
 export function onDrapeClothChanged(): void {
-  settingsChanged = true;
   setStatus(drapeStatusText());
 }
 
@@ -281,7 +286,7 @@ function bareKey(): string {
 export function generateDrape(): void {
   if (!figure || !figureFile || worker) return;
   const rev = revision, name = STATE.drapeFigureName, fig = figure;
-  const { pose, params } = drapeJob(STATE, STATE.drapeWindMode);
+  const { pose, params } = drapeJob(STATE, STATE.drapeWindMode), jobKey = JSON.stringify(params);
   const extras = [params.faceAttractStrength > 0 ? 'local attraction' : '', params.fitStrength > 0 ? 'surface fit' : '',
     params.windMode === 1 ? 'wind' : params.windMode === 2 ? 'pressure' : ''].filter(Boolean);
   const label = [poseText(pose), params.attractStrength > 0 ? 'gathered' : 'silk', ...extras, `frame ${params.frames}`].join(', ');
@@ -301,7 +306,7 @@ export function generateDrape(): void {
     if (m.type === 'error') { setStatus(drapeStatusText()); showToast(`Drape failed: ${m.message}`, 8000); return; }
     void (async () => {
       try {
-        const relief = { heightsM: m.heightsM, mask: m.mask, name: `${name}, silk drape, ${label}`, fig, kind: 'draped' as const, label };
+        const relief = { heightsM: m.heightsM, mask: m.mask, name: `${name}, silk drape, ${label}`, fig, kind: 'draped' as const, label, jobKey };
         const master = await toMaster(relief);
         if (rev !== revision) return;                               // the figure or pose changed meanwhile
         lastRelief = relief;

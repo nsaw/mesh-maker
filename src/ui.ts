@@ -579,7 +579,9 @@ function buildDrapeSections(): HTMLElement[] {
     b.title = preset.about;
     b.dataset.drapePreset = id;
     b.addEventListener('click', () => {
-      Object.assign(STATE, preset.settings, { drapeWindMode: preset.windMode });
+      // A preset sets the drape, not the carve: Relief Depth stays as the user set it.
+      const { drapeReliefDepth: _carve, ...settings } = preset.settings;
+      Object.assign(STATE, settings, { drapeWindMode: preset.windMode });
       buildSidebar();
       onDrapePoseChanged();
       onDrapeClothChanged();
