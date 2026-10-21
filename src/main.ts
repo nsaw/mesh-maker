@@ -1,5 +1,5 @@
-import { STATE, deserializeConfig, setDemoDepthMap } from './state';
-import { buildSidebar, fitMeshToAspect } from './ui';
+import { STATE, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
+import { buildSidebar, showDemoDepthMap } from './ui';
 import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
 import { setupInteraction } from './interaction';
 import { setupSponsorModal } from './sponsor';
@@ -7,27 +7,13 @@ import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
 import { ensureDrapeFigure } from './drape-ui';
 
-/** The board size a DEPTH MAP share link set, or null. The demo image keeps it (instead of refitting
- *  the board to its own aspect) as long as the board still is that size when the image arrives,
- *  whatever tabs were visited meanwhile; a board the user or another tab changed is fitted. */
-let linkSize: { meshX: number; meshY: number } | null = null;
-
 function preloadDemoDepthMap(): void {
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => {
     setDemoDepthMap(img);
     if (STATE.mode === 'depthmap' && !STATE.depthMap && !STATE.reliefMaster) {
-      STATE.depthMap = img;
-      STATE.depthMapName = 'Mona Lisa (demo)';
-      // A DEPTH MAP link carries its own size; only a page without one is sized to the demo image.
-      if (linkSize && STATE.meshX === linkSize.meshX && STATE.meshY === linkSize.meshY) STATE.depthMapAR = img.width / img.height;
-      else fitMeshToAspect(img.width, img.height);
-      const zone = document.getElementById('uploadZone');
-      if (zone) {
-        zone.classList.add('has-image');
-        zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
-      }
+      showDemoDepthMap(img);
       buildSidebar();
       generateMesh();
     }
@@ -49,8 +35,7 @@ function init(): void {
     (STATE as unknown as Record<string, unknown>)[key] = value;
   }
 
-  if (urlConfig.mode === 'depthmap' && ('meshX' in urlConfig || 'meshY' in urlConfig)) linkSize = { meshX: STATE.meshX, meshY: STATE.meshY };
-
+  rememberLinkBoard(urlConfig);
   // Sync body class with potentially URL-overridden mode
   document.body.className = 'mode-' + STATE.mode;
 

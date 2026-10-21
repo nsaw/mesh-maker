@@ -2,7 +2,7 @@ import { STATE, demoDepthMap, restoreNoiseDims, saveNoiseDims, serializeConfig }
 import { generateMesh } from './mesh';
 import { renderViewport, setCameraFromState, resizeCanvas } from './render';
 import { doExport } from './export';
-import { applyPendingFit, applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
+import { applyPendingFit, applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed, showDemoDepthMap } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
 import { ensureDrapeFigure, restoreSizeAfterDrape, setDrapeFrontView } from './drape-ui';
@@ -39,14 +39,7 @@ export function setupTabs(): void {
 
       // Auto-apply demo depth map if switching to depthmap with no user image
       if (STATE.mode === 'depthmap' && !STATE.reliefMaster && !STATE.depthMap && demoDepthMap) {
-        STATE.depthMap = demoDepthMap;
-        STATE.depthMapName = 'Mona Lisa (demo)';
-        fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
-        const zone = document.getElementById('uploadZone');
-        if (zone) {
-          zone.classList.add('has-image');
-          zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
-        }
+        showDemoDepthMap(demoDepthMap);
         buildSidebar();
       }
 

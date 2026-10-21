@@ -320,6 +320,17 @@ export function restoreNoiseDims(): void {
 }
 
 export let demoDepthMap: HTMLImageElement | null = null;
+
+/** The board size a DEPTH MAP share link set (null for any other page). The demo image keeps it rather
+ *  than refit the board to its own aspect, as long as the board still is that size when the image is
+ *  shown, whatever tabs were visited meanwhile (see showDemoDepthMap in src/ui.ts). */
+let linkBoard: { meshX: number; meshY: number } | null = null;
+export function rememberLinkBoard(link: Partial<MeshState>): void {
+  linkBoard = link.mode === 'depthmap' && ('meshX' in link || 'meshY' in link) ? { meshX: STATE.meshX, meshY: STATE.meshY } : null;
+}
+export function boardIsLinkBoard(): boolean {
+  return linkBoard !== null && STATE.meshX === linkBoard.meshX && STATE.meshY === linkBoard.meshY;
+}
 export function setDemoDepthMap(img: HTMLImageElement | null): void {
   demoDepthMap = img;
 }
@@ -888,6 +899,11 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
     // DRAPE controls: the slider ranges. Cloth resolution and frames set the solver's work, so a
     // crafted link must not raise them past the sliders.
+    // The board, to its sliders' ranges (a link with meshX 200 used to keep a 200 in board).
+    if ('meshX' in result) clampField('meshX', 1, 96);
+    if ('meshY' in result) clampField('meshY', 1, 48);
+    if ('resolution' in result) clampField('resolution', 16, 1024, true);
+    if ('baseThickness' in result) clampField('baseThickness', 0.25, 6);
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
     // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same way).

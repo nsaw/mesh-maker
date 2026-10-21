@@ -1,4 +1,4 @@
-import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, reliefMasterActive, saveNoiseDims } from './state';
+import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, boardIsLinkBoard, reliefMasterActive, saveNoiseDims } from './state';
 import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, drapeControlEffect, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
@@ -828,6 +828,22 @@ function wireControls(): void {
 
   // Section collapse
   wireSectionCollapse();
+}
+
+/** Show the demo image on DEPTH MAP: the board keeps a DEPTH MAP share link's size while it still is
+ *  that size (boardIsLinkBoard), else it is fitted to the image. One path for the page load and the
+ *  tab switch, so the image arriving on either side of a tab visit gives the same board. */
+export function showDemoDepthMap(img: HTMLImageElement): void {
+  STATE.depthMap = img;
+  STATE.depthMapName = 'Mona Lisa (demo)';
+  if (boardIsLinkBoard()) STATE.depthMapAR = img.width / img.height;
+  else fitMeshToAspect(img.width, img.height);
+  const zone = document.getElementById('uploadZone');
+  if (zone) {
+    zone.classList.add('has-image');
+    const text = zone.querySelector('.upload-text');
+    if (text) text.textContent = STATE.depthMapName;
+  }
 }
 
 /** Show STATE.aspectLocked on the lock button (also when code, not a click, changes it). */
