@@ -585,7 +585,6 @@ function buildDrapeSections(): HTMLElement[] {
       buildSidebar();
       onDrapePoseChanged();
       onDrapeClothChanged();
-      onDrapeCarveChanged();
       showToast(`${preset.label}: ${preset.about} Press Generate Drape.`, 4000);
     });
     presetRow.append(b);

@@ -280,7 +280,7 @@ async function main(): Promise<void> {
     // (Cloth by the crown swings a little in front as the sheet falls and is pushed; the sheet passes
     // that on, so allow 5% of the effect the same wind has on cloth in front.)
     const backEffect = Math.abs(backWind.positions[probeBehind] - backFall.positions[probeBehind]), frontEffect = drop(fall) - drop(still);
-    assert(backEffect < 0.05 * frontEffect, 'wind and pressure leave the cloth behind the crown alone',
+    assert(backEffect < 0.05 * frontEffect, 'wind leaves the cloth behind the crown alone (pressure goes through the same front-only check)',
       `effect behind ${backEffect.toFixed(4)} units, in front ${frontEffect.toFixed(4)}`);
     // Surface fit: full strength puts the region's cloth at the clearance from the plane above.
     const fit = simulateCloth(J, plane, farTris, { ...small, fitStrength: 1, faceX: px, faceZ: 1, faceRadius: 3 });

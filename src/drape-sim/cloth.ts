@@ -74,7 +74,7 @@ export const SILK: ClothParams = {
   vertexMass: 0.15, compliance: 3e-5, shearCompliance: 3e-5, bendCompliance: 1e5, iterations: 8,
   linearDamping: 1.0, friction: 0.5, vertexRadius: 0.005, fabricThickness: 0, frames: 100, fps: 24, substeps: 8,
   attractStrength: 0, attractReach: 0.8, attractStart: 45, attractFull: 100, attractFrictionKeep: 0,
-  windMode: 0, windStrength: 0, windAzimuth: 45, windElevation: 0, windX: 0.38, windZ: 0.07, windRadius: 0.37,
+  windMode: 0, windStrength: 0, windAzimuth: 45, windElevation: 0, windX: 0.4, windZ: 0.07, windRadius: 0.3,
   windStart: 100, windFull: 115,
   faceAttractStrength: 0, faceAttractReach: 0.4, faceStart: 45, faceFull: 100, faceX: -0.1, faceZ: 0.08, faceRadius: 0.63,
   fitStrength: 0, displaySubdivisions: 2,
