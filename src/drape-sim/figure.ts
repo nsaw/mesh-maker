@@ -64,25 +64,40 @@ export function parseFigure(buf: ArrayBuffer): Figure {
   return { header, positions, triangles };
 }
 
+/** How the figure is posed for the drape, degrees: `tiltDeg` tips the face back (positive = face looks
+ *  up), `turnDeg` turns it about the vertical axis (positive = face turns toward the viewer's right),
+ *  `leanDeg` leans the head sideways (positive = crown toward the viewer's right). */
+export interface FigurePose { tiltDeg: number; turnDeg: number; leanDeg: number }
+
 /**
- * Tip the face back by `tiltDeg` (positive = face looks up) about the X axis through the head centre,
- * then move the new highest point back to (0, 0, 1). Same construction as scripts/drape/blender_drape.py.
+ * Pose the figure about its head centre (turn about Z, then tilt about X, then lean about Y), then move
+ * the new highest point back to (0, 0, 1). Tilt alone is the construction of scripts/drape/blender_drape.py.
  */
-export function tiltFigure(fig: Figure, tiltDeg: number): Float32Array {
-  const a = (-tiltDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
-  const [, hy, hz] = fig.header.head_centre;
+export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
+  const t = (-pose.tiltDeg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
+  const u = (pose.turnDeg * Math.PI) / 180, cu = Math.cos(u), su = Math.sin(u);
+  const l = (pose.leanDeg * Math.PI) / 180, cl = Math.cos(l), sl = Math.sin(l);
+  const [hx, hy, hz] = fig.header.head_centre;
   const p = fig.positions, out = new Float32Array(p.length);
   let top = -Infinity, ti = 0;
   for (let i = 0; i < p.length; i += 3) {
-    const y = p[i + 1] - hy, z = p[i + 2] - hz;
-    out[i] = p[i];
-    out[i + 1] = y * c - z * s + hy;
-    out[i + 2] = y * s + z * c + hz;
+    let x = p[i] - hx, y = p[i + 1] - hy, z = p[i + 2] - hz;
+    if (pose.turnDeg) { const x2 = x * cu - y * su; y = x * su + y * cu; x = x2; }
+    const y2 = y * c - z * s; z = y * s + z * c; y = y2;
+    if (pose.leanDeg) { const x2 = x * cl + z * sl; z = -x * sl + z * cl; x = x2; }
+    out[i] = pose.turnDeg || pose.leanDeg ? x + hx : p[i];
+    out[i + 1] = y + hy;
+    out[i + 2] = z + hz;
     if (out[i + 2] > top) { top = out[i + 2]; ti = i; }
   }
   const dx = out[ti], dy = out[ti + 1], dz = out[ti + 2] - 1;
   for (let i = 0; i < out.length; i += 3) { out[i] -= dx; out[i + 1] -= dy; out[i + 2] -= dz; }
   return out;
+}
+
+/** Tip the face back by `tiltDeg` only (the Blender proof's pose). */
+export function tiltFigure(fig: Figure, tiltDeg: number): Float32Array {
+  return poseFigure(fig, { tiltDeg, turnDeg: 0, leanDeg: 0 });
 }
 
 /** Serialize a figure as a .mcfig file (the Worker takes a file, so the same parser checks both

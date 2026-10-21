@@ -39,9 +39,9 @@ npm run lint:fix
 npm run test:relief      # tsx cli/voronoi-relief.spec.ts
 npm run test:gh-parity   # tsx cli/grasshopper-parity.spec.ts
 npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~5 s)
-npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drape vs the Blender proof, ~1 min)
+npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drapes vs the Blender silk and gathered runs, ~2.5 min)
 npm run test:depthmap       # tsx cli/depthmap.spec.ts (luma sampling, orientation, cutoff, share links)
-npm run drape-run -- <figure.mcfig> --out <dir> [--tilt 25] [--param key=value]   # one web drape in Node
+npm run drape-run -- <figure.mcfig> --out <dir> [--preset silk|gathered] [--tilt 25] [--turn 0] [--lean 0] [--param key=value]   # one web drape in Node
 npm run test:cut         # tsx cli/sbp-cut.spec.ts (compensation oracles + SBP cut replay, ~7 min)
 npm run test:relief-master  # tsx cli/relief-master.spec.ts (.mcrelief contract, export fidelity)
 npm run relief-roundtrip -- <master.mcrelief> --out <dir> [--crop ...] [--sbp] [--replay f.sbp] [--sim-factor N] [--offset x,y] [--face ...]
@@ -131,8 +131,9 @@ npm run stl-to-sbp -- <input.stl> --dry-run
 
 `.github/workflows/ci.yml` runs lint, both typechecks, `test:relief`, `test:gh-parity`,
 `test:depthmap`, `test:drape`, `test:drape-parity`, `test:cut`, `test:relief-master` and the build on every pull request.
-`test:drape-parity` runs one full cloth simulation of the bundled bust against the Blender proof's reference
-(`cli/fixtures/drape-silk-tilt25`); after any change under `src/drape-sim/`, paste its numbers in the PR.
+`test:drape-parity` runs two full cloth simulations of the bundled bust against the Blender references
+(`cli/fixtures/drape-silk-tilt25`, `cli/fixtures/drape-silk-gathered`); after any change under `src/drape-sim/`, paste its numbers in the PR.
+The references come from Blender (`scripts/drape/workflow.py`) and are never regenerated from the web solver.
 
 Visual and interaction items (view modes, orbit and pinch, responsive under 900px, URL state
 round-trip, depth map upload) are not covered by any suite. If a change touches them, verify
