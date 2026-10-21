@@ -1,16 +1,19 @@
 /**
- * Fast checks of the DRAPE pipeline (src/drape-sim): figure container, tilt geometry, frontmost
- * extraction, cloth smoothing, relief mapping, and a short cloth run. The full parity run against the
+ * Fast checks of the DRAPE pipeline (src/drape-sim): figure container, pose geometry, frontmost
+ * extraction, cloth smoothing, relief mapping, a short cloth run, the field forces, the nearest-surface
+ * field, fabric thickness, and the controls (src/drape-controls.ts). The full parity run against the
  * Blender proof is cli/drape-parity.spec.ts.
  * Run: npm run test:drape  (or: npx tsx cli/drape.spec.ts)
  */
 import { readFileSync } from 'node:fs';
 import initJolt from 'jolt-physics/wasm-compat';
-import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
-import { bareDepth, PANEL_WINDOW, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
-import { simulateCloth, SILK } from '../src/drape-sim/cloth';
+import { bareDepth, offsetTowardViewer, PANEL_WINDOW, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
+import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
+import { buildNearestField, closestOnTriangle, nearestPoint } from '../src/drape-sim/nearest';
+import { DRAPE_PRESETS, drapeCarveFor, drapeJob, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -181,6 +184,127 @@ async function main(): Promise<void> {
     assert(finite, 'all cloth positions stay finite');
     assert(Math.abs(res.positions[centre + 2] - (1 + SILK.liftZ)) < 1e-6, 'the pinned crown vertex stays where it was attached');
     assert(minZ < 1 + SILK.liftZ - 0.2, 'the free cloth falls under gravity', `lowest z ${minZ.toFixed(3)} after 12 frames, ${res.seconds.toFixed(1)} s`);
+  }
+
+  // ---------- D8 pose ----------
+  process.stdout.write('D8 figure pose\n');
+  {
+    const t = tiltFigure(demo, 25), p = poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0 });
+    assert(t.every((v, i) => v === p[i]), 'a pose with no turn or lean is the tilt alone, bit for bit');
+    // The nose is the frontmost point (most -Y) of the head; turning the face toward the viewer's right
+    // moves it toward +X, leaning moves the crown's neighbourhood toward +X.
+    // The face is the frontmost (most -Y) part of the head (the top 1.2 units below the crown).
+    const face = (q: Float32Array): number => { let k = -1; for (let i = 1; i < q.length; i += 3) if (q[i + 1] > -0.2 && (k < 0 || q[i] < q[k * 3 + 1])) k = (i - 1) / 3; return q[k * 3]; };
+    const right = poseFigure(demo, { tiltDeg: 25, turnDeg: 40, leanDeg: 0 }), left = poseFigure(demo, { tiltDeg: 25, turnDeg: -40, leanDeg: 0 });
+    assert(face(right) > face(t) + 0.2 && face(left) < face(t) - 0.2, 'turning +40 deg moves the face toward the viewer\'s right (+X), -40 toward the left',
+      `face x ${face(left).toFixed(2)} / ${face(t).toFixed(2)} / ${face(right).toFixed(2)}`);
+    const lean = poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 20 });
+    let ct = 0, cl = 0, n = 0;
+    for (let i = 0; i < t.length; i += 3) if (t[i + 2] < -2) { ct += t[i]; cl += lean[i]; n++; }
+    assert(cl / n < ct / n - 0.3, 'leaning the crown right swings the body below it to the left (-X)', `body x ${(ct / n).toFixed(2)} -> ${(cl / n).toFixed(2)}`);
+    let top = -Infinity; for (let i = 2; i < lean.length; i += 3) top = Math.max(top, lean[i]);
+    assert(Math.abs(top - 1) < 1e-6, 'a posed figure keeps its crown at z = 1');
+  }
+
+  // ---------- D9 force timing ----------
+  process.stdout.write('D9 force timing\n');
+  {
+    // Blender 5.2.2 evaluates keys (45, 0) and (100, -1000) with default interpolation to these values.
+    const blender: [number, number][] = [[50, 23.291], [55, 87.153], [60, 182.569], [72.5, 500], [85, 817.431], [95, 976.709]];
+    const worst = Math.max(...blender.map(([f, v]) => Math.abs(1000 * ramp(f, 45, 100) - v)));
+    assert(worst < 0.01, 'the attraction ramp matches Blender\'s keyframe curve', `max diff ${worst.toFixed(4)} of 1000`);
+    assert(ramp(44, 45, 100) === 0 && ramp(100, 45, 100) === 1 && ramp(150, 45, 100) === 1 && ramp(7, 7, 7) === 1, 'zero before the start, full from the full frame');
+  }
+
+  // ---------- D10 nearest surface field ----------
+  process.stdout.write('D10 nearest-surface field\n');
+  {
+    const pos = tiltFigure(demo, 25);
+    const f = buildNearestField(pos, demo.triangles, { x0: -3, x1: 3, y0: -3, y1: 3, z0: -3, z1: 1.2 }, 0.04, 0.8);
+    const q = new Float64Array(3), c = new Float64Array(3);
+    let worst = 0, checked = 0, seed = 12345;
+    const rnd = (): number => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    for (let n = 0; n < 60; n++) {
+      const px = -1.5 + 3 * rnd(), py = -1.5 + 3 * rnd(), pz = -1.5 + 2.5 * rnd();
+      let best = Infinity;
+      for (let t = 0; t < demo.triangles.length; t += 3) {
+        closestOnTriangle(px, py, pz, pos, demo.triangles[t] * 3, demo.triangles[t + 1] * 3, demo.triangles[t + 2] * 3, c);
+        best = Math.min(best, Math.hypot(c[0] - px, c[1] - py, c[2] - pz));
+      }
+      if (best > 0.8) continue;
+      const d = nearestPoint(f, px, py, pz, q);
+      worst = Math.max(worst, d - best); checked++;
+    }
+    assert(checked > 20 && worst >= -1e-9 && worst < 0.01, 'within reach, the field\'s distance is the brute-force nearest within 0.01 units (a quarter voxel)',
+      `${checked} points, worst excess ${worst.toFixed(5)}`);
+  }
+
+  // ---------- D11 field forces act as Blender's ----------
+  process.stdout.write('D11 field forces\n');
+  {
+    // A sheet far above a small far-away figure: no contact. A force of exactly 1 g upward balances
+    // gravity on the interior (the edge vertices carry less area, so they sag and pull it down a
+    // little); twice that lifts it. The same force from the attraction, toward a plane above, holds too.
+    const J = await initJolt();
+    const hold = 9.81 * SILK.vertexMass / (EFFECTOR_ACCEL * 0.05 * 0.05);
+    const far = new Float32Array([-0.1, 0, -40, 0.1, 0, -40, 0, 0.1, -40]), farTris = new Uint32Array([0, 1, 2]);
+    const small: ClothParams = { ...SILK, sheetX: 1, sheetY: 1, cellsX: 20, cellsY: 20, frames: 12 };
+    const probe = ((10 + 5) * 21 + 10 + 5) * 3 + 2;                     // an interior vertex off the pins
+    const still = simulateCloth(J, far, farTris, { ...small, windMode: 1, windStrength: hold, windElevation: -90, windX: 0, windZ: 1, windRadius: 50, windStart: 0, windFull: 0 });
+    const fall = simulateCloth(J, far, farTris, small);
+    const z0 = 1 + SILK.liftZ;
+    const rise = simulateCloth(J, far, farTris, { ...small, windMode: 1, windStrength: 2 * hold, windElevation: -90, windX: 0, windZ: 1, windRadius: 50, windStart: 0, windFull: 0 });
+    const drop = (r: { positions: Float64Array }): number => z0 - r.positions[probe];
+    assert(drop(fall) > 0.1 && Math.abs(drop(still)) < 0.2 * drop(fall) && drop(rise) < 0,
+      'wind of the strength computed for 1 g upward balances gravity, twice that lifts the cloth',
+      `drop: none ${drop(fall).toFixed(3)}, 1 g ${drop(still).toFixed(3)}, 2 g ${drop(rise).toFixed(3)} units`);
+    const plane = new Float32Array([-5, -5, 1.4, 5, -5, 1.4, 0, 5, 1.4]);
+    const lifted = simulateCloth(J, plane, farTris, { ...small, attractStrength: hold, attractReach: 0.8, attractStart: 0, attractFull: 0 });
+    assert(Math.abs(drop(lifted) - drop(still)) < 0.01, 'attraction toward a surface above, of the same strength, balances it the same way',
+      `drop ${drop(lifted).toFixed(4)} units`);
+    const odd = { ...small, cellsX: 20, cellsY: 20, frontShare: 0.7 };
+    const oy = sheetOffsetY(odd);
+    assert(Math.abs(oy + 0.2) < 1e-12, 'a 70% front share moves the sheet 0.2 of its length toward the viewer, on the cell grid', `offset ${oy}`);
+  }
+
+  // ---------- D12 fabric thickness ----------
+  process.stdout.write('D12 fabric thickness\n');
+  {
+    // A flat sheet in the x-z plane, wound either way: the offset always moves it toward the viewer (-Y).
+    const grid = (flip: boolean): Float64Array => {
+      const g = new Float64Array(5 * 5 * 3);
+      for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) { const k = (j * 5 + i) * 3; g[k] = flip ? -i : i; g[k + 1] = 0; g[k + 2] = j; }
+      return g;
+    };
+    const ok = [false, true].every(flip => offsetTowardViewer(grid(flip), 5, 5, 0.01).every((v, k) => k % 3 === 1 ? Math.abs(v + 0.01) < 1e-12 : v === grid(flip)[k]));
+    assert(ok, 'fabric thickness offsets the cloth surface toward the viewer by exactly its thickness, whichever way the sheet is wound');
+  }
+
+  // ---------- D13 controls ----------
+  process.stdout.write('D13 controls\n');
+  {
+    const g = drapeJob(DRAPE_PRESETS.gathered.settings, 'off'), sk = drapeJob(DRAPE_PRESETS.silk.settings, 'off');
+    // Wind settings are inert while the wind mode is off (the sliders keep a strength ready); the pin
+    // radius is rounded to 0.01 cm, which pins the same vertices (checked below).
+    const differs = (a: ClothParams, b: ClothParams): string[] => (Object.keys(b) as (keyof ClothParams)[])
+      .filter(k => k !== 'pinRadius' && !k.startsWith('wind') && Math.abs(a[k] - b[k]) > 1e-12 * Math.max(1, Math.abs(b[k])));
+    assert(differs(g.params, SILK_GATHERED).length === 0, 'the Gathered preset\'s controls give the solver the gathered parameters', differs(g.params, SILK_GATHERED).join(',') || 'all equal');
+    assert(differs(sk.params, SILK).length === 0, 'the Silk preset\'s controls give the solver the proof\'s parameters', differs(sk.params, SILK).join(',') || 'all equal');
+    const pins = (p: ClothParams): number => { let n = 0; const dx = p.sheetX / p.cellsX; for (let i = 0; i <= p.cellsX; i++) for (let j = 0; j <= p.cellsY; j++) if (Math.abs(-p.sheetX / 2 + i * dx) < p.pinRadius && Math.abs(sheetOffsetY(p) - p.sheetY / 2 + j * dx) < p.pinRadius) n++; return n; };
+    const qw = drapeJob(DRAPE_PRESETS.quartering.settings, DRAPE_PRESETS.quartering.windMode).params;
+    assert(qw.windMode === 1 && qw.windStrength === 250 && qw.windAzimuth === 45 && Math.abs(qw.windX - SILK.windX) < 0.004
+      && Math.abs(qw.windZ - SILK.windZ) < 0.004 && Math.abs(qw.windRadius - SILK.windRadius) < 0.004 && qw.windStart === 100 && qw.windFull === 115,
+      'the Quartering wind preset blows 250 from the front-right onto the left cheek, frames 100 to 115');
+    assert(pins(g.params) === 9, 'the default crown attachment holds the proof\'s nine vertices', `${pins(g.params)} pinned`);
+    const fine = drapeJob({ ...DRAPE_PRESETS.gathered.settings, drapeClothRes: 200 }, 'off').params;
+    const mass = (p: ClothParams): number => p.vertexMass / ((p.sheetX / p.cellsX) * (p.sheetY / p.cellsY));
+    assert(fine.cellsX === 200 && fine.cellsY === 320 && Math.abs(mass(fine) - mass(SILK)) < 1e-9, 'a finer cloth keeps its mass per area', `${fine.cellsX} x ${fine.cellsY}`);
+    const IN = 0.0254, std = new Float32Array([RELIEF_BACKING_IN * IN, (RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN]);
+    const c4 = drapeCarveFor(4, 3), out = remapToCarve(std, c4);
+    assert(Math.abs(out[0] / IN - 1) < 1e-6 && Math.abs(out[1] / IN - 4) < 1e-6, 'a 4 in board with 3 in of relief spans 1 to 4 in', `${(out[0] / IN).toFixed(4)} to ${(out[1] / IN).toFixed(4)} in`);
+    const thin = drapeCarveFor(1, 3);
+    assert(Math.abs(thin.backingIn - MIN_DRAPE_BACKING_IN) < 1e-12 && thin.stockIn === 1, 'relief depth is capped to keep the minimum backing', JSON.stringify(thin));
+    assert(drapeCarveFor(9, 0.5).stockIn === 4 && drapeCarveFor(0.1, 0.05).stockIn === 0.25, 'material thickness stays within 0.25 to 4 in');
   }
 
   process.stdout.write(failures ? `\n${failures} FAILURE(S)\n` : '\nALL OK\n');

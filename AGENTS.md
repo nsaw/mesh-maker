@@ -54,9 +54,12 @@ meshcraft/
 │   │                          #   weightedSmooth, triangle split + watertight enclosure emitters
 │   ├── drape-ui.ts            # Drape tab: figure (bundled bust or upload), bare preview, Worker
 │   │                          #   runs, result as an in-memory relief master (activeMaster())
+│   ├── drape-controls.ts      # Drape controls table, presets (gathered, silk, quartering wind),
+│   │                          #   controls -> solver parameters, carve (thickness, depth) remap
 │   ├── drape-sim/             # Silk drape over a 3D figure (pure, browser Worker + Node):
-│   │   ├── figure.ts          #   .mcfig container, tilt, uploaded-mesh placement
-│   │   ├── cloth.ts           #   Jolt Physics soft-body cloth; SILK = calibrated Blender-proof values
+│   │   ├── figure.ts          #   .mcfig container, pose (tilt, turn, lean), uploaded-mesh placement
+│   │   ├── cloth.ts           #   Jolt Physics soft-body cloth; SILK, SILK_GATHERED; attraction, wind
+│   │   ├── nearest.ts         #   nearest point on the figure's surface (voxel field, for attraction)
 │   │   ├── raster.ts          #   frontmost depth along +Y (the relief's front view)
 │   │   ├── subdiv.ts          #   Catmull-Clark smoothing of the solved cloth grid
 │   │   ├── pipeline.ts        #   figure -> drape -> 12 x 16 in relief heights
@@ -93,10 +96,11 @@ meshcraft/
 │   ├── voronoi-relief.spec.ts # npm run test:relief
 │   ├── grasshopper-parity.spec.ts # npm run test:gh-parity
 │   ├── depthmap.spec.ts       # npm run test:depthmap (luma, orientation, cutoff, share links)
-│   ├── drape.spec.ts          # npm run test:drape (fast: figure, tilt, extraction, short cloth run)
-│   ├── drape-parity.spec.ts   # npm run test:drape-parity (~1 min: web drape vs the Blender proof)
+│   ├── drape.spec.ts          # npm run test:drape (fast: figure, pose, extraction, forces, controls)
+│   ├── drape-parity.spec.ts   # npm run test:drape-parity (~2.5 min: web silk and gathered vs Blender)
 │   ├── drape-run.ts           # npm run drape-run (one web drape in Node, arrays for comparison)
-│   ├── fixtures/drape-silk-tilt25/ # Blender proof reference (every 4th node) + provenance
+│   ├── fixtures/drape-silk-tilt25/   # Blender proof reference (every 4th node) + provenance
+│   ├── fixtures/drape-silk-gathered/ # Blender gathered-study reference + provenance
 │   ├── sbp-cut.spec.ts        # npm run test:cut (compensation oracle + emitted-SBP cut replay)
 │   ├── cut-sim.ts             # Independent swept-cutter simulation of an SBP file
 │   ├── relief-master.spec.ts  # npm run test:relief-master (data contract, export fidelity)
@@ -119,7 +123,7 @@ meshcraft/
 - **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar.
 - **Watertight export**: Side walls + a bottom fan from one centre vertex (closed two-manifold, Euler characteristic 2) for CNC-ready meshes. Enforces minimum 0.01" material thickness to prevent degenerate triangles.
 - **Relief master** (`src/relief-master.ts`, `.mcrelief`): a finished relief's float heights with dimensions, units, row order, backing, stock, mask, fixed triangulation and a SHA-256, imported without the image path's 8-bit read, normalization, cutoff or smoothing. The viewport shows a preview resample; every export and toolpath reads the master at full resolution. `scripts/relief/npy_to_mcrelief.py` packages one; `npm run relief-roundtrip` plus `scripts/relief/verify_export.py` (Blender) prove an export reproduces it.
-- **Drape** (`src/drape-sim/`, `src/drape-ui.ts`): a silk veil simulated over a complete 3D figure with Jolt Physics in a Worker, then seen from the front as a 12 x 16 in relief (0.125 in backing + 0.625 in relief) that becomes the active relief master. It reproduces the Blender proof in `scripts/drape/` (the local workflow: `python3 scripts/drape/workflow.py FIGURE --preset silk-tilt25|silk-tilt35|silk-tilt25-cling --out DIR`). Figures are `.mcfig` (written by `scripts/drape/export_figure.py`) or STL/OBJ/glTF placed with units, up axis and turn. Parity with Blender is gated by `npm run test:drape-parity`; the browser and Node runs produce identical heights.
+- **Drape** (`src/drape-sim/`, `src/drape-ui.ts`): a silk veil simulated over a complete 3D figure with Jolt Physics in a Worker, then seen from the front as a 12 x 16 in relief (Material Thickness up to 4 in, Relief Depth above the backing) that becomes the active relief master. It reproduces the Blender drapes in `scripts/drape/` (the local workflow: `python3 scripts/drape/workflow.py FIGURE --preset silk-gathered|silk-tilt25|silk-tilt35|silk-tilt25-cling --out DIR`); the gathered silk (surface attraction) is the default. Every setting has a control (`src/drape-controls.ts`). Figures are `.mcfig` (written by `scripts/drape/export_figure.py`) or STL/OBJ/glTF placed with units, up axis and turn. Parity with Blender is gated by `npm run test:drape-parity`; the browser and Node runs produce identical heights.
 - **Tool compensation** (`src/sbp/compensate.ts`): tip = max over the cutter footprint of (surface - cutter profile), side angles from the tool axis. Finishing drops the cutter at every emitted point onto the exported triangles (vertex, edge and facet contact) instead of interpolating node tips; roughing carries segment and between-node margins. `npm run test:cut` replays the emitted SBP text through `cli/cut-sim.ts`, which shares no code with `src/sbp/`, on a grid finer than the target, against the triangulated surface.
 - **ShopBot defaults**: 36"x24" max dimensions, 6" Z limit — hardcoded for the ShopBot Desktop Max ATC.
 

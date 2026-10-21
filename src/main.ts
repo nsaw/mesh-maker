@@ -4,6 +4,7 @@ import { setupTabs, setupToolbar, setupResize, updateExportControls } from './to
 import { setupInteraction } from './interaction';
 import { setupSponsorModal } from './sponsor';
 import { generateMesh } from './mesh';
+import { setCameraFromState } from './render';
 import { ensureDrapeFigure } from './drape-ui';
 
 function preloadDemoDepthMap(): void {
@@ -60,7 +61,8 @@ function init(): void {
   setupSponsorModal();
   generateMesh();
   preloadDemoDepthMap();
-  if (STATE.mode === 'drape') void ensureDrapeFigure();
+  // A page opened on DRAPE: load the figure and point the camera straight at the carve.
+  if (STATE.mode === 'drape') { void ensureDrapeFigure(); buildSidebar(); setCameraFromState(); }
 }
 
 document.addEventListener('DOMContentLoaded', init);

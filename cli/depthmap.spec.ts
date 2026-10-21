@@ -118,10 +118,25 @@ process.stdout.write('T15 share links\n');
   const retired = ['blend', 'drapeFoldScale', 'drapeFoldDepth', 'drapeFoldWarp', 'drapeFoldSpacing', 'drapeFoldAmp', 'drapeFoldLength',
     'drapeHang', 'drapeGravityAngle', 'drapeThickness', 'drapeConform'].filter(k => k in v12 || k in v13);
   assert(retired.length === 0, 'retired procedural-drape keys are dropped from v12 and v13 links', retired.join(',') || 'none survived');
-  const crafted = deserializeConfig(enc({ _v: 14, drapeTilt: 1e9, dmBackgroundCutoff: 5, viewMaterial: 'chrome', mode: 'evil', viewMode: 'x' }));
-  assert(crafted.drapeTilt === 45 && crafted.dmBackgroundCutoff === 0.9, 'crafted numeric values clamp to slider ranges', JSON.stringify(crafted));
-  assert(deserializeConfig(enc({ _v: 14, drapeTilt: -3 })).drapeTilt === 0, 'a negative tilt clamps to 0');
-  assert(!('drapeTilt' in deserializeConfig(enc({ _v: 14, drapeTilt: 'NaN' }))), 'a non-numeric tilt is dropped');
+  const crafted = deserializeConfig(enc({ _v: 15, drapeTilt: 1e9, dmBackgroundCutoff: 5, viewMaterial: 'chrome', mode: 'evil', viewMode: 'x' }));
+  assert(crafted.drapeTilt === 60 && crafted.dmBackgroundCutoff === 0.9, 'crafted numeric values clamp to slider ranges', JSON.stringify(crafted));
+  assert(deserializeConfig(enc({ _v: 15, drapeTilt: -300 })).drapeTilt === -20, 'a tilt below the slider clamps to -20');
+  assert(!('drapeTilt' in deserializeConfig(enc({ _v: 15, drapeTilt: 'NaN' }))), 'a non-numeric tilt is dropped');
+  // Every DRAPE control is clamped to its slider: resolution and frames set the solver's work.
+  const heavy = deserializeConfig(enc({ _v: 15, mode: 'drape', drapeClothRes: 1e6, drapeFrames: 1e6, drapeAttract: -5, drapeStock: 40,
+    drapeReliefDepth: 'x', drapeWindMode: 'tornado' }));
+  assert(heavy.drapeClothRes === 200 && heavy.drapeFrames === 240 && heavy.drapeAttract === 0 && heavy.drapeStock === 4
+    && !('drapeReliefDepth' in heavy) && !('drapeWindMode' in heavy), 'crafted DRAPE controls clamp to their sliders or drop', JSON.stringify(heavy));
+  // v15 made the gathered silk the default: a v14 drape link was the plain silk proof and stays it.
+  const v14 = deserializeConfig(enc({ _v: 14, mode: 'drape', drapeTilt: 30 }));
+  assert(v14.drapeTilt === 30 && v14.drapeAttract === 0 && v14.drapeFrames === 100, 'a v14 drape link opens as the silk proof at its tilt',
+    `tilt ${String(v14.drapeTilt)}, attraction ${String(v14.drapeAttract)}, frames ${String(v14.drapeFrames)}`);
+  assert(!('drapeAttract' in deserializeConfig(enc({ _v: 14, mode: 'noise', frequency: 0.2 }))), 'a v14 noise link gets no drape keys');
+  Object.assign(STATE, { mode: 'drape', drapeWindMode: 'wind', drapeClothRes: 140, drapeStock: 2.5, drapeReliefDepth: 1.75, drapeAttract: 1500 });
+  const dl = deserializeConfig('?c=' + serializeConfig());
+  assert(dl.drapeWindMode === 'wind' && dl.drapeClothRes === 140 && dl.drapeStock === 2.5 && dl.drapeReliefDepth === 1.75 && dl.drapeAttract === 1500,
+    'DRAPE controls round-trip through a share link');
+  Object.assign(STATE, saved);
   assert(!('viewMaterial' in crafted) && !('mode' in crafted) && !('viewMode' in crafted), 'unknown enum values fall back to defaults');
   // GPT review: ["blend"] stringifies to "blend" and passed a String()-coerced check, then failed
   // every strict comparison downstream. Every string-enum key must reject non-strings.

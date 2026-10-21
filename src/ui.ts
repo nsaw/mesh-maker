@@ -1,5 +1,6 @@
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, noiseDims, reliefMasterActive } from './state';
-import { cancelDrape, downloadDrapeRelief, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged, restoreSizeAfterDrape } from './drape-ui';
+import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, drapeControlEffect, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
@@ -42,7 +43,7 @@ export function buildSidebar(): void {
   sections.push(
     buildSmoothingSection(),
     buildDepthMapSection(),
-    buildDrapeSection(),
+    ...buildDrapeSections(),
     buildViewControlsSection(),
     buildSBPSection(),
   );
@@ -210,7 +211,8 @@ function buildMeshDimensionsSection(): HTMLElement {
   return buildSection('Mesh Dimensions', [
     inlineRow,
     slider('resolution', 'Grid Resolution', 16, 1024, 4),
-    slider('baseThickness', 'Material Thickness (in)', 0.25, 6, 0.05),
+    // DRAPE cuts its relief into at most 4 in of material (src/drape-controls.ts).
+    slider('baseThickness', 'Material Thickness (in)', 0.25, STATE.mode === 'drape' ? DRAPE_STOCK_RANGE[1] : 6, 0.05),
     note,
   ]);
 }
@@ -485,8 +487,9 @@ function buildDepthMapSection(): HTMLElement {
 const figurePlacement = { metresPerUnit: 0.001, up: 'z' as 'z' | 'y', turnDeg: 0 };
 
 /** DRAPE: a silk veil simulated over a 3D figure (src/drape-ui.ts, src/drape-sim), the web
- *  version of the Blender proof in scripts/drape. */
-function buildDrapeSection(): HTMLElement {
+ *  version of the Blender drapes in scripts/drape. One section runs it; the others hold its controls
+ *  (src/drape-controls.ts), grouped. */
+function buildDrapeSections(): HTMLElement[] {
   const zone = createElement('div', `upload-zone${STATE.drapeFigureName ? ' has-image' : ''}`);
   zone.id = 'drapeZone';
   zone.tabIndex = 0;
@@ -563,15 +566,57 @@ function buildDrapeSection(): HTMLElement {
   status.style.fontSize = '10px';
   status.style.color = 'var(--text2)';
   const about = createElement('div', undefined,
-    'Silk cloth hung from the crown under gravity, simulated in this tab (Jolt Physics). The relief is the front view, 12 x 16 in, 0.125 in backing + 0.625 in relief.');
+    'Silk cloth hung from the crown under gravity, simulated in this tab (Jolt Physics). The relief is the front view, 12 x 16 in, cut to Material Thickness and Relief Depth.');
   about.style.fontSize = '10px';
   about.style.color = 'var(--text3)';
 
-  return buildSection('Drape', [
-    zone, placeRow, placeNote,
-    slider('drapeTilt', 'Face Tilt (deg, face tipped back)', 0, 45, 1),
-    btnRow, dl, status, about,
-  ], false, 'drape-section');
+  // Presets: one click sets every cloth, force and pose control.
+  const presetRow = createElement('div', 'btn-row');
+  presetRow.style.margin = '6px 0';
+  for (const [id, preset] of Object.entries(DRAPE_PRESETS)) {
+    const b = createElement('button', 'preset-pill', preset.label) as HTMLButtonElement;
+    b.type = 'button';
+    b.title = preset.about;
+    b.dataset.drapePreset = id;
+    b.addEventListener('click', () => {
+      Object.assign(STATE, preset.settings, { drapeWindMode: preset.windMode });
+      buildSidebar();
+      onDrapePoseChanged();
+      onDrapeClothChanged();
+      onDrapeCarveChanged();
+      showToast(`${preset.label}: ${preset.about} Press Generate Drape.`, 4000);
+    });
+    presetRow.append(b);
+  }
+
+  const group = (g: DrapeGroup): HTMLDivElement[] => DRAPE_CONTROLS.filter(c => c.group === g).map(c => {
+    // Relief Depth can use all but the minimum backing of the material.
+    const max = c.key === 'drapeReliefDepth' ? Math.max(c.min, drapeCarve().stockIn - MIN_DRAPE_BACKING_IN) : c.max;
+    return slider(c.key, c.label, c.min, max, c.step);
+  });
+  const note = (text: string): HTMLDivElement => {
+    const n = createElement('div', undefined, text);
+    n.style.fontSize = '10px'; n.style.color = 'var(--text3)'; n.style.margin = '4px 0';
+    return n;
+  };
+  const windMode = enumSelect('drapeWindMode', 'Mode', [['off', 'Off'], ['wind', 'Wind (fixed direction)'], ['pressure', 'Pressure (onto the cloth)']]);
+
+  return [
+    buildSection('Drape', [zone, placeRow, placeNote, presetRow, btnRow, dl, status, about], false, 'drape-section'),
+    buildSection('Drape: Figure', [...group('figure'), note('Changing the pose shows the bare figure again.')], false, 'drape-section'),
+    buildSection('Drape: Cloth', [...group('cloth'),
+      note('Sizes are life size (the bust is about 2.4 head-units of 12.5 cm). Fabric Thickness thickens the carved veil toward you; the solve treats the cloth as a sheet. Higher resolution takes longer.')],
+    false, 'drape-section'),
+    buildSection('Drape: Attraction', [...group('attraction'),
+      note('Pulls the cloth toward the nearest point of the figure, as Blender\'s surface force field does: strength 1000 is about 1.4 g. It ramps in smoothly between the two frames.')],
+    true, 'drape-section'),
+    buildSection('Drape: Wind / Pressure', [windMode, ...group('wind'),
+      note('Acts on the cloth inside the target circle of the front view. Wind pushes in one direction; pressure pushes the cloth onto the figure.')],
+    true, 'drape-section'),
+    buildSection('Drape: Carve', [...group('carve'),
+      note('Material Thickness is under Mesh Dimensions (up to 4 in). The relief is remapped at once; no new simulation.')],
+    false, 'drape-section'),
+  ];
 }
 
 /** What a loaded relief master is, so the numbers can be checked against its source. */
@@ -608,15 +653,40 @@ function buildViewControlsSection(): HTMLElement {
   ], false);
 }
 
+/** Relief Depth can use all but MIN_DRAPE_BACKING_IN of the drape's material: cap its slider (and the
+ *  value, if the material got thinner). */
+function syncDrapeDepthMax(): void {
+  const max = Math.max(0.05, STATE.drapeStock - MIN_DRAPE_BACKING_IN);
+  const sl = document.querySelector<HTMLInputElement>('input[data-key="drapeReliefDepth"]');
+  if (sl) sl.max = String(max);
+  if (STATE.drapeReliefDepth > max) {
+    STATE.drapeReliefDepth = Math.round(max * 1000) / 1000;
+    if (sl) sl.value = String(STATE.drapeReliefDepth);
+    const val = document.getElementById('val_drapeReliefDepth');
+    if (val) val.textContent = formatSliderValue(STATE.drapeReliefDepth, 0.005);
+  }
+}
+
 function wireControls(): void {
   // Sliders
   document.querySelectorAll<HTMLInputElement>('input[type="range"][data-key]').forEach(sl => {
     const key = sl.dataset.key!;
     sl.addEventListener('input', () => {
+      // DRAPE owns its material thickness (drapeStock); baseThickness follows it there.
+      if (STATE.mode === 'drape' && key === 'baseThickness') {
+        const v = Math.min(DRAPE_STOCK_RANGE[1], Math.max(DRAPE_STOCK_RANGE[0], parseFloat(sl.value)));
+        STATE.drapeStock = v; STATE.baseThickness = v;
+        const valEl = document.getElementById('val_baseThickness');
+        if (valEl) valEl.textContent = formatSliderValue(v, parseFloat(sl.step));
+        syncDrapeDepthMax();
+        syncSbpSafeZ();
+        onDrapeCarveChanged();
+        return;
+      }
       if (reliefMasterActive() && RELIEF_LOCKED_KEYS.has(key)) {
         sl.value = String(STATE[key as keyof typeof STATE]);
         showToast(STATE.mode === 'drape'
-          ? 'The drape relief has a fixed 12 x 16 in size and 0.75 in stock.'
+          ? 'The drape relief is 12 x 16 in. Set its material thickness here and its depth under Drape: Carve.'
           : 'A relief master fixes size, stock and heights. Load an image to change them.', 3000);
         return;
       }
@@ -672,8 +742,12 @@ function wireControls(): void {
         syncSbpSafeZ();
       }
 
-      // The tilt re-places the figure, not the mesh settings: drape-ui rebuilds the bare relief.
-      if (key === 'drapeTilt') { onDrapeTiltChanged(); return; }
+      // DRAPE controls drive the drape, not the mesh settings: the pose rebuilds the bare figure, the
+      // carve remaps the relief, the rest waits for Generate Drape.
+      const effect = drapeControlEffect(key);
+      if (effect === 'pose') { onDrapePoseChanged(); return; }
+      if (effect === 'carve') { onDrapeCarveChanged(); return; }
+      if (effect === 'cloth') { onDrapeClothChanged(); return; }
 
       // Clear active preset/profile on manual change
       if (STATE.activePreset) {
@@ -719,6 +793,7 @@ function wireControls(): void {
         applySurfaceMaterial();
         return;
       }
+      if (key === 'drapeWindMode') { onDrapeClothChanged(); return; }
       // Clear active preset/profile on manual change — same as slider behavior.
       if (STATE.activePreset) {
         STATE.activePreset = null;

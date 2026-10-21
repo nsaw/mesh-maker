@@ -1,0 +1,18 @@
+{
+ "description": "Blender 5.2.2 gathered silk drape over the Venus de Milo bust, tilt 25 deg, frame 120 of a 150-frame bake: the preferred result of the 2026-10-21 study (scripts/drape preset silk-gathered), as the web drape parity reference",
+ "produced_by": "python3 scripts/drape/workflow.py venus-de-milo-smk.glb --preset silk-gathered --azimuth -45 --scale 8 --pose scripts/drape/venus-de-milo-pose.json (four threads)",
+ "figure_source_sha256_hex_upper": "54662281AD0314BDFE5430B8F756E060B0BCFC6254C8F12094B0E905E3CA2EEA",
+ "blender": "5.2.2 LTS",
+ "silk_preset_sha256_hex_upper": "8A78BF288DC4D1EA4949CB4162D66C5608468C0D4573D8A5ED613F63CA487080",
+ "max_node_motion_units_per_frame": { "frame_120": 0.1491, "frame_150": 0.1845 },
+ "window": { "x": [-2.1, 2.1], "z": [-4.4, 1.2], "cols": 1201, "rows": 1601, "row_order": "top-down", "col_order": "camera-right" },
+ "stride": 4,
+ "shape": [401, 301],
+ "units": "scene units (1/8 m), depth toward the camera, NaN = no hit, rows top-down",
+ "blender_self_variation": {
+  "note": "same drape, Blender vs Blender, at stride 4 with the parity spec's measures (.claude-cache/drape-gather/compare.py); the veil is still moving at frame 120",
+  "frame120_vs_frame150": { "veil_iou": 0.6745, "area_ratio": 1.473, "depth_bias_mm": 1.65, "depth_diff_mm_p50": 4.22, "fold_wavelength_mm": [13.0, 12.1] },
+  "frame120_vs_frame110": { "veil_iou": 0.9691, "area_ratio": 0.991, "depth_bias_mm": -0.07, "depth_diff_mm_p50": 1.23 },
+  "threads_4_vs_8": { "veil_iou": 0.9427, "area_ratio": 1.023, "depth_bias_mm": -0.11, "depth_diff_mm_p50": 1.59 }
+ }
+}

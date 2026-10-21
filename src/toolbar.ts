@@ -5,7 +5,7 @@ import { doExport } from './export';
 import { applyPendingFit, applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
-import { ensureDrapeFigure, restoreSizeAfterDrape } from './drape-ui';
+import { ensureDrapeFigure, restoreSizeAfterDrape, setDrapeFrontView } from './drape-ui';
 
 export function setupTabs(): void {
   // Mode tabs
@@ -45,8 +45,9 @@ export function setupTabs(): void {
         buildSidebar();
       }
 
-      // DRAPE works on a 3D figure, not an image: load the bundled bust (once) and show it bare.
-      if (STATE.mode === 'drape' && prevMode !== 'drape') void ensureDrapeFigure(prevMode);
+      // DRAPE works on a 3D figure, not an image: load the bundled bust (once) and show it bare, with the
+      // camera straight at the carve and DRAPE's own material thickness range.
+      if (STATE.mode === 'drape' && prevMode !== 'drape') { void ensureDrapeFigure(prevMode); buildSidebar(); }
 
       // Auto-apply demo depth map if switching to depthmap with no user image
       if (STATE.mode === 'depthmap' && !STATE.reliefMaster && !STATE.depthMap && demoDepthMap) {
@@ -118,7 +119,8 @@ export function setupToolbar(): void {
   document.getElementById('btnRandomSeed')!.addEventListener('click', randomSeed);
   document.getElementById('btnZoomExtents')!.addEventListener('click', zoomExtents);
   document.getElementById('btnResetCamera')!.addEventListener('click', () => {
-    STATE.orbit = 55; STATE.tilt = -25; STATE.roll = 0; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0;
+    if (STATE.mode === 'drape') setDrapeFrontView();
+    else { STATE.orbit = 55; STATE.tilt = -25; STATE.roll = 0; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0; }
     buildSidebar();
     setCameraFromState();
   });
