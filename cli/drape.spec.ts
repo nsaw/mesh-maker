@@ -13,6 +13,10 @@ import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
 import { bareDepth, offsetTowardViewer, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
+import { STATE } from '../src/state';
+import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
+import { drapeCarvePending, getExportSurface } from '../src/export-surface';
+import { buildConfig, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MAX_CLOTH_QUADS, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
 let failures = 0;
@@ -345,6 +349,42 @@ async function main(): Promise<void> {
     const thin = drapeCarveFor(1, 3);
     assert(Math.abs(thin.backingIn - MIN_DRAPE_BACKING_IN) < 1e-12 && thin.stockIn === 1, 'relief depth is capped to keep the minimum backing', JSON.stringify(thin));
     assert(drapeCarveFor(9, 0.5).stockIn === 4 && drapeCarveFor(0.1, 0.05).stockIn === 0.25, 'material thickness stays within 0.25 to 4 in');
+  }
+
+  // ---------- D14 export safety on the Drape tab ----------
+  process.stdout.write('D14 export safety\n');
+  {
+    // syncSbpSafeZ updates the sidebar if there is one; in Node there is none.
+    (globalThis as unknown as { document: unknown }).document = { getElementById: () => null, querySelector: () => null };
+    const IN = 0.0254;
+    const master = async (stockIn: number, backingIn: number) => parseReliefMaster(await encodeReliefMaster({
+      format: 'meshcraft-relief', version: 1, units: 'm', cols: 3, rows: 3, width: 12 * IN, height: 16 * IN, dtype: 'float32',
+      rowOrder: 'top-down', heightOrigin: 'panel-back', backing: backingIn * IN, stock: stockIn * IN, triangulation: 'tr-bl', mask: false, name: 'probe',
+    }, new Float32Array(9).fill(backingIn * IN).map((v, k) => (k === 4 ? stockIn * IN : v))));
+    const keep = { ...STATE };
+    const thin = await master(0.75, 0.125), thick = await master(2, 0.75);
+    // Material Thickness moved to 2 in; the master is still the 0.75 in one being remapped.
+    Object.assign(STATE, { mode: 'drape', drapeMaster: thin, drapeStock: 2, drapeReliefDepth: 1.25, baseThickness: 2 });
+    const pending = getExportSurface(true);
+    assert(drapeCarvePending() && typeof pending === 'string' && /remapped/.test(pending),
+      'while the relief is being remapped to a new carve, every export refuses', typeof pending === 'string' ? pending : 'exported');
+    // The remap landed: the master is the 2 in one, and SBP cuts its stock top.
+    Object.assign(STATE, { drapeMaster: thick, baseThickness: 0.5 });
+    const ok = getExportSurface(true);
+    assert(!drapeCarvePending() && typeof ok !== 'string' && buildConfig().materialZ === 2,
+      'once it lands, export proceeds and SBP material Z is the master\'s stock top', `materialZ ${buildConfig().materialZ}`);
+    // Safe Z follows the stock top when it moves, and keeps a raised value when it does not.
+    Object.assign(STATE, { drapeMaster: thin, drapeStock: 0.75, drapeReliefDepth: 0.625 });
+    syncSbpSafeZ();
+    const at075 = SBP_STATE.safeZ;
+    SBP_STATE.safeZ = 2;                                                // the user raises Safe Z to clear clamps
+    syncSbpSafeZIfStockMoved();
+    const kept = SBP_STATE.safeZ;
+    Object.assign(STATE, { drapeMaster: thick, drapeStock: 2, drapeReliefDepth: 1.25 });
+    syncSbpSafeZIfStockMoved();
+    assert(at075 >= 0.8 && kept === 2 && SBP_STATE.safeZ > 2, 'Safe Z keeps a raised value on the same stock and moves above a new stock top',
+      `0.75 in: ${at075}, kept ${kept}, 2 in: ${SBP_STATE.safeZ}`);
+    Object.assign(STATE, keep);
   }
 
   process.stdout.write(failures ? `\n${failures} FAILURE(S)\n` : '\nALL OK\n');

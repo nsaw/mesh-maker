@@ -114,7 +114,7 @@ sequenceDiagram
 
 ## Routing table
 
-- `src/depth-estimate.ts`, `src/geometry.ts`, `src/mesh.ts`, `src/drape-sim/`, `src/drape-ui.ts`, `src/types.ts` -> [docs/mesh-generation-core.md](docs/mesh-generation-core.md)
+- `src/depth-estimate.ts`, `src/geometry.ts`, `src/mesh.ts`, `src/drape-sim/`, `src/drape-ui.ts`, `src/drape-controls.ts`, `src/types.ts` -> [docs/mesh-generation-core.md](docs/mesh-generation-core.md)
 - `src/noise/**`, `docs/voronoi-relief-target-spec.md` -> [docs/noise-and-relief-system.md](docs/noise-and-relief-system.md)
 - `grasshopper/builder/**`, `grasshopper/components/**`, `grasshopper/VORONOI_RELIEF_NATIVE.md`, `grasshopper/mesh-maker.gh` -> [docs/grasshopper-integration.md](docs/grasshopper-integration.md)
 - `cli/**`, `stl-to-sbp.sh`, `tsconfig.cli.json` -> [docs/cli-tools.md](docs/cli-tools.md)

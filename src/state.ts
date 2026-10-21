@@ -715,7 +715,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       // verbatim from CNC_PRESETS['relief-starburst'] below, so this never drifts from the
       // shipped preset), so users opening older saved links see the latest starburst
       // rendering rather than a mix of stale param values reinterpreted under the current
-      // sampler. The migration runs on payloadVersion < CURRENT_PAYLOAD_VERSION and detects
+      // sampler. The migration runs on payloadVersion < STARBURST_CURRENT_SINCE and detects
       // the known starburst signatures produced by each prior shipped version. Non-starburst
       // links (fociCount = 0) pass through untouched. Links with custom/manually-tuned values
       // that don't match any known signature ALSO pass through untouched — their author

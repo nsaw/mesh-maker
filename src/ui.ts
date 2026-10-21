@@ -6,7 +6,7 @@ import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
-import { buildSBPSection, wireSBPControls, syncSbpSafeZ } from './sbp-export';
+import { buildSBPSection, wireSBPControls, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from './sbp-export';
 import { updateExportControls } from './toolbar';
 import { estimateDepth } from './depth-estimate';
 import { showToast } from './toast';
@@ -56,7 +56,7 @@ export function buildSidebar(): void {
   if (ampInit) ampInit.max = String(STATE.baseThickness);
   const dmInit = document.querySelector<HTMLInputElement>('input[data-key="dmHeightScale"]');
   if (dmInit) dmInit.max = String(STATE.baseThickness);
-  syncSbpSafeZ();
+  syncSbpSafeZIfStockMoved();
   wireSBPControls();
   updateExportControls();
 }
@@ -686,7 +686,7 @@ function wireControls(): void {
         const valEl = document.getElementById('val_baseThickness');
         if (valEl) valEl.textContent = formatSliderValue(v, parseFloat(sl.step));
         syncDrapeDepthMax();
-        syncSbpSafeZ();
+        // Safe Z follows once the remapped master lands (drape-ui syncSizeControls); exports wait for it.
         onDrapeCarveChanged();
         return;
       }

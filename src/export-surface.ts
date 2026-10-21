@@ -1,4 +1,5 @@
 import { STATE, activeMaster } from './state';
+import { drapeCarveFor } from './drape-controls';
 import { MIN_WATERTIGHT_THICKNESS } from './geometry';
 import type { ExportSurface } from './mesh-writer';
 import type { ReliefMaster } from './relief-master';
@@ -10,6 +11,7 @@ import type { Heightmap } from './sbp/types';
  *  skips the watertight-only checks. */
 export function getExportSurface(forToolpath = false): ExportSurface | string {
   const m = activeMaster();
+  if (drapeCarvePending()) return 'The drape relief is still being remapped to the new Material Thickness or Relief Depth: export again in a moment.';
   // Toolpaths cut the top surface only, so the watertight enclosure's floor rule does not apply.
   if (m) return reliefMasterSurface(m, forToolpath ? false : STATE.watertight);
   const { vertices, cols, rows, meshX, meshY } = STATE;
@@ -18,6 +20,20 @@ export function getExportSurface(forToolpath = false): ExportSurface | string {
   const z = new Float64Array(rows * cols);
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) z[j * cols + i] = vertices[j][i];
   return { z, cols, rows, meshX, meshY, diagonal: 'shortest', watertight: STATE.watertight };
+}
+
+/** True when relief master `m` was not cut to the drape carve the controls show (STATE.drapeStock and
+ *  STATE.drapeReliefDepth), within 1e-6 in. */
+export function masterOffCarve(m: ReliefMaster): boolean {
+  const c = drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth);
+  return Math.abs(m.stockIn - c.stockIn) > 1e-6 || Math.abs(m.backingIn - c.backingIn) > 1e-6;
+}
+
+/** On the DRAPE tab, Material Thickness and Relief Depth are applied by rebuilding the relief master,
+ *  debounced. Until that lands (or if it fails) the master's stock top and heights are not the ones
+ *  the controls show, so every export refuses rather than pair one with the other. */
+export function drapeCarvePending(): boolean {
+  return STATE.mode === 'drape' && STATE.drapeMaster !== null && masterOffCarve(STATE.drapeMaster);
 }
 
 /** A relief master's export surface: its own heights, extents and triangulation, unchanged. Shared

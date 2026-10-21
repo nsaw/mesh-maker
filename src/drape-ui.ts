@@ -8,7 +8,8 @@
  */
 import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
-import { syncSbpSafeZ } from './sbp-export';
+import { syncSbpSafeZIfStockMoved } from './sbp-export';
+import { drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
@@ -119,7 +120,8 @@ function syncSizeControls(m: ReliefMaster): void {
     const val = document.getElementById(`val_${key}`);
     if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : String(Math.round(v * 100) / 100);
   }
-  syncSbpSafeZ();
+  // Safe Z follows the stock top when it moves; a new drape on the same stock keeps the user's Safe Z.
+  syncSbpSafeZIfStockMoved();
 }
 
 /** Show a drape relief (bare or draped) in DRAPE mode. */
@@ -127,8 +129,7 @@ function present(m: ReliefMaster, kind: 'bare' | 'draped', label: string): void 
   bareError = null;
   STATE.drapeMaster = m; STATE.drapeMasterKind = kind; STATE.drapeMasterLabel = label;
   // A carve change made while this master was being built: remap it to the carve the controls show.
-  const c = drapeCarve();
-  if (Math.abs(m.stockIn - c.stockIn) > 1e-6 || Math.abs(m.backingIn - c.backingIn) > 1e-6) onDrapeCarveChanged();
+  if (masterOffCarve(m)) onDrapeCarveChanged();
   setStatus(drapeStatusText());
   if (STATE.mode !== 'drape') return;
   syncSizeControls(m);
@@ -344,6 +345,7 @@ export function cancelDrape(announce = true): void {
 export async function downloadDrapeRelief(): Promise<void> {
   const m = STATE.drapeMaster;
   if (!m) return;
+  if (drapeCarvePending()) { showToast('The drape relief is still being remapped to the new carve: download again in a moment.', 4000); return; }
   const heights = new Float32Array(m.cols * m.rows);
   // Back to the file layout: metres, rows top-down (MeshCraft's grid has row 0 at the bottom).
   for (let j = 0; j < m.rows; j++) for (let i = 0; i < m.cols; i++)

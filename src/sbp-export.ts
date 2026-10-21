@@ -29,7 +29,8 @@ interface SbpState {
   stlName: string;
 }
 
-const SBP_STATE: SbpState = {
+/** The SBP sidebar settings. Exported for cli/drape.spec.ts. */
+export const SBP_STATE: SbpState = {
   roughingEnabled: true,
   finishingEnabled: true,
   materialProfile: 'general',
@@ -51,8 +52,18 @@ const SBP_STATE: SbpState = {
 
 let sbpWorkerRunning = false;
 
+/** The stock top Safe Z was last synced to (null before the first sync). */
+let safeZSyncedStock: number | null = null;
+
+/** Sync Safe Z only when the stock top moved since the last sync, so a rebuild or a new drape on the
+ *  same stock keeps a Safe Z the user raised. */
+export function syncSbpSafeZIfStockMoved(): void {
+  if (safeZSyncedStock === null || Math.abs(stockTopIn() - safeZSyncedStock) > 1e-9) syncSbpSafeZ();
+}
+
 /** Sync SBP safe/home Z to the stock top (stockTopIn). Called when it changes. */
 export function syncSbpSafeZ(): void {
+  safeZSyncedStock = stockTopIn();
   const safeZ = Math.min(6, Math.max(0.5, parseFloat((stockTopIn() + 0.1).toFixed(1))));
   SBP_STATE.safeZ = safeZ;
   if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, Math.max(1.0, parseFloat((safeZ + 0.5).toFixed(1))));
@@ -74,7 +85,8 @@ export function syncSbpSafeZ(): void {
   if (homeVal) homeVal.textContent = SBP_STATE.homeZ.toFixed(1);
 }
 
-function buildConfig(): SbpConfig {
+/** The SBP job settings from the sidebar and the stock top. Exported for cli/drape.spec.ts. */
+export function buildConfig(): SbpConfig {
   const base = getDefaultConfig(SBP_STATE.materialProfile);
   base.roughingEnabled = SBP_STATE.roughingEnabled;
   base.finishingEnabled = SBP_STATE.finishingEnabled;
