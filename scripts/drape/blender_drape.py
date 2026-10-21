@@ -11,11 +11,13 @@ Construction, all in Blender scene units (Z up, the figure faces -Y):
      object and self collision 0.003, gravity -9.81 Z.
   3. Optional wet cling: a surface force field on the figure, `cling_strength` (negative attracts),
      felt within `cling_reach` units. It is an art convention, not cloth physics.
-  4. Bake `frames` frames, read frame `frame`.
+  4. silk-gathered overrides bend, gap and quality and animates gathering. Optional calibrated
+     quartering wind adds finite surface panels (no collisions). See README for schedules.
+     Bake `frames` frames, read frame `frame`.
   5. Orthographic rays along +Y over a 12 x 16 aspect window (`frame_width` units wide, top at z 1.2);
      frontmost of the veil (with 2-level display subdivision) and the figure, plus the bare figure alone.
 Writes in `out`: drape.blend, front.png, oblique.png, veiled-depth.npy, bare-depth.npy, cloth-front.npy,
-drape.json (every applied setting, read back from Blender).
+drape.json (requested controls plus applied material/collision/field values), setup.blend, cloth-nodes.npz.
 """
 import ast, hashlib, json, math, sys, time
 from pathlib import Path
@@ -24,7 +26,12 @@ import numpy as np
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from quartering_wind import create_emitter, validate_profile
+
 A = json.loads(sys.argv[sys.argv.index('--') + 1]); OUT = Path(A['out']); OUT.mkdir(parents=True, exist_ok=True); t0 = time.time()
+CODE_HASHES = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+               for name in ('blender_drape.py', 'workflow.py', 'quartering_wind.py')}
 bpy.ops.wm.read_factory_settings(use_empty=True); sc = bpy.context.scene
 sc.frame_start = 1; sc.frame_end = A['frames']; sc.gravity = (0, 0, -9.81)
 
@@ -50,10 +57,16 @@ top = max(V, key=lambda p: p.z).copy(); V = [p - top + Vector((0, 0, 1)) for p i
 for o in list(sc.objects): bpy.data.objects.remove(o, do_unlink=True)
 me = bpy.data.meshes.new('figure'); me.from_pydata(V, [], F); me.update()
 fig = bpy.data.objects.new('Figure collision', me); sc.collection.objects.link(fig)
-fig.modifiers.new('Collision', 'COLLISION'); fig.collision.thickness_outer = .002
+gathered = A['preset'] == 'silk-gathered'
+fig.modifiers.new('Collision', 'COLLISION'); fig.collision.thickness_outer = .001 if gathered else .002
 if A['cling_strength']:
     fig.field.type = 'FORCE'; fig.field.shape = 'SURFACE'; fig.field.strength = A['cling_strength']
     fig.field.use_max_distance = True; fig.field.distance_max = A['cling_reach']; fig.field.falloff_type = 'SPHERE'
+    if gathered:
+        # Artistic gathering control: let gravity form folds before surface attraction ramps up.
+        for frame, strength in ((1, 0), (45, 0), (100, A['cling_strength']), (150, A['cling_strength'])):
+            fig.field.strength = strength
+            fig.field.keyframe_insert('strength', frame=frame)
 
 NX, NY, SP = 100, 160, .05
 PV = [(-2.5 + i * SP, -4 + j * SP, 0) for j in range(NY + 1) for i in range(NX + 1)]
@@ -69,19 +82,38 @@ mod = veil.modifiers.new('Cloth', 'CLOTH'); s = mod.settings; cs = mod.collision
 PRESET = Path(bpy.utils.resource_path('LOCAL')) / 'scripts/presets/cloth/Silk.py'
 for st in ast.parse(PRESET.read_text()).body:
     if isinstance(st, ast.Assign): setattr(s, st.targets[0].attr, ast.literal_eval(st.value))
-s.quality = 8; s.vertex_group_mass = 'Pins'
-cs.use_self_collision = A.get('self_collision', True); cs.distance_min = .003; cs.self_distance_min = .003; cs.collision_quality = 4
+s.quality = 12 if gathered else 8; s.vertex_group_mass = 'Pins'
+if gathered: s.bending_stiffness = .0025
+cs.use_self_collision = A.get('self_collision', True); cs.distance_min = .001 if gathered else .003; cs.self_distance_min = .003; cs.collision_quality = 6 if gathered else 4
 mod.point_cache.frame_end = A['frames']
 for o in (fig, veil):
     for p in o.data.polygons: p.use_smooth = True
 sub = veil.modifiers.new('Subdivision after Cloth', 'SUBSURF'); sub.levels = sub.render_levels = 2
+wind = None
+if A.get('quartering_wind'):
+    control = A['quartering_wind']
+    validate_profile(control['profile'], A)
+    wind = create_emitter(control['profile'], control['strength'], sc)
+if gathered: sub.show_viewport = sub.show_render = False
+sc.frame_set(1)
+bpy.ops.wm.save_as_mainfile(filepath=str(OUT / 'setup.blend'))
 with bpy.context.temp_override(scene=sc, object=veil, point_cache=mod.point_cache): bpy.ops.ptcache.bake(bake=True)
 if not mod.point_cache.is_baked: raise SystemExit('cloth cache did not bake')
+# Save raw simulation nodes, independent of display subdivision, and measure one-frame motion.
+sub.show_viewport = False
+samples = {}
+for frame in sorted({A['frame']-1, A['frame'], A['frames']-1, A['frames']}):
+    sc.frame_set(frame); bpy.context.view_layer.update()
+    ev = veil.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    xyz = np.empty(len(ev.data.vertices)*3, dtype=np.float32)
+    ev.data.vertices.foreach_get('co', xyz)
+    samples[str(frame)] = xyz.reshape(-1, 3)
+np.savez(OUT / 'cloth-nodes.npz', **samples)
 sc.frame_set(A['frame'])
+sub.show_viewport = sub.show_render = True
 for o, col in ((fig, (.18, .3, .4, 1)), (veil, (.82, .79, .72, 1))):
     m = bpy.data.materials.new(o.name); m.use_nodes = True; b = m.node_tree.nodes['Principled BSDF']
-    b.inputs['Base Color'].default_value = col; b.inputs['Roughness'].default_value = .65; o.data.materials.append(m)
-bpy.ops.wm.save_as_mainfile(filepath=str(OUT / 'drape.blend'))
+    b.inputs['Base Color'].default_value = (.64, .61, .56, 1) if gathered else col; b.inputs['Roughness'].default_value = .7 if gathered else .65; o.data.materials.append(m)
 
 # Front relief extraction.
 deps = bpy.context.evaluated_depsgraph_get()
@@ -101,13 +133,25 @@ for j in range(R):
         if c: veiled[j, i] = -min(c); front[j, i] = yv is not None and (yf is None or yv <= yf)
 np.save(OUT / 'veiled-depth.npy', veiled); np.save(OUT / 'bare-depth.npy', bare); np.save(OUT / 'cloth-front.npy', front)
 
-rep = dict(args=A, blender=bpy.app.version_string, silk_preset=str(PRESET), silk_preset_sha256=hashlib.sha256(PRESET.read_bytes()).hexdigest(),
+rep = dict(args=A, blender=bpy.app.version_string, blender_build=bpy.app.build_hash.decode(), threads=sc.render.threads,
+           max_node_motion_units={str(frame): float(np.linalg.norm(samples[str(frame)]-samples[str(frame-1)], axis=1).max())
+                                  for frame in (A['frame'], A['frames'])}, silk_preset=str(PRESET), silk_preset_sha256=hashlib.sha256(PRESET.read_bytes()).hexdigest(),
+           workflow_sha256=CODE_HASHES,
            input_sha256=hashlib.sha256(src.read_bytes()).hexdigest(), figure_vertices=len(V), veil_vertices=len(PV), pinned=pins,
            cloth={k: getattr(s, k) for k in ('quality', 'mass', 'tension_stiffness', 'compression_stiffness', 'shear_stiffness', 'bending_stiffness', 'air_damping')},
-           collision=dict(object=cs.distance_min, self=cs.self_distance_min, self_collision=cs.use_self_collision, figure_outer=fig.collision.thickness_outer),
+           collision=dict(object=cs.distance_min, self=cs.self_distance_min, self_collision=cs.use_self_collision, figure_outer=fig.collision.thickness_outer, quality=cs.collision_quality),
            cling=dict(type=fig.field.type, shape=fig.field.shape, strength=fig.field.strength, reach=fig.field.distance_max) if A['cling_strength'] else None,
            baked=mod.point_cache.is_baked, frame=sc.frame_current, window=dict(x=[X0, X1], z=[Z0, Z1], cols=C, rows=R, row_order='top-down', col_order='camera-right'),
            foreground_fraction=float(np.isfinite(veiled).mean()), veil_front_fraction=float(front.mean()))
+
+if wind:
+    f = wind.field
+    rep['quartering_wind'] = dict(requested_strength=A['quartering_wind']['strength'], strength_at_frame=f.strength,
+        type=f.type, shape=f.shape, flow=f.flow, noise=f.noise, falloff=f.falloff_type, power=f.falloff_power,
+        reach=f.distance_max, surface_modifier=any(m.type == 'SURFACE' for m in wind.modifiers),
+        direction_world=A['quartering_wind']['profile']['wind_world'],
+        support_min_world_x=validate_profile(A['quartering_wind']['profile'], A))
+else: rep['quartering_wind'] = None
 
 # Previews.
 sc.world = bpy.data.worlds.new('W'); sc.world.use_nodes = True
@@ -118,8 +162,12 @@ for loc, pw, sz in (((-4, -5, 7), 1100, 4), ((4, 2, 4), 450, 3)):
     bpy.ops.object.light_add(type='AREA', location=loc); l = bpy.context.object; l.data.energy = pw; l.data.size = sz
     l.rotation_euler = (target - l.location).to_track_quat('-Z', 'Y').to_euler()
 sc.render.engine = 'CYCLES'; sc.cycles.samples = 32; sc.cycles.use_denoising = True; sc.render.resolution_x = sc.render.resolution_y = 900
-for name, loc in (('front', (0, -11, -.3)), ('oblique', (5, -10, .5))):
-    cam.location = loc; cam.rotation_euler = (target - cam.location).to_track_quat('-Z', 'Y').to_euler()
+cam.rotation_euler = (target - cam.location).to_track_quat('-Z', 'Y').to_euler()
+bpy.ops.wm.save_as_mainfile(filepath=str(OUT / 'drape.blend'))
+for name, loc, aim, size in (('front', (0, -11, -.3), target, W),
+                              ('oblique', (5, -10, .5), target, W),
+                              ('face', (0, -10, 4.3), Vector((0, -.4, -.3)), 2.5)):
+    cam.location = loc; cam.rotation_euler = (aim - cam.location).to_track_quat('-Z', 'Y').to_euler(); cam.data.ortho_scale = size
     sc.render.filepath = str(OUT / f'{name}.png'); bpy.ops.render.render(write_still=True)
 rep['seconds'] = round(time.time() - t0, 1)
 (OUT / 'drape.json').write_text(json.dumps(rep, indent=1)); print('DRAPE_DONE', json.dumps(dict(out=str(OUT), seconds=rep['seconds'])), flush=True)
