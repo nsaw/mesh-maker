@@ -412,7 +412,7 @@ async function main(): Promise<void> {
       dlThrew ? `went on to download (${dlThrew})` : toast.textContent.slice(0, 40));
     Object.assign(STATE, { drapeMaster: null, vertices: [[0, 0], [0, 0]], cols: 2, rows: 2 });
     const none = getExportSurface();
-    assert(typeof none === 'string' && /not ready/.test(none), 'DRAPE exports nothing until its relief exists (not the previous tab\'s mesh)', typeof none === 'string' ? none : 'exported');
+    assert(typeof none === 'string' && /no drape relief/.test(none), 'DRAPE exports nothing until its relief exists (not the previous tab\'s mesh)', typeof none === 'string' ? none : 'exported');
     Object.assign(STATE, keep);
   }
 

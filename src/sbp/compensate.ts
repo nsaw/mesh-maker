@@ -52,8 +52,8 @@ export function toolZOffset(tool: ToolDef, d: number): number {
 }
 
 /** toolZOffset for one tool, with its constants worked out once: the drop-cutter evaluates the profile
- *  millions of times per toolpath. Same values as toolZOffset (cli/sbp-cut.spec.ts checks the drop
- *  cutter against it). */
+ *  millions of times per toolpath. Same values as toolZOffset to float rounding (within 1e-14 in: the cone
+ *  multiplies by 1 / tan a where toolZOffset divides); cli/sbp-cut.spec.ts C6 checks the drop cutter. */
 export function profileOf(tool: ToolDef): (d: number) => number {
   const R = tool.tipRadius, R2 = R * R;
   const ball = (d: number): number => (d <= R ? R - Math.sqrt(Math.max(0, R2 - d * d)) : Infinity);

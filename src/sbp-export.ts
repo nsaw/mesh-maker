@@ -62,7 +62,8 @@ export function syncSbpSafeZIfStockMoved(): void {
 }
 
 /** Safe Z for a stock top: at least 0.1 in above it, rounded UP to the slider's 0.1 in step (rounding
- *  to the nearest tenth left 0.05 in at 0.75 in stock), within 0.5 to 6 in. The 1e-6 keeps an exact
+ *  to the nearest tenth left 0.05 in at 0.75 in stock), within 0.5 to 6 in. Above 5.9 in of stock the
+ *  6 in Z travel leaves less, and generateSBP refuses a Safe Z at or below the stock top. The 1e-6 keeps an exact
  *  tenth exact: (0.8 + 0.1) * 10 is 9.000000000000002 in floating point. */
 export function safeZForStock(stockIn: number): number {
   return Math.min(6, Math.max(0.5, Math.ceil((stockIn + 0.1) * 10 - 1e-6) / 10));

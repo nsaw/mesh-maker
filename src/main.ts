@@ -7,7 +7,8 @@ import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
 import { ensureDrapeFigure } from './drape-ui';
 
-/** A share link that set the board size: the demo image must not refit it on load. */
+/** A DEPTH MAP share link that set the board size: the demo image must not refit it when it loads
+ *  while that link's tab is still showing. Any tab switch clears it (the board is then the tab's own). */
 let linkSetSize = false;
 
 function preloadDemoDepthMap(): void {
@@ -42,7 +43,7 @@ function init(): void {
   // string, the hash, OR a malformed path (`meshcraft.sawyerdesign.io/=eyJ...`) that some
   // copy-paste flows produce on iOS.
   const urlConfig = deserializeConfig(window.location);
-  linkSetSize = 'meshX' in urlConfig || 'meshY' in urlConfig;
+  linkSetSize = urlConfig.mode === 'depthmap' && ('meshX' in urlConfig || 'meshY' in urlConfig);
   for (const [key, value] of Object.entries(urlConfig)) {
     (STATE as unknown as Record<string, unknown>)[key] = value;
   }
@@ -60,6 +61,7 @@ function init(): void {
 
   buildSidebar();
   setupTabs();
+  document.querySelectorAll('.mode-tab').forEach(b => b.addEventListener('click', () => { linkSetSize = false; }));
   setupToolbar();
   updateExportControls();
   setupInteraction();

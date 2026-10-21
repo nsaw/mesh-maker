@@ -27,7 +27,7 @@ flowchart LR
 
 A parallel path lets state travel in a URL: `serializeConfig()` diffs `STATE` against `DEFAULTS` over a curated `URL_SERIALIZABLE_KEYS` allowlist, base64url-encodes the diff, and tags it with a payload version (`CURRENT_PAYLOAD_VERSION`). `deserializeConfig()` (invoked once, in `main.ts`'s `init()`) reverses this, applying legacy default backfills (`LEGACY_V0_DEFAULTS` through `LEGACY_V4_DEFAULTS`) for older payload versions so that older share links keep rendering the same shape after `DEFAULTS` changes. `findEncodedPayload()` tolerantly extracts the payload from query string, hash, or even a malformed path (an iOS clipboard failure mode). Numeric fields that could cause pathological O(rows·cols·sites) relief computation (`reliefRelaxIterations`, `reliefDensityStrength`, etc.) are clamped after decode since URL payloads are untrusted input, unlike slider-driven values which are already range-limited by the DOM.
 
-`noiseDims` is a small side-cache (not part of `MeshState`) that preserves noise-mode mesh dimensions across mode switches, since depth-map mode overwrites `meshX`/`meshY`/`resolution` via `fitMeshToAspect()`.
+`noiseDims` is a small side-cache (not part of `MeshState`) that preserves NOISE's board across mode switches: `meshX`, `meshY`, `resolution` and `baseThickness`, which DEPTH MAP (`fitMeshToAspect()`, a loaded `.mcrelief`'s stock) overwrites. `saveNoiseDims()` / `restoreNoiseDims()` in `state.ts` are the only writers and readers (the tab switch and the `.mcrelief` load both use them).
 
 ## Sidebar construction and control wiring
 
