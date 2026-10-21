@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { STATE } from './state';
+import { STATE, reliefMasterActive } from './state';
 import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
 
 // --- Module state ---
@@ -9,7 +9,14 @@ let _camera: THREE.PerspectiveCamera;
 let _surfaceMesh: THREE.Mesh | null = null;
 let _wireLines: THREE.LineSegments | null = null;
 let _pointsObj: THREE.Points | null = null;
+/** Inputs for the lazily built wireframe and points of the current surface. */
+let _overlaySource: {
+  positions: Float32Array; vertices: number[][]; cols: number; rows: number; zMin: number; zRange: number;
+} | null = null;
 let _encGroup: THREE.Group | null = null;
+let _hemi: THREE.HemisphereLight | null = null;
+let _keyLight: THREE.DirectionalLight | null = null;
+let _fillLight: THREE.DirectionalLight | null = null;
 let _gizmoScene: THREE.Scene;
 let _gizmoCamera: THREE.OrthographicCamera;
 let _needsRender = false;
@@ -94,17 +101,14 @@ function ensureRenderer(): void {
   _camera = new THREE.PerspectiveCamera(FOV, w / h, 0.01, 2000);
   _camera.up.set(0, 0, 1); // Z-up for CNC
 
-  // Lighting: hemisphere for natural ambient fill + key + fill directional
-  const hemi = new THREE.HemisphereLight(0x8899bb, 0x445566, 0.35);
-  _scene.add(hemi);
-
-  const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
-  keyLight.position.set(-1, -0.8, 1.5).normalize();
-  _scene.add(keyLight);
-
-  const fillLight = new THREE.DirectionalLight(0x8899aa, 0.3);
-  fillLight.position.set(1, 0.5, 0.3).normalize();
-  _scene.add(fillLight);
+  // Lighting: hemisphere for natural ambient fill + key + fill directional (see applyLighting)
+  _hemi = new THREE.HemisphereLight(0x8899bb, 0x445566, 0.35);
+  _scene.add(_hemi);
+  _keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+  _scene.add(_keyLight);
+  _fillLight = new THREE.DirectionalLight(0x8899aa, 0.3);
+  _scene.add(_fillLight);
+  applyLighting();
 
   // Gizmo scene (AxesHelper + axis labels in scissored inset)
   _gizmoScene = new THREE.Scene();
@@ -294,10 +298,26 @@ function makeSurfaceMaterial(): THREE.MeshPhongMaterial {
   });
 }
 
+/** 'elevation' keeps the original soft key + fill. 'neutral' is for judging form: one raking key from
+ *  the upper left of the panel (+Y is up the image) at about 35 deg elevation, the light the relief
+ *  renders in cli/relief-roundtrip.ts use, with little fill. Under the soft setup a 0.05 in eyelid on
+ *  a relief master was close to invisible. */
+function applyLighting(): void {
+  if (!_hemi || !_keyLight || !_fillLight) return;
+  const neutral = STATE.viewMaterial === 'neutral';
+  _hemi.intensity = neutral ? 0.12 : 0.35;
+  _keyLight.intensity = neutral ? 1.15 : 0.85;
+  if (neutral) _keyLight.position.set(-0.55, 0.45, 0.5).normalize();
+  else _keyLight.position.set(-1, -0.8, 1.5).normalize();
+  _fillLight.intensity = neutral ? 0.08 : 0.3;
+  _fillLight.position.set(1, 0.5, 0.3).normalize();
+}
+
 /** Swap the surface material after a shading change without rebuilding geometry. The shared ramp
  *  texture is cached module-wide, so only the material itself is disposed. */
 export function applySurfaceMaterial(): void {
-  if (!_surfaceMesh) return;
+  applyLighting();
+  if (!_surfaceMesh) { requestRender(); return; }
   (_surfaceMesh.material as THREE.Material).dispose();
   _surfaceMesh.material = makeSurfaceMaterial();
   requestRender();
@@ -336,14 +356,16 @@ function buildSurface(
   }
 
   // Indexed triangles (2 per quad, shortest-diagonal split)
-  const indices: number[] = [];
+  // A relief master declares its triangulation; draw the preview with it, as the export does.
+  const fixedDiagonal = reliefMasterActive() && STATE.reliefMaster ? STATE.reliefMaster.diagonalZ00Z11 : null;
+  const indices = new Uint32Array((rows - 1) * (cols - 1) * 6);
+  let ti = 0;
   for (let j = 0; j < rows - 1; j++)
     for (let i = 0; i < cols - 1; i++) {
       const a = j * cols + i;
-      const [t1, t2] = cellTriangleOffsets(
-        preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
-      indices.push(a + t1[0], a + t1[1], a + t1[2]);
-      indices.push(a + t2[0], a + t2[1], a + t2[2]);
+      const [t1, t2] = cellTriangleOffsets(fixedDiagonal ?? preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
+      indices[ti++] = a + t1[0]; indices[ti++] = a + t1[1]; indices[ti++] = a + t1[2];
+      indices[ti++] = a + t2[0]; indices[ti++] = a + t2[1]; indices[ti++] = a + t2[2];
     }
 
   // Analytical heightfield normals from central differences -- much smoother than
@@ -370,20 +392,31 @@ function buildSurface(
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  geo.setIndex(indices);
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
 
   _surfaceMesh = new THREE.Mesh(geo, makeSurfaceMaterial());
   _scene.add(_surfaceMesh);
 
-  // Wireframe: grid lines (horizontal + vertical, no triangle diagonals)
-  const wPos: number[] = [];
-  const wCol: number[] = [];
+  // Wireframe and points are built on first use (updateVisibility): at 400 columns they add about
+  // 4 MB of line vertices that most sessions never display.
+  _overlaySource = { positions, vertices, cols, rows, zMin, zRange };
+}
+
+function ensureWireframe(): void {
+  if (_wireLines || !_overlaySource) return;
+  const { positions, vertices, cols, rows, zMin, zRange } = _overlaySource;
+  // Grid lines (horizontal + vertical, no triangle diagonals)
+  const nSeg = rows * (cols - 1) + cols * (rows - 1);
+  const wPos = new Float32Array(nSeg * 6);
+  const wCol = new Float32Array(nSeg * 6);
+  let w = 0;
   function pushWireVtx(wj: number, wi: number): void {
     const widx = wj * cols + wi;
-    wPos.push(positions[widx * 3], positions[widx * 3 + 1], positions[widx * 3 + 2]);
+    wPos[w] = positions[widx * 3]; wPos[w + 1] = positions[widx * 3 + 1]; wPos[w + 2] = positions[widx * 3 + 2];
     const vt = Math.max(0, Math.min(1, (vertices[wj][wi] - zMin) / zRange));
     const g = (40 + vt * 120) / 255;
-    wCol.push(g, g + 15 / 255, g + 30 / 255);
+    wCol[w] = g; wCol[w + 1] = g + 15 / 255; wCol[w + 2] = g + 30 / 255;
+    w += 3;
   }
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols - 1; i++) { pushWireVtx(j, i); pushWireVtx(j, i + 1); }
@@ -391,16 +424,18 @@ function buildSurface(
     for (let j = 0; j < rows - 1; j++) { pushWireVtx(j, i); pushWireVtx(j + 1, i); }
 
   const wGeo = new THREE.BufferGeometry();
-  wGeo.setAttribute('position', new THREE.Float32BufferAttribute(wPos, 3));
-  wGeo.setAttribute('color', new THREE.Float32BufferAttribute(wCol, 3));
+  wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
+  wGeo.setAttribute('color', new THREE.BufferAttribute(wCol, 3));
   _wireLines = new THREE.LineSegments(wGeo, new THREE.LineBasicMaterial({
     vertexColors: true, transparent: true, opacity: 0.7,
   }));
   _scene.add(_wireLines);
+}
 
-  // Points
+function ensurePoints(): void {
+  if (_pointsObj || !_overlaySource) return;
   const pGeo = new THREE.BufferGeometry();
-  pGeo.setAttribute('position', new THREE.BufferAttribute(positions.slice(), 3));
+  pGeo.setAttribute('position', new THREE.BufferAttribute(_overlaySource.positions.slice(), 3));
   _pointsObj = new THREE.Points(pGeo, new THREE.PointsMaterial({
     size: 2, sizeAttenuation: false, color: 0x4eaaff, transparent: true, opacity: 0.8,
   }));
@@ -476,7 +511,10 @@ function updateVisibility(): void {
   const mode = STATE.viewMode;
   const showSolid = mode === 'solid' || mode === 'both';
   if (_surfaceMesh) _surfaceMesh.visible = showSolid;
-  if (_wireLines) _wireLines.visible = mode === 'wireframe' || mode === 'both';
+  const showWire = mode === 'wireframe' || mode === 'both';
+  if (showWire) ensureWireframe();
+  if (mode === 'points') ensurePoints();
+  if (_wireLines) _wireLines.visible = showWire;
   if (_pointsObj) _pointsObj.visible = mode === 'points';
   if (_encGroup) _encGroup.visible = showSolid && STATE.watertight && STATE.baseThickness > 0;
 }
@@ -504,6 +542,7 @@ export function renderViewport(): void {
       disposeGroup(_wireLines); _wireLines = null;
       disposeGroup(_pointsObj); _pointsObj = null;
       disposeGroup(_encGroup); _encGroup = null;
+      _overlaySource = null;
     }
   }
 
@@ -537,7 +576,9 @@ export function updateDimsOverlay(): void {
 
   el.textContent = '';
   const spanDims = document.createElement('span');
-  spanDims.textContent = `${STATE.meshX}" x ${STATE.meshY}"`;
+  // Relief masters carry decimal extents (6.000000000000001 from metres): show at most 3 places.
+  const dim = (v: number): string => String(Number(v.toFixed(3)));
+  spanDims.textContent = `${dim(STATE.meshX)}" x ${dim(STATE.meshY)}"`;
   el.appendChild(spanDims);
 
   const spanZ = document.createElement('span');

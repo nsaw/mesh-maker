@@ -4,14 +4,14 @@ Verify against live code before citing it as authoritative. -->
 
 # SBP Export Pipeline
 
-The app converts a generated heightfield mesh (or an uploaded STL) into ShopBot OpenSBP CNC toolpath code. `src/export.ts` dispatches to `src/sbp-export.ts`, which builds cutting config from UI state and either runs the pipeline inline (current mesh) or offloads it to `src/sbp/worker.ts` (uploaded STL), which chains `src/sbp/stl-parser.ts` -> `src/sbp/heightmap.ts` -> `src/sbp/compensate.ts` -> `src/sbp/roughing.ts`/`src/sbp/finishing.ts` -> `src/sbp/writer.ts`.
+The app converts a generated heightfield mesh (or an uploaded STL) into ShopBot OpenSBP CNC toolpath code. `src/export.ts` dispatches to `src/sbp-export.ts`, which builds cutting config from UI state and always runs the pipeline in `src/sbp/worker.ts` (the current surface or relief master since 2026-10-19, or an uploaded STL), which chains `src/sbp/stl-parser.ts` -> `src/sbp/heightmap.ts` (STL only) -> `src/sbp/compensate.ts` -> `src/sbp/roughing.ts`/`src/sbp/finishing.ts` -> `src/sbp/writer.ts`.
 
 ## Mental model
 
 ```mermaid
 flowchart TD
   A[export.ts doExport] --> B[sbp-export.ts doSBPExport]
-  B -->|mesh path| C[stateToHeightmap]
+  B -->|mesh path| C[export-surface.ts getExportSurface + surfaceHeightmap, then worker.ts]
   B -->|STL path| D[worker.ts: parseSTLBinary + meshToHeightmap]
   C --> E[generate.ts normalizeZ]
   D --> E
@@ -25,8 +25,8 @@ flowchart TD
 
 `src/export.ts`'s `_doExportInner` checks `STATE.exportFormat`; when it is `'sbp'` it calls `doSBPExport()` from `src/sbp-export.ts` and returns immediately (no shared post-processing with the other export formats). `doSBPExport` picks one of two source paths based on whether an STL was uploaded (`SBP_STATE.stlBuffer`):
 
-- **Mesh path** (`exportFromMesh`): uses the currently generated `STATE.vertices` grid directly, via `stateToHeightmap` in `src/sbp/heightmap.ts`. This assumes `STATE.vertices` is already a regular row/col grid in CNC Z space — no rasterization needed.
-- **STL path** (`exportFromSTL`): spawns a Web Worker from `src/sbp/worker.ts` and posts the raw STL `ArrayBuffer`, the resolved `SbpConfig`, and a heightmap `resolution` (cells per inch). The worker owns the CPU-heavy parse + rasterize + toolpath-generation work off the main thread; `sbp-export.ts` guards against concurrent runs with `sbpWorkerRunning` and re-attaches the transferred `stlBuffer` on both success and error so the UI can retain the uploaded file.
+- **Mesh path** (`exportFromMesh`): reads `getExportSurface(true)` (`src/export-surface.ts`): the full-resolution relief master when one is active in DEPTH MAP mode, else the generated `STATE.vertices` grid. `surfaceHeightmap()` turns it into a `Heightmap` (copy, with row spacing and diagonal) and the job runs in `src/sbp/worker.ts`, like the STL path.
+- **STL path** (`exportFromSTL`): posts the raw STL `ArrayBuffer`, the resolved `SbpConfig`, and a heightmap `resolution` (cells per inch) to the same worker, which parses and rasterizes it first. Both paths share `runSbpWorker`, which guards concurrent runs with `sbpWorkerRunning`, captures the job's filename and source when it starts (a result for a replaced model is downloaded under its own name and not attached to the current one), and hands a transferred `stlBuffer` back only if no newer upload replaced it.
 
 Both paths converge on the same `generateSBP` function (`src/sbp/generate.ts`), so behavior is identical for a given heightmap regardless of source — the worker doesn't get a different pipeline.
 
@@ -36,9 +36,9 @@ Both paths converge on the same `generateSBP` function (`src/sbp/generate.ts`), 
 
 ## Stage 1: getting a heightmap
 
-A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows`/`cols`/`cellSize`/`meshX`/`meshY`. Two producers:
+A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows`/`cols`/`cellSize`/`cellSizeY`/`meshX`/`meshY` and an optional cell `diagonal`. Producers:
 
-- `stateToHeightmap` (`src/sbp/heightmap.ts`) — trivial reshape of `STATE.vertices` (`number[][]`) into the flat grid; `cellSize` is derived as `meshX / (cols - 1)`.
+- `surfaceHeightmap` (`src/export-surface.ts`): copies an `ExportSurface` (the relief master or the generated grid) into a `Heightmap` with `cellSize = meshX / (cols - 1)`, `cellSizeY = meshY / (rows - 1)` and the surface's diagonal. `stateToHeightmap` (`src/sbp/heightmap.ts`) does the same for a `number[][]` grid and is now used by the specs only.
 - `meshToHeightmap` (`src/sbp/heightmap.ts`), fed by `parseSTLBinary` (`src/sbp/stl-parser.ts`) — parses a binary STL into a `Float32Array` (12 floats/triangle: normal + 3 vertices) with bounds tracked in the same pass. `meshToHeightmap` then rasterizes: for each triangle, it walks its XY bounding box in grid cells and barycentrically interpolates Z, keeping the max Z per cell (top-surface wins on overlap). A gap-fill pass expands a nearest-neighbor ring (up to 5 cells) for any cell no triangle touched, falling back to the STL's global minimum Z if nothing is found within that radius.
 
 ## Stage 2: Z normalization
@@ -47,12 +47,12 @@ A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows
 
 ## Stage 3: tool compensation
 
-`compensateForTool` (`src/sbp/compensate.ts`) performs a separable 2-pass morphological erosion of the heightmap per tool, computing the actual Z the tool center can reach without gouging the surface. `toolZOffset` models tool geometry by `ToolType`: ball nose and tapered-ball-nose use hemisphere/taper offset math (`R - sqrt(R^2 - d^2)` near center, linear taper beyond the transition radius for TBN/V-bit), while end mill and radiused tools are flat within their radius (radiused adds a rounded edge). The kernel's half-width is capped at the tool's physical radius (not the theoretical taper projection, which diverges for shallow taper angles). This step runs independently for the roughing tool and the finishing tool, producing two different compensated heightmaps even though they share the same source surface.
+`compensateForTool` (`src/sbp/compensate.ts`) computes, at every node, the lowest tip height that clears the surface everywhere under the cutter: `tip(x) = max over d of (H(x + d) - profile(|d|))`, exact over the grid with a true radial kernel and physical X/Y spacing. Before 2026-10-19 it took the MINIMUM with a separable 1D kernel, which put the tip below the surface (a flat 0.500 in plane came out at 0.4732 in under a 0.1 in ball; an end mill erased a 0.5 in peak), and it modelled the tapered ball nose's side angle as measured from the horizontal, so the 3.58 deg TBN was cut as a nearly flat 1/8 in disc. `toolZOffset` now takes side angles from the tool axis (ball tangent to the cone at r = R cos a, slope 1/tan a beyond) and throws on an unmodelled `ToolType`. Roughing uses it with `segment = cellSize` and `slack = cell diagonal`, so a node-to-node move held at its higher end stays clear of the triangulated surface between nodes. Finishing does not interpolate node tips at all: `createDropCutter` evaluates the exact tip at every emitted point against the exported triangles (vertex, edge and facet contact), and each straight move is certified: the exact tip is sampled at the n - 1 interior points that cut the move into n equal intervals (n from 2, doubling to 256), and the move is accepted only if every sample excess is within 0.0001 in and the largest plus L h / 2 (h = |ab| / n) is within 0.0004 in, with L a local bound on the tip's slope (`createTipLipschitzField`); otherwise it is split, and at the deepest split the cutter lifts and crosses at max(ends) + L |ab| / 2. Flat end mills and radius-0 radiused cutters are refused for finishing. A node-only drop-cutter gouged 0.089 in between nodes on 0.09 in cells. `cli/sbp-cut.spec.ts` replays the emitted SBP through an independent swept-cutter simulation (`cli/cut-sim.ts`) to check all of this.
 
 ## Stage 4: toolpath generation
 
 - `generateRoughing` (`src/sbp/roughing.ts`) computes discrete Z levels from `materialZ` down to a fixed 0.050" floor, stepping by the roughing tool's `stepdown`. At each level it serpentine-rasters (alternating sweep direction) at `stepover`-cell intervals, cutting `max(zLevel, surfaceZ + leaveStock)` so it never removes the reserved finishing allowance — retracting to `safeZ` between disconnected cut segments.
-- `generateFinishing` (`src/sbp/finishing.ts`) instead produces one continuous toolpath: `computeRasterLines` computes parallel lines across the workpiece at `finishRasterAngle` degrees (default 45), and each line is sampled at a uniform 0.005" spacing with Z from `bilinearInterp` of the compensated heightmap (no point-reduction, for consistent surface finish). Between lines, the tool traverses at `materialZ` rather than retracting to `safeZ` — this is only safe because Stage 2 guaranteed `materialZ` clears the surface; `generateFinishing` throws if a line endpoint's Z would exceed `materialZ` at traverse time, catching a `normalizeZ` regression early.
+- `generateFinishing` (`src/sbp/finishing.ts`) instead produces one continuous toolpath: `computeRasterLines` computes parallel lines across the workpiece at `finishRasterAngle` degrees (default 45), and each line is sampled at a uniform 0.005" spacing with Z from `createDropCutter` on the target surface, plus extra points (and, at the deepest split, lift-and-cross holds) wherever a move cannot be certified as above (no point-reduction, for consistent surface finish). Between lines, the tool traverses at `materialZ` rather than retracting to `safeZ`. This is only safe because Stage 2 guaranteed `materialZ` clears the surface; `generateFinishing` throws if a line endpoint's Z would exceed `materialZ` at traverse time, catching a `normalizeZ` regression early.
 
 `generateSBP` runs whichever of roughing/finishing are enabled (independently toggleable) and collects their `ToolpathSection`s.
 
@@ -65,7 +65,7 @@ A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows
 When these files or sections are changed, remember to consider these:
 
 - If `SbpConfig` or `ToolDef`/`CuttingParams` in `src/sbp/types.ts` change shape, update all three producers of `SbpConfig` (`getDefaultConfig` in `src/sbp/tools.ts`, `buildConfig` in `src/sbp-export.ts`) and the worker's `WorkerInput`/message contract in `src/sbp/worker.ts`, which structurally clones the config across the postMessage boundary with no schema validation.
-- If `ToolType` gains a new variant or geometry parameter, `toolZOffset` in `src/sbp/compensate.ts` must add a matching branch — an unhandled type falls into the `default` (flat end mill) case silently, producing a wrong (non-gouging-checked) toolpath rather than an error.
+- If `ToolType` gains a new variant or geometry parameter, `toolZOffset` in `src/sbp/compensate.ts` and `cutterProfile` in `cli/cut-sim.ts` must both add a branch. An unhandled type throws in both (it used to fall silently into a flat end mill).
 - If the roughing floor (0.050", `src/sbp/roughing.ts`) or the finishing traverse height contract (`materialZ` must clear all surface points, enforced by `normalizeZ` in `src/sbp/generate.ts`) changes, re-verify `generateFinishing`'s boundary-traverse assumption in `src/sbp/finishing.ts` — it throws instead of silently gouging, so a `normalizeZ` change that stops guaranteeing headroom will surface as a hard export failure, not corrupted G-code.
 - If `src/sbp/writer.ts`'s move/command format changes, re-diff full sample output against the Aspire reference; the format comment states it was verified line-by-line and downstream ShopBot controllers parse it literally.
 - The Voronoi-relief stepover warning in `src/sbp-export.ts` (`buildReliefStepoverWarning`) hardcodes a physical seam-width derivation tied to `voronoi-relief.ts`'s seam smoothstep gate; if that noise algorithm's seam geometry changes, this warning's math goes stale silently (it will just produce a wrong recommended stepover, not an error).
@@ -90,9 +90,9 @@ When these files or sections are changed, remember to consider these:
 | `src/sbp/types.ts` | Canonical shapes: `SbpConfig`, `ToolDef`, `Heightmap`, `ToolpathMove`/`Section`, `SbpStats` |
 | `src/sbp/tools.ts` | Embedded ATC tool table and per-material cutting params; default tool/config resolution |
 | `src/sbp/stl-parser.ts` | Binary STL -> flat `Float32Array` + bounds, single-pass, validated |
-| `src/sbp/heightmap.ts` | Two heightmap producers: STL rasterization (`meshToHeightmap`) and mesh reshape (`stateToHeightmap`) |
+| `src/sbp/heightmap.ts` | STL rasterization (`meshToHeightmap`) and the spec-only grid reshape (`stateToHeightmap`); the app's mesh path uses `surfaceHeightmap` in `src/export-surface.ts` |
 | `src/sbp/generate.ts` | Pipeline orchestrator (`generateSBP`), Z normalization |
-| `src/sbp/compensate.ts` | Tool-radius compensation via separable morphological erosion, per `ToolType` geometry |
+| `src/sbp/compensate.ts` | Exact max-envelope tool compensation (2D radial kernel) and the finishing drop-cutter, per `ToolType` geometry |
 | `src/sbp/roughing.ts` | Z-level serpentine raster roughing toolpath |
 | `src/sbp/finishing.ts` | Continuous angled-raster finishing toolpath with boundary traverses |
 | `src/sbp/writer.ts` | OpenSBP text serialization (header, tool changes, moves, footer) |

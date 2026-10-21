@@ -1,13 +1,12 @@
-import { STATE } from './state';
+import { STATE, reliefMasterActive } from './state';
 import { attachValueEdit } from './slider-utils';
-import { stateToHeightmap } from './sbp/heightmap';
-import { generateSBP } from './sbp/generate';
+import { getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
 import { updateExportControls } from './toolbar';
 import { showToast } from './toast';
 import type { MaterialProfile, SbpConfig, SbpStats } from './sbp/types';
-import type { GenerateResult } from './sbp/generate';
+import type { SbpWorkerInput, SbpWorkerOutput } from './sbp/worker';
 
 /** Persistent SBP config -- survives sidebar rebuilds */
 interface SbpState {
@@ -138,43 +137,26 @@ function buildSbpToastMessage(stats: SbpStats): string {
   return `SBP exported! ${parts.join(', ')}`;
 }
 
-function handleResult(result: GenerateResult, filename: string, warning?: string): void {
-  const { sbp, stats } = result;
-  STATE.sbpStats = stats;
-  triggerDownload(sbp, filename);
-  updateStats();
-  // If we have a warning, show it alongside the success summary with the longer duration —
-  // a separate showToast() call would be cancelled by this one (synchronous flow, single
-  // event-loop tick before paint), so the user would only ever see one of the two.
-  if (warning) {
-    showToast(`${buildSbpToastMessage(stats)} — ${warning}`, 6000);
-  } else {
-    showToast(buildSbpToastMessage(stats));
-  }
-}
-
-/** Export using current MeshCraft mesh (STATE.vertices) */
+/** Export the current surface: the relief master at full resolution when one is active, otherwise
+ *  the generated grid. Runs in the worker, since a 1201 x 2401 master takes seconds to compensate. */
 function exportFromMesh(): void {
-  const { vertices, rows, cols, meshX, meshY } = STATE;
-  if (!vertices || rows < 2 || cols < 2) {
-    showToast('Generate a mesh first');
-    return;
-  }
-
-  const heightmap = stateToHeightmap(vertices, rows, cols, meshX, meshY);
+  const surface = getExportSurface(true);
+  if (typeof surface === 'string') { showToast(surface, 6000); return; }
+  const heightmap = surfaceHeightmap(surface);
   const config = buildConfig();
+  config.materialX = surface.meshX;
+  config.materialY = surface.meshY;
   // Only emit the seam-rounding warning when finishing is actually enabled. The warning
   // refers to the finishing-pass stepover, which is meaningless for roughing-only exports.
   const reliefWarning = config.finishingEnabled
     ? buildReliefStepoverWarning(config.finishingTool.cutting.stepover)
     : undefined;
-  const result = generateSBP(heightmap, config);
-  handleResult(result, `${STATE.filename}.sbp`, reliefWarning);
+  runSbpWorker({ kind: 'heightmap', heightmap, config }, [heightmap.z.buffer as ArrayBuffer], reliefWarning);
 }
 
 /** Voronoi-relief seams are narrow V-grooves; ball-nose stepover must be ≤ half the seam width
  *  or the cutter rolls over the seam instead of cutting it. Returns a warning string or null
- *  so handleResult can fold it into the export toast — separate toasts in the same tick get
+ *  so runSbpWorker can fold it into the export toast: separate toasts in the same tick get
  *  collapsed to whichever ran last.
  *
  *  Physical seam width derivation: in voronoi-relief.ts, the seam smoothstep gate is
@@ -196,49 +178,68 @@ function buildReliefStepoverWarning(stepoverIn: number): string | undefined {
 
 /** Export using uploaded STL via Web Worker */
 function exportFromSTL(): void {
-  if (sbpWorkerRunning) {
-    showToast('SBP generation already in progress');
-    return;
-  }
   if (!SBP_STATE.stlBuffer || SBP_STATE.stlBuffer.byteLength === 0) {
     showToast('No STL uploaded');
     return;
   }
+  const stlBuffer = SBP_STATE.stlBuffer;
+  runSbpWorker({ kind: 'stl', stlBuffer, config: buildConfig(), resolution: SBP_STATE.resolution }, [stlBuffer]);
+}
 
+function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: string): void {
+  if (sbpWorkerRunning) {
+    showToast('SBP generation already in progress');
+    return;
+  }
   sbpWorkerRunning = true;
-  showToast('Generating SBP from STL...');
+  // The page stays editable while the worker runs, so the job keeps its own identity: the file name
+  // and the source it was built from. A result for a source that has since been replaced is still
+  // delivered under its own name, but never labelled with or attached to the current model.
+  const jobSource = currentSbpSource();
+  const jobFilename = `${STATE.filename}.sbp`;
+  showToast(`${input.kind === 'stl' ? 'Generating SBP from STL' : 'Generating SBP'}... a full-size relief takes a few minutes`, 600000);
 
   const worker = new Worker(
     new URL('./sbp/worker.ts', import.meta.url),
     { type: 'module' },
   );
 
-  worker.onmessage = (e: MessageEvent) => {
+  worker.onmessage = (e: MessageEvent<SbpWorkerOutput>) => {
     worker.terminate();
     sbpWorkerRunning = false;
-    SBP_STATE.stlBuffer = e.data.stlBuffer;
-    if (e.data.type === 'error') {
-      showToast(`SBP generation failed: ${e.data.message}`, 8000);
+    const out = e.data;
+    // Hand the transferred STL back only if no newer upload replaced it meanwhile.
+    if (out.stlBuffer && SBP_STATE.stlBuffer === jobSource) SBP_STATE.stlBuffer = out.stlBuffer;
+    const current = currentSbpSource() === jobSource || (out.stlBuffer !== undefined && SBP_STATE.stlBuffer === out.stlBuffer);
+    if (out.type === 'error') {
+      showToast(`SBP generation failed${current ? '' : ' (for an earlier model)'}: ${out.message}`, 8000);
       return;
     }
-    STATE.sbpStats = e.data.stats;
-    triggerDownload(e.data.sbpBytes, `${STATE.filename}.sbp`);
+    triggerDownload(out.sbpBytes, jobFilename);
+    const summary = buildSbpToastMessage(out.stats);
+    if (!current) {
+      showToast(`${jobFilename} was built from the model loaded when the export started, not the current one. ${summary}`, 8000);
+      return;
+    }
+    STATE.sbpStats = out.stats;
     updateStats();
-    showToast(buildSbpToastMessage(e.data.stats));
+    showToast(warning ? `${summary}. ${warning}` : summary, warning ? 6000 : 3000);
   };
 
   worker.onerror = (err) => {
     worker.terminate();
     sbpWorkerRunning = false;
-    showToast(`Worker error: ${err.message}. Re-upload the STL and try again.`, 8000);
+    showToast(`Worker error: ${err.message}.${input.kind === 'stl' ? ' Re-upload the STL and try again.' : ''}`, 8000);
   };
 
-  const stlBuffer = SBP_STATE.stlBuffer;
-  worker.postMessage({
-    stlBuffer,
-    config: buildConfig(),
-    resolution: SBP_STATE.resolution,
-  }, [stlBuffer]);
+  worker.postMessage(input, transfer);
+}
+
+/** Identity of what an SBP export is built from: the uploaded STL buffer, else the relief master,
+ *  else the generated grid. Every regeneration or upload replaces the object. */
+function currentSbpSource(): unknown {
+  if (SBP_STATE.stlBuffer) return SBP_STATE.stlBuffer;
+  return reliefMasterActive() ? STATE.reliefMaster : STATE.vertices;
 }
 
 /** Main export entry point -- called from export.ts */
@@ -308,6 +309,7 @@ function updateStlUploadUi(): void {
 }
 
 function clearLoadedStl(): void {
+  stlRevision++;
   SBP_STATE.stlBuffer = null;
   SBP_STATE.stlName = '';
   invalidateSbpStats();
@@ -663,9 +665,15 @@ export function wireSBPControls(): void {
 
 }
 
+/** Bumped by every STL upload and by Clear: a read that finishes after a newer upload or a clear
+ *  is discarded, as the depth-map uploads do (ui.ts uploadRevision). */
+let stlRevision = 0;
+
 function loadSTL(file: File): void {
+  const revision = ++stlRevision;
   const reader = new FileReader();
   reader.onload = () => {
+    if (revision !== stlRevision) return;
     SBP_STATE.stlBuffer = reader.result as ArrayBuffer;
     SBP_STATE.stlName = file.name;
     invalidateSbpStats();
@@ -674,7 +682,7 @@ function loadSTL(file: File): void {
     showToast(`STL loaded: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`);
   };
   reader.onerror = () => {
-    showToast('Failed to read STL file');
+    if (revision === stlRevision) showToast('Failed to read STL file');
   };
   reader.readAsArrayBuffer(file);
 }

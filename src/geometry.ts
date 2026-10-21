@@ -104,46 +104,6 @@ export function gridMinMax(grid: number[][], rows: number, cols: number): [numbe
   return [min, max];
 }
 
-/** Emit watertight enclosure triangles (bottom face + 4 side walls) via callback.
- *  Winding produces outward-facing normals on all faces.
- *  topBase/botBase are flat index offsets for top and bottom vertex arrays. */
-export function emitWatertightTriangles(
-  cols: number, rows: number, topBase: number, botBase: number,
-  emit: (a: number, b: number, c: number) => void,
-): void {
-  // Bottom face (normal points -Z)
-  for (let j = 0; j < rows - 1; j++)
-    for (let i = 0; i < cols - 1; i++) {
-      const a = botBase + j * cols + i;
-      emit(a, a + cols, a + 1);
-      emit(a + 1, a + cols, a + cols + 1);
-    }
-  // Front wall (j=0, normal points -Y)
-  for (let i = 0; i < cols - 1; i++) {
-    const tl = topBase + i, bl = botBase + i;
-    emit(tl, bl, tl + 1);
-    emit(tl + 1, bl, bl + 1);
-  }
-  // Back wall (j=rows-1, normal points +Y)
-  for (let i = 0; i < cols - 1; i++) {
-    const tl = topBase + (rows - 1) * cols + i, bl = botBase + (rows - 1) * cols + i;
-    emit(tl, tl + 1, bl);
-    emit(tl + 1, bl + 1, bl);
-  }
-  // Left wall (i=0, normal points -X)
-  for (let j = 0; j < rows - 1; j++) {
-    const tt = topBase + j * cols, bt = botBase + j * cols;
-    emit(tt, tt + cols, bt);
-    emit(tt + cols, bt + cols, bt);
-  }
-  // Right wall (i=cols-1, normal points +X)
-  for (let j = 0; j < rows - 1; j++) {
-    const tt = topBase + j * cols + (cols - 1), bt = botBase + j * cols + (cols - 1);
-    emit(tt, bt, tt + cols);
-    emit(tt + cols, bt, bt + cols);
-  }
-}
-
 /** Weighted 3x3 kernel smoothing (center 4, edge 2, corner 1), `iterations` passes at
  *  `strength` lerp. Shared by the noise pipeline (mesh.ts) and the drape compositor
  *  (drape.ts) — lives here so drape.ts never has to import mesh.ts (no import cycle). */

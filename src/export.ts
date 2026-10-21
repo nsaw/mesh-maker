@@ -1,130 +1,9 @@
 import { STATE } from './state';
-import type { Vertex3D, Triangle, MeshData } from './types';
 import { showToast } from './toast';
-import { MIN_WATERTIGHT_THICKNESS, preferZ00Z11Diagonal, cellTriangleOffsets, emitWatertightTriangles, gridMinMax } from './geometry';
 import { doSBPExport } from './sbp-export';
-
-export function getFullMeshData(): MeshData | null {
-  const { vertices, cols, rows, meshX, meshY, watertight } = STATE;
-  const baseThickness = watertight ? Math.max(STATE.baseThickness, MIN_WATERTIGHT_THICKNESS) : STATE.baseThickness;
-  if (!vertices || cols < 2 || rows < 2) return null;
-
-  const top: Vertex3D[][] = [];
-  for (let j = 0; j < rows; j++) {
-    top[j] = [];
-    for (let i = 0; i < cols; i++) {
-      top[j][i] = { x: (i/(cols-1))*meshX, y: (j/(rows-1))*meshY, z: vertices[j][i] };
-    }
-  }
-  return { top, cols, rows, meshX, meshY, baseThickness, watertight };
-}
-
-function triNormal(a: Vertex3D, b: Vertex3D, c: Vertex3D): Vertex3D {
-  const ux = b.x-a.x, uy = b.y-a.y, uz = b.z-a.z;
-  const vx = c.x-a.x, vy = c.y-a.y, vz = c.z-a.z;
-  const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
-  const len = Math.hypot(nx, ny, nz);
-  return len > 0 ? { x: nx/len, y: ny/len, z: nz/len } : { x: 0, y: 0, z: 1 };
-}
-
-
-function collectTriangles(mesh: MeshData): Triangle[] {
-  const { top, cols, rows, watertight } = mesh;
-
-  // Flatten top[][] for index-based access: flat[j*cols+i] === top[j][i]
-  const flat: Vertex3D[] = [];
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) flat.push(top[j][i]);
-
-  const tris: Triangle[] = [];
-  for (let j = 0; j < rows - 1; j++) for (let i = 0; i < cols - 1; i++) {
-    const a = j * cols + i;
-    const [t1, t2] = cellTriangleOffsets(
-      preferZ00Z11Diagonal(flat[a].z, flat[a + 1].z, flat[a + cols].z, flat[a + cols + 1].z), cols);
-    tris.push([flat[a + t1[0]], flat[a + t1[1]], flat[a + t1[2]]]);
-    tris.push([flat[a + t2[0]], flat[a + t2[1]], flat[a + t2[2]]]);
-  }
-
-  if (watertight) {
-    const botStart = flat.length;
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++)
-        flat.push({ x: top[j][i].x, y: top[j][i].y, z: 0 });
-    emitWatertightTriangles(cols, rows, 0, botStart, (a, b, c) => {
-      tris.push([flat[a], flat[b], flat[c]]);
-    });
-  }
-  return tris;
-}
-
-function exportSTL_ASCII(mesh: MeshData): string {
-  const tris = collectTriangles(mesh);
-  let s = 'solid meshcraft\n';
-  for (const [a, b, c] of tris) {
-    const n = triNormal(a, b, c);
-    s += `facet normal ${n.x} ${n.y} ${n.z}\n outer loop\n  vertex ${a.x} ${a.y} ${a.z}\n  vertex ${b.x} ${b.y} ${b.z}\n  vertex ${c.x} ${c.y} ${c.z}\n endloop\nendfacet\n`;
-  }
-  return s + 'endsolid meshcraft';
-}
-
-function exportSTL_Binary(mesh: MeshData): Blob {
-  const tris = collectTriangles(mesh);
-  const buf = new ArrayBuffer(84 + tris.length * 50);
-  const view = new DataView(buf);
-  const header = 'MESHCRAFT // Sawyer Design';
-  for (let i = 0; i < 80; i++) view.setUint8(i, i < header.length ? header.charCodeAt(i) : 0);
-  view.setUint32(80, tris.length, true);
-  let off = 84;
-  for (const [a, b, c] of tris) {
-    const n = triNormal(a, b, c);
-    view.setFloat32(off, n.x, true); off += 4;
-    view.setFloat32(off, n.y, true); off += 4;
-    view.setFloat32(off, n.z, true); off += 4;
-    for (const v of [a, b, c]) {
-      view.setFloat32(off, v.x, true); off += 4;
-      view.setFloat32(off, v.y, true); off += 4;
-      view.setFloat32(off, v.z, true); off += 4;
-    }
-    view.setUint16(off, 0, true); off += 2;
-  }
-  return new Blob([buf], { type: 'application/octet-stream' });
-}
-
-function exportOBJ(mesh: MeshData): string {
-  const { top, cols, rows, watertight } = mesh;
-  const zBase = 0;
-  let s = '# MESHCRAFT - Sawyer Design\n# OBJ Export\n\n';
-
-  const topStart = 1;
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-    const v = top[j][i];
-    s += `v ${v.x.toFixed(6)} ${v.y.toFixed(6)} ${v.z.toFixed(6)}\n`;
-  }
-
-  const botStart = rows * cols + 1;
-
-  if (watertight) {
-    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-      s += `v ${top[j][i].x.toFixed(6)} ${top[j][i].y.toFixed(6)} ${zBase.toFixed(6)}\n`;
-    }
-  }
-
-  s += '\n# Top surface\n';
-  for (let j = 0; j < rows - 1; j++) for (let i = 0; i < cols - 1; i++) {
-    const a = topStart + j * cols + i;
-    const [t1, t2] = cellTriangleOffsets(
-      preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z), cols);
-    s += `f ${a + t1[0]} ${a + t1[1]} ${a + t1[2]}\nf ${a + t2[0]} ${a + t2[1]} ${a + t2[2]}\n`;
-  }
-
-  if (watertight) {
-    s += '\n# Bottom + side walls\n';
-    emitWatertightTriangles(cols, rows, topStart, botStart, (a, b, c) => {
-      s += `f ${a} ${b} ${c}\n`;
-    });
-  }
-  return s;
-}
+import { getExportSurface } from './export-surface';
+import { buildIndexedMesh, writeAsciiSTL, writeBinarySTL, writeOBJ } from './mesh-writer';
+import type { ExportSurface, IndexedMesh } from './mesh-writer';
 
 // --- Rhino 3DM export via lazy-loaded rhino3dm.js WASM from CDN ---
 //
@@ -190,12 +69,9 @@ async function loadRhino3dm(): Promise<RhinoApi> {
   return _rhinoPromise;
 }
 
-async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
+async function exportRhino3DM(mesh: IndexedMesh): Promise<Blob> {
   const rhino = await loadRhino3dm();
-
-  const { top, cols, rows, watertight } = mesh;
-  const zBase = 0;
-
+  const { positions: p, triangles: t } = mesh;
   const asPointCloud = STATE.export3dmAsPointCloud;
 
   let m: RhinoMesh | null = null;
@@ -209,64 +85,17 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
 
     if (asPointCloud) {
       const points: number[][] = [];
-      for (let j = 0; j < rows; j++)
-        for (let i = 0; i < cols; i++)
-          points.push([top[j][i].x, top[j][i].y, top[j][i].z]);
-      if (watertight)
-        for (let j = 0; j < rows; j++)
-          for (let i = 0; i < cols; i++)
-            points.push([top[j][i].x, top[j][i].y, zBase]);
-
+      for (let i = 0; i < p.length / 3; i++) points.push([p[i * 3], p[i * 3 + 1], p[i * 3 + 2]]);
       cloud = new rhino.PointCloud();
       cloud.addRangePoints(points);
       file.objects().addPointCloud(cloud, null);
       geometryAdded = true;
     } else {
       m = new rhino.Mesh();
-      for (let j = 0; j < rows; j++)
-        for (let i = 0; i < cols; i++)
-          m.vertices().add(top[j][i].x, top[j][i].y, top[j][i].z);
-
-      const botStart = rows * cols;
-      if (watertight)
-        for (let j = 0; j < rows; j++)
-          for (let i = 0; i < cols; i++)
-            m.vertices().add(top[j][i].x, top[j][i].y, zBase);
-
-      for (let j = 0; j < rows - 1; j++)
-        for (let i = 0; i < cols - 1; i++) {
-          const a = j * cols + i;
-          const [t1, t2] = cellTriangleOffsets(
-            preferZ00Z11Diagonal(top[j][i].z, top[j][i+1].z, top[j+1][i].z, top[j+1][i+1].z), cols);
-          m.faces().addTriFace(a + t1[0], a + t1[1], a + t1[2]);
-          m.faces().addTriFace(a + t2[0], a + t2[1], a + t2[2]);
-        }
-
-      if (watertight) {
-        for (let j = 0; j < rows - 1; j++)
-          for (let i = 0; i < cols - 1; i++) {
-            const a = botStart + j * cols + i;
-            m.faces().addQuadFace(a, a + cols, a + cols + 1, a + 1);
-          }
-        for (let i = 0; i < cols - 1; i++)
-          m.faces().addQuadFace(i, botStart + i, botStart + i + 1, i + 1);
-        for (let i = 0; i < cols - 1; i++) {
-          const t = (rows - 1) * cols + i, b = botStart + (rows - 1) * cols + i;
-          m.faces().addQuadFace(t, t + 1, b + 1, b);
-        }
-        for (let j = 0; j < rows - 1; j++) {
-          const t = j * cols, b = botStart + j * cols;
-          m.faces().addQuadFace(t, t + cols, b + cols, b);
-        }
-        for (let j = 0; j < rows - 1; j++) {
-          const t = j * cols + (cols - 1), b = botStart + j * cols + (cols - 1);
-          m.faces().addQuadFace(t, b, b + cols, t + cols);
-        }
-      }
-
+      for (let i = 0; i < p.length / 3; i++) m.vertices().add(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+      for (let f = 0; f < t.length / 3; f++) m.faces().addTriFace(t[f * 3], t[f * 3 + 1], t[f * 3 + 2]);
       m.normals().computeNormals();
       m.compact();
-
       file.objects().add(m, null);
       geometryAdded = true;
     }
@@ -295,11 +124,10 @@ async function exportRhino3DM(mesh: MeshData): Promise<Blob> {
 
 // --- Heightmap PNG export ---
 
-function exportHeightmapPNG(): Promise<Blob | null> {
-  const { vertices, cols, rows } = STATE;
-  if (!vertices) return Promise.resolve(null);
-
-  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
+function exportHeightmapPNG(surface: ExportSurface): Promise<Blob | null> {
+  const { z, cols, rows } = surface;
+  let zMin = Infinity, zMax = -Infinity;
+  for (let k = 0; k < z.length; k++) { if (z[k] < zMin) zMin = z[k]; if (z[k] > zMax) zMax = z[k]; }
   const zRange = zMax - zMin || 1;
 
   const c = document.createElement('canvas');
@@ -311,7 +139,7 @@ function exportHeightmapPNG(): Promise<Blob | null> {
   // heightmap reads the same way as the carving and as the source image.
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
-      const t = (vertices[j][i] - zMin) / zRange;
+      const t = (z[j * cols + i] - zMin) / zRange;
       const v = Math.round(Math.max(0, Math.min(1, t)) * 255);
       const idx = ((rows - 1 - j) * cols + i) * 4;
       img.data[idx] = v;
@@ -350,34 +178,29 @@ async function _doExportInner(): Promise<void> {
     return;
   }
 
+  const surface = getExportSurface();
+  if (typeof surface === 'string') { showToast(surface, 6000); return; }
+
   if (fmt === 'heightmap') {
-    if (!STATE.vertices) { showToast('Generate a mesh first'); return; }
-    const blob = await exportHeightmapPNG();
+    const blob = await exportHeightmapPNG(surface);
     if (!blob) { showToast('Heightmap export failed'); return; }
     triggerDownload(blob, `${STATE.filename}_heightmap.png`);
     return;
   }
 
-  const mesh = getFullMeshData();
-  if (!mesh) {
-    showToast(STATE.vertices ? 'Mesh too small to export (need at least 2\u00d72 grid)' : 'Generate a mesh first');
-    return;
-  }
-
+  const mesh = buildIndexedMesh(surface);
   let blob: Blob | undefined;
   let ext: string;
 
   if (fmt === 'stl') {
     if (STATE.binary) {
-      blob = exportSTL_Binary(mesh);
+      blob = new Blob([writeBinarySTL(mesh)], { type: 'application/octet-stream' });
     } else {
-      const txt = exportSTL_ASCII(mesh);
-      blob = new Blob([txt], { type: 'text/plain' });
+      blob = new Blob(writeAsciiSTL(mesh), { type: 'text/plain' });
     }
     ext = 'stl';
   } else if (fmt === 'obj') {
-    const txt = exportOBJ(mesh);
-    blob = new Blob([txt], { type: 'text/plain' });
+    blob = new Blob(writeOBJ(mesh), { type: 'text/plain' });
     ext = 'obj';
   } else if (fmt === '3dm') {
     try {
@@ -385,8 +208,7 @@ async function _doExportInner(): Promise<void> {
       blob = await exportRhino3DM(mesh);
       ext = '3dm';
     } catch (e: unknown) {
-      const txt = exportOBJ(mesh);
-      blob = new Blob([txt], { type: 'text/plain' });
+      blob = new Blob(writeOBJ(mesh), { type: 'text/plain' });
       ext = 'obj';
       const errMsg = e instanceof Error ? e.message : String(e);
       showToast(`3DM failed (OBJ fallback): ${errMsg}`, 8000);

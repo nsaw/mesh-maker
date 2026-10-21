@@ -5,14 +5,16 @@ import type { Heightmap, SbpConfig, ToolpathSection, ToolpathMove } from './type
  *
  * Strategy: step down from materialZ to roughing floor (0.050") in increments of tool stepdown.
  * At each Z level, serpentine raster: sweep X, step Y by stepover, reverse each row.
- * Cut Z = max(currentZLevel, surfaceZ + leaveStock) -- never cuts below the surface.
+ * Cut Z = max(currentZLevel, tipZ + leaveStock), where tipZ comes from compensateForTool with
+ * segment = cellSize, and each node-to-node segment is cut at the higher of its two ends. Together
+ * these keep the cutter clear of the surface along the whole move, not just at the nodes.
  * Retract between disconnected segments (gaps in the cut).
  */
 export function generateRoughing(
   compensated: Heightmap,
   config: SbpConfig,
 ): ToolpathSection {
-  const { z, rows, cols, cellSize } = compensated;
+  const { z, rows, cols, cellSize, cellSizeY } = compensated;
   const tool = config.roughingTool;
   const stepdown = tool.cutting.stepdown;
   const stepover = tool.cutting.stepover;
@@ -31,7 +33,7 @@ export function generateRoughing(
   levels.push(floor);
 
   // Raster step in grid cells
-  const stepCells = Math.max(1, Math.round(stepover / cellSize));
+  const stepCells = Math.max(1, Math.round(stepover / cellSizeY));
 
   for (const zLevel of levels) {
     let forward = true;
@@ -42,7 +44,7 @@ export function generateRoughing(
         : { start: cols - 1, end: 0, step: -1 };
 
       let cutting = false;
-      let prevX = 0, prevY = 0;
+      let prevX = 0, prevY = 0, prevZ = 0;
 
       for (
         let c = colRange.start;
@@ -63,19 +65,26 @@ export function generateRoughing(
         }
 
         const worldX = offsetX + c * cellSize;
-        const worldY = offsetY + r * cellSize;
+        const worldY = offsetY + r * cellSizeY;
 
         if (!cutting) {
           // Rapid to position, then plunge
           moves.push({ type: 'rapid', x: worldX, y: worldY, z: safeZ });
           moves.push({ type: 'cut', x: worldX, y: worldY, z: cutZ });
           cutting = true;
+        } else if (cutZ < prevZ) {
+          // Hold the higher end across the segment, then drop: a linear ramp between node tips can
+          // pass under the envelope (the input is compensated with segment = cellSize for this).
+          moves.push({ type: 'cut', x: worldX, y: worldY, z: prevZ });
+          moves.push({ type: 'cut', x: worldX, y: worldY, z: cutZ });
         } else {
+          if (cutZ > prevZ) moves.push({ type: 'cut', x: prevX, y: prevY, z: cutZ });
           moves.push({ type: 'cut', x: worldX, y: worldY, z: cutZ });
         }
 
         prevX = worldX;
         prevY = worldY;
+        prevZ = cutZ;
       }
 
       if (cutting) {

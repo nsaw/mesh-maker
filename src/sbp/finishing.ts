@@ -1,39 +1,18 @@
 import type { Heightmap, SbpConfig, ToolpathSection, ToolpathMove } from './types';
+import { createDropCutter, createTipLipschitzField } from './compensate';
 
-/**
- * Bilinear interpolation of the heightmap at arbitrary (x, y) in mesh coordinates.
- */
-function bilinearInterp(
-  z: Float64Array,
-  rows: number,
-  cols: number,
-  cellSize: number,
-  x: number,
-  y: number,
-): number {
-  const col = x / cellSize;
-  const row = y / cellSize;
-
-  const c0 = Math.floor(col);
-  const r0 = Math.floor(row);
-  const c1 = Math.min(c0 + 1, cols - 1);
-  const r1 = Math.min(r0 + 1, rows - 1);
-  const c0c = Math.max(0, c0);
-  const r0c = Math.max(0, r0);
-
-  const fx = col - c0;
-  const fy = row - r0;
-
-  const z00 = z[r0c * cols + c0c];
-  const z10 = z[r0c * cols + c1];
-  const z01 = z[r1 * cols + c0c];
-  const z11 = z[r1 * cols + c1];
-
-  return z00 * (1 - fx) * (1 - fy)
-    + z10 * fx * (1 - fy)
-    + z01 * (1 - fx) * fy
-    + z11 * fx * fy;
-}
+/** Largest the straight move between two emitted points may sit below the exact tip height at a
+ *  sample before the move is split. The envelope bends sharply where the steep side of a tapered
+ *  ball nose touches fine detail, so uniform 0.005 in points alone gouged up to 0.007 in there. */
+const CHORD_TOLERANCE = 0.0001;
+const MAX_CHORD_SPLITS = 6;
+/** Most samples of the exact tip per move before it is split instead. At least eighths are always
+ *  taken on a move that is not already flat to the bound: on a cliff-and-spike surface a rise at
+ *  t = 0.125 went 1.1 thou under quarter-point checks (cli/sbp-cut.spec.ts C8). */
+const MAX_CHORD_SAMPLES = 256;
+/** Most a certified move may pass under the exact tip, inches; under the 0.0005 in the cut specs
+ *  allow, so sampling noise in the check itself cannot reach it. */
+const CERTIFIED_GOUGE = 0.0004;
 
 function pushUniquePoint(
   points: Array<{ x: number; y: number }>,
@@ -122,20 +101,25 @@ function computeRasterLines(
  *   At line ends, traverse boundary at materialZ to next line (no mid-path retracts)
  * - Exit: retract to safeZ
  *
- * Points sampled at uniform 0.005" spacing along each raster line.
- * No collinear reduction -- uniform point density for consistent surface finish.
+ * Points sampled at uniform 0.005" spacing along each raster line, each one dropped onto the target
+ * surface (createDropCutter). Each straight move between two points is certified against the exact
+ * tip (see emit below) or split, with a provably clear lift-and-cross at the deepest split. No
+ * collinear reduction.
  */
 export function generateFinishing(
-  compensated: Heightmap,
+  target: Heightmap,
   config: SbpConfig,
 ): ToolpathSection {
-  const { z, rows, cols, cellSize, meshX, meshY } = compensated;
+  const { meshX, meshY } = target;
   const tool = config.finishingTool;
+  const drop = createDropCutter(target, tool);
   const stepover = tool.cutting.stepover;
   const { materialZ, safeZ, offsetX, offsetY, finishRasterAngle } = config;
 
   const lines = computeRasterLines(meshX, meshY, stepover, finishRasterAngle);
   const pointSpacing = 0.005; // uniform spacing along each line
+  // Moves are at most pointSpacing long; the field covers every contact of any point on one.
+  const tipSlopeAt = createTipLipschitzField(target, tool, pointSpacing);
   const moves: ToolpathMove[] = [];
 
   // Entry: rapid to start of first line at safeZ
@@ -146,7 +130,7 @@ export function generateFinishing(
   const firstLine = lines[0];
   const startX = offsetX + firstLine.x0;
   const startY = offsetY + firstLine.y0;
-  const startZ = bilinearInterp(z, rows, cols, cellSize, firstLine.x0, firstLine.y0);
+  const startZ = drop(firstLine.x0, firstLine.y0);
 
   moves.push({ type: 'rapid', x: startX, y: startY, z: safeZ });
   moves.push({ type: 'cut', x: startX, y: startY, z: startZ });
@@ -164,22 +148,51 @@ export function generateFinishing(
 
     const numPoints = Math.max(2, Math.ceil(lineLen / pointSpacing) + 1);
     const linePoints: { x: number; y: number; z: number }[] = [];
+    const at = (t: number): { x: number; y: number; z: number } => {
+      const lx = line.x0 + t * dx, ly = line.y0 + t * dy;
+      return { x: offsetX + lx, y: offsetY + ly, z: drop(lx, ly) };
+    };
+    // Emit [ta, tb). A straight move is accepted only when it is certified: the exact tip is sampled
+    // at n evenly spaced points, and between two samples h apart the tip can rise above them by
+    // at most L h / 2 (L from createTipLipschitzField, local to the move). So the move passes under
+    // the tip by at most max(sample excess) + L h / 2, and it must keep that within CERTIFIED_GOUGE.
+    // Otherwise it is split; if the last allowed split still fails, the cutter lifts at a, crosses at
+    // max(a, b) + L |ab| / 2 (no point of the step can need more) and drops at b.
+    const emit = (ta: number, a: { x: number; y: number; z: number }, tb: number,
+      b: { x: number; y: number; z: number }, depth: number): void => {
+      const tm = (ta + tb) / 2, m = at(tm);
+      const lineT = (t: number): number => a.z + (b.z - a.z) * ((t - ta) / (tb - ta));
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const L = tipSlopeAt((a.x + b.x) / 2 - offsetX, (a.y + b.y) / 2 - offsetY);
+      // Sample at n evenly spaced points, doubling n (new points only) while the samples are clean
+      // but the bound is not yet met: near steep ground that costs tip evaluations, not emitted points.
+      let excess = Math.max(0, m.z - lineT(tm)), n = 2;
+      while (excess <= CHORD_TOLERANCE && excess + L * (len / n) / 2 > CERTIFIED_GOUGE && n < MAX_CHORD_SAMPLES) {
+        n *= 2;
+        for (let k = 1; k < n && excess <= CHORD_TOLERANCE; k += 2) {
+          const t = ta + ((tb - ta) * k) / n;
+          excess = Math.max(excess, at(t).z - lineT(t));
+        }
+      }
+      if (excess <= CHORD_TOLERANCE && excess + L * (len / n) / 2 <= CERTIFIED_GOUGE) {
+        linePoints.push(a);
+      } else if (depth < MAX_CHORD_SPLITS) {
+        emit(ta, a, tm, m, depth + 1);
+        emit(tm, m, tb, b, depth + 1);
+      } else {
+        const hold = Math.max(a.z, b.z) + L * len / 2;
+        linePoints.push(a, { x: a.x, y: a.y, z: hold }, { x: b.x, y: b.y, z: hold });
+      }
+    };
 
-    for (let p = 0; p < numPoints; p++) {
-      const t = forward
-        ? p / (numPoints - 1)
-        : 1 - p / (numPoints - 1);
-
-      const lx = line.x0 + t * dx;
-      const ly = line.y0 + t * dy;
-      const lz = bilinearInterp(z, rows, cols, cellSize, lx, ly);
-
-      linePoints.push({
-        x: offsetX + lx,
-        y: offsetY + ly,
-        z: lz,
-      });
+    let tPrev = forward ? 0 : 1, pPrev = at(tPrev);
+    for (let p = 1; p < numPoints; p++) {
+      const t = forward ? p / (numPoints - 1) : 1 - p / (numPoints - 1);
+      const pt = at(t);
+      emit(tPrev, pPrev, t, pt, 0);
+      tPrev = t; pPrev = pt;
     }
+    linePoints.push(pPrev);
 
     // If not the first line, traverse from previous line end to this line start at materialZ
     if (i > 0) {

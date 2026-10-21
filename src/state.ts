@@ -1,4 +1,5 @@
 import type { SbpStats } from './sbp/types';
+import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
@@ -98,6 +99,14 @@ export interface MeshState {
   // Depth map
   depthMap: HTMLImageElement | null;
   depthMapName: string;
+  /** A finished relief loaded from a .mcrelief file (src/relief-master.ts). In DEPTH MAP mode it
+   *  replaces the image path: the viewport shows a preview resample, and every export and toolpath
+   *  reads these full-resolution heights unchanged. Never serialized into share links. */
+  reliefMaster: ReliefMaster | null;
+  /** File name the relief master was loaded from (the label shown while it is active). */
+  reliefMasterName: string;
+  /** Largest preview-vs-master height difference at the master's nodes, inches (previewErrorIn). */
+  reliefPreviewErrorIn: number;
   /** Fabric tension for BLEND (drape) mode: 0 = membrane hugs the form, 1 = bridges between
    *  supports. Mapped log-linearly to membrane curvature in src/drape.ts. */
   blend: number;
@@ -232,6 +241,9 @@ export const DEFAULTS: MeshState = {
   baseThickness: 0.75,
   depthMap: null,
   depthMapName: '',
+  reliefMaster: null,
+  reliefMasterName: '',
+  reliefPreviewErrorIn: 0,
   // 0.8 = membrane curvature 0.48/in, the value that matched the reference cloth best (P3).
   blend: 0.8,
   dmHeightScale: 1.0,
@@ -270,6 +282,17 @@ export const DEFAULTS: MeshState = {
 };
 
 export const STATE: MeshState = { ...DEFAULTS };
+
+/** True when a relief master drives the mesh (DEPTH MAP mode with a master loaded). */
+export function reliefMasterActive(): boolean {
+  return STATE.reliefMaster !== null && STATE.mode === 'depthmap';
+}
+
+/** Controls a relief master fixes: its size, stock and heights are the data, not settings. Grid
+ *  Resolution stays live because it only sets the preview density. */
+export const RELIEF_LOCKED_KEYS: ReadonlySet<string> = new Set([
+  'meshX', 'meshY', 'baseThickness', 'dmHeightScale', 'dmOffset', 'dmBackgroundCutoff', 'dmSmoothing',
+]);
 
 export const noiseDims = { meshX: 36, meshY: 24, resolution: 400 };
 

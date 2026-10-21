@@ -10,7 +10,7 @@ function preloadDemoDepthMap(): void {
   img.crossOrigin = 'anonymous';
   img.onload = () => {
     setDemoDepthMap(img);
-    if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap) {
+    if ((STATE.mode === 'depthmap' || STATE.mode === 'blend') && !STATE.depthMap && !STATE.reliefMaster) {
       STATE.depthMap = img;
       STATE.depthMapName = 'Mona Lisa (demo)';
       fitMeshToAspect(img.width, img.height);

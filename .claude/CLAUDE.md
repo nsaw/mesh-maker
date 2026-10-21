@@ -40,6 +40,9 @@ npm run test:relief      # tsx cli/voronoi-relief.spec.ts
 npm run test:gh-parity   # tsx cli/grasshopper-parity.spec.ts
 npm run test:drape       # tsx cli/drape.spec.ts (Blend drape, ~5 s)
 npm run test:drape-physics  # tsx cli/drape-physics.spec.ts (vs reference cloth sim, minutes)
+npm run test:cut         # tsx cli/sbp-cut.spec.ts (compensation oracles + SBP cut replay, ~7 min)
+npm run test:relief-master  # tsx cli/relief-master.spec.ts (.mcrelief contract, export fidelity)
+npm run relief-roundtrip -- <master.mcrelief> --out <dir> [--crop ...] [--sbp] [--replay f.sbp] [--sim-factor N] [--offset x,y] [--face ...]
 npm run stl-to-sbp -- <input.stl> [--dry-run]
 npm run deploy           # build, then wrangler pages deploy (needs CF env vars)
 ```
@@ -117,11 +120,13 @@ npm run lint && npm run typecheck && npm run typecheck:cli
 npm run test:relief
 npm run test:gh-parity
 npm run test:drape
+npm run test:cut
+npm run test:relief-master
 npm run stl-to-sbp -- <input.stl> --dry-run
 ```
 
 `.github/workflows/ci.yml` runs lint, both typechecks, `test:relief`, `test:gh-parity`,
-`test:drape` and the build on every pull request. `test:drape-physics` takes minutes and is
+`test:drape`, `test:cut`, `test:relief-master` and the build on every pull request. `test:drape-physics` takes minutes and is
 not in CI: run it by hand after any change to `src/drape.ts` and paste its numbers in the PR.
 
 Visual and interaction items (view modes, orbit and pinch, responsive under 900px, URL state

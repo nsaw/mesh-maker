@@ -1,4 +1,4 @@
-import { STATE } from './state';
+import { STATE, reliefMasterActive } from './state';
 import { setCameraFromState } from './render';
 import { gridMinMax } from './geometry';
 
@@ -50,15 +50,21 @@ export function updateStats(): void {
       ['SBP Lines', STATE.sbpStats.totalLines.toLocaleString()],
     ];
   } else {
-    const topTris = (cols-1) * (rows-1) * 2;
-    const sideTris = watertight ? ((cols-1)*4 + (rows-1)*4) : 0;
-    const bottomTris = watertight ? topTris : 0;
-    const totalTris = topTris + bottomTris + sideTris;
-    const verts = cols * rows * (watertight ? 2 : 1);
+    // Exports read the relief master at full resolution when one is active, not the preview grid.
+    const master = reliefMasterActive() ? STATE.reliefMaster : null;
+    const ec = master ? master.cols : cols, er = master ? master.rows : rows;
+    // Matches src/mesh-writer.ts: top grid, plus a wall quad per boundary edge and a bottom fan
+    // from one centre vertex to every boundary node.
+    const rim = 2 * (ec + er) - 4;
+    const topTris = (ec - 1) * (er - 1) * 2;
+    const totalTris = topTris + (watertight ? 3 * rim : 0);
+    const verts = ec * er + (watertight ? rim + 1 : 0);
     const estSize = STATE.binary ? (84 + totalTris * 50) : (totalTris * 200);
     statData = [
       ['Vertices', verts.toLocaleString()],
       ['Triangles', totalTris.toLocaleString()],
+      ...(master ? [['Preview', `${cols} x ${rows} of ${ec} x ${er}`] as [string, string],
+        ['Preview error', `${STATE.reliefPreviewErrorIn.toFixed(4)}"`] as [string, string]] : []),
       ['Gen time', `${genTime.toFixed(0)}ms`],
       ['Est. size', formatBytes(estSize)],
     ];
