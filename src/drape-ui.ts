@@ -23,6 +23,9 @@ let figureFile: ArrayBuffer | null = null;
 /** Bumped whenever the figure or tilt changes; a result built from an older revision is discarded. */
 let revision = 0;
 let worker: Worker | null = null;
+/** Why the current figure has no relief at the current tilt (the status line a rebuilt sidebar shows),
+ *  or null. */
+let bareError: string | null = null;
 let demoLoading: Promise<void> | null = null;
 /** Bumped by every upload; a read that finishes after a newer upload started is dropped. */
 let uploadSeq = 0;
@@ -32,6 +35,20 @@ let uploadSeq = 0;
 let sizeBeforeDrape: Pick<typeof STATE, 'meshX' | 'meshY' | 'resolution' | 'baseThickness' | 'aspectLocked' | 'depthMapAR'> | null = null;
 /** The tab the user came from (null when the page opened on DRAPE). */
 let modeBeforeDrape: typeof STATE.mode | null = null;
+
+/** Run `fn`, which sets the size controls for another tab (an image or relief master that finished
+ *  loading after the user opened DRAPE). While DRAPE holds the controls, `fn` writes to the sizes DRAPE
+ *  hands back on leaving, not to the ones its relief shows; otherwise it simply runs. */
+export function withSizesOutsideDrape(fn: () => void): void {
+  if (STATE.mode !== 'drape' || !sizeBeforeDrape) { fn(); return; }
+  const pick = (): NonNullable<typeof sizeBeforeDrape> => {
+    const { meshX, meshY, resolution, baseThickness, aspectLocked, depthMapAR } = STATE;
+    return { meshX, meshY, resolution, baseThickness, aspectLocked, depthMapAR };
+  };
+  const shown = pick();
+  Object.assign(STATE, sizeBeforeDrape);
+  try { fn(); sizeBeforeDrape = pick(); } finally { Object.assign(STATE, shown); }
+}
 
 /** Leaving DRAPE: restore the size controls and return the tab the user was on before it, so the
  *  caller can treat the switch as if the DRAPE visit never happened. */
@@ -65,6 +82,7 @@ function syncButtons(): void {
 export function drapeStatusText(): string {
   if (!figure) return 'Loading the figure...';
   if (worker) return 'Simulating the drape...';
+  if (bareError && !STATE.drapeMaster) return bareError;
   if (STATE.drapeMasterKind === 'draped') return `Draped at ${STATE.drapeMasterTilt} deg tilt. Exports use this drape at full resolution.`;
   return `Bare figure at ${STATE.drapeTilt} deg tilt. Press Generate Drape to simulate the veil (1-4 minutes in this tab).`;
 }
@@ -84,6 +102,7 @@ function syncSizeControls(m: ReliefMaster): void {
 
 /** Show a drape relief (bare or draped) in DRAPE mode. */
 function present(m: ReliefMaster, kind: 'bare' | 'draped', tilt: number): void {
+  bareError = null;
   STATE.drapeMaster = m; STATE.drapeMasterKind = kind; STATE.drapeMasterTilt = tilt;
   setStatus(drapeStatusText());
   if (STATE.mode !== 'drape') return;
@@ -102,10 +121,13 @@ async function toMaster(heightsM: Float32Array, mask: Uint8Array, name: string, 
   return parseReliefMaster(buf);
 }
 
-/** A relief that could not be built: say so instead of leaving the last status line up. */
-function reliefFailed(what: string, err: unknown): void {
-  setStatus(`${what} failed. Check the figure placement (units, up axis) and try again.`);
+/** A relief that could not be built: say so instead of leaving the last status line up. Returns the
+ *  status line. */
+function reliefFailed(what: string, err: unknown): string {
+  const status = `${what} failed. Check the figure placement (units, up axis) or try another tilt.`;
+  setStatus(status);
   showToast(`${what} failed: ${err instanceof Error ? err.message : String(err)}`, 8000);
+  return status;
 }
 
 /** The bare-figure relief of `fig` at `tilt`, as the relief master the viewport and exports read. */
@@ -128,7 +150,7 @@ async function showBare(): Promise<void> {
     // Nothing valid to show at this figure and tilt: clear the old relief so nothing exports it.
     STATE.drapeMaster = null; STATE.drapeMasterKind = null;
     if (STATE.mode === 'drape') generateMesh();
-    reliefFailed('The bare figure relief', err);
+    bareError = reliefFailed('The bare figure relief', err);
   }
 }
 
@@ -137,7 +159,7 @@ async function showBare(): Promise<void> {
 function useFigure(fig: Figure, file: ArrayBuffer, name: string, bare?: { master: ReliefMaster; tilt: number }): void {
   cancelDrape(false);
   revision++;
-  figure = fig; figureFile = file; STATE.drapeFigureName = name;
+  figure = fig; figureFile = file; STATE.drapeFigureName = name; bareError = null;
   // The previous figure's relief must not stay exportable under the new name while (or if) the new
   // one is built.
   STATE.drapeMaster = null; STATE.drapeMasterKind = null;
@@ -277,7 +299,8 @@ export async function loadFigureFile(file: File, placement: { metresPerUnit: num
     useFigure(fig, buf, name, { master, tilt });
   } catch (err) {
     if (seq !== uploadSeq) return;
-    showToast(`Could not use ${name} as a figure: ${err instanceof Error ? err.message : String(err)}. Check the units and up axis.`, 8000);
+    const hint = lower.endsWith('.mcfig') ? '' : '. Check the units and up axis.';
+    showToast(`Could not use ${name} as a figure: ${err instanceof Error ? err.message : String(err)}${hint}`, 8000);
   }
 }
 

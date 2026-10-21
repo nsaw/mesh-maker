@@ -33,6 +33,10 @@ async function main(): Promise<void> {
     return v;
   };
   const get = (flag: string): string | undefined => { const i = argv.indexOf(flag); return i < 0 ? undefined : operand(i); };
+  const FLAGS = ['--out', '--tilt', '--param'];
+  argv.forEach((a, i) => {
+    if (a.startsWith('--') && !FLAGS.includes(a) && !(i > 0 && argv[i - 1] === '--param')) throw new Error(`unknown flag ${a}. ${USAGE}`);
+  });
   const file = argv[0], out = get('--out');
   if (!file || file.startsWith('--') || !out) throw new Error(USAGE);
   const tiltText = get('--tilt');

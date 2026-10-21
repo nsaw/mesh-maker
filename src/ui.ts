@@ -1,5 +1,5 @@
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, noiseDims, reliefMasterActive } from './state';
-import { cancelDrape, downloadDrapeRelief, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged } from './drape-ui';
+import { cancelDrape, downloadDrapeRelief, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged, restoreSizeAfterDrape, withSizesOutsideDrape } from './drape-ui';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
@@ -890,6 +890,10 @@ export function updateSectionVisibility(): void {
 }
 
 export function fitMeshToAspect(imgW: number, imgH: number): void {
+  withSizesOutsideDrape(() => fitSizes(imgW, imgH));
+}
+
+function fitSizes(imgW: number, imgH: number): void {
   const ar = imgW / imgH;
   if (ar >= 36 / 24) {
     STATE.meshX = 36;
@@ -898,11 +902,10 @@ export function fitMeshToAspect(imgW: number, imgH: number): void {
     STATE.meshY = 24;
     STATE.meshX = Math.max(1, Math.round(24 * ar));
   }
-  // Full grid resolution — image resolution is the hard gate for depth-map/drape quality;
-  // 256 visibly quantized fine features that the drape's contact-detail channel needs.
-  // Capped by total grid cells: rows scale with meshY/meshX, and an extreme portrait
-  // aspect at resolution 400 would allocate millions of vertices (plus the drape's
-  // envelope/fold/contact grids) and freeze the tab.
+  // Full grid resolution: image resolution is the hard gate for depth-map quality, and 256
+  // visibly quantized fine features. Capped by total grid cells: rows scale with meshY/meshX,
+  // and an extreme portrait aspect at resolution 400 would allocate millions of vertices and
+  // freeze the tab.
   const aspectRowsPerCol = STATE.meshY / STATE.meshX;
   const maxGridCells = 250000;
   STATE.resolution = Math.max(
@@ -1032,6 +1035,8 @@ async function loadReliefMaster(file: File, revision: number): Promise<void> {
     noiseDims.meshY = STATE.meshY;
     noiseDims.resolution = STATE.resolution;
   }
+  // Leaving DRAPE this way skips the tab switch: hand back the sizes DRAPE took over first.
+  if (STATE.mode === 'drape') restoreSizeAfterDrape();
   STATE.mode = 'depthmap';
   document.body.className = 'mode-depthmap';
   document.querySelectorAll('.mode-tab').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.mode === 'depthmap'));
