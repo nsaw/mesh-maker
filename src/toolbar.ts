@@ -2,7 +2,7 @@ import { STATE, noiseDims, demoDepthMap, serializeConfig } from './state';
 import { generateMesh } from './mesh';
 import { renderViewport, setCameraFromState, resizeCanvas } from './render';
 import { doExport } from './export';
-import { applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
+import { applyPendingFit, applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
 import { ensureDrapeFigure, restoreSizeAfterDrape } from './drape-ui';
@@ -60,6 +60,9 @@ export function setupTabs(): void {
         }
         buildSidebar();
       }
+
+      // An image that finished loading while another tab was open sizes the board now.
+      if (STATE.mode === 'depthmap' && applyPendingFit()) buildSidebar();
 
       // Re-fit mesh to depth map aspect only when entering from noise mode
       if (prevMode === 'noise' && STATE.mode === 'depthmap' && !STATE.reliefMaster && STATE.depthMap && !STATE.aspectLocked) {

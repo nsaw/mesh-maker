@@ -23,8 +23,8 @@ let figureFile: ArrayBuffer | null = null;
 /** Bumped whenever the figure or tilt changes; a result built from an older revision is discarded. */
 let revision = 0;
 let worker: Worker | null = null;
-/** Why the current figure has no relief at the current tilt (the status line a rebuilt sidebar shows),
- *  or null. */
+/** Why there is nothing to show (no demo figure, or no relief for this figure at this tilt): the
+ *  status line a rebuilt sidebar shows, or null. */
 let bareError: string | null = null;
 let demoLoading: Promise<void> | null = null;
 /** Bumped by every upload; a read that finishes after a newer upload started is dropped. */
@@ -35,20 +35,6 @@ let uploadSeq = 0;
 let sizeBeforeDrape: Pick<typeof STATE, 'meshX' | 'meshY' | 'resolution' | 'baseThickness' | 'aspectLocked' | 'depthMapAR'> | null = null;
 /** The tab the user came from (null when the page opened on DRAPE). */
 let modeBeforeDrape: typeof STATE.mode | null = null;
-
-/** Run `fn`, which sets the size controls for another tab (an image or relief master that finished
- *  loading after the user opened DRAPE). While DRAPE holds the controls, `fn` writes to the sizes DRAPE
- *  hands back on leaving, not to the ones its relief shows; otherwise it simply runs. */
-export function withSizesOutsideDrape(fn: () => void): void {
-  if (STATE.mode !== 'drape' || !sizeBeforeDrape) { fn(); return; }
-  const pick = (): NonNullable<typeof sizeBeforeDrape> => {
-    const { meshX, meshY, resolution, baseThickness, aspectLocked, depthMapAR } = STATE;
-    return { meshX, meshY, resolution, baseThickness, aspectLocked, depthMapAR };
-  };
-  const shown = pick();
-  Object.assign(STATE, sizeBeforeDrape);
-  try { fn(); sizeBeforeDrape = pick(); } finally { Object.assign(STATE, shown); }
-}
 
 /** Leaving DRAPE: restore the size controls and return the tab the user was on before it, so the
  *  caller can treat the switch as if the DRAPE visit never happened. */
@@ -80,7 +66,7 @@ function syncButtons(): void {
 
 /** What the viewport shows, in words: the drape status line. */
 export function drapeStatusText(): string {
-  if (!figure) return 'Loading the figure...';
+  if (!figure) return bareError ?? 'Loading the figure...';
   if (worker) return 'Simulating the drape...';
   if (bareError && !STATE.drapeMaster) return bareError;
   if (STATE.drapeMasterKind === 'draped') return `Draped at ${STATE.drapeMasterTilt} deg tilt. Exports use this drape at full resolution.`;
@@ -190,6 +176,7 @@ export function ensureDrapeFigure(fromMode: typeof STATE.mode | null = null): Pr
   }
   if (!demoLoading) {
     demoLoading = (async () => {
+      bareError = null;
       try {
         const res = await fetch(DEMO_FIGURE_URL);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -197,7 +184,8 @@ export function ensureDrapeFigure(fromMode: typeof STATE.mode | null = null): Pr
         if (!figure) useFigure(parseFigure(buf), buf, DEMO_FIGURE_NAME);
       } catch (err) {
         demoLoading = null;
-        setStatus('Could not load the demo figure. Upload a figure (.mcfig, .stl, .obj, .glb).');
+        bareError = 'Could not load the demo figure. Upload a figure (.mcfig, .stl, .obj, .glb).';
+        setStatus(bareError);
         showToast(`Could not load the demo figure: ${err instanceof Error ? err.message : String(err)}`, 6000);
       }
     })();

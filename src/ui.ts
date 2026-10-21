@@ -1,5 +1,5 @@
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, noiseDims, reliefMasterActive } from './state';
-import { cancelDrape, downloadDrapeRelief, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged, restoreSizeAfterDrape, withSizesOutsideDrape } from './drape-ui';
+import { cancelDrape, downloadDrapeRelief, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged, restoreSizeAfterDrape } from './drape-ui';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
@@ -889,8 +889,25 @@ export function updateSectionVisibility(): void {
   });
 }
 
+/** An image fit that arrived while another tab owned the size controls (an image or AI depth result
+ *  that finished after the user left DEPTH MAP). Applied when DEPTH MAP is next entered. */
+let pendingFit: { w: number; h: number } | null = null;
+
+/** Size the board to an image's aspect. Only DEPTH MAP's board follows its image: on another tab the
+ *  fit waits for DEPTH MAP, so NOISE and DRAPE keep their own sizes. */
 export function fitMeshToAspect(imgW: number, imgH: number): void {
-  withSizesOutsideDrape(() => fitSizes(imgW, imgH));
+  if (STATE.mode !== 'depthmap') { pendingFit = { w: imgW, h: imgH }; return; }
+  pendingFit = null;
+  fitSizes(imgW, imgH);
+}
+
+/** Entering DEPTH MAP: apply a fit that arrived while another tab was open. Returns whether it did. */
+export function applyPendingFit(): boolean {
+  if (!pendingFit || STATE.mode !== 'depthmap' || STATE.reliefMaster) { pendingFit = null; return false; }
+  const { w, h } = pendingFit;
+  pendingFit = null;
+  fitSizes(w, h);
+  return true;
 }
 
 function fitSizes(imgW: number, imgH: number): void {
