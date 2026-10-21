@@ -222,7 +222,7 @@ async function _doExportInner(): Promise<void> {
   if (fmt === '3dm' && ext === '3dm') showToast('3DM exported!');
 }
 
-function triggerDownload(blob: Blob, filename: string): void {
+export function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

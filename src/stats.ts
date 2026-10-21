@@ -1,4 +1,4 @@
-import { STATE, reliefMasterActive } from './state';
+import { STATE, activeMaster } from './state';
 import { setCameraFromState } from './render';
 import { gridMinMax } from './geometry';
 
@@ -51,7 +51,7 @@ export function updateStats(): void {
     ];
   } else {
     // Exports read the relief master at full resolution when one is active, not the preview grid.
-    const master = reliefMasterActive() ? STATE.reliefMaster : null;
+    const master = activeMaster();
     const ec = master ? master.cols : cols, er = master ? master.rows : rows;
     // Matches src/mesh-writer.ts: top grid, plus a wall quad per boundary edge and a bottom fan
     // from one centre vertex to every boundary node.

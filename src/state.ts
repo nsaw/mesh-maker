@@ -4,7 +4,7 @@ import { CNC_PRESETS, PROFILES } from './noise/presets';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 export interface MeshState {
-  mode: 'noise' | 'depthmap' | 'blend';
+  mode: 'noise' | 'depthmap' | 'drape';
   viewMode: 'solid' | 'wireframe' | 'both' | 'points';
   exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp';
   // Noise params
@@ -107,29 +107,23 @@ export interface MeshState {
   reliefMasterName: string;
   /** Largest preview-vs-master height difference at the master's nodes, inches (previewErrorIn). */
   reliefPreviewErrorIn: number;
-  /** Fabric tension for BLEND (drape) mode: 0 = membrane hugs the form, 1 = bridges between
-   *  supports. Mapped log-linearly to membrane curvature in src/drape.ts. */
-  blend: number;
   dmHeightScale: number;
   dmOffset: number;
   dmSmoothing: number;
   /** Normalized height at or below which the depth map is flattened to the floor (both depth
    *  modes); the rest is stretched to the full cut. 0 = off. */
   dmBackgroundCutoff: number;
-  // Drape (BLEND mode) controls, physical units (src/drape.ts)
-  /** Fold crest spacing, inches. */
-  drapeFoldSpacing: number;
-  /** Fold depth (standard deviation of the fold field), inches. */
-  drapeFoldAmp: number;
-  /** Fold streamline half-length as a multiple of the spacing. */
-  drapeFoldLength: number;
-  /** 0 = gravity into the panel (folds radiate from supports), 1 = hanging down the panel. */
-  drapeHang: number;
-  /** In-plane gravity direction, degrees: 0 = down the image, positive = clockwise. */
-  drapeGravityAngle: number;
-  drapeThickness: number;
-  /** How much fine form detail the fabric follows: 0 = felt (bends over ~0.5 in), 1 = silk. */
-  drapeConform: number;
+  // DRAPE mode (src/drape-sim): a silk veil simulated over a 3D figure, extracted as a relief.
+  /** How far the figure's face is tipped back before the drape, degrees (0 = face vertical). */
+  drapeTilt: number;
+  /** The relief DRAPE mode shows and exports: the bare figure until a drape is generated, then the
+   *  draped figure. Built in memory as a relief master (src/relief-master.ts). Never serialized. */
+  drapeMaster: ReliefMaster | null;
+  /** 'bare' = the figure before draping, 'draped' = a generated drape at drapeMasterTilt. */
+  drapeMasterKind: 'bare' | 'draped' | null;
+  drapeMasterTilt: number;
+  /** Label of the figure being draped. */
+  drapeFigureName: string;
   depthMapAR: number | null;
   aspectLocked: boolean;
   // View
@@ -152,12 +146,6 @@ export interface MeshState {
   activeProfile: string | null;
   // Internal
   vertices: number[][] | null;
-  /** Blend: how far the fabric thickness alone exceeds the cut, inches (infeasible settings; the
-   *  dims overlay warns). Not serialized. */
-  drapeOverflowIn: number;
-  /** Blend: fraction of the requested fold depth that fit inside the cut (dims overlay warns
-   *  below 1). Not serialized. */
-  drapeFoldScaleUsed: number;
   cols: number;
   rows: number;
   genTime: number;
@@ -244,19 +232,16 @@ export const DEFAULTS: MeshState = {
   reliefMaster: null,
   reliefMasterName: '',
   reliefPreviewErrorIn: 0,
-  // 0.8 = membrane curvature 0.48/in, the value that matched the reference cloth best (P3).
-  blend: 0.8,
   dmHeightScale: 1.0,
   dmOffset: -0.08,
   dmSmoothing: 7,
   dmBackgroundCutoff: 0,
-  drapeFoldSpacing: 0.4,
-  drapeFoldAmp: 0.04,
-  drapeFoldLength: 6,
-  drapeHang: 0.75,
-  drapeGravityAngle: 0,
-  drapeThickness: 0.03,
-  drapeConform: 0.7,
+  // 25 deg is the tilt of the Blender proof accepted on 2026-10-20 (scripts/drape, silk-tilt25).
+  drapeTilt: 25,
+  drapeMaster: null,
+  drapeMasterKind: null,
+  drapeMasterTilt: 0,
+  drapeFigureName: '',
   depthMapAR: null,
   aspectLocked: false,
   viewMaterial: 'elevation',
@@ -273,8 +258,6 @@ export const DEFAULTS: MeshState = {
   activePreset: null,
   activeProfile: null,
   vertices: null,
-  drapeOverflowIn: 0,
-  drapeFoldScaleUsed: 1,
   cols: 400,
   rows: 267,
   genTime: 0,
@@ -283,9 +266,17 @@ export const DEFAULTS: MeshState = {
 
 export const STATE: MeshState = { ...DEFAULTS };
 
-/** True when a relief master drives the mesh (DEPTH MAP mode with a master loaded). */
+/** The relief master driving the mesh, if any: a loaded .mcrelief in DEPTH MAP mode, or the drape
+ *  result in DRAPE mode. Exports, toolpaths, stats and the preview all read this one. */
+export function activeMaster(): ReliefMaster | null {
+  if (STATE.mode === 'depthmap') return STATE.reliefMaster;
+  if (STATE.mode === 'drape') return STATE.drapeMaster;
+  return null;
+}
+
+/** True when a relief master drives the mesh (see activeMaster). */
 export function reliefMasterActive(): boolean {
-  return STATE.reliefMaster !== null && STATE.mode === 'depthmap';
+  return activeMaster() !== null;
 }
 
 /** Controls a relief master fixes: its size, stock and heights are the data, not settings. Grid
@@ -315,7 +306,7 @@ const ENUM_VALUES: {
   reliefBaseMode: Record<ReliefBaseMode, true>;
   reliefRadialMode: Record<ReliefRadialMode, true>;
 } = {
-  mode: { noise: true, depthmap: true, blend: true },
+  mode: { noise: true, depthmap: true, drape: true },
   noiseType: {
     simplex: true, perlin: true, ridged: true, fbm: true, voronoi: true, value: true, opensimplex2: true,
     worley: true, billow: true, turbulence: true, hybrid: true, hetero: true, domainwarp: true,
@@ -350,15 +341,14 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
   'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
-  'baseThickness', 'blend', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'dmBackgroundCutoff',
-  'drapeFoldSpacing', 'drapeFoldAmp', 'drapeFoldLength', 'drapeHang', 'drapeGravityAngle',
-  'drapeThickness', 'drapeConform', 'watertight',
+  'baseThickness', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'dmBackgroundCutoff',
+  'drapeTilt', 'watertight',
   'viewMode', 'viewMaterial', 'activePreset', 'activeProfile',
 ];
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 13;
+const CURRENT_PAYLOAD_VERSION = 14;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -454,9 +444,11 @@ const LEGACY_V11_DEFAULTS: Partial<MeshState> = {};
 // ignores them). blend (tension), drapeThickness and drapeConform carry over by value. The blend
 // DEFAULT moved 0.2 → 0.8, and serializeConfig omits keys equal to the default, so a v12 link saved
 // at the old default carries no blend key: record 0.2 here so it keeps its tension.
-const LEGACY_V12_DEFAULTS: Partial<MeshState> = {
-  blend: 0.2,
-};
+// v13→v14 replaced that procedural drape with a cloth simulation over a 3D figure (src/drape-sim).
+// None of its keys (blend, drapeFoldSpacing, drapeFoldAmp, drapeFoldLength, drapeHang,
+// drapeGravityAngle, drapeThickness, drapeConform) has an equivalent: they left
+// URL_SERIALIZABLE_KEYS, so the copy loop drops them and older drape links open with the defaults.
+const LEGACY_V12_DEFAULTS: Partial<MeshState> = {};
 export function serializeConfig(): string {
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
@@ -783,6 +775,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         delete (result as Record<string, unknown>)[key];
       }
     };
+    // The DRAPE tab was named BLEND before 2026-10-20; old links carry mode 'blend'.
+    if ((result.mode as unknown) === 'blend') result.mode = 'drape';
     clampEnum('mode', ENUM_VALUES.mode);
     clampEnum('noiseType', ENUM_VALUES.noiseType);
     clampEnum('viewMode', ENUM_VALUES.viewMode);
@@ -840,19 +834,9 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefDepthVariation' in result) clampField('reliefDepthVariation', 0, 1);
     if ('reliefJunctionLift' in result) clampField('reliefJunctionLift', 0, 1);
     if ('reliefCrestVariation' in result) clampField('reliefCrestVariation', 0, 1);
-    // Drape (BLEND mode) controls. These bound real work, not just looks: foldSpacing sets the
-    // noise feature size and foldLength x spacing the per-pixel streamline length, so an
-    // unclamped length or a near-zero spacing on a crafted link multiplies the fold pass cost.
     // Ranges match the sliders.
-    if ('blend' in result) clampField('blend', 0, 1);
     if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
-    if ('drapeFoldSpacing' in result) clampField('drapeFoldSpacing', 0.25, 3);
-    if ('drapeFoldAmp' in result) clampField('drapeFoldAmp', 0, 0.25);
-    if ('drapeFoldLength' in result) clampField('drapeFoldLength', 1, 12);
-    if ('drapeHang' in result) clampField('drapeHang', 0, 1);
-    if ('drapeGravityAngle' in result) clampField('drapeGravityAngle', -180, 180);
-    if ('drapeThickness' in result) clampField('drapeThickness', 0, 0.2);
-    if ('drapeConform' in result) clampField('drapeConform', 0, 1);
+    if ('drapeTilt' in result) clampField('drapeTilt', 0, 45);
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so
     // they cannot over-amplify the bowl normalization or angular irregularity.

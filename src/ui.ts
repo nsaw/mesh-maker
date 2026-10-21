@@ -1,4 +1,5 @@
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, noiseDims, reliefMasterActive } from './state';
+import { cancelDrape, downloadDrapeRelief, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged, restoreSizeAfterDrape } from './drape-ui';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
@@ -41,6 +42,7 @@ export function buildSidebar(): void {
   sections.push(
     buildSmoothingSection(),
     buildDepthMapSection(),
+    buildDrapeSection(),
     buildViewControlsSection(),
     buildSBPSection(),
   );
@@ -463,11 +465,6 @@ function buildDepthMapSection(): HTMLElement {
   aiBtn.style.marginTop = '6px';
   aiBtn.addEventListener('click', () => { void runDepthEstimation(aiBtn); });
 
-  // Drape (BLEND mode) rows are tagged blend-only and Depth Map Smoothing depthmap-only:
-  // each does nothing in the other mode, and updateSectionVisibility() hides it there.
-  const blendOnly = (row: HTMLDivElement): HTMLDivElement => { row.classList.add('blend-only'); return row; };
-  const depthmapOnly = (row: HTMLDivElement): HTMLDivElement => { row.classList.add('depthmap-only'); return row; };
-
   // Image-only rows have no meaning for a relief master (its heights are final), so they hide
   // while one is active; the master's own facts take their place.
   const imageOnly = (el: HTMLElement): HTMLElement => { el.classList.add('image-only'); return el; };
@@ -479,19 +476,102 @@ function buildDepthMapSection(): HTMLElement {
     imageOnly(slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05)),
     imageOnly(slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)),
     imageOnly(slider('dmBackgroundCutoff', 'Background Cutoff (0=off)', 0, 0.9, 0.01)),
-    imageOnly(depthmapOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1))),
-    // Drape model: membrane over the form + gravity-directed folds (src/drape.ts). 'blend' is
-    // fabric tension: 0 hugs every support, 1 bridges between them.
-    blendOnly(blendPreviewNote()),
-    blendOnly(slider('blend', 'Fabric Tension (0=hug, 1=bridge)', 0, 1, 0.01)),
-    blendOnly(slider('drapeThickness', 'Fabric Thickness (in)', 0, 0.2, 0.005)),
-    blendOnly(slider('drapeConform', 'Detail Transmission (0=felt, 1=silk)', 0, 1, 0.05)),
-    blendOnly(slider('drapeHang', 'Hang (0=pressed, 1=hanging)', 0, 1, 0.05)),
-    blendOnly(slider('drapeGravityAngle', 'Gravity Angle (deg, 0=down)', -180, 180, 5)),
-    blendOnly(slider('drapeFoldSpacing', 'Fold Spacing (in)', 0.25, 3, 0.05)),
-    blendOnly(slider('drapeFoldAmp', 'Fold Depth (in)', 0, 0.25, 0.005)),
-    blendOnly(slider('drapeFoldLength', 'Fold Length (x spacing)', 1, 12, 0.5)),
+    imageOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)),
   ], false, 'depth-map-only');
+}
+
+/** Units, up axis and turn applied to the next uploaded STL / OBJ / glTF figure (a .mcfig is
+ *  already placed). Kept across sidebar rebuilds, not in share links. */
+const figurePlacement = { metresPerUnit: 0.001, up: 'z' as 'z' | 'y', turnDeg: 0 };
+
+/** DRAPE: a silk veil simulated over a 3D figure (src/drape-ui.ts, src/drape-sim), the web
+ *  version of the Blender proof in scripts/drape. */
+function buildDrapeSection(): HTMLElement {
+  const zone = createElement('div', `upload-zone${STATE.drapeFigureName ? ' has-image' : ''}`);
+  zone.id = 'drapeZone';
+  zone.tabIndex = 0;
+  zone.setAttribute('role', 'button');
+  zone.setAttribute('aria-label', 'Upload a 3D figure to drape');
+  const text = createElement('div', 'upload-text', STATE.drapeFigureName || 'Click or drag a 3D figure (.mcfig, .stl, .obj, .glb)');
+  const input = createElement('input') as HTMLInputElement;
+  input.type = 'file';
+  input.id = 'drapeFigureInput';
+  input.accept = FIGURE_EXTENSIONS.join(',');
+  zone.append(text, input);
+  const load = (f: File): void => { void loadFigureFile(f, { ...figurePlacement }); };
+  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    const f = e.dataTransfer?.files[0];
+    if (f) load(f);
+  });
+  input.addEventListener('change', () => { if (input.files?.[0]) load(input.files[0]); input.value = ''; });
+
+  // Placement of an uploaded mesh: the drape assumes Z up, the face toward the viewer (-Y).
+  const placeRow = createElement('div', 'control-row');
+  placeRow.style.display = 'flex';
+  placeRow.style.gap = '6px';
+  placeRow.style.margin = '6px 0';
+  const units = createElement('select') as HTMLSelectElement;
+  units.setAttribute('aria-label', 'Units of an uploaded mesh');
+  for (const [v, l] of [['0.001', 'mm'], ['0.01', 'cm'], ['1', 'm'], ['0.0254', 'in']]) units.add(new Option(l, v));
+  units.value = String(figurePlacement.metresPerUnit);
+  units.addEventListener('change', () => { figurePlacement.metresPerUnit = parseFloat(units.value); });
+  const up = createElement('select') as HTMLSelectElement;
+  up.setAttribute('aria-label', 'Up axis of an uploaded mesh');
+  up.add(new Option('Z up', 'z')); up.add(new Option('Y up', 'y'));
+  up.value = figurePlacement.up;
+  up.addEventListener('change', () => { figurePlacement.up = up.value === 'y' ? 'y' : 'z'; });
+  const turn = createElement('input') as HTMLInputElement;
+  turn.type = 'number'; turn.min = '-180'; turn.max = '180'; turn.step = '5';
+  turn.value = String(figurePlacement.turnDeg);
+  turn.title = 'Turn the uploaded mesh about its vertical axis so the face looks at you, degrees';
+  turn.setAttribute('aria-label', 'Turn of an uploaded mesh, degrees');
+  turn.style.width = '64px';
+  turn.addEventListener('change', () => { const v = parseFloat(turn.value); figurePlacement.turnDeg = Number.isFinite(v) ? Math.max(-180, Math.min(180, v)) : 0; });
+  placeRow.append(units, up, turn);
+  const placeNote = createElement('div', undefined, 'Upload placement: units, up axis, turn (deg). Applied when a mesh is loaded.');
+  placeNote.style.fontSize = '10px';
+  placeNote.style.color = 'var(--text3)';
+
+  const btnRow = createElement('div');
+  btnRow.style.display = 'flex';
+  btnRow.style.gap = '6px';
+  btnRow.style.margin = '8px 0 4px';
+  const gen = createElement('button', 'btn btn-sm btn-primary', 'GENERATE DRAPE') as HTMLButtonElement;
+  gen.id = 'drapeGenerateBtn';
+  gen.style.flex = '1';
+  gen.addEventListener('click', () => generateDrape());
+  const run = drapeControls();
+  gen.disabled = !run.canGenerate;
+  const cancel = createElement('button', 'btn btn-sm', 'CANCEL') as HTMLButtonElement;
+  cancel.id = 'drapeCancelBtn';
+  cancel.style.display = run.running ? '' : 'none';
+  cancel.addEventListener('click', () => cancelDrape());
+  btnRow.append(gen, cancel);
+  const dl = createElement('button', 'btn btn-sm', 'DOWNLOAD .MCRELIEF') as HTMLButtonElement;
+  dl.style.width = '100%';
+  dl.addEventListener('click', () => { void downloadDrapeRelief(); });
+
+  const status = createElement('div', undefined, drapeStatusText());
+  status.id = 'drapeStatus';
+  status.setAttribute('role', 'status');
+  status.style.margin = '6px 0';
+  status.style.fontSize = '10px';
+  status.style.color = 'var(--text2)';
+  const about = createElement('div', undefined,
+    'Silk cloth hung from the crown under gravity, simulated in this tab (Jolt Physics). The relief is the front view, 12 x 16 in, 0.125 in backing + 0.625 in relief.');
+  about.style.fontSize = '10px';
+  about.style.color = 'var(--text3)';
+
+  return buildSection('Drape', [
+    zone, placeRow, placeNote,
+    slider('drapeTilt', 'Face Tilt (deg, face tipped back)', 0, 45, 1),
+    btnRow, dl, status, about,
+  ], false, 'drape-section');
 }
 
 /** What a loaded relief master is, so the numbers can be checked against its source. */
@@ -508,17 +588,6 @@ function reliefMasterInfo(): HTMLDivElement {
   ];
   if (m.header.license) lines.push(`License: ${m.header.license}.`);
   for (const text of lines) note.appendChild(createElement('div', undefined, text));
-  return note;
-}
-
-/** Blend's folds are procedural (direction-field noise), not a cloth simulation; say so where the
- *  controls are, so the preview is not mistaken for the final drape. */
-function blendPreviewNote(): HTMLDivElement {
-  const note = createElement('div');
-  note.style.margin = '4px 0 8px';
-  note.style.fontSize = '10px';
-  note.style.color = 'var(--text3)';
-  note.textContent = 'Experimental preview: folds are procedural, not a cloth simulation.';
   return note;
 }
 
@@ -546,7 +615,9 @@ function wireControls(): void {
     sl.addEventListener('input', () => {
       if (reliefMasterActive() && RELIEF_LOCKED_KEYS.has(key)) {
         sl.value = String(STATE[key as keyof typeof STATE]);
-        showToast('A relief master fixes size, stock and heights. Load an image to change them.', 3000);
+        showToast(STATE.mode === 'drape'
+          ? 'The drape relief has a fixed 12 x 16 in size and 0.75 in stock.'
+          : 'A relief master fixes size, stock and heights. Load an image to change them.', 3000);
         return;
       }
       const v = parseFloat(sl.value);
@@ -600,6 +671,9 @@ function wireControls(): void {
       if (key === 'baseThickness') {
         syncSbpSafeZ();
       }
+
+      // The tilt re-places the figure, not the mesh settings: drape-ui rebuilds the bare relief.
+      if (key === 'drapeTilt') { onDrapeTiltChanged(); return; }
 
       // Clear active preset/profile on manual change
       if (STATE.activePreset) {
@@ -798,33 +872,45 @@ function wireSectionCollapse(): void {
 export function updateSectionVisibility(): void {
   const mode = STATE.mode;
   document.querySelectorAll<HTMLElement>('.noise-only').forEach(el => {
-    // v16: BLEND mode is the drape compositor and no longer consumes the noise pipeline,
-    // so noise sections show in noise mode only — EXCEPT when blend mode has no depth map
-    // yet: generateMesh() falls back to the noise mesh there, and hiding the controls
-    // would leave the user staring at a noise render they cannot configure.
-    const blendNoiseFallback = mode === 'blend' && !STATE.depthMap;
-    el.style.display = (mode === 'noise' || blendNoiseFallback) ? 'block' : 'none';
+    el.style.display = mode === 'noise' ? 'block' : 'none';
   });
   document.querySelectorAll<HTMLElement>('.depth-map-only').forEach(el => {
-    el.style.display = (mode === 'depthmap' || mode === 'blend') ? 'block' : 'none';
+    el.style.display = mode === 'depthmap' ? 'block' : 'none';
   });
-  document.querySelectorAll<HTMLElement>('.blend-only').forEach(el => {
-    el.style.display = mode === 'blend' ? '' : 'none';
-  });
-  document.querySelectorAll<HTMLElement>('.depthmap-only').forEach(el => {
-    el.style.display = mode === 'depthmap' ? '' : 'none';
+  document.querySelectorAll<HTMLElement>('.drape-section').forEach(el => {
+    el.style.display = mode === 'drape' ? 'block' : 'none';
   });
   const master = reliefMasterActive();
   document.querySelectorAll<HTMLElement>('.image-only').forEach(el => {
-    if (master) el.style.display = 'none';
-    else if (el.style.display === 'none' && !el.classList.contains('depthmap-only') && !el.classList.contains('blend-only')) el.style.display = '';
+    el.style.display = master ? 'none' : '';
   });
   document.querySelectorAll<HTMLElement>('.relief-master-info').forEach(el => {
     el.style.display = master ? '' : 'none';
   });
 }
 
+/** An image fit that arrived while another tab owned the size controls (an image or AI depth result
+ *  that finished after the user left DEPTH MAP). Applied when DEPTH MAP is next entered. */
+let pendingFit: { w: number; h: number } | null = null;
+
+/** Size the board to an image's aspect. Only DEPTH MAP's board follows its image: on another tab the
+ *  fit waits for DEPTH MAP, so NOISE and DRAPE keep their own sizes. */
 export function fitMeshToAspect(imgW: number, imgH: number): void {
+  if (STATE.mode !== 'depthmap') { pendingFit = { w: imgW, h: imgH }; return; }
+  pendingFit = null;
+  fitSizes(imgW, imgH);
+}
+
+/** Entering DEPTH MAP: apply a fit that arrived while another tab was open. Returns whether it did. */
+export function applyPendingFit(): boolean {
+  if (!pendingFit || STATE.mode !== 'depthmap' || STATE.reliefMaster) { pendingFit = null; return false; }
+  const { w, h } = pendingFit;
+  pendingFit = null;
+  fitSizes(w, h);
+  return true;
+}
+
+function fitSizes(imgW: number, imgH: number): void {
   const ar = imgW / imgH;
   if (ar >= 36 / 24) {
     STATE.meshX = 36;
@@ -833,11 +919,10 @@ export function fitMeshToAspect(imgW: number, imgH: number): void {
     STATE.meshY = 24;
     STATE.meshX = Math.max(1, Math.round(24 * ar));
   }
-  // Full grid resolution — image resolution is the hard gate for depth-map/drape quality;
-  // 256 visibly quantized fine features that the drape's contact-detail channel needs.
-  // Capped by total grid cells: rows scale with meshY/meshX, and an extreme portrait
-  // aspect at resolution 400 would allocate millions of vertices (plus the drape's
-  // envelope/fold/contact grids) and freeze the tab.
+  // Full grid resolution: image resolution is the hard gate for depth-map quality, and 256
+  // visibly quantized fine features. Capped by total grid cells: rows scale with meshY/meshX,
+  // and an extreme portrait aspect at resolution 400 would allocate millions of vertices and
+  // freeze the tab.
   const aspectRowsPerCol = STATE.meshY / STATE.meshX;
   const maxGridCells = 250000;
   STATE.resolution = Math.max(
@@ -967,6 +1052,8 @@ async function loadReliefMaster(file: File, revision: number): Promise<void> {
     noiseDims.meshY = STATE.meshY;
     noiseDims.resolution = STATE.resolution;
   }
+  // Leaving DRAPE this way skips the tab switch: hand back the sizes DRAPE took over first.
+  if (STATE.mode === 'drape') restoreSizeAfterDrape();
   STATE.mode = 'depthmap';
   document.body.className = 'mode-depthmap';
   document.querySelectorAll('.mode-tab').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.mode === 'depthmap'));

@@ -1,624 +1,190 @@
 /**
- * Deterministic verification of the Blend drape compositor (src/drape.ts) and its CNC mapping.
+ * Fast checks of the DRAPE pipeline (src/drape-sim): figure container, tilt geometry, frontmost
+ * extraction, cloth smoothing, relief mapping, and a short cloth run. The full parity run against the
+ * Blender proof is cli/drape-parity.spec.ts.
  * Run: npm run test:drape  (or: npx tsx cli/drape.spec.ts)
- *
- * Each block pins one finding from the 2026-10-19 review of the previous compositor:
- *   T1  no peak inflation (old: square max-filter dilation, impulse r=3 -> 121 px)
- *   T2  thickness survives the CNC mapping at peaks (old: clamp to 1 before offset, 0.000 in)
- *   T3  thickness does not move folds (old: +0.005 in moved 27.5% of vertices)
- *   T4  fold strength is local (old: one global-max slope mask; a distant spike flipped 0 -> 0.999)
- *   T5  Detail Transmission acts at any smoothing (old: no-op at dmSmoothing 0)
- *   T6  Fold Spacing is a physical spacing (old: "Fold Count 12" gave ~24 height-phase creases)
- *   T7  fold orientation crosses contours / follows gravity (old: contour rings, cos^2 0.81)
- * plus profile skew, determinism, bounds, timing, solver convergence, luma, cutoff, share links,
- * machinability, and the SBP toolpath path.
- *
- * Orientation thresholds come from a PBD cloth simulation run during the review (scratchpad
- * sim.ts/orient.py, 128x128 grid): dome contour cos^2 0.100, two domes 0.232; tilted + pinned
- * vertical-crest 0.960. The physics comparison itself runs in cli/drape-physics.spec.ts.
  */
-
-import { composeDrape, drapeToStockHeights, foldDirection, gaussianBlur, solveMembrane, tensionToCurvature } from '../src/drape';
-import type { DrapeParams } from '../src/drape';
-import { applyBackgroundCutoff, normalizeGrid, sampleLumaGrid } from '../src/geometry';
-import { DEFAULTS, STATE, deserializeConfig, serializeConfig } from '../src/state';
-import { getDefaultConfig, getDefaultFinishingTool } from '../src/sbp/tools';
-import { contourAlignment, domes, skewness, verticalCrest } from './drape-metrics';
-import { stateToHeightmap } from '../src/sbp/heightmap';
-import { generateSBP } from '../src/sbp/generate';
+import { readFileSync } from 'node:fs';
+import initJolt from 'jolt-physics/wasm-compat';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
+import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
+import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
+import { bareDepth, PANEL_WINDOW, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
+import { simulateCloth, SILK } from '../src/drape-sim/cloth';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
-  if (condition) {
-    process.stdout.write(`  ok  ${label}${detail ? ` (${detail})` : ''}\n`);
-  } else {
-    process.stdout.write(`  FAIL ${label}${detail ? `: ${detail}` : ''}\n`);
-    failures++;
+  if (condition) process.stdout.write(`  ok  ${label}${detail ? ` (${detail})` : ''}\n`);
+  else { process.stdout.write(`  FAIL ${label}${detail ? `: ${detail}` : ''}\n`); failures++; }
+}
+const throws = (f: () => unknown): boolean => { try { f(); return false; } catch { return true; } };
+/** The message a call throws, or '' when it does not throw. */
+const thrown = (f: () => unknown): string => { try { f(); return ''; } catch (e) { return e instanceof Error ? e.message : String(e); } };
+/** A .mcfig whose JSON header is `json` verbatim, followed by `body` bytes. */
+function rawFigure(json: string, body = 0): ArrayBuffer {
+  const h = new TextEncoder().encode(json), start = Math.ceil((12 + h.length) / 8) * 8, out = new Uint8Array(start + body);
+  out.set([77, 67, 70, 73, 71, 0, 0, 0], 0); new DataView(out.buffer).setUint32(8, h.length, true); out.set(h, 12);
+  return out.buffer;
+}
+const fileBuffer = (path: string): ArrayBuffer => { const b = readFileSync(path); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+
+async function main(): Promise<void> {
+  // ---------- D1 figure container ----------
+  process.stdout.write('D1 figure container\n');
+  const demoBuf = fileBuffer('public/demo/venus-de-milo.mcfig');
+  const demo = parseFigure(demoBuf);
+  assert(demo.header.vertices === demo.positions.length / 3 && demo.header.triangles === demo.triangles.length / 3,
+    'the bundled Venus parses with consistent counts', `${demo.header.vertices} vertices, ${demo.header.triangles} triangles`);
+  assert(demo.header.license === 'CC0', 'the bundled figure is CC0');
+  const re = parseFigure(encodeFigure(demo));
+  assert(re.positions.every((v, i) => v === demo.positions[i]) && re.triangles.every((v, i) => v === demo.triangles[i]),
+    'encodeFigure round-trips the bundled figure exactly');
+  const bad = new Uint8Array(demoBuf.slice(0)); bad[0] = 88;
+  assert(throws(() => parseFigure(bad.buffer)), 'a wrong signature is rejected');
+  assert(throws(() => parseFigure(demoBuf.slice(0, demoBuf.byteLength - 4))), 'a truncated file is rejected');
+  const tiny: Figure = { header: { format: 'meshcraft-figure', version: 1, vertices: 3, triangles: 1, head_centre: [0, 0, 0], head_height: 2.6 },
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 1]), triangles: new Uint32Array([0, 1, 5]) };
+  assert(throws(() => parseFigure(encodeFigure(tiny))), 'a triangle index past the vertex count is rejected');
+  tiny.triangles = new Uint32Array([0, 1, 2]); tiny.positions[4] = NaN;
+  assert(throws(() => parseFigure(encodeFigure(tiny))), 'a non-finite position is rejected');
+  const good = '"format":"meshcraft-figure","version":1,"vertices":3,"triangles":1,"head_height":2.6';
+  assert(parseFigure(rawFigure(`{${good},"head_centre":[0,0,0]}`, 48)).header.vertices === 3, 'a minimal well-formed figure parses (control)');
+  assert(/head_centre/.test(thrown(() => parseFigure(rawFigure(`{${good}}`, 48)))), 'a missing head_centre is rejected by name');
+  assert(/head_centre/.test(thrown(() => parseFigure(rawFigure(`{${good},"head_centre":[0,"x",0]}`, 48)))), 'a non-numeric head_centre is rejected by name');
+  assert(/JSON object/.test(thrown(() => parseFigure(rawFigure('null')))), 'a null header is rejected with a message, not a TypeError');
+  assert(/license must be a string/.test(thrown(() => parseFigure(rawFigure(`{${good},"head_centre":[0,0,0],"license":null}`, 48)))),
+    'a non-string license (which the relief master would refuse later) is rejected at upload');
+  assert(/not a MeshCraft figure/.test(thrown(() => parseFigure(new Uint8Array([77, 67, 70, 73, 71, 0, 0, 0]).buffer))), 'a file shorter than its header is rejected');
+  const big = MAX_FIGURE_TRIANGLES + 1;
+  assert(/decimate/.test(thrown(() => parseFigure(rawFigure(`{"format":"meshcraft-figure","version":1,"vertices":3,"triangles":${big},"head_centre":[0,0,0],"head_height":2.6}`, 36 + big * 12)))),
+    'a .mcfig over the triangle cap is refused like an uploaded mesh');
+
+  // ---------- D2 tilt ----------
+  process.stdout.write('D2 tilt geometry\n');
+  {
+    const p0 = tiltFigure(demo, 0);
+    let d = 0; for (let i = 0; i < p0.length; i++) d = Math.max(d, Math.abs(p0[i] - demo.positions[i]));
+    assert(d < 1e-6, 'tilt 0 leaves the placed figure unchanged', `max ${d.toExponential(2)}`);
+    // A face point in front of the head centre rises when the face tips back (looks up).
+    const [hx, hy, hz] = [0, 0, 0];
+    const probe: Figure = { header: { format: 'meshcraft-figure', version: 1, vertices: 2, triangles: 0, head_centre: [hx, hy, hz], head_height: 2.6 },
+      positions: new Float32Array([0, 0, 1, 0, -1, 0]), triangles: new Uint32Array(0) };
+    const p = tiltFigure(probe, 25);
+    // Crown (0, 0, 1) and face point (0, -1, 0) about the head centre at the origin. After tipping
+    // back by t the crown sits at (0, sin t, cos t) and the face point at (0, -cos t, sin t), so
+    // relative to the crown the face rises by sin t + 1 - cos t and moves forward by sin t + cos t - 1.
+    const t = 25 * Math.PI / 180;
+    const rise = (p[5] - p[2]) - (0 - 1), forward = (p[1] - p[4]) - (0 - -1);
+    assert(Math.abs(rise - (Math.sin(t) + 1 - Math.cos(t))) < 1e-6 && Math.abs(forward - (Math.sin(t) + Math.cos(t) - 1)) < 1e-6,
+      'tipping back 25 deg raises the face and moves the crown back by the exact rotation', `rise ${rise.toFixed(4)}, forward ${forward.toFixed(4)}`);
+    let top = -Infinity; const t25 = tiltFigure(demo, 25); for (let i = 2; i < t25.length; i += 3) top = Math.max(top, t25[i]);
+    assert(Math.abs(top - 1) < 1e-6, 'the tilted figure keeps its crown at z = 1');
   }
-}
 
-// ---------- fixtures ----------
-
-const PANEL_X = 16;
-
-function params(rows: number, cols: number, overrides: Partial<DrapeParams> = {}): DrapeParams {
-  return {
-    cols, rows,
-    dxIn: PANEL_X / (cols - 1),
-    formDepthIn: 0.75,
-    thicknessIn: DEFAULTS.drapeThickness,
-    tension: DEFAULTS.blend,
-    conform: DEFAULTS.drapeConform,
-    foldSpacingIn: DEFAULTS.drapeFoldSpacing,
-    foldAmpIn: DEFAULTS.drapeFoldAmp,
-    foldLength: DEFAULTS.drapeFoldLength,
-    hang: DEFAULTS.drapeHang,
-    gravityAngleDeg: DEFAULTS.drapeGravityAngle,
-    seed: 7,
-    ...overrides,
-  };
-}
-
-/** Deterministic face-like relief: a head ellipsoid with brow, nose and cheek bumps and fine
- *  0.1 in-scale texture, normalized to 0..1. Stands in for a depth map at production size. */
-function faceRelief(rows: number, cols: number): Float64Array {
-  const f = new Float64Array(rows * cols);
-  const bump = (x: number, y: number, cx: number, cy: number, sx: number, sy: number) =>
-    Math.exp(-(((x - cx) / sx) ** 2 + ((y - cy) / sy) ** 2));
-  let mx = 0;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      const x = i / (cols - 1), y = j / (rows - 1);
-      const e = ((x - 0.5) / 0.28) ** 2 + ((y - 0.38) / 0.3) ** 2;
-      let h = e < 1 ? Math.sqrt(1 - e) : 0;
-      h += 0.15 * bump(x, y, 0.5, 0.42, 0.03, 0.08) + 0.08 * bump(x, y, 0.4, 0.3, 0.07, 0.02)
-         + 0.08 * bump(x, y, 0.6, 0.3, 0.07, 0.02) + 0.06 * bump(x, y, 0.38, 0.47, 0.06, 0.05)
-         + 0.06 * bump(x, y, 0.62, 0.47, 0.06, 0.05) - 0.07 * bump(x, y, 0.42, 0.34, 0.035, 0.02)
-         - 0.07 * bump(x, y, 0.58, 0.34, 0.035, 0.02);
-      h += 0.01 * Math.sin(i * 0.9) * Math.sin(j * 0.7);
-      f[j * cols + i] = Math.max(0, h);
-      if (f[j * cols + i] > mx) mx = f[j * cols + i];
+  // ---------- D3 frontmost extraction ----------
+  process.stdout.write('D3 frontmost extraction matches a brute-force ray cast\n');
+  {
+    let s = 7; const rnd = (): number => ((s = (s * 1103515245 + 12345) >>> 0) / 4294967296);
+    const n = 40, pos = new Float32Array(n * 9), tris = new Uint32Array(n * 3);
+    for (let t = 0; t < n; t++) for (let v = 0; v < 3; v++) {
+      pos.set([rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1], (t * 3 + v) * 3); tris[t * 3 + v] = t * 3 + v;
     }
-  for (let k = 0; k < f.length; k++) f[k] /= mx;
-  return f;
-}
-
-/** Demo-like depth map: an elliptical figure on a dark background with sparse one-pixel specks.
- *  Its noisy contact pattern makes the solver as slow as the real demo (T11) and exposes the
- *  coarse-level plateau defect (T12b). */
-function speckledRelief(rows: number, cols: number): Float64Array {
-  const f = new Float64Array(rows * cols);
-  let seed = 99; const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-    const x = i / (cols - 1) - 0.5, y = (j / (rows - 1) - 0.62) * 1.5, e = x * x / 0.08 + y * y / 0.1;
-    f[j * cols + i] = e < 1 ? Math.sqrt(1 - e) : 0;
-  }
-  for (let k = 0; k < f.length; k++) if (rnd() < 0.002) f[k] = Math.min(1, f[k] + 0.3 + 0.5 * rnd());
-  return f;
-}
-
-function maxAbsDiff(a: ArrayLike<number>, b: ArrayLike<number>): number {
-  let d = 0; for (let k = 0; k < a.length; k++) d = Math.max(d, Math.abs(a[k] - b[k])); return d;
-}
-
-// ---------- T1 no inflation ----------
-process.stdout.write('T1 no peak inflation\n');
-{
-  const n = 64, f = new Float64Array(n * n);
-  f[32 * n + 32] = 1;
-  const p = params(n, n, { conform: 1, thicknessIn: 0, foldAmpIn: 0 });
-  const r = composeDrape(f, p);
-  const peak = Math.max(...r.membrane);
-  let atPeak = 0; for (const v of r.membrane) if (v >= peak - 1e-4) atPeak++;
-  assert(atPeak <= 1, 'impulse: membrane plateau no wider than the original peak', `${atPeak} px at peak height`);
-  assert(peak <= Math.max(...r.obstacle) + 1e-12, 'membrane never rises above the highest support');
-  const ramp = new Float64Array(n * n);
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) ramp[j * n + i] = i / (n - 1);
-  const rr = composeDrape(ramp, p);
-  assert(maxAbsDiff(rr.membrane, rr.obstacle) < 1e-9, 'linear ramp: membrane lies on the form everywhere, edges included',
-    `max gap ${maxAbsDiff(rr.membrane, rr.obstacle).toExponential(2)} in`);
-}
-
-// ---------- T2 clearance at peaks ----------
-process.stdout.write('T2 thickness survives the CNC mapping\n');
-{
-  const n = 101, f = domes(n, n, [[0.5, 0.5, 0.4]]);
-  const p = params(n, n, { foldAmpIn: 0, conform: 1, thicknessIn: 0.03 });
-  const r = composeDrape(f, p);
-  const bt = 0.75, cut = 0.75;
-  const z = drapeToStockHeights(r.surface, n, n, bt, cut, 0, 0);
-  // Form placed the same way the surface is (same overflow shift).
-  const top = Math.max(...r.surface), overflow = Math.max(0, (bt - cut) + top - bt);
-  const formZ = (j: number, i: number) => (bt - cut) + f[j * n + i] * cut - overflow;
-  const peakClr = z[50][50] - formZ(50, 50);
-  const flankClr = z[50][74] - formZ(50, 74);
-  assert(Math.abs(peakClr - 0.03) < 1e-6, 'peak clearance equals thickness', `${peakClr.toFixed(6)} in`);
-  assert(Math.abs(flankClr - 0.03) < 1e-6, 'flank clearance equals thickness', `${flankClr.toFixed(6)} in`);
-  assert(Math.abs(Math.max(...z.flat()) - bt) < 1e-9, 'veil top meets the stock top');
-  // Below conform 1 the fabric is stiff, but it must still never sit closer than its thickness to
-  // the form anywhere (round-1 review: a blurred obstacle let the default veil cut into a dome).
-  const narrow = domes(n, n, [[0.5, 0.5, 0.06]]);
-  for (const conform of [DEFAULTS.drapeConform, 0]) {
-    const rc = composeDrape(narrow, params(n, n, { foldAmpIn: 0, conform, thicknessIn: 0.03 }));
-    let minClr = Infinity;
-    for (let k = 0; k < narrow.length; k++) minClr = Math.min(minClr, rc.surface[k] - narrow[k] * 0.75);
-    assert(minClr >= 0.03 - 1e-9, `conform ${conform}: clearance over the form never below thickness`, `min ${minClr.toFixed(6)} in`);
-    const withFolds = composeDrape(narrow, params(n, n, { conform }));
-    let minF = Infinity;
-    for (let k = 0; k < narrow.length; k++) minF = Math.min(minF, withFolds.surface[k] - narrow[k] * 0.75);
-    assert(minF >= 0.03 - 1e-9, `conform ${conform} with folds: no penetration`, `min ${minF.toFixed(6)} in`);
-  }
-}
-
-// ---------- T2b fitting the veil inside the cut ----------
-process.stdout.write('T2b the veil fits inside the cut without clipping the background\n');
-{
-  // A figure (dome) on a background with low relief bumps at 3% of the cut, the demo's situation.
-  const n = 121, f = domes(n, n, [[0.5, 0.45, 0.3]]);
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
-    const k = j * n + i;
-    if (f[k] === 0) f[k] = 0.03 * (0.5 + 0.5 * Math.sin(i * 0.6) * Math.sin(j * 0.5));
-  }
-  const bt = 0.75, cut = 0.75;
-  const p = params(n, n, { fitDepthIn: cut });
-  const r = composeDrape(f, p);
-  const top = Math.max(...r.surface);
-  assert(top <= cut + 0.002, 'fitted drape top within 0.002 in of the cut', `top ${top.toFixed(4)} in, cut ${cut}`);
-  const z = drapeToStockHeights(r.surface, n, n, bt, cut, 0, 0.01);
-  // Background corner region: its relief must survive (not be flattened onto the floor).
-  let mn = Infinity, mx = -Infinity;
-  for (let j = 100; j < 118; j++) for (let i = 2; i < 30; i++) { mn = Math.min(mn, z[j][i]); mx = Math.max(mx, z[j][i]); }
-  assert(mn > 0.01 + 1e-9, 'background stays above the floor clamp', `min ${mn.toFixed(4)} in`);
-  assert(mx - mn > 0.005, 'background relief survives', `range ${(mx - mn).toFixed(4)} in`);
-  const shiftOnly = drapeToStockHeights(composeDrape(f, params(n, n)).surface, n, n, bt, cut, 0, 0.01);
-  let flat = 0; for (let j = 100; j < 118; j++) for (let i = 2; i < 30; i++) if (shiftOnly[j][i] <= 0.01 + 1e-12) flat++;
-  process.stdout.write(`  info: without fitting, ${flat} of ${18 * 28} background cells hit the floor\n`);
-  // At the summit the cloth rests on the obstacle (exactly form + thickness), so surface - obstacle
-  // is 0 and the clearance over the form is exactly the thickness.
-  let summitGap = Infinity;
-  for (let k = 0; k < r.surface.length; k++) if (f[k] > 0.999) summitGap = Math.min(summitGap, r.surface[k] - r.obstacle[k]);
-  assert(Math.abs(summitGap) < 1e-9, 'after fitting, the summit still carries exactly the fabric thickness', `surface - obstacle ${summitGap.toExponential(2)} in`);
-}
-
-// ---------- T2c stock fit at legal extremes (GPT review round 1) ----------
-process.stdout.write('T2c the fit converges at legal extremes and reports infeasibility\n');
-{
-  // GPT's reproduction: one fit correction overflowed by 0.0478 in and clipped 2,984 background
-  // samples. The fit must now converge (top within tolerance) and leave the background alone.
-  const n = 80, f = domes(n, n, [[0.5, 0.5, 0.3]]);
-  const p = params(n, n, { dxIn: 16 / (n - 1), conform: 1, foldAmpIn: 0.25, seed: 7, fitDepthIn: 0.75 });
-  const r = composeDrape(f, p);
-  const top = Math.max(...r.surface);
-  assert(r.fitOverflowIn === 0 && top <= 0.75 + 0.001, 'fold depth 0.25 in on a 0.3 dome fits the 0.75 in cut', `top ${top.toFixed(4)} in, overflow ${r.fitOverflowIn.toFixed(4)}`);
-  const z = drapeToStockHeights(r.surface, n, n, 0.75, 0.75, 0, 0.01);
-  let clipped = 0, bg = 0;
-  for (let k = 0; k < f.length; k++) if (f[k] === 0) { bg++; if (z[Math.floor(k / n)][k % n] <= 0.01 + 1e-12) clipped++; }
-  assert(clipped === 0, 'no background sample clipped to the floor', `${clipped} of ${bg}`);
-  // Infeasible: thickness alone deeper than the cut. Reported, not hidden.
-  const inf = composeDrape(f, params(n, n, { dxIn: 16 / (n - 1), thicknessIn: 0.2, foldAmpIn: 0.25, fitDepthIn: 0.1 }));
-  assert(Math.abs(inf.fitOverflowIn - 0.1) < 1e-6 && inf.formDepthUsedIn === 0, 'fabric thicker than the cut is reported as overflow', `overflow ${inf.fitOverflowIn.toFixed(4)} in`);
-  // GPT model-gap review: at fold depth 0.25 in the old fit kept 1.1% of the figure to preserve the
-  // folds. The figure must keep at least 75% of the cut minus thickness; the folds give way.
-  assert(r.formDepthUsedIn >= 0.75 * 0.75 - p.thicknessIn - 1e-12, 'at fold depth 0.25 in the figure keeps >= 75% of the cut',
-    `form ${r.formDepthUsedIn.toFixed(4)} in, folds at ${(100 * r.foldScaleUsed).toFixed(1)}%`);
-  // A broad flat-topped mesa puts the cloth in contact across the whole top, so 0.25 in folds
-  // exceed the capped headroom there: they must shrink (and say so) rather than overflow.
-  const mesa = new Float64Array(n * n);
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) mesa[j * n + i] = (i / (n - 1) - 0.5) ** 2 + (j / (n - 1) - 0.5) ** 2 < 0.16 ? 1 : 0;
-  const rm = composeDrape(mesa, params(n, n, { dxIn: 16 / (n - 1), foldAmpIn: 0.25, seed: 7, fitDepthIn: 0.75 }));
-  assert(rm.foldScaleUsed < 1 && Math.max(...rm.surface) <= 0.75 + 1e-9 && rm.formDepthUsedIn >= 0.75 * 0.75 - p.thicknessIn - 1e-12,
-    'on a mesa, deep folds shrink to fit and the figure keeps its depth', `folds at ${(100 * rm.foldScaleUsed).toFixed(1)}%, top ${Math.max(...rm.surface).toFixed(4)} in`);
-  const easy = composeDrape(f, params(n, n, { dxIn: 16 / (n - 1), foldAmpIn: 0.01, fitDepthIn: 0.75 }));
-  assert(easy.foldScaleUsed === 1 && easy.fitOverflowIn === 0, 'folds that fit are not scaled and no overflow is reported');
-  // GPT's penetration reproduction: Gaussian support, production fit, defaults. The summit must
-  // carry the full thickness above the FITTED form, never sit below it.
-  const rows = 600, cols = 400, g = new Float64Array(rows * cols);
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) { const x = i / (cols - 1) - 0.5, y = (j / (rows - 1) - 0.5) * 1.5; g[j * cols + i] = Math.exp(-(x * x + y * y) / (0.2 * 0.2)); }
-  const rg = composeDrape(g, params(rows, cols, { seed: 0, fitDepthIn: 0.75 }));
-  let worst = Infinity;
-  for (let k = 0; k < g.length; k++) worst = Math.min(worst, rg.surface[k] - g[k] * rg.formDepthUsedIn);
-  assert(worst >= p.thicknessIn - 1e-9, 'Gaussian support at defaults: clearance over the fitted form never below thickness', `min ${worst.toFixed(6)} in, form laid at ${rg.formDepthUsedIn.toFixed(4)} in`);
-}
-
-// ---------- T3 thickness invariance ----------
-process.stdout.write('T3 thickness does not move folds\n');
-{
-  const rows = 120, cols = 80, f = faceRelief(rows, cols);
-  const a = composeDrape(f, params(rows, cols, { thicknessIn: 0.030 }));
-  const b = composeDrape(f, params(rows, cols, { thicknessIn: 0.035 }));
-  // Not bit-identical: a uniform shift perturbs the block-averaged direction blur in the last ulp.
-  // 1e-9 is still ~7 orders of magnitude below the old defect (folds moved up to 0.050 in).
-  assert(maxAbsDiff(a.folds, b.folds) < 1e-9, 'fold field unchanged for 0.030 vs 0.035 in', `max diff ${maxAbsDiff(a.folds, b.folds).toExponential(2)}`);
-  let worst = 0, n = 0;
-  for (let k = 0; k < a.surface.length; k++)
-    if (a.contact[k] === 1 && b.contact[k] === 1) { worst = Math.max(worst, Math.abs(b.surface[k] - a.surface[k] - 0.005)); n++; }
-  assert(n > 0 && worst < 1e-8, 'in full contact the surface rises by exactly +0.005 in', `${n} px, max error ${worst.toExponential(2)}`);
-  // The production path is fitted: there the form depth depends on thickness and fold depth, and
-  // fold directions taken from the fitted membrane let both sliders move the folds (pass-2 N7/N8).
-  const fitted = (o: Partial<DrapeParams>) => composeDrape(f, params(rows, cols, { fitDepthIn: 0.75, ...o })).folds;
-  const base = fitted({});
-  assert(maxAbsDiff(base, fitted({ thicknessIn: 0.035 })) < 1e-9 && maxAbsDiff(base, fitted({ thicknessIn: 0.06 })) < 1e-9,
-    'fitted: thickness 0.03 / 0.035 / 0.06 in give the same fold field', `max diff ${maxAbsDiff(base, fitted({ thicknessIn: 0.06 })).toExponential(2)}`);
-  assert(maxAbsDiff(fitted({ foldAmpIn: 0.03 }), fitted({ foldAmpIn: 0.05 })) < 1e-9, 'fitted: Fold Depth does not move where the folds are');
-}
-
-// ---------- T4 slope invariance ----------
-process.stdout.write('T4 fold strength is local\n');
-{
-  // Measure what reaches the surface (surface - membrane), not the raw fold field: the old defect
-  // was a slope mask on fold AMPLITUDE, applied after the field, so a field-only check misses it.
-  const rows = 160, cols = 160, flat = new Float64Array(rows * cols), plane = new Float64Array(rows * cols);
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) plane[j * cols + i] = 0.1 * i / (cols - 1);
-  const p = params(rows, cols, { hang: 1 });
-  const contribution = (f: Float64Array): Float64Array => {
-    const r = composeDrape(f, p), c = new Float64Array(f.length);
-    for (let k = 0; k < c.length; k++) c[k] = r.surface[k] - r.membrane[k];
-    return c;
-  };
-  const std = (c: Float64Array): number => {
-    let m = 0, n = 0; for (let j = 20; j < rows - 20; j++) for (let i = 20; i < cols - 20; i++) { m += c[j * cols + i]; n++; }
-    m /= n; let v = 0; for (let j = 20; j < rows - 20; j++) for (let i = 20; i < cols - 20; i++) v += (c[j * cols + i] - m) ** 2;
-    return Math.sqrt(v / n);
-  };
-  const sFlat = std(contribution(flat)), sSlope = std(contribution(plane));
-  assert(sFlat > 0.1 * p.foldAmpIn, 'folds reach the surface on flat ground', `std ${sFlat.toFixed(4)} in`);
-  assert(Math.abs(sSlope - sFlat) / sFlat < 0.1, 'a gentle constant slope carries the same fold strength as flat ground',
-    `flat ${sFlat.toFixed(4)} in, slope ${sSlope.toFixed(4)} in`);
-  const spiked = plane.slice(); spiked[5 * cols + 5] = 1;
-  const a = contribution(plane), b = contribution(spiked);
-  // The spike's reach: membrane tent + direction blur (0.5 in) + streamline length.
-  let farDelta = 0;
-  for (let j = 100; j < rows - 10; j++) for (let i = 100; i < cols - 10; i++) farDelta = Math.max(farDelta, Math.abs(a[j * cols + i] - b[j * cols + i]));
-  assert(farDelta < 0.05 * p.foldAmpIn, 'a distant spike leaves far fold heights essentially unchanged', `max delta ${farDelta.toExponential(2)} in`);
-}
-
-// ---------- T5 Detail Transmission ----------
-process.stdout.write('T5 Detail Transmission acts at any smoothing\n');
-{
-  const rows = 120, cols = 120, f = new Float64Array(rows * cols);
-  // Base dome plus 0.1 in-wide ridges (0.6 in period) across it.
-  const d = domes(rows, cols, [[0.5, 0.5, 0.45]]);
-  for (let k = 0; k < f.length; k++) { const i = k % cols; f[k] = d[k] * (0.9 + 0.1 * Math.max(0, Math.sin(i * 2 * Math.PI * (PANEL_X / (cols - 1)) / 0.6))); }
-  const hi = composeDrape(f, params(rows, cols, { conform: 1, foldAmpIn: 0 }));
-  const mid = composeDrape(f, params(rows, cols, { conform: 0.5, foldAmpIn: 0 }));
-  const lo = composeDrape(f, params(rows, cols, { conform: 0, foldAmpIn: 0 }));
-  assert(maxAbsDiff(hi.surface, lo.surface) > 0.01, 'silk vs felt differ by more than 0.01 in', `${maxAbsDiff(hi.surface, lo.surface).toFixed(4)} in`);
-  const hp = (s: Float64Array) => { const b = gaussianBlur(s, rows, cols, 3); let e = 0; for (let k = 0; k < s.length; k++) e += (s[k] - b[k]) ** 2; return e; };
-  assert(hp(hi.surface) > hp(mid.surface) && hp(mid.surface) > hp(lo.surface), 'fine-detail energy rises monotonically with transmission');
-}
-
-// ---------- T6 spacing ----------
-process.stdout.write('T6 Fold Spacing is physical\n');
-{
-  const rows = 200, cols = 200, plane = new Float64Array(rows * cols);
-  const spacing = 0.6;
-  const r = composeDrape(plane, params(rows, cols, { hang: 1, foldSpacingIn: spacing, foldLength: 6 }));
-  // Count local maxima across x on the middle rows; mean distance between crests.
-  let crests = 0, rowsCounted = 0;
-  for (let j = 60; j < 140; j += 4) {
-    for (let i = 1; i < cols - 1; i++) { const v = r.folds[j * cols + i]; if (v > r.folds[j * cols + i - 1] && v >= r.folds[j * cols + i + 1] && v > 0) crests++; }
-    rowsCounted++;
-  }
-  const meanSpacing = (PANEL_X * rowsCounted) / crests;
-  assert(Math.abs(meanSpacing - spacing) / spacing < 0.25, 'mean crest spacing within 25% of Fold Spacing', `${meanSpacing.toFixed(3)} in vs ${spacing}`);
-}
-
-// ---------- T7 orientation ----------
-process.stdout.write('T7 fold orientation\n');
-{
-  const n = 128;
-  const dome = domes(n, n, [[0.5, 0.5, 0.22]]);
-  const two = domes(n, n, [[0.3, 0.5, 0.16], [0.7, 0.5, 0.16]]);
-  const pr = (o: Partial<DrapeParams>) => params(n, n, { dxIn: 1 / (n - 1) * PANEL_X, foldSpacingIn: 6 * PANEL_X / (n - 1), ...o });
-  const cd = contourAlignment(composeDrape(dome, pr({ hang: 0 })).folds, dome, n, n);
-  const c2 = contourAlignment(composeDrape(two, pr({ hang: 0 })).folds, two, n, n);
-  assert(cd <= 0.20, 'pressed (hang 0) on a dome: folds cross the contours', `cos^2 ${cd.toFixed(3)} (sim 0.100, old 0.81)`);
-  assert(c2 <= 0.30, 'pressed (hang 0) on two domes: folds cross the contours', `cos^2 ${c2.toFixed(3)} (sim 0.232, old 0.86)`);
-  const flat = new Float64Array(n * n);
-  const vh = verticalCrest(composeDrape(flat, pr({ hang: 1 })).folds, n, n);
-  assert(vh >= 0.90, 'hanging on flat ground: crests run down the image', `vertical ${vh.toFixed(3)}`);
-  const hz = 1 - verticalCrest(composeDrape(flat, pr({ hang: 1, gravityAngleDeg: 90 })).folds, n, n);
-  assert(hz >= 0.90, 'gravity 90 deg: crests run across the image', `horizontal ${hz.toFixed(3)}`);
-}
-
-// ---------- T8 profile ----------
-process.stdout.write('T8 fold profile\n');
-{
-  const rows = 160, cols = 160;
-  const r = composeDrape(faceRelief(rows, cols), params(rows, cols));
-  const sk = skewness(r.folds);
-  assert(sk >= 0.2 && sk <= 1.0, 'fold field skews toward sharp-topped ridges', `skew ${sk.toFixed(3)} (sim +0.56)`);
-}
-
-// ---------- T9 determinism ----------
-process.stdout.write('T9 determinism\n');
-{
-  const rows = 90, cols = 60, f = faceRelief(rows, cols);
-  const a = composeDrape(f, params(rows, cols, { seed: 3 }));
-  const b = composeDrape(f, params(rows, cols, { seed: 3 }));
-  const c = composeDrape(f, params(rows, cols, { seed: 4 }));
-  assert(maxAbsDiff(a.surface, b.surface) === 0, 'same seed reproduces bit for bit');
-  assert(maxAbsDiff(a.surface, c.surface) > 1e-4, 'a different seed changes the folds');
-}
-
-// ---------- T10 bounds sweep ----------
-process.stdout.write('T10 bounds across slider extremes\n');
-{
-  let s = 12345; const rnd = () => ((s = (s * 1103515245 + 12345) >>> 0) / 4294967296);
-  const rows = 48, cols = 32, f = faceRelief(rows, cols);
-  let bad = 0, badFit = 0, cases = 0;
-  for (let c = 0; c < 200; c++) {
-    const pick = (lo: number, hi: number) => (rnd() < 0.2 ? (rnd() < 0.5 ? lo : hi) : lo + (hi - lo) * rnd());
-    const bt = pick(0.05, 6), cut = Math.min(pick(0, 6), bt), floor = rnd() < 0.5 ? 0.01 : 0;
-    const p = params(rows, cols, {
-      dxIn: pick(1, 96) / (cols - 1), formDepthIn: cut, thicknessIn: pick(0, 0.2), tension: pick(0, 1),
-      conform: pick(0, 1), foldSpacingIn: pick(0.25, 3), foldAmpIn: pick(0, 0.25), foldLength: pick(1, 12),
-      hang: pick(0, 1), gravityAngleDeg: pick(-180, 180), seed: Math.floor(rnd() * 99999),
-    });
-    const r = composeDrape(f, { ...p, fitDepthIn: cut });
-    const z = drapeToStockHeights(r.surface, rows, cols, bt, cut, pick(-1, 1), floor);
-    for (const row of z) for (const v of row) if (!Number.isFinite(v) || v < floor - 1e-12 || v > bt + 1e-12) bad++;
-    // Before the final clamp: the fit either holds (top within tolerance of the cut) or reports
-    // exactly how far it overflows.
-    const top = Math.max(...r.surface);
-    if (r.fitOverflowIn === 0 ? top > cut + 0.001 + 1e-12 : Math.abs(top - cut - r.fitOverflowIn) > 1e-9) badFit++;
-    cases++;
-  }
-  assert(bad === 0, `${cases} randomized cases stay finite and inside [floor, bt]`, `${bad} bad vertices`);
-  assert(badFit === 0, `${cases} randomized fitted cases fit the cut or report the overflow exactly`, `${badFit} bad cases`);
-}
-
-// ---------- T11 timing ----------
-process.stdout.write('T11 production-size timing\n');
-{
-  // The production path, fitted into the cut, on the demo-like speckled fixture (a smooth fixture
-  // ran ~370 ms faster than the real demo and would hide a solver slowdown). Tension 0 is the slow
-  // end. The product budget is 1 s per generation in the browser on the development Mac; CI runners
-  // are slower and shared, so CI enforces a 4 s gross-regression bound and prints the time.
-  const budget = process.env.CI ? 4000 : 1000;
-  const rows = 600, cols = 400, f = speckledRelief(rows, cols);
-  const p = params(rows, cols, { fitDepthIn: 0.75 });
-  composeDrape(f, p);                                  // warm-up (JIT)
-  for (const tension of [DEFAULTS.blend, 0]) {
-    const t0 = performance.now();
-    composeDrape(f, { ...p, tension });
-    const ms = performance.now() - t0;
-    assert(ms < budget, `composeDrape (fitted) at 400x600, tension ${tension}, under ${budget} ms`, `${ms.toFixed(0)} ms`);
-  }
-}
-
-// ---------- T12 convergence ----------
-process.stdout.write('T12 membrane solver convergence\n');
-{
-  // Two domes far apart force a long bridged span, the slow mode for any membrane solver.
-  const rows = 300, cols = 200, f = domes(rows, cols, [[0.25, 0.5, 0.18], [0.75, 0.5, 0.18]]);
-  const p = params(rows, cols, { tension: 1 });
-  const obstacle = new Float64Array(f.length);
-  for (let k = 0; k < f.length; k++) obstacle[k] = f[k] * p.formDepthIn + p.thicknessIn;
-  const sag = tensionToCurvature(p.tension) * p.dxIn * p.dxIn / 4;
-  const fast = solveMembrane(obstacle, rows, cols, sag);
-  // Independent reference: single-grid projected SOR started from the bare obstacle (no coarse
-  // levels, no shared starting guess), run until a full sweep moves nothing by more than 1e-12.
-  const ref = obstacle.slice();
-  let sweeps = 0, moved = 1;
-  for (; sweeps < 200000 && moved > 1e-12; sweeps++) {
-    moved = 0;
-    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-      const k = j * cols + i, c = ref[k];
-      const l = i > 0 ? ref[k - 1] : 2 * c - ref[k + 1], r = i < cols - 1 ? ref[k + 1] : 2 * c - ref[k - 1];
-      const u = j > 0 ? ref[k - cols] : 2 * c - ref[k + cols], d = j < rows - 1 ? ref[k + cols] : 2 * c - ref[k - cols];
-      const v = Math.max(obstacle[k], c + 1.95 * (0.25 * (l + r + u + d) - sag - c));
-      moved = Math.max(moved, Math.abs(v - c)); ref[k] = v;
-    }
-  }
-  assert(moved <= 1e-12, 'reference solve converged', `${sweeps} sweeps, last move ${moved.toExponential(1)}`);
-  let lifted = 0; for (let k = 0; k < ref.length; k++) if (ref[k] - obstacle[k] > 0.01) lifted++;
-  assert(lifted > ref.length * 0.05, 'fixture actually bridges (reference lifts off > 5% of cells)', `${(100 * lifted / ref.length).toFixed(1)}%`);
-  const err = maxAbsDiff(fast, ref);
-  assert(err <= 0.005, 'coarse-to-fine PSOR within 0.005 in of the independent reference', `${err.toFixed(5)} in`);
-}
-
-// ---------- T12b solver on speckled input (the real failure mode) ----------
-process.stdout.write('T12b membrane solver on a speckled depth map\n');
-{
-  // Depth maps carry one-pixel specks. A 2x2 MAX restriction grew each into a plateau per coarse
-  // level and left 0.22 in of error on the demo at the default tension; the smooth domes of T12
-  // never showed it. Face relief plus 0.5% one-pixel spikes, against an independent SOR reference.
-  // Production size: the plateau effect grows with the number of coarse levels (six at 400x600;
-  // a 200x300 grid with four levels did not separate max from average restriction).
-  const rows = 600, cols = 400, f = speckledRelief(rows, cols);
-  // Measured at the default (0.48/in) and at tension 1 (0.3/in): max restriction 0.052 / 0.081 in,
-  // average 0.010 / 0.028 in (residual long-wavelength error, documented at PSOR_SWEEPS).
-  for (const [tension, bound] of [[DEFAULTS.blend, 0.02], [1, 0.05]] as [number, number][]) {
-    const p = params(rows, cols, { tension });
-    const obstacle = new Float64Array(f.length);
-    for (let k = 0; k < f.length; k++) obstacle[k] = f[k] * p.formDepthIn + p.thicknessIn;
-    const sag = tensionToCurvature(tension) * p.dxIn * p.dxIn / 4;
-    const fast = solveMembrane(obstacle, rows, cols, sag);
-    // Independent: start from the bare obstacle, not from `fast` (a reference seeded with the
-    // answer only proves the answer is a fixed point).
-    const ref = obstacle.slice();
-    let moved = 1, sweeps = 0;
-    for (; sweeps < 200000 && moved > 1e-11; sweeps++) {
-      moved = 0;
-      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-        const k = j * cols + i, c = ref[k];
-        const l = i > 0 ? ref[k - 1] : 2 * c - ref[k + 1], r = i < cols - 1 ? ref[k + 1] : 2 * c - ref[k - 1];
-        const u = j > 0 ? ref[k - cols] : 2 * c - ref[k + cols], d = j < rows - 1 ? ref[k + cols] : 2 * c - ref[k - cols];
-        const v = Math.max(obstacle[k], c + 1.95 * (0.25 * (l + r + u + d) - sag - c));
-        moved = Math.max(moved, Math.abs(v - c)); ref[k] = v;
+    const w: DepthWindow = { x0: -1, x1: 1, zTop: 1, zBottom: -1, cols: 61, rows: 57 };
+    const got = emptyDepth(w); rasterizeFrontmost(pos, tris, w, got);
+    let worst = 0, nanMismatch = 0;
+    for (let j = 0; j < w.rows; j++) for (let i = 0; i < w.cols; i++) {
+      const x = w.x0 + i * (w.x1 - w.x0) / (w.cols - 1), z = w.zTop - j * (w.zTop - w.zBottom) / (w.rows - 1);
+      let best = NaN;
+      for (let t = 0; t < n; t++) {
+        const a = t * 9;
+        const ax = pos[a], ay = pos[a + 1], az = pos[a + 2], bx = pos[a + 3], by = pos[a + 4], bz = pos[a + 5], cx = pos[a + 6], cy = pos[a + 7], cz = pos[a + 8];
+        const det = (bx - ax) * (cz - az) - (cx - ax) * (bz - az);
+        if (det === 0) continue;
+        const l1 = ((x - ax) * (cz - az) - (cx - ax) * (z - az)) / det, l2 = ((bx - ax) * (z - az) - (x - ax) * (bz - az)) / det, l0 = 1 - l1 - l2;
+        if (l0 < -1e-9 || l1 < -1e-9 || l2 < -1e-9) continue;
+        const d = -(l0 * ay + l1 * by + l2 * cy);
+        if (!(best >= d)) best = d;
       }
+      const g = got[j * w.cols + i];
+      if (Number.isNaN(g) !== Number.isNaN(best)) nanMismatch++; else if (!Number.isNaN(g)) worst = Math.max(worst, Math.abs(g - best));
     }
-    const err = maxAbsDiff(fast, ref);
-    assert(moved <= 1e-11 && err <= bound, `tension ${tension}: within ${bound} in of the converged membrane`, `${err.toFixed(5)} in (reference ${sweeps} sweeps)`);
+    assert(nanMismatch === 0 && worst < 1e-6, 'every node equals the frontmost ray hit', `max diff ${worst.toExponential(2)}, coverage mismatches ${nanMismatch}`);
   }
-}
 
-// ---------- T13 luma ----------
-process.stdout.write('T13 luma sampling\n');
-{
-  const w = 7, h = 5, gray = new Uint8ClampedArray(w * h * 4), color = new Uint8ClampedArray(w * h * 4);
-  for (let k = 0; k < w * h; k++) {
-    const v = (k * 37) % 256;
-    gray.set([v, v, v, 255], k * 4);
-    color.set([v, (k * 11) % 256, (k * 53) % 256, 255], k * 4);
+  // ---------- D4 smoothing ----------
+  process.stdout.write('D4 cloth smoothing\n');
+  {
+    const rows = 6, cols = 9, pos = new Float64Array(rows * cols * 3);
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) pos.set([i * 0.3 + j * 0.1, 0.2 * i - 0.5 * j + 1, j * 0.25], (j * cols + i) * 3);
+    const g = subdivideGrid({ rows, cols, pos });
+    let d = 0;
+    for (let J = 0; J < g.rows; J++) for (let I = 0; I < g.cols; I++) {
+      const i = I / 2, j = J / 2, e = [i * 0.3 + j * 0.1, 0.2 * i - 0.5 * j + 1, j * 0.25];
+      for (let k = 0; k < 3; k++) d = Math.max(d, Math.abs(g.pos[(J * g.cols + I) * 3 + k] - e[k]));
+    }
+    assert(g.rows === 2 * rows - 1 && g.cols === 2 * cols - 1 && d < 1e-12, 'a flat affine grid subdivides onto itself', `max ${d.toExponential(2)}`);
+    assert(gridTriangles(3, 4).length === 2 * 3 * 2 * 3, 'two triangles per cell');
   }
-  // The pre-2026-10-19 sampler read the red channel only.
-  const redOnly = (data: Uint8ClampedArray, cols: number, rows: number): number[][] => {
-    const g: number[][] = [];
-    for (let j = 0; j < rows; j++) { g[j] = [];
-      const fy = (j / (rows - 1)) * (h - 1), iy0 = Math.min(Math.floor(fy), h - 1), iy1 = Math.min(iy0 + 1, h - 1), ty = fy - iy0;
-      for (let i = 0; i < cols; i++) {
-        const fx = (i / (cols - 1)) * (w - 1), ix0 = Math.min(Math.floor(fx), w - 1), ix1 = Math.min(ix0 + 1, w - 1), tx = fx - ix0;
-        const top = data[(iy0 * w + ix0) * 4] * (1 - tx) + data[(iy0 * w + ix1) * 4] * tx;
-        const bot = data[(iy1 * w + ix0) * 4] * (1 - tx) + data[(iy1 * w + ix1) * 4] * tx;
-        g[j][i] = (top * (1 - ty) + bot * ty) / 255; } }
-    return g;
-  };
-  // Same values as the old sampler, with rows in world order (grid row 0 = image bottom).
-  const a = sampleLumaGrid(gray, w, h, 13, 9).flat(), b = redOnly(gray, 13, 9).reverse().flat();
-  assert(maxAbsDiff(a, b) < 1e-12, 'grayscale input matches the old sampler, rows in world order', `max diff ${maxAbsDiff(a, b).toExponential(2)}`);
-  const px = sampleLumaGrid(color, w, h, w, h)[h - 2][3], k = w + 3;   // grid row h-2 = image row 1
-  const expect = (0.2126 * color[k * 4] + 0.7152 * color[k * 4 + 1] + 0.0722 * color[k * 4 + 2]) / 255;
-  assert(Math.abs(px - expect) < 1e-12, 'color input uses Rec. 709 luma');
-}
 
-// ---------- T13b orientation ----------
-process.stdout.write('T13b the carving is not mirrored\n');
-{
-  // Image with a bright TOP-LEFT quadrant. World Y grows away from the machine front (exports put
-  // grid row j at y = j / (rows - 1) x meshY), so the bright patch must land at high j, low i.
-  const w = 8, h = 8, img = new Uint8ClampedArray(w * h * 4);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const v = x < w / 2 && y < h / 2 ? 255 : 0; img.set([v, v, v, 255], (y * w + x) * 4); }
-  const g = sampleLumaGrid(img, w, h, w, h);
-  assert(g[h - 1][0] > 1 - 1e-12 && g[0][0] === 0 && g[h - 1][w - 1] === 0, 'image top-left lands at world top-left (high Y, low X)',
-    `g[top][left]=${g[h - 1][0]}, g[bottom][left]=${g[0][0]}, g[top][right]=${g[h - 1][w - 1]}`);
-}
-
-// ---------- T13c flat images stay flat ----------
-process.stdout.write('T13c a constant image is not normalized into relief\n');
-{
-  // GPT's reproduction: RGB(144,144,144) everywhere carved 0.01-0.67 in, because luma rounding
-  // (~2e-16 across bilinear samples) was stretched to the full depth.
-  const w = 7, h = 5, img = new Uint8ClampedArray(w * h * 4);
-  for (let k = 0; k < w * h; k++) img.set([144, 144, 144, 255], k * 4);
-  const g = sampleLumaGrid(img, w, h, 400, 282);
-  const flat = g.flat(), raw = Math.max(...flat) - Math.min(...flat);
-  normalizeGrid(g, 282, 400);
-  const after = g.flat();
-  assert(after.every(v => v === 0), 'constant gray normalizes to all zeros', `raw range ${raw.toExponential(2)}, after max ${Math.max(...after)}`);
-  // Real contrast of one 8-bit level still normalizes to the full range.
-  const img2 = img.slice(); img2.set([145, 145, 145, 255], 0);
-  const g2 = sampleLumaGrid(img2, w, h, 400, 282);
-  normalizeGrid(g2, 282, 400);
-  assert(Math.max(...g2.flat()) === 1, 'one gray level of contrast still spans [0, 1]');
-}
-
-// ---------- T14 background cutoff ----------
-process.stdout.write('T14 background cutoff\n');
-{
-  const g = [[0, 0.25, 0.5, 0.75, 1]], g0 = g.map(r => r.slice());
-  applyBackgroundCutoff(g0, 1, 5, 0);
-  assert(maxAbsDiff(g0[0], g[0]) === 0, 'cutoff 0 is the identity');
-  const g1 = g.map(r => r.slice());
-  applyBackgroundCutoff(g1, 1, 5, 0.5);
-  assert(g1[0][0] === 0 && g1[0][1] === 0 && g1[0][2] === 0 && Math.abs(g1[0][3] - 0.5) < 1e-12 && g1[0][4] === 1,
-    'cutoff 0.5 flattens <= 0.5 and stretches the rest to [0, 1]', g1[0].map(v => v.toFixed(2)).join(','));
-}
-
-// ---------- T15 share links ----------
-process.stdout.write('T15 share links\n');
-{
-  const saved = { ...STATE };
-  const set = (o: Partial<typeof STATE>) => Object.assign(STATE, o);
-  set({ mode: 'blend', drapeFoldSpacing: 0.85, drapeFoldAmp: 0.07, drapeFoldLength: 5, drapeHang: 0.3, drapeGravityAngle: -40, dmBackgroundCutoff: 0.45, viewMaterial: 'neutral', blend: 0.62 });
-  const back = deserializeConfig('?c=' + serializeConfig());
-  const keys = ['mode', 'drapeFoldSpacing', 'drapeFoldAmp', 'drapeFoldLength', 'drapeHang', 'drapeGravityAngle', 'dmBackgroundCutoff', 'viewMaterial', 'blend'] as const;
-  assert(keys.every(k => back[k] === STATE[k]), 'new Blend keys round-trip through a share link');
-  Object.assign(STATE, saved);
-  const enc = (o: object) => '?c=' + Buffer.from(JSON.stringify(o)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const v12 = deserializeConfig(enc({ _v: 12, mode: 'blend', blend: 0.3, drapeFoldScale: 20, drapeFoldDepth: 0.3, drapeFoldWarp: 0.9, drapeThickness: 0.05, drapeConform: 0.4 }));
-  assert(!('drapeFoldScale' in v12) && !('drapeFoldDepth' in v12) && !('drapeFoldWarp' in v12), 'v12 link: retired fold keys are dropped');
-  assert(v12.blend === 0.3 && v12.drapeThickness === 0.05 && v12.drapeConform === 0.4, 'v12 link: tension, thickness, transmission carry over by value');
-  // serializeConfig omits default-valued keys, so a v12 link saved at the old default tension
-  // (0.2) has no blend key at all and must still load 0.2, not the new default 0.8.
-  const v12Default = deserializeConfig(enc({ _v: 12, mode: 'blend' }));
-  assert(v12Default.blend === 0.2, 'v12 link at the old default tension keeps 0.2', `blend ${String(v12Default.blend)}`);
-  const v13Default = deserializeConfig(enc({ _v: 13, mode: 'blend' }));
-  assert(!('blend' in v13Default), 'v13 link without blend uses the current default');
-  const crafted = deserializeConfig(enc({ _v: 13, drapeFoldSpacing: 0, drapeFoldLength: 1e9, drapeFoldAmp: 'NaN', drapeHang: -5, drapeGravityAngle: '720', dmBackgroundCutoff: 5, blend: 9, viewMaterial: 'chrome', mode: 'evil', viewMode: 'x' }));
-  assert(crafted.drapeFoldSpacing === 0.25 && crafted.drapeFoldLength === 12 && !('drapeFoldAmp' in crafted) && crafted.drapeHang === 0
-    && crafted.drapeGravityAngle === 180 && crafted.dmBackgroundCutoff === 0.9 && crafted.blend === 1,
-    'crafted numeric values clamp to slider ranges or drop', JSON.stringify(crafted));
-  assert(!('viewMaterial' in crafted) && !('mode' in crafted) && !('viewMode' in crafted), 'unknown enum values fall back to defaults');
-  // GPT review: ["blend"] stringifies to "blend" and passed a String()-coerced check, then failed
-  // every strict comparison downstream. Every string-enum key must reject non-strings.
-  const arrays = deserializeConfig(enc({ _v: 13, mode: ['blend'], viewMode: ['solid'], viewMaterial: ['neutral'], noiseType: ['perlin'],
-    reliefPolarity: ['domes'], reliefProfile: { a: 1 }, reliefAttractorMode: null, reliefBaseMode: 1, reliefRadialMode: ['rays'],
-    activePreset: 'no-such-preset', activeProfile: 'no-such-profile' }));
-  const enumKeys = ['mode', 'viewMode', 'viewMaterial', 'noiseType', 'reliefPolarity', 'reliefProfile', 'reliefAttractorMode', 'reliefBaseMode', 'reliefRadialMode', 'activePreset', 'activeProfile'];
-  const survivors = enumKeys.filter(k => k in arrays);
-  assert(survivors.length === 0, 'non-string or unknown enum values are dropped for all 11 enum keys', survivors.join(',') || 'none survived');
-  const presetArray = deserializeConfig(enc({ _v: 13, activePreset: ['relief-starburst'] }));
-  assert(!('activePreset' in presetArray), 'an array that stringifies to a real preset name is dropped');
-  for (const bad of ['false', 0, ['true'], null]) {
-    const w = deserializeConfig(enc({ _v: 13, watertight: bad }));
-    assert(!('watertight' in w), `watertight ${JSON.stringify(bad)} is dropped (only booleans load)`);
+  // ---------- D5 relief mapping on the bundled figure ----------
+  process.stdout.write('D5 bare relief of the bundled bust\n');
+  {
+    const pos = tiltFigure(demo, 25), bare = bareDepth(pos, demo.triangles);
+    const r = reliefHeights(bare, bare), IN = 0.0254;
+    let lo = Infinity, hi = -Infinity, bgOk = true, fg = 0;
+    for (let k = 0; k < r.heightsM.length; k++) {
+      lo = Math.min(lo, r.heightsM[k]); hi = Math.max(hi, r.heightsM[k]);
+      if (r.mask[k]) fg++; else if (r.heightsM[k] !== Math.fround(RELIEF_BACKING_IN * IN)) bgOk = false;
+    }
+    assert(Math.abs(lo - RELIEF_BACKING_IN * IN) < 1e-9 && Math.abs(hi - (RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN) < 1e-7 && bgOk,
+      'heights span exactly backing to stock, background at the backing', `${(lo / IN).toFixed(4)} to ${(hi / IN).toFixed(4)} in`);
+    // The crown (z = 1) is the highest foreground row: row (1.2 - 1) / 5.6 x 1600 = 57.
+    let firstRow = -1;
+    for (let j = 0; j < PANEL_WINDOW.rows && firstRow < 0; j++) for (let i = 0; i < PANEL_WINDOW.cols; i++) if (r.mask[j * PANEL_WINDOW.cols + i]) { firstRow = j; break; }
+    assert(Math.abs(firstRow - 57) <= 1, 'the crown is the top of the figure in the panel (upright, not upside down)', `first foreground row ${firstRow}`);
+    assert(fg / r.mask.length > 0.4 && fg / r.mask.length < 0.9, 'the bust fills a plausible share of the panel', `${(100 * fg / r.mask.length).toFixed(1)}%`);
+    // Veil hanging behind the figure's deepest point (beside the figure, where the bare depth is NaN)
+    // must still land on the backing, never below it or below 0.
+    const depth = bare.slice(), veil = new Uint8Array(bare.length);
+    let bareLo = Infinity, bareHi = -Infinity;
+    for (const v of bare) if (Number.isFinite(v)) { bareLo = Math.min(bareLo, v); bareHi = Math.max(bareHi, v); }
+    let behind = 0;
+    for (let k = 0; k < depth.length; k++) if (!Number.isFinite(bare[k]) && k % 7 === 0) { depth[k] = bareLo - 2 * (bareHi - bareLo); veil[k] = 1; behind++; }
+    const rv = reliefHeights(depth, bare, veil);
+    let vlo = Infinity, vhi = -Infinity;
+    for (let k = 0; k < rv.heightsM.length; k++) if (rv.mask[k]) { vlo = Math.min(vlo, rv.heightsM[k]); vhi = Math.max(vhi, rv.heightsM[k]); }
+    assert(behind > 0 && Math.abs(vlo - RELIEF_BACKING_IN * IN) < 1e-9 && vhi <= Math.fround((RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN),
+      'veil deeper than the figure maps onto the backing, never below it', `${behind} veil nodes behind, heights ${(vlo / IN).toFixed(4)} to ${(vhi / IN).toFixed(4)} in`);
   }
-  assert(deserializeConfig(enc({ _v: 13, watertight: false })).watertight === false, 'watertight false loads');
-  const ok = deserializeConfig(enc({ _v: 13, noiseType: 'perlin', reliefPolarity: 'pockets', activePreset: null, activeProfile: null }));
-  assert(ok.noiseType === 'perlin' && ok.reliefPolarity === 'pockets' && ok.activePreset === null && ok.activeProfile === null,
-    'valid enum strings and null presets still load');
-}
 
-// ---------- T16 machinability ----------
-process.stdout.write('T16 machinability at defaults\n');
-{
-  const tip = getDefaultFinishingTool().tipRadius;
-  for (const [name, f, rows, cols] of [
-    ['plane', new Float64Array(300 * 200), 300, 200],
-    ['dome', domes(300, 200, [[0.5, 0.5, 0.35]]), 300, 200],
-  ] as [string, Float64Array, number, number][]) {
-    const p = params(rows, cols);
-    const r = composeDrape(f, p);
-    const { dx, dy } = foldDirection(r.membrane, rows, cols, p.dxIn, p.gravityAngleDeg, p.hang);
-    // Concave curvature across the local crest direction (normal = crest rotated 90 deg), 1/in.
-    const curv: number[] = [];
-    for (let j = 2; j < rows - 2; j++)
-      for (let i = 2; i < cols - 2; i++) {
-        const k = j * cols + i, nx = -dy[k], ny = dx[k];
-        const at = (s: number) => { const x = Math.round(i + nx * s), y = Math.round(j + ny * s); return r.surface[y * cols + x]; };
-        const c2 = (at(1) - 2 * r.surface[k] + at(-1)) / (p.dxIn * p.dxIn);
-        if (c2 > 0) curv.push(c2);
-      }
-    curv.sort((a, b) => a - b);
-    const p99 = curv[Math.floor(curv.length * 0.99)] ?? 0;
-    assert(p99 <= 1 / tip, `${name}: 99th-percentile valley curvature cuttable by the ${tip} in tip`,
-      `${p99.toFixed(2)} 1/in vs limit ${(1 / tip).toFixed(2)}`);
+  // ---------- D6 uploaded mesh placement ----------
+  process.stdout.write('D6 uploaded mesh placement\n');
+  {
+    // A 300 mm tall Y-up box whose front (+Z, glTF convention) must end up facing the viewer (-Y).
+    const p = new Float32Array([-100, 0, 50, 100, 0, 50, 0, 300, 50, 0, 0, -50]);
+    const f = figureFromMesh(p, [0, 1, 2, 0, 2, 3], { metresPerUnit: 0.001, up: 'y', turnDeg: 0, name: 'box' });
+    const ys = [f.positions[1], f.positions[4], f.positions[10]];
+    assert(Math.abs(f.positions[8] - 1) < 1e-6, 'the highest point becomes the crown at z = 1');
+    assert(ys[0] < ys[2] && ys[1] < ys[2], 'a Y-up model\'s front (+Z) faces the viewer (-Y)', ys.map(v => v.toFixed(2)).join(','));
+    assert(Math.abs((f.positions[8] - f.positions[2]) - 0.3 * 8) < 1e-5, '300 mm becomes 2.4 scene units (8 per metre)');
   }
+
+  // ---------- D7 short cloth run ----------
+  process.stdout.write('D7 a short cloth run on the bundled bust\n');
+  {
+    const J = await initJolt();
+    const pos = tiltFigure(demo, 25);
+    const res = simulateCloth(J, pos, demo.triangles, { ...SILK, frames: 12 });
+    let finite = true, minZ = Infinity;
+    for (let k = 0; k < res.positions.length; k++) { if (!Number.isFinite(res.positions[k])) finite = false; if (k % 3 === 2) minZ = Math.min(minZ, res.positions[k]); }
+    const centre = ((SILK.cellsY / 2) * (SILK.cellsX + 1) + SILK.cellsX / 2) * 3;
+    assert(finite, 'all cloth positions stay finite');
+    assert(Math.abs(res.positions[centre + 2] - (1 + SILK.liftZ)) < 1e-6, 'the pinned crown vertex stays where it was attached');
+    assert(minZ < 1 + SILK.liftZ - 0.2, 'the free cloth falls under gravity', `lowest z ${minZ.toFixed(3)} after 12 frames, ${res.seconds.toFixed(1)} s`);
+  }
+
+  process.stdout.write(failures ? `\n${failures} FAILURE(S)\n` : '\nALL OK\n');
+  process.exit(failures ? 1 : 0);
 }
 
-// ---------- T17 SBP path ----------
-process.stdout.write('T17 drape surface through the SBP generator\n');
-{
-  const rows = 90, cols = 60, f = faceRelief(rows, cols);
-  const p = params(rows, cols, { dxIn: 10 / (cols - 1) });
-  const z = drapeToStockHeights(composeDrape(f, p).surface, rows, cols, 0.75, 0.75, -0.08, 0.01);
-  let threw = '';
-  let sbp = '';
-  try {
-    const hm = stateToHeightmap(z, rows, cols, 10, 15);
-    sbp = generateSBP(hm, getDefaultConfig()).sbp;
-  } catch (e) { threw = e instanceof Error ? e.message : String(e); }
-  assert(threw === '' && sbp.length > 0, 'generateSBP accepts the drape heightmap and emits toolpaths', threw || `${sbp.length} bytes`);
-  const zs = [...sbp.matchAll(/^M3,[^,]*,[^,]*,(-?[\d.]+)/gm)].map(m => parseFloat(m[1]));
-  assert(zs.length > 0 && zs.every(v => Number.isFinite(v)), 'every cutting move has a finite Z', `${zs.length} moves`);
-}
-
-if (failures === 0) {
-  process.stdout.write('\nALL OK\n');
-  process.exit(0);
-} else {
-  process.stdout.write(`\n${failures} FAILURE(S)\n`);
-  process.exit(1);
-}
+main().catch((e: unknown) => { process.stderr.write(`${e instanceof Error ? e.stack ?? e.message : String(e)}\n`); process.exit(1); });

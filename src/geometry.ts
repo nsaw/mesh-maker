@@ -105,8 +105,7 @@ export function gridMinMax(grid: number[][], rows: number, cols: number): [numbe
 }
 
 /** Weighted 3x3 kernel smoothing (center 4, edge 2, corner 1), `iterations` passes at
- *  `strength` lerp. Shared by the noise pipeline (mesh.ts) and the drape compositor
- *  (drape.ts) — lives here so drape.ts never has to import mesh.ts (no import cycle). */
+ *  `strength` lerp. Used by the noise and depth-map smoothing in mesh.ts. */
 export function weightedSmooth(verts: number[][], rows: number, cols: number, iterations: number, strength: number): number[][] {
   let sm = verts;
   for (let iter = 0; iter < iterations; iter++) {

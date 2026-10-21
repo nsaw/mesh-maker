@@ -1,9 +1,8 @@
 name: CI
 
 # Gates every pull request and every non-main branch push. deploy.yml runs only on main and only
-# lints + builds, so before this workflow the spec suites never ran in CI. test:drape-physics is
-# excluded on purpose: it runs a cloth simulation for several minutes and is run by hand after
-# changes to src/drape.ts (see .claude/CLAUDE.md).
+# lints + builds, so before this workflow the spec suites never ran in CI. test:drape-parity runs one
+# full cloth simulation of the bundled bust (about a minute) against the Blender proof's reference.
 on:
   pull_request:
   push:
@@ -32,7 +31,9 @@ jobs:
       - run: npm run typecheck:cli
       - run: npm run test:relief
       - run: npm run test:gh-parity
+      - run: npm run test:depthmap
       - run: npm run test:drape
+      - run: npm run test:drape-parity
       - run: npm run test:cut
       - run: npm run test:relief-master
       - run: npm run build

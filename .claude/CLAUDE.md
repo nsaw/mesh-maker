@@ -38,8 +38,10 @@ npm run lint             # eslint src/ cli/
 npm run lint:fix
 npm run test:relief      # tsx cli/voronoi-relief.spec.ts
 npm run test:gh-parity   # tsx cli/grasshopper-parity.spec.ts
-npm run test:drape       # tsx cli/drape.spec.ts (Blend drape, ~5 s)
-npm run test:drape-physics  # tsx cli/drape-physics.spec.ts (vs reference cloth sim, minutes)
+npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~5 s)
+npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drape vs the Blender proof, ~1 min)
+npm run test:depthmap       # tsx cli/depthmap.spec.ts (luma sampling, orientation, cutoff, share links)
+npm run drape-run -- <figure.mcfig> --out <dir> [--tilt 25] [--param key=value]   # one web drape in Node
 npm run test:cut         # tsx cli/sbp-cut.spec.ts (compensation oracles + SBP cut replay, ~7 min)
 npm run test:relief-master  # tsx cli/relief-master.spec.ts (.mcrelief contract, export fidelity)
 npm run relief-roundtrip -- <master.mcrelief> --out <dir> [--crop ...] [--sbp] [--replay f.sbp] [--sim-factor N] [--offset x,y] [--face ...]
@@ -105,7 +107,7 @@ drives a physical machine, so these are not style preferences.
   toolpaths), and Y grows away from the machine front. Depth-map sampling therefore puts the
   image's bottom row at `j = 0` (`sampleLumaGrid` in `src/geometry.ts`), and the heightmap PNG
   export writes rows top-down. Before 2026-10-19 the image's top row went to `Y = 0`, which
-  carved a mirror image. `npm run test:drape` T13b guards it.
+  carved a mirror image. `npm run test:depthmap` T13b guards it.
 
 `src/sbp/` is shared by the browser worker and the Node CLI. Keep it dependency-free of Node
 built-ins or it breaks the web path at runtime rather than at build time.
@@ -119,15 +121,18 @@ before you claim a change is good:
 npm run lint && npm run typecheck && npm run typecheck:cli
 npm run test:relief
 npm run test:gh-parity
+npm run test:depthmap
 npm run test:drape
+npm run test:drape-parity
 npm run test:cut
 npm run test:relief-master
 npm run stl-to-sbp -- <input.stl> --dry-run
 ```
 
 `.github/workflows/ci.yml` runs lint, both typechecks, `test:relief`, `test:gh-parity`,
-`test:drape`, `test:cut`, `test:relief-master` and the build on every pull request. `test:drape-physics` takes minutes and is
-not in CI: run it by hand after any change to `src/drape.ts` and paste its numbers in the PR.
+`test:depthmap`, `test:drape`, `test:drape-parity`, `test:cut`, `test:relief-master` and the build on every pull request.
+`test:drape-parity` runs one full cloth simulation of the bundled bust against the Blender proof's reference
+(`cli/fixtures/drape-silk-tilt25`); after any change under `src/drape-sim/`, paste its numbers in the PR.
 
 Visual and interaction items (view modes, orbit and pinch, responsive under 900px, URL state
 round-trip, depth map upload) are not covered by any suite. If a change touches them, verify
