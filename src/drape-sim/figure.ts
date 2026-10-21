@@ -53,6 +53,8 @@ export function parseFigure(buf: ArrayBuffer): Figure {
   if (nt > MAX_FIGURE_TRIANGLES) throw new Error(`${nt.toLocaleString()} triangles; decimate below ${MAX_FIGURE_TRIANGLES.toLocaleString()}`);
   const hc = header.head_centre;
   if (!Array.isArray(hc) || hc.length !== 3 || !hc.every(v => typeof v === 'number' && Number.isFinite(v))) throw new Error('figure head_centre must be three finite numbers');
+  for (const key of ['name', 'source', 'license'] as const)                // carried into the relief master
+    if (header[key] !== undefined && typeof header[key] !== 'string') throw new Error(`figure ${key} must be a string when present`);
   const start = Math.ceil((12 + len) / 8) * 8;
   if (buf.byteLength !== start + nv * 12 + nt * 12) throw new Error('figure size does not match its header');
   const positions = new Float32Array(buf.slice(start, start + nv * 12));

@@ -65,7 +65,7 @@ When these files or sections are changed, remember to consider these:
 - Adding a numeric field that participates in relief/noise cost scaling: add an explicit clamp in `deserializeConfig()` (`src/state.ts`) mirroring the slider's min/max, since URL payloads bypass the DOM's built-in range clamping and can otherwise trigger runaway computation.
 - Changing `STATE.baseThickness` semantics: `wireControls()` in `ui.ts` and `syncSbpSafeZ()` (sbp-export.ts, out of scope here) both derive dependent slider maxes from it — verify both stay consistent.
 - Changing camera fields (`orbit`, `tilt`, `roll`, `zoom`, `panX`, `panY`): both `interaction.ts` (drag/wheel/touch) and `ui.ts`'s View Controls sliders write the same fields — keep clamp ranges (e.g. zoom 0.1–10, tilt -90–90) identical in both places or the UI and mouse input will disagree.
-- Changing `noiseDims` or the mode-switch logic in `toolbar.ts`'s `setupTabs()`: this is the only place that saves/restores noise-mode dimensions across a depthmap/drape excursion; a missed branch silently loses the user's noise-mode mesh size.
+- Changing `noiseDims` or the mode-switch logic in `toolbar.ts`'s `setupTabs()`: this saves/restores noise-mode dimensions across a depthmap excursion, and `src/drape-ui.ts` (`ensureDrapeFigure` / `restoreSizeAfterDrape`) saves and restores every tab's size controls around a DRAPE visit; a missed branch silently loses the user's mesh size or stock.
 
 ## Important failure modes
 

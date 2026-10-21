@@ -52,6 +52,8 @@ async function main(): Promise<void> {
   assert(/head_centre/.test(thrown(() => parseFigure(rawFigure(`{${good}}`, 48)))), 'a missing head_centre is rejected by name');
   assert(/head_centre/.test(thrown(() => parseFigure(rawFigure(`{${good},"head_centre":[0,"x",0]}`, 48)))), 'a non-numeric head_centre is rejected by name');
   assert(/JSON object/.test(thrown(() => parseFigure(rawFigure('null')))), 'a null header is rejected with a message, not a TypeError');
+  assert(/license must be a string/.test(thrown(() => parseFigure(rawFigure(`{${good},"head_centre":[0,0,0],"license":null}`, 48)))),
+    'a non-string license (which the relief master would refuse later) is rejected at upload');
   assert(/not a MeshCraft figure/.test(thrown(() => parseFigure(new Uint8Array([77, 67, 70, 73, 71, 0, 0, 0]).buffer))), 'a file shorter than its header is rejected');
   const big = MAX_FIGURE_TRIANGLES + 1;
   assert(/decimate/.test(thrown(() => parseFigure(rawFigure(`{"format":"meshcraft-figure","version":1,"vertices":3,"triangles":${big},"head_centre":[0,0,0],"head_height":2.6}`, 36 + big * 12)))),
