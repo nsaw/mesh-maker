@@ -13,7 +13,7 @@ import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
 import { bareDepth, offsetTowardViewer, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
-import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MAX_CLOTH_QUADS, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -334,6 +334,10 @@ async function main(): Promise<void> {
     assert(pins(g.params) === 9, 'the default crown attachment holds the proof\'s nine vertices', `${pins(g.params)} pinned`);
     const fine = drapeJob({ ...DRAPE_PRESETS.gathered.settings, drapeClothRes: 200 }, 'off').params;
     const mass = (p: ClothParams): number => p.vertexMass / ((p.sheetX / p.cellsX) * (p.sheetY / p.cellsY));
+    // The sliders can ask for more cloth than the solver holds; Generate refuses past MAX_CLOTH_QUADS.
+    const huge = drapeJob({ ...DRAPE_PRESETS.gathered.settings, drapeClothRes: 200, drapeClothWidth: 25, drapeClothLength: 150 }, 'off').params;
+    assert(huge.cellsX * huge.cellsY > MAX_CLOTH_QUADS && fine.cellsX * fine.cellsY <= MAX_CLOTH_QUADS && g.params.cellsX * g.params.cellsY <= MAX_CLOTH_QUADS,
+      'the largest cloth the sliders allow is over the solver cap, the default and 200 across are under it', `${huge.cellsX} x ${huge.cellsY}`);
     assert(fine.cellsX === 200 && fine.cellsY === 320 && Math.abs(mass(fine) - mass(SILK)) < 1e-9, 'a finer cloth keeps its mass per area', `${fine.cellsX} x ${fine.cellsY}`);
     const IN = 0.0254, std = new Float32Array([RELIEF_BACKING_IN * IN, (RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN]);
     const c4 = drapeCarveFor(4, 3), out = remapToCarve(std, c4);

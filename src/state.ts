@@ -283,6 +283,13 @@ export function activeMaster(): ReliefMaster | null {
   return null;
 }
 
+/** The stock top the exported surface is cut from, inches: the active relief master's own stock when a
+ *  master drives the heights (Material Thickness can move ahead of a pending remap of it), else Material
+ *  Thickness. SBP material Z and Safe Z read this, never baseThickness directly. */
+export function stockTopIn(): number {
+  return activeMaster()?.stockIn ?? STATE.baseThickness;
+}
+
 /** True when a relief master drives the mesh (see activeMaster). */
 export function reliefMasterActive(): boolean {
   return activeMaster() !== null;
@@ -360,6 +367,9 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
 const CURRENT_PAYLOAD_VERSION = 15;
+/** The payload version from which starburst links already hold the current preset values (the version
+ *  current when the starburst migration was last due); later bumps that touch other keys leave it. */
+const STARBURST_CURRENT_SINCE = 14;
 const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
   resolution: 256,
 };
@@ -711,7 +721,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       // that don't match any known signature ALSO pass through untouched — their author
       // tuned them deliberately.
       const fociCount = toFiniteNumber(result.reliefRadialFociCount);
-      if (payloadVersion >= CURRENT_PAYLOAD_VERSION || fociCount === null || fociCount <= 0) return;
+      // v15 changed only DRAPE keys: links saved at v14 already carry the current starburst values.
+      if (payloadVersion >= STARBURST_CURRENT_SINCE || fociCount === null || fociCount <= 0) return;
       const matchesV7PolarDefaults =
         approximately(result.reliefCellSize, 3.5)
         && approximately(result.reliefRadialStrength, 1.8)
@@ -864,8 +875,10 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
     // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same way).
-    if ('drapeReliefDepth' in result) {
+    // (a link with a thin stock and no depth gets the default depth capped the same way).
+    if ('drapeReliefDepth' in result || 'drapeStock' in result) {
       const stock = typeof result.drapeStock === 'number' ? result.drapeStock : DEFAULTS.drapeStock;
+      if (!('drapeReliefDepth' in result)) (result as Record<string, unknown>).drapeReliefDepth = DEFAULTS.drapeReliefDepth;
       clampField('drapeReliefDepth', 0.05, Math.max(0.05, stock - MIN_DRAPE_BACKING_IN));
     }
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;

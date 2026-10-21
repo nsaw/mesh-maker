@@ -46,7 +46,7 @@ export const DRAPE_CONTROLS: readonly DrapeControl[] = [
   { key: 'drapePinSize', label: 'Crown Attachment: Size (cm)', min: 0.3, max: 10, step: 0.01, group: 'cloth' },
   { key: 'drapeFabricThickness', label: 'Fabric Thickness (mm)', min: 0, max: 5, step: 0.1, group: 'cloth' },
   { key: 'drapeClearance', label: 'Collision Clearance (mm)', min: 0.1, max: 5, step: 0.025, group: 'cloth' },
-  { key: 'drapeBendStiffness', label: 'Bending Stiffness (0 = silk, 8 = stiff)', min: 0, max: 8, step: 0.5, group: 'cloth' },
+  { key: 'drapeBendStiffness', label: 'Bending Stiffness (0 to 4 = silk, no resistance; 8 = stiff)', min: 0, max: 8, step: 0.5, group: 'cloth' },
   { key: 'drapeDamping', label: 'Damping (air)', min: 0, max: 5, step: 0.1, group: 'cloth' },
   { key: 'drapeFrames', label: 'Simulation Length (frames, 24 fps)', min: 60, max: 240, step: 1, group: 'cloth' },
   { key: 'drapeAttract', label: 'Attraction Strength (0 = off)', min: 0, max: 3000, step: 50, group: 'attraction' },
@@ -74,6 +74,11 @@ export const DRAPE_CONTROLS: readonly DrapeControl[] = [
   { key: 'drapeSubdivisions', label: 'Display Subdivision (smoothing levels)', min: 0, max: 3, step: 1, group: 'solver' },
   { key: 'drapeReliefDepth', label: 'Relief Depth (in)', min: 0.05, max: 3.95, step: 0.005, group: 'carve' },
 ];
+
+/** Most cloth quads the solver can hold: Jolt's fixed 128 MiB WASM heap ran 200 x 750 (150,000) and
+ *  ran out at 200 x 900 (180,000) over the bundled bust (drape-run, 2026-10-21). A large uploaded figure
+ *  takes some of that memory too; the Worker then reports the failure. */
+export const MAX_CLOTH_QUADS = 150_000;
 
 /** Thinnest backing left under the deepest point of the drape relief, inches. */
 export const MIN_DRAPE_BACKING_IN = 0.05;
@@ -134,7 +139,7 @@ export const DRAPE_PRESETS: Record<'gathered' | 'silk' | 'quartering', DrapePres
   silk: { label: 'Silk', settings: settingsFrom(SILK), windMode: 'off',
     about: 'The original Blender proof: gravity only, read at frame 100.' },
   quartering: { label: 'Quartering wind', settings: settingsFrom(SILK_GATHERED), windMode: 'wind',
-    about: 'Gathered, plus wind 250 from your front-right onto the left cheek from frame 100 to 115.' },
+    about: 'Gathered, plus wind 250 from your front-right onto the left cheek, ramping in from frame 100 to 115 and holding.' },
 };
 
 /** The figure pose and solver parameters the controls describe. */

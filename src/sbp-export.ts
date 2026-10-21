@@ -1,4 +1,4 @@
-import { STATE, activeMaster } from './state';
+import { STATE, activeMaster, stockTopIn } from './state';
 import { attachValueEdit } from './slider-utils';
 import { getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
@@ -51,9 +51,9 @@ const SBP_STATE: SbpState = {
 
 let sbpWorkerRunning = false;
 
-/** Sync SBP safe/home Z to current material thickness. Called when baseThickness changes. */
+/** Sync SBP safe/home Z to the stock top (stockTopIn). Called when it changes. */
 export function syncSbpSafeZ(): void {
-  const safeZ = Math.min(6, Math.max(0.5, parseFloat((STATE.baseThickness + 0.1).toFixed(1))));
+  const safeZ = Math.min(6, Math.max(0.5, parseFloat((stockTopIn() + 0.1).toFixed(1))));
   SBP_STATE.safeZ = safeZ;
   if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, Math.max(1.0, parseFloat((safeZ + 0.5).toFixed(1))));
 
@@ -78,7 +78,7 @@ function buildConfig(): SbpConfig {
   const base = getDefaultConfig(SBP_STATE.materialProfile);
   base.roughingEnabled = SBP_STATE.roughingEnabled;
   base.finishingEnabled = SBP_STATE.finishingEnabled;
-  base.materialZ = STATE.baseThickness;
+  base.materialZ = stockTopIn();
   base.offsetX = SBP_STATE.offsetX;
   base.offsetY = SBP_STATE.offsetY;
   base.safeZ = SBP_STATE.safeZ;

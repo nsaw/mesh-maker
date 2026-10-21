@@ -8,13 +8,14 @@
  */
 import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
+import { syncSbpSafeZ } from './sbp-export';
 import { showToast } from './toast';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, type Figure, type FigurePose } from './drape-sim/figure';
 import { bareDepth, PANEL_HEIGHT_IN, PANEL_WIDTH_IN, reliefHeights } from './drape-sim/pipeline';
 import type { DrapeJob, DrapeWorkerMessage } from './drape-sim/messages';
-import { drapeCarveFor, drapeJob, remapToCarve, type DrapeCarve } from './drape-controls';
+import { drapeCarveFor, drapeJob, MAX_CLOTH_QUADS, remapToCarve, type DrapeCarve } from './drape-controls';
 import type { BufferAttribute, BufferGeometry, Mesh } from 'three';
 
 export const DEMO_FIGURE_URL = '/demo/venus-de-milo.mcfig';
@@ -118,6 +119,7 @@ function syncSizeControls(m: ReliefMaster): void {
     const val = document.getElementById(`val_${key}`);
     if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : String(Math.round(v * 100) / 100);
   }
+  syncSbpSafeZ();
 }
 
 /** Show a drape relief (bare or draped) in DRAPE mode. */
@@ -287,6 +289,10 @@ export function generateDrape(): void {
   if (!figure || !figureFile || worker) return;
   const rev = revision, name = STATE.drapeFigureName, fig = figure;
   const { pose, params } = drapeJob(STATE, STATE.drapeWindMode), jobKey = JSON.stringify(params);
+  if (params.cellsX * params.cellsY > MAX_CLOTH_QUADS) {
+    showToast(`The cloth is ${params.cellsX} x ${params.cellsY} quads, over the ${MAX_CLOTH_QUADS.toLocaleString()} the solver has memory for. Lower Cloth Resolution or the cloth size.`, 8000);
+    return;
+  }
   const extras = [params.faceAttractStrength > 0 ? 'local attraction' : '', params.fitStrength > 0 ? 'surface fit' : '',
     params.windMode === 1 ? 'wind' : params.windMode === 2 ? 'pressure' : ''].filter(Boolean);
   const label = [poseText(pose), params.attractStrength > 0 ? 'gathered' : 'silk', ...extras, `frame ${params.frames}`].join(', ');
