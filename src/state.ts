@@ -897,17 +897,17 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefCrestVariation' in result) clampField('reliefCrestVariation', 0, 1);
     // Ranges match the sliders.
     if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
-    // DRAPE controls: the slider ranges. Cloth resolution and frames set the solver's work, so a
-    // crafted link must not raise them past the sliders.
     // The board, to its sliders' ranges (a link with meshX 200 used to keep a 200 in board).
     if ('meshX' in result) clampField('meshX', 1, 96);
     if ('meshY' in result) clampField('meshY', 1, 48);
     if ('resolution' in result) clampField('resolution', 16, 1024, true);
     if ('baseThickness' in result) clampField('baseThickness', 0.25, 6);
+    // DRAPE controls: the slider ranges. Cloth resolution and frames set the solver's work, so a
+    // crafted link must not raise them past the sliders.
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
-    // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same way).
-    // (a link with a thin stock and no depth gets the default depth capped the same way).
+    // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same
+    // way); a link with a thin stock and no depth gets the default depth capped too.
     if ('drapeReliefDepth' in result || 'drapeStock' in result) {
       const stock = typeof result.drapeStock === 'number' ? result.drapeStock : DEFAULTS.drapeStock;
       if (!('drapeReliefDepth' in result)) (result as Record<string, unknown>).drapeReliefDepth = DEFAULTS.drapeReliefDepth;
