@@ -11,42 +11,53 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import initJolt from 'jolt-physics/wasm-compat';
-import { parseFigure, tiltFigure } from '../src/drape-sim/figure';
-import { simulateCloth, SILK, type ClothParams } from '../src/drape-sim/cloth';
-import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
-import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
+import { parseFigure } from '../src/drape-sim/figure';
+import { SILK, type ClothParams } from '../src/drape-sim/cloth';
+import { drapeFigure, PANEL_WINDOW } from '../src/drape-sim/pipeline';
+
+const USAGE = 'usage: drape-run FIGURE.mcfig --out DIR [--tilt DEG] [--param key=value ...]';
+
+/** A finite number, or an error naming the flag it came from. */
+function finite(text: string, what: string): number {
+  const v = Number(text);
+  if (text.trim() === '' || !Number.isFinite(v)) throw new Error(`${what} must be a finite number, got ${JSON.stringify(text)}`);
+  return v;
+}
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
+  /** The operand after argv[i]; a flag present without one is an error, never read as absent. */
+  const operand = (i: number): string => {
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--')) throw new Error(`${argv[i]} needs a value. ${USAGE}`);
+    return v;
+  };
+  const get = (flag: string): string | undefined => { const i = argv.indexOf(flag); return i < 0 ? undefined : operand(i); };
   const file = argv[0], out = get('--out');
-  if (!file || !out) throw new Error('usage: drape-run FIGURE.mcfig --out DIR [--tilt DEG] [--param key=value ...]');
-  const tilt = Number(get('--tilt') ?? 25);
+  if (!file || file.startsWith('--') || !out) throw new Error(USAGE);
+  const tiltText = get('--tilt');
+  const tilt = tiltText === undefined ? 25 : finite(tiltText, '--tilt');
   const params: ClothParams = { ...SILK };
   argv.forEach((a, i) => {
     if (a !== '--param') return;
-    const [k, val] = argv[i + 1].split('=');
-    if (!(k in params)) throw new Error(`unknown cloth parameter ${k}`);
-    (params as unknown as Record<string, number>)[k] = Number(val);
+    const kv = operand(i), eq = kv.indexOf('=');
+    if (eq <= 0) throw new Error(`--param needs key=value, got ${JSON.stringify(kv)}`);
+    const k = kv.slice(0, eq);
+    if (!Object.hasOwn(params, k)) throw new Error(`unknown cloth parameter ${k}`);
+    (params as unknown as Record<string, number>)[k] = finite(kv.slice(eq + 1), `--param ${k}`);
   });
   mkdirSync(out, { recursive: true });
   const buf = readFileSync(file); const fig = parseFigure(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-  const figPos = tiltFigure(fig, tilt);
   const J = await initJolt();
-  const res = simulateCloth(J, figPos, fig.triangles, params, f => { if (f % 20 === 0) process.stdout.write(`frame ${f}\n`); });
-  let g = { rows: res.rows, cols: res.cols, pos: res.positions };
-  g = subdivideGrid(subdivideGrid(g));
-  const w: DepthWindow = { x0: -2.1, x1: 2.1, zTop: 1.2, zBottom: 1.2 - 4.2 * 16 / 12, cols: 1201, rows: 1601 };
-  const bare = emptyDepth(w); rasterizeFrontmost(figPos, fig.triangles, w, bare);
-  const veiled = bare.slice(), owner = new Uint8Array(w.cols * w.rows);
-  rasterizeFrontmost(g.pos, gridTriangles(g.rows, g.cols), w, veiled, owner, 1);
-  writeFileSync(join(out, 'veiled-depth.f32'), Buffer.from(new Float32Array(veiled).buffer));
-  writeFileSync(join(out, 'bare-depth.f32'), Buffer.from(new Float32Array(bare).buffer));
-  writeFileSync(join(out, 'cloth-front.u8'), Buffer.from(owner.buffer));
-  writeFileSync(join(out, 'cloth.f32'), Buffer.from(new Float32Array(res.positions).buffer));
-  const meta = { figure: file, tilt, params, window: w, seconds: res.seconds, lastFrameMotion: res.lastFrameMotion };
+  // The same pipeline the Drape tab runs (src/drape-sim/pipeline.ts): tilt, cloth, smoothing, extraction.
+  const run = drapeFigure(J, fig, tilt, params, f => { if (f % 20 === 0) process.stdout.write(`frame ${f}\n`); });
+  writeFileSync(join(out, 'veiled-depth.f32'), Buffer.from(new Float32Array(run.veiled).buffer));
+  writeFileSync(join(out, 'bare-depth.f32'), Buffer.from(new Float32Array(run.bare).buffer));
+  writeFileSync(join(out, 'cloth-front.u8'), Buffer.from(run.relief.veil.buffer));
+  writeFileSync(join(out, 'cloth.f32'), Buffer.from(new Float32Array(run.cloth).buffer));
+  const meta = { figure: file, tilt, params, window: PANEL_WINDOW, seconds: run.seconds, lastFrameMotion: run.lastFrameMotion };
   writeFileSync(join(out, 'drape.json'), JSON.stringify(meta, null, 1));
-  process.stdout.write(`${JSON.stringify({ seconds: res.seconds, lastFrameMotion: res.lastFrameMotion })}\n`);
+  process.stdout.write(`${JSON.stringify({ seconds: run.seconds, lastFrameMotion: run.lastFrameMotion })}\n`);
 }
 
 main().catch((e: unknown) => { process.stderr.write(`${e instanceof Error ? e.stack ?? e.message : String(e)}\n`); process.exit(1); });

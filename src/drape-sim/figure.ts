@@ -15,6 +15,9 @@
  */
 
 export const FIGURE_MAGIC = 'MCFIG';
+/** Jolt's collision mesh and the 1.9M-node extraction both scale with the figure: the most a browser
+ *  tab is asked to hold. The bundled Venus has 141,642 triangles. */
+export const MAX_FIGURE_TRIANGLES = 2_000_000;
 
 export interface FigureHeader {
   format: 'meshcraft-figure';
@@ -37,12 +40,19 @@ export interface Figure {
 export function parseFigure(buf: ArrayBuffer): Figure {
   const u8 = new Uint8Array(buf);
   const magic = String.fromCharCode(...u8.subarray(0, 5));
-  if (magic !== FIGURE_MAGIC || u8[5] !== 0 || u8[6] !== 0 || u8[7] !== 0) throw new Error('not a MeshCraft figure (.mcfig)');
+  if (u8.length < 12 || magic !== FIGURE_MAGIC || u8[5] !== 0 || u8[6] !== 0 || u8[7] !== 0) throw new Error('not a MeshCraft figure (.mcfig)');
   const len = new DataView(buf).getUint32(8, true);
-  const header = JSON.parse(new TextDecoder().decode(u8.subarray(12, 12 + len))) as FigureHeader;
+  if (12 + len > u8.length) throw new Error('figure header runs past the end of the file');
+  let raw: unknown;
+  try { raw = JSON.parse(new TextDecoder().decode(u8.subarray(12, 12 + len))); } catch { throw new Error('figure header is not valid JSON'); }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('figure header must be a JSON object');
+  const header = raw as FigureHeader;
   if (header.format !== 'meshcraft-figure' || header.version !== 1) throw new Error('unsupported figure header');
   const nv = header.vertices, nt = header.triangles;
   if (!Number.isInteger(nv) || !Number.isInteger(nt) || nv < 3 || nt < 1) throw new Error('figure header has bad counts');
+  if (nt > MAX_FIGURE_TRIANGLES) throw new Error(`${nt.toLocaleString()} triangles; decimate below ${MAX_FIGURE_TRIANGLES.toLocaleString()}`);
+  const hc = header.head_centre;
+  if (!Array.isArray(hc) || hc.length !== 3 || !hc.every(v => typeof v === 'number' && Number.isFinite(v))) throw new Error('figure head_centre must be three finite numbers');
   const start = Math.ceil((12 + len) / 8) * 8;
   if (buf.byteLength !== start + nv * 12 + nt * 12) throw new Error('figure size does not match its header');
   const positions = new Float32Array(buf.slice(start, start + nv * 12));
@@ -111,7 +121,7 @@ export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, 
   for (let i = 0; i < n; i++) {
     const x = pos[i * 3] * k;
     let y = pos[i * 3 + 1] * k, z = pos[i * 3 + 2] * k;
-    if (p.up === 'y') { const t = y; y = -z; z = t; }                // Y-up model: its -Z faces the viewer
+    if (p.up === 'y') { const t = y; y = -z; z = t; }                // Y-up model: its +Z (glTF front) faces the viewer
     out[i * 3] = x * c - y * s; out[i * 3 + 1] = x * s + y * c; out[i * 3 + 2] = z;
   }
   let ti = 0;

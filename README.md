@@ -46,7 +46,8 @@ Generate 3D meshes from procedural noise or depth map images, tuned for CNC mach
 ### Features
 
 - **16+ noise algorithms** — Simplex, Perlin, OpenSimplex2, Value, FBM, Ridged, Billow, Turbulence, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet, Voronoi Relief (3D cellular relief with attractor masks)
-- **Depth map import** — Upload any image, blend with noise
+- **Depth map import**: Upload any image as a relief, or a `.mcrelief` master at full resolution
+- **Drape**: Hang a silk veil over a 3D figure (the bundled Venus de Milo bust or your STL, OBJ or glTF) and carve the front view as a 12 x 16 in relief, simulated in the browser
 - **CNC presets** — 18 presets tuned for the ShopBot Desktop Max ATC (36" x 24", 6" Z)
 - **STL-to-SBP toolpaths** — Two-pass roughing + finishing .sbp generation from any binary STL (CLI + web)
 - **Watertight export** — Bottom face + side walls for CNC-ready meshes

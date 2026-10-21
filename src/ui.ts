@@ -1,5 +1,5 @@
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, noiseDims, reliefMasterActive } from './state';
-import { cancelDrape, downloadDrapeRelief, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged } from './drape-ui';
+import { cancelDrape, downloadDrapeRelief, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeTiltChanged } from './drape-ui';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
@@ -545,9 +545,11 @@ function buildDrapeSection(): HTMLElement {
   gen.id = 'drapeGenerateBtn';
   gen.style.flex = '1';
   gen.addEventListener('click', () => generateDrape());
+  const run = drapeControls();
+  gen.disabled = !run.canGenerate;
   const cancel = createElement('button', 'btn btn-sm', 'CANCEL') as HTMLButtonElement;
   cancel.id = 'drapeCancelBtn';
-  cancel.style.display = 'none';
+  cancel.style.display = run.running ? '' : 'none';
   cancel.addEventListener('click', () => cancelDrape());
   btnRow.append(gen, cancel);
   const dl = createElement('button', 'btn btn-sm', 'DOWNLOAD .MCRELIEF') as HTMLButtonElement;
@@ -670,6 +672,9 @@ function wireControls(): void {
         syncSbpSafeZ();
       }
 
+      // The tilt re-places the figure, not the mesh settings: drape-ui rebuilds the bare relief.
+      if (key === 'drapeTilt') { onDrapeTiltChanged(); return; }
+
       // Clear active preset/profile on manual change
       if (STATE.activePreset) {
         STATE.activePreset = null;
@@ -682,8 +687,6 @@ function wireControls(): void {
         if (pill) pill.classList.remove('active');
       }
 
-      // The tilt re-places the figure, not the mesh settings: drape-ui rebuilds the bare relief.
-      if (key === 'drapeTilt') { onDrapeTiltChanged(); return; }
       debouncedGenerate(key);
     });
 

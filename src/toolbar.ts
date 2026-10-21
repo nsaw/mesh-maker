@@ -5,18 +5,22 @@ import { doExport } from './export';
 import { applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
-import { ensureDrapeFigure } from './drape-ui';
+import { ensureDrapeFigure, restoreSizeAfterDrape } from './drape-ui';
 
 export function setupTabs(): void {
   // Mode tabs
   document.querySelectorAll('.mode-tab').forEach(btn => {
     btn.addEventListener('click', () => {
-      const prevMode = STATE.mode;
+      let prevMode = STATE.mode;
       document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       STATE.mode = (btn as HTMLElement).dataset.mode as typeof STATE.mode;
       document.body.className = 'mode-' + STATE.mode;
       updateSectionVisibility();
+
+      // Leaving DRAPE: give the other tabs back the size controls its relief took over, then switch
+      // as if from the tab the user was on before DRAPE (a page opened on DRAPE counts as NOISE).
+      if (prevMode === 'drape' && STATE.mode !== 'drape') { prevMode = restoreSizeAfterDrape() ?? 'noise'; buildSidebar(); }
 
       // Save noise dimensions before depth map overwrites them
       if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'drape')) {
@@ -42,7 +46,7 @@ export function setupTabs(): void {
       }
 
       // DRAPE works on a 3D figure, not an image: load the bundled bust (once) and show it bare.
-      if (STATE.mode === 'drape') void ensureDrapeFigure();
+      if (STATE.mode === 'drape' && prevMode !== 'drape') void ensureDrapeFigure(prevMode);
 
       // Auto-apply demo depth map if switching to depthmap with no user image
       if (STATE.mode === 'depthmap' && !STATE.reliefMaster && !STATE.depthMap && demoDepthMap) {
@@ -58,9 +62,7 @@ export function setupTabs(): void {
       }
 
       // Re-fit mesh to depth map aspect only when entering from noise mode
-      // ...and when leaving DRAPE, whose relief locks the size to 12 x 16 in.
-      if (prevMode === 'drape' && STATE.mode === 'depthmap' && !STATE.reliefMaster) STATE.aspectLocked = false;
-      if ((prevMode === 'noise' || prevMode === 'drape') && STATE.mode === 'depthmap' && !STATE.reliefMaster && STATE.depthMap && !STATE.aspectLocked) {
+      if (prevMode === 'noise' && STATE.mode === 'depthmap' && !STATE.reliefMaster && STATE.depthMap && !STATE.aspectLocked) {
         fitMeshToAspect(STATE.depthMap.width, STATE.depthMap.height);
         buildSidebar();
       }

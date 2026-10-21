@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import initJolt from 'jolt-physics/wasm-compat';
-import { encodeFigure, figureFromMesh, parseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
 import { bareDepth, PANEL_WINDOW, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
@@ -18,6 +18,14 @@ function assert(condition: boolean, label: string, detail = ''): void {
   else { process.stdout.write(`  FAIL ${label}${detail ? `: ${detail}` : ''}\n`); failures++; }
 }
 const throws = (f: () => unknown): boolean => { try { f(); return false; } catch { return true; } };
+/** The message a call throws, or '' when it does not throw. */
+const thrown = (f: () => unknown): string => { try { f(); return ''; } catch (e) { return e instanceof Error ? e.message : String(e); } };
+/** A .mcfig whose JSON header is `json` verbatim, followed by `body` bytes. */
+function rawFigure(json: string, body = 0): ArrayBuffer {
+  const h = new TextEncoder().encode(json), start = Math.ceil((12 + h.length) / 8) * 8, out = new Uint8Array(start + body);
+  out.set([77, 67, 70, 73, 71, 0, 0, 0], 0); new DataView(out.buffer).setUint32(8, h.length, true); out.set(h, 12);
+  return out.buffer;
+}
 const fileBuffer = (path: string): ArrayBuffer => { const b = readFileSync(path); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
 
 async function main(): Promise<void> {
@@ -39,6 +47,15 @@ async function main(): Promise<void> {
   assert(throws(() => parseFigure(encodeFigure(tiny))), 'a triangle index past the vertex count is rejected');
   tiny.triangles = new Uint32Array([0, 1, 2]); tiny.positions[4] = NaN;
   assert(throws(() => parseFigure(encodeFigure(tiny))), 'a non-finite position is rejected');
+  const good = '"format":"meshcraft-figure","version":1,"vertices":3,"triangles":1,"head_height":2.6';
+  assert(parseFigure(rawFigure(`{${good},"head_centre":[0,0,0]}`, 48)).header.vertices === 3, 'a minimal well-formed figure parses (control)');
+  assert(/head_centre/.test(thrown(() => parseFigure(rawFigure(`{${good}}`, 48)))), 'a missing head_centre is rejected by name');
+  assert(/head_centre/.test(thrown(() => parseFigure(rawFigure(`{${good},"head_centre":[0,"x",0]}`, 48)))), 'a non-numeric head_centre is rejected by name');
+  assert(/JSON object/.test(thrown(() => parseFigure(rawFigure('null')))), 'a null header is rejected with a message, not a TypeError');
+  assert(/not a MeshCraft figure/.test(thrown(() => parseFigure(new Uint8Array([77, 67, 70, 73, 71, 0, 0, 0]).buffer))), 'a file shorter than its header is rejected');
+  const big = MAX_FIGURE_TRIANGLES + 1;
+  assert(/decimate/.test(thrown(() => parseFigure(rawFigure(`{"format":"meshcraft-figure","version":1,"vertices":3,"triangles":${big},"head_centre":[0,0,0],"head_height":2.6}`, 36 + big * 12)))),
+    'a .mcfig over the triangle cap is refused like an uploaded mesh');
 
   // ---------- D2 tilt ----------
   process.stdout.write('D2 tilt geometry\n');
@@ -124,6 +141,18 @@ async function main(): Promise<void> {
     for (let j = 0; j < PANEL_WINDOW.rows && firstRow < 0; j++) for (let i = 0; i < PANEL_WINDOW.cols; i++) if (r.mask[j * PANEL_WINDOW.cols + i]) { firstRow = j; break; }
     assert(Math.abs(firstRow - 57) <= 1, 'the crown is the top of the figure in the panel (upright, not upside down)', `first foreground row ${firstRow}`);
     assert(fg / r.mask.length > 0.4 && fg / r.mask.length < 0.9, 'the bust fills a plausible share of the panel', `${(100 * fg / r.mask.length).toFixed(1)}%`);
+    // Veil hanging behind the figure's deepest point (beside the figure, where the bare depth is NaN)
+    // must still land on the backing, never below it or below 0.
+    const depth = bare.slice(), veil = new Uint8Array(bare.length);
+    let bareLo = Infinity, bareHi = -Infinity;
+    for (const v of bare) if (Number.isFinite(v)) { bareLo = Math.min(bareLo, v); bareHi = Math.max(bareHi, v); }
+    let behind = 0;
+    for (let k = 0; k < depth.length; k++) if (!Number.isFinite(bare[k]) && k % 7 === 0) { depth[k] = bareLo - 2 * (bareHi - bareLo); veil[k] = 1; behind++; }
+    const rv = reliefHeights(depth, bare, veil);
+    let vlo = Infinity, vhi = -Infinity;
+    for (let k = 0; k < rv.heightsM.length; k++) if (rv.mask[k]) { vlo = Math.min(vlo, rv.heightsM[k]); vhi = Math.max(vhi, rv.heightsM[k]); }
+    assert(behind > 0 && Math.abs(vlo - RELIEF_BACKING_IN * IN) < 1e-9 && vhi <= Math.fround((RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN),
+      'veil deeper than the figure maps onto the backing, never below it', `${behind} veil nodes behind, heights ${(vlo / IN).toFixed(4)} to ${(vhi / IN).toFixed(4)} in`);
   }
 
   // ---------- D6 uploaded mesh placement ----------

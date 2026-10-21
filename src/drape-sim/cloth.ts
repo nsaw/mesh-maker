@@ -26,12 +26,13 @@ export interface ClothParams {
 
 /** The Blender proof's sheet, pins, frames and timing (5 x 8 units, 100 x 160 quads, 0.012 above the
  *  crown, nine pinned vertices, Silk preset vertex mass 0.15, 24 fps, read at frame 100), with Jolt
- *  material values calibrated against it on 2026-10-21. Calibration (cli/drape-parity.ts against the
- *  Blender silk-tilt25 reference, about 60 runs): bend compliance 1, 10, 1e2 ... 1e6; edge compliance 1e-5 to
- *  1e-3; damping 0.02 to 6.7; friction 0.1 to 5; 8 or 16 iterations and substeps. Chosen values gave
- *  veil footprint IoU 0.915, area ratio 1.03, fold wavelength 13.0 mm (Blender 11.9) and no depth bias;
- *  Blender's own frame-100 vs frame-400 IoU is 0.87. Fold positions differ, as they do between Blender
- *  runs with different thread counts. */
+ *  material values calibrated against it on 2026-10-21. Calibration (cli/drape-run.ts runs scored
+ *  against the Blender silk-tilt25 reference, about 60 runs): bend compliance 1, 10, 1e2 ... 1e6; edge
+ *  compliance 1e-5 to 1e-3; damping 0.02 to 6.7; friction 0.1 to 5; 8 or 16 iterations and substeps.
+ *  With the chosen values npm run test:drape-parity measures veil footprint IoU 0.916, area ratio 1.03,
+ *  median depth bias -0.17 mm and fold wavelength 13.9 mm (Blender 12.7); Blender's own frame-100 vs
+ *  frame-400 IoU is 0.87. Fold positions differ, as they do between Blender runs with different thread
+ *  counts. */
 export const SILK: ClothParams = {
   sheetX: 5, sheetY: 8, cellsX: 100, cellsY: 160, liftZ: 0.012, pinRadius: 0.051,
   vertexMass: 0.15, compliance: 3e-5, shearCompliance: 3e-5, bendCompliance: 1e5, iterations: 8,

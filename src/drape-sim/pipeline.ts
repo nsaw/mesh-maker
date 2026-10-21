@@ -1,11 +1,12 @@
 /**
  * Figure -> (optional) silk drape -> front relief, the web counterpart of the Blender proof
  * (scripts/drape/blender_drape.py + workflow.py). Pure: no DOM; used by the drape Worker, the Node
- * parity runner (cli/drape-parity.ts) and the specs.
+ * runner (cli/drape-run.ts) and the specs.
  *
  * Panel: the figure seen from the front (-Y) over x -2.1..2.1 scene units, z 1.2 down to -4.4 (12 x 16
- * aspect), 1201 x 1601 nodes, rows top-down. Heights map linearly: the deepest bare-figure point to the
- * frontmost point spans RELIEF_SPAN_IN above a RELIEF_BACKING_IN backing (the accepted Monti mapping).
+ * aspect), 1201 x 1601 nodes, rows top-down. Heights map linearly: the deepest visible point (figure or
+ * veil) to the frontmost point spans RELIEF_SPAN_IN above a RELIEF_BACKING_IN backing (the accepted Monti
+ * mapping), so every height lies in [backing, backing + span].
  */
 import { simulateCloth, type ClothParams, type Jolt } from './cloth';
 import { tiltFigure, type Figure } from './figure';
@@ -44,11 +45,13 @@ export function veiledDepth(bare: Float64Array, cloth: Float64Array, rows: numbe
   return { depth, veil };
 }
 
-/** Linear relief: `lo` (the deepest bare-figure point) to the frontmost point spans RELIEF_SPAN_IN. */
+/** Linear relief: `lo` (the deepest visible point, figure or veil) to the frontmost point spans
+ *  RELIEF_SPAN_IN. Veil hanging behind the figure's deepest point beside it would otherwise map below the
+ *  backing, and below 0 (a rejected relief master) when it hangs far enough back. */
 export function reliefHeights(depth: Float64Array, bare: Float64Array, veil?: Uint8Array): ReliefArrays {
   let lo = Infinity, hi = -Infinity;
   for (let k = 0; k < bare.length; k++) if (bare[k] < lo) lo = bare[k];
-  for (let k = 0; k < depth.length; k++) if (depth[k] > hi) hi = depth[k];
+  for (let k = 0; k < depth.length; k++) { if (depth[k] > hi) hi = depth[k]; if (depth[k] < lo) lo = depth[k]; }
   if (!(hi > lo)) throw new Error('nothing of the figure is inside the panel');
   const IN = 0.0254, back = RELIEF_BACKING_IN * IN, span = RELIEF_SPAN_IN * IN;
   const heightsM = new Float32Array(depth.length), mask = new Uint8Array(depth.length);

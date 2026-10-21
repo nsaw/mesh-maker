@@ -53,11 +53,13 @@ def main():
     if r.returncode != 0 or 'DRAPE_DONE' not in r.stdout:
         sys.exit(f'Blender step failed (exit {r.returncode}); see {out / "blender.log"}')
 
-    # Linear relief: the deepest bare-figure point to the frontmost veil point spans 0.625 in.
+    # Linear relief: the deepest visible point (figure or veil) to the frontmost point spans 0.625 in,
+    # so veil hanging behind the figure never maps below the 0.125 in backing (or below 0).
     veiled, bare = np.load(out / 'veiled-depth.npy'), np.load(out / 'bare-depth.npy')
     fg = np.isfinite(veiled)
     if not fg.any(): sys.exit('nothing in the relief window: adjust --frame-width or the figure placement')
-    lo, hi = float(np.nanmin(bare)), float(np.nanmax(veiled))
+    lo, hi = float(np.nanmin(np.fmin(bare, veiled))), float(np.nanmax(veiled))
+    if not hi > lo: sys.exit(f'degenerate depth range ({lo} to {hi}): check the figure placement')
     h = np.where(fg, BACK + SPAN * (veiled - lo) / (hi - lo), BACK).astype(np.float32)
     np.save(out / 'veiled-height-m.npy', h); np.save(out / 'mask.npy', fg)
     W, H = 12 * IN, 16 * IN
