@@ -52,8 +52,8 @@ export function toolZOffset(tool: ToolDef, d: number): number {
 }
 
 /** toolZOffset for one tool, with its constants worked out once: the drop-cutter evaluates the profile
- *  millions of times per toolpath. Same values as toolZOffset to float rounding (within 1e-14 in: the cone
- *  multiplies by 1 / tan a where toolZOffset divides); cli/sbp-cut.spec.ts C6 checks the drop cutter. */
+ *  millions of times per toolpath. Same values as toolZOffset, bit for bit (the same operations in the
+ *  same order); cli/sbp-cut.spec.ts C6 checks the drop cutter. */
 export function profileOf(tool: ToolDef): (d: number) => number {
   const R = tool.tipRadius, R2 = R * R;
   const ball = (d: number): number => (d <= R ? R - Math.sqrt(Math.max(0, R2 - d * d)) : Infinity);
@@ -63,9 +63,10 @@ export function profileOf(tool: ToolDef): (d: number) => number {
     case ToolType.VBit: {
       const a = tool.halfAngle;
       if (!(a > 0)) return ball;
-      const rT = R * Math.cos(a), z0 = R * (1 - Math.sin(a)), k = 1 / Math.tan(a);
+      const rT = R * Math.cos(a), z0 = R * (1 - Math.sin(a)), tanA = Math.tan(a);
       const edge = tool.type === ToolType.VBit ? tool.diameter / 2 : Infinity;
-      return (d: number): number => (d > edge ? Infinity : d <= rT ? R - Math.sqrt(Math.max(0, R2 - d * d)) : z0 + (d - rT) * k);
+      // Divided by tan a, as toolZOffset does, so the two agree to the last bit.
+      return (d: number): number => (d > edge ? Infinity : d <= rT ? R - Math.sqrt(Math.max(0, R2 - d * d)) : z0 + (d - rT) / tanA);
     }
     default: return (d: number): number => toolZOffset(tool, d);
   }
@@ -397,7 +398,8 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
       const d = distToTri(x, y);
       if (d > reach || triTop - f(d) <= best) continue;
       // TRI_BOUND_SLACK absorbs rounding in the bound (its algebra is exact; floating point is not).
-      if (triBound(x, y) + TRI_BOUND_SLACK <= best) continue;
+      // An end mill's profile is flat, so its bound is the triangle's top, which already beat `best`.
+      if (tool.type !== ToolType.EndMill && triBound(x, y) + TRI_BOUND_SLACK <= best) continue;
       best = triMax(x, y, best);
     }
     return best;

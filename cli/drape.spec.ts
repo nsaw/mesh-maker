@@ -16,7 +16,7 @@ import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } 
 import { STATE } from '../src/state';
 import { downloadDrapeRelief } from '../src/drape-ui';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
-import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface } from '../src/export-surface';
+import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, getExportSurface } from '../src/export-surface';
 import { buildConfig, doSBPExport, safeZForStock, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MAX_CLOTH_QUADS, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
@@ -412,7 +412,10 @@ async function main(): Promise<void> {
       dlThrew ? `went on to download (${dlThrew})` : toast.textContent.slice(0, 40));
     Object.assign(STATE, { drapeMaster: null, vertices: [[0, 0], [0, 0]], cols: 2, rows: 2 });
     const none = getExportSurface();
-    assert(typeof none === 'string' && /no drape relief/.test(none), 'DRAPE exports nothing until its relief exists (not the previous tab\'s mesh)', typeof none === 'string' ? none : 'exported');
+    assert(none === DRAPE_NO_RELIEF, 'DRAPE exports nothing until its relief exists (not the previous tab\'s mesh)', typeof none === 'string' ? none : 'exported');
+    toast.textContent = '';
+    await downloadDrapeRelief();
+    assert(toast.textContent === DRAPE_NO_RELIEF, 'the .mcrelief download says why when there is no relief yet', toast.textContent || 'silent');
     Object.assign(STATE, keep);
   }
 

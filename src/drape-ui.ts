@@ -10,7 +10,7 @@ import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
 import { syncSbpSafeZIfStockMoved } from './sbp-export';
 import { syncAspectLockButton } from './ui';
-import { DRAPE_CARVE_PENDING, drapeCarvePending, masterOffCarve } from './export-surface';
+import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
@@ -348,7 +348,7 @@ export function cancelDrape(announce = true): void {
 /** Download the relief DRAPE mode shows, as a .mcrelief (opens in the Depth Map tab or the CLI). */
 export async function downloadDrapeRelief(): Promise<void> {
   const m = STATE.drapeMaster;
-  if (!m) return;
+  if (!m) { showToast(DRAPE_NO_RELIEF, 6000); return; }
   if (drapeCarvePending()) { showToast(DRAPE_CARVE_PENDING, 6000); return; }
   const heights = new Float32Array(m.cols * m.rows);
   // Back to the file layout: metres, rows top-down (MeshCraft's grid has row 0 at the bottom).
