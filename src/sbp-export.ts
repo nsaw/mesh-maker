@@ -37,7 +37,7 @@ export const SBP_STATE: SbpState = {
   resolution: 200,
   offsetX: 2.0,
   offsetY: 2.0,
-  safeZ: 0.9,   // baseThickness(0.75) + 0.1, rounded
+  safeZ: 0.9,   // safeZForStock(0.75)
   homeZ: 1.4,   // safeZ + 0.5
   leaveStock: 0.02,
   finishRasterAngle: 45,
@@ -61,10 +61,18 @@ export function syncSbpSafeZIfStockMoved(): void {
   if (safeZSyncedStock === null || Math.abs(stockTopIn() - safeZSyncedStock) > 1e-9) syncSbpSafeZ();
 }
 
+/** Safe Z for a stock top: at least 0.1 in above it, rounded UP to the slider's 0.1 in step (rounding
+ *  to the nearest tenth left 0.05 in at 0.75 in stock), within 0.5 to 6 in. Above 5.9 in of stock the
+ *  6 in Z travel leaves less, and generateSBP refuses a Safe Z at or below the stock top. The 1e-6 keeps an exact
+ *  tenth exact: (0.8 + 0.1) * 10 is 9.000000000000002 in floating point. */
+export function safeZForStock(stockIn: number): number {
+  return Math.min(6, Math.max(0.5, Math.ceil((stockIn + 0.1) * 10 - 1e-6) / 10));
+}
+
 /** Sync SBP safe/home Z to the stock top (stockTopIn). Called when it changes. */
 export function syncSbpSafeZ(): void {
   safeZSyncedStock = stockTopIn();
-  const safeZ = Math.min(6, Math.max(0.5, parseFloat((stockTopIn() + 0.1).toFixed(1))));
+  const safeZ = safeZForStock(stockTopIn());
   SBP_STATE.safeZ = safeZ;
   if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, Math.max(1.0, parseFloat((safeZ + 0.5).toFixed(1))));
 

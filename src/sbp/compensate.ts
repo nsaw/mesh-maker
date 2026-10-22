@@ -51,6 +51,53 @@ export function toolZOffset(tool: ToolDef, d: number): number {
   }
 }
 
+/** toolZOffset for one tool, with its constants worked out once: the drop-cutter evaluates the profile
+ *  millions of times per toolpath. Same values as toolZOffset, bit for bit (the same operations in the
+ *  same order); cli/sbp-cut.spec.ts C6 checks the drop cutter. */
+export function profileOf(tool: ToolDef): (d: number) => number {
+  const R = tool.tipRadius, R2 = R * R;
+  const ball = (d: number): number => (d <= R ? R - Math.sqrt(Math.max(0, R2 - d * d)) : Infinity);
+  switch (tool.type) {
+    case ToolType.BallNose: return ball;
+    case ToolType.TaperedBallNose:
+    case ToolType.VBit: {
+      // A V-bit's cutting edge ends at its diameter, also when it has no cone (toolZOffset checks it first).
+      const edge = tool.type === ToolType.VBit ? tool.diameter / 2 : Infinity;
+      const a = tool.halfAngle;
+      if (!(a > 0)) return (d: number): number => (d > edge ? Infinity : ball(d));
+      const rT = R * Math.cos(a), z0 = R * (1 - Math.sin(a)), tanA = Math.tan(a);
+      // Divided by tan a, as toolZOffset does, so the two agree to the last bit.
+      return (d: number): number => (d > edge ? Infinity : d <= rT ? R - Math.sqrt(Math.max(0, R2 - d * d)) : z0 + (d - rT) / tanA);
+    }
+    default: return (d: number): number => toolZOffset(tool, d);
+  }
+}
+
+/** d/dd of toolZOffset for one tool (Infinity where the profile is vertical or undefined). Every
+ *  supported profile is convex and non-decreasing in d up to its finite radius, which is what lets
+ *  the drop cutter bound a triangle by tangent planes (see createDropCutter). */
+export function profileSlopeOf(tool: ToolDef): (d: number) => number {
+  const R = tool.tipRadius, R2 = R * R;
+  const ball = (d: number): number => (d < R ? d / Math.sqrt(R2 - d * d) : Infinity);
+  switch (tool.type) {
+    case ToolType.BallNose: return ball;
+    case ToolType.TaperedBallNose:
+    case ToolType.VBit: {
+      const edge = tool.type === ToolType.VBit ? tool.diameter / 2 : Infinity;
+      const a = tool.halfAngle;
+      if (!(a > 0)) return (d: number): number => (d > edge ? Infinity : ball(d));
+      const rT = R * Math.cos(a), k = 1 / Math.tan(a);
+      return (d: number): number => (d > edge ? Infinity : d <= rT ? d / Math.sqrt(Math.max(1e-300, R2 - d * d)) : k);
+    }
+    case ToolType.Radiused: {
+      const toolR = tool.diameter / 2, flatR = toolR - R;
+      return (d: number): number => (d > toolR ? Infinity : R <= 0 || d <= flatR ? 0 : ball(d - flatR));
+    }
+    case ToolType.EndMill: return (d: number): number => (d <= tool.diameter / 2 ? 0 : Infinity);
+    default: return () => Infinity;
+  }
+}
+
 interface KernelPoint { di: number; dj: number; offset: number }
 
 /** Every grid offset the cutter can touch, sorted by profile height. Points whose profile height is
@@ -210,6 +257,10 @@ function cellUsesZ00Z11(diagonal: Heightmap['diagonal'], z00: number, z10: numbe
   return Math.abs(z00 - z11) < Math.abs(z10 - z01);
 }
 
+/** Margin on the tangent-plane bound, inches: far above its rounding error (~1e-15), far below
+ *  any tolerance in the toolpath (CHORD_TOLERANCE and the gouge checks are 1e-4 and up). */
+const TRI_BOUND_SLACK = 1e-9;
+
 /**
  * Exact tip height at an arbitrary (x, y), in heightmap coordinates, against the TRIANGULATED surface
  * the export writes (vertices, edges and facets), not just its nodes: the max over every surface point
@@ -234,7 +285,7 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
   while (zRange > 0 && toolZOffset(tool, reach + step) < zRange && reach < 6) reach += step;
   reach += step;
   const rArc = Math.min(reach, finiteRadius(tool));
-  const f = (r: number): number => toolZOffset(tool, r);
+  const f = profileOf(tool), fSlope = profileSlopeOf(tool);
 
   // Triangle scratch: vertex x, y, h.
   const tx = new Float64Array(3), ty = new Float64Array(3), th = new Float64Array(3);
@@ -253,6 +304,9 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
   }
 
   const G = 0.6180339887498949;
+  // The edge being searched in triMax: its start (relative to the query point), direction and rise.
+  let eAh = 0, eOx = 0, eOy = 0, eEx = 0, eEy = 0, eEh = 0;
+  const phi = (t: number): number => eAh + t * eEh - f(Math.sqrt((eOx + t * eEx) ** 2 + (eOy + t * eEy) ** 2));
 
   /** Max of H - profile over the triangle in tx/ty/th (counterclockwise), or `best` if it cannot
    *  beat it. The plane's peak along its uphill direction bounds the whole triangle; when the peak
@@ -287,7 +341,7 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
       // The edge's highest end minus the profile at its nearest point bounds the whole edge.
       const tn = Math.max(t0, Math.min(t1, -(ox * ex + oy * ey) / A));
       if (Math.max(ah + t0 * eh, ah + t1 * eh) - f(Math.sqrt((ox + tn * ex) ** 2 + (oy + tn * ey) ** 2)) <= best) continue;
-      const phi = (t: number): number => ah + t * eh - f(Math.sqrt((ox + t * ex) ** 2 + (oy + t * ey) ** 2));
+      eAh = ah; eOx = ox; eOy = oy; eEx = ex; eEy = ey; eEh = eh;
       best = Math.max(best, phi(t0), phi(t1));
       let a = t1 - G * (t1 - t0), b = t0 + G * (t1 - t0), fa = phi(a), fb = phi(b);
       // 32 steps shrink the bracket by 0.618^32 = 2e-7 of a cell edge: below 1e-8 in on 0.05 in cells.
@@ -298,6 +352,29 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
       best = Math.max(best, fa, fb);
     }
     return best;
+  }
+
+  /** An upper bound of H - profile over the triangle in tx/ty/th, or Infinity. With a convex,
+   *  non-decreasing profile, g(p) = plane(p) - profile(|p - q|) is concave on the triangle, so it lies
+   *  under its tangent plane at each vertex v: g(p) <= g(v) + grad g(v) . (p - v), whose maximum over the
+   *  triangle is at a vertex. The smallest of the three is the bound. It is within about
+   *  profile'' x cell^2 / 2 of the true maximum, so it rules out almost every triangle that cannot
+   *  touch, without the exact search in triMax. */
+  function triBound(qx: number, qy: number): number {
+    const x1 = tx[1] - tx[0], y1 = ty[1] - ty[0], x2 = tx[2] - tx[0], y2 = ty[2] - ty[0];
+    const h1 = th[1] - th[0], h2 = th[2] - th[0], det = x1 * y2 - x2 * y1;
+    const gx = (h1 * y2 - h2 * y1) / det, gy = (x1 * h2 - x2 * h1) / det;
+    let bound = Infinity;
+    for (let v = 0; v < 3; v++) {
+      const dx = tx[v] - qx, dy = ty[v] - qy, r = Math.sqrt(dx * dx + dy * dy);
+      const fv = f(r), sv = r > 0 ? fSlope(r) : 0;
+      if (!(fv < Infinity) || !(sv < Infinity)) return Infinity;
+      const ux = r > 0 ? (gx - (sv * dx) / r) : gx, uy = r > 0 ? (gy - (sv * dy) / r) : gy;
+      let rise = 0;
+      for (let w = 0; w < 3; w++) if (w !== v) rise = Math.max(rise, ux * (tx[w] - tx[v]) + uy * (ty[w] - ty[v]));
+      bound = Math.min(bound, th[v] - fv + rise);
+    }
+    return bound;
   }
 
   function loadTri(x0: number, y0: number, a: number, ah: number, b: number, bh: number, c: number, ch: number): void {
@@ -321,6 +398,9 @@ export function createDropCutter(heightmap: Heightmap, tool: ToolDef): (x: numbe
       if (triTop <= best) continue;
       const d = distToTri(x, y);
       if (d > reach || triTop - f(d) <= best) continue;
+      // TRI_BOUND_SLACK absorbs rounding in the bound (its algebra is exact; floating point is not).
+      // An end mill's profile is flat, so its bound is the triangle's top, which already beat `best`.
+      if (tool.type !== ToolType.EndMill && triBound(x, y) + TRI_BOUND_SLACK <= best) continue;
       best = triMax(x, y, best);
     }
     return best;

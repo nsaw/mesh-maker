@@ -170,7 +170,9 @@ async function main(): Promise<void> {
       hashes.push(Buffer.from(digest).toString('hex'));
     }
     assert(new Set(hashes).size === 1, 'identical STL bytes at preview resolutions 8, 20 and 41', hashes[0].slice(0, 16));
-    STATE.mode = 'drape';
+    // NOISE does not use the DEPTH MAP master. (DRAPE without its own relief exports nothing:
+    // cli/drape.spec.ts D15.)
+    STATE.mode = 'noise';
     const s = getExportSurface();
     assert(typeof s !== 'string' && s.cols === STATE.cols, 'outside DEPTH MAP mode the generated grid is exported instead');
     STATE.mode = 'depthmap';

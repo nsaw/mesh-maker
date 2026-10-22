@@ -249,7 +249,13 @@ function main(): void {
   config.roughingEnabled = !opts.finishingOnly;
   config.finishingEnabled = !opts.roughingOnly;
 
-  if (opts.roughingPattern) {
+  // A named tool for a pass that does not run is not looked up (it could only fail the export).
+  if (opts.roughingPattern && opts.finishingOnly)
+    process.stderr.write(`--roughing-tool "${opts.roughingPattern}" ignored: --finishing-only skips roughing\n`);
+  if (opts.finishingPattern && opts.roughingOnly)
+    process.stderr.write(`--finishing-tool "${opts.finishingPattern}" ignored: --roughing-only skips finishing\n`);
+
+  if (opts.roughingPattern && config.roughingEnabled) {
     const found = resolveTool(entries, tools, opts.roughingPattern, 'Roughing');
     if (!found) {
       process.stderr.write(`Roughing tool not found: "${opts.roughingPattern}"\n`);
@@ -262,7 +268,7 @@ function main(): void {
     config.roughingTool = { ...config.roughingTool, atcSlot: opts.roughingAtc };
   }
 
-  if (opts.finishingPattern) {
+  if (opts.finishingPattern && config.finishingEnabled) {
     const found = resolveTool(entries, tools, opts.finishingPattern, 'Finishing');
     if (!found) {
       process.stderr.write(`Finishing tool not found: "${opts.finishingPattern}"\n`);

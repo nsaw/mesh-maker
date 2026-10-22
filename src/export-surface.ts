@@ -12,6 +12,9 @@ import type { Heightmap } from './sbp/types';
 export function getExportSurface(forToolpath = false): ExportSurface | string {
   const m = activeMaster();
   if (drapeCarvePending()) return DRAPE_CARVE_PENDING;
+  // DRAPE exports only its relief: until the figure's relief exists, STATE.vertices can still hold the
+  // previous tab's mesh for a frame.
+  if (STATE.mode === 'drape' && !m) return DRAPE_NO_RELIEF;
   // Toolpaths cut the top surface only, so the watertight enclosure's floor rule does not apply.
   if (m) return reliefMasterSurface(m, forToolpath ? false : STATE.watertight);
   const { vertices, cols, rows, meshX, meshY } = STATE;
@@ -28,6 +31,9 @@ export function masterOffCarve(m: ReliefMaster): boolean {
   const c = drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth);
   return Math.abs(m.stockIn - c.stockIn) > 1e-6 || Math.abs(m.backingIn - c.backingIn) > 1e-6;
 }
+
+/** Why DRAPE exports or downloads nothing before its relief exists. */
+export const DRAPE_NO_RELIEF = 'There is no drape relief to export yet: the figure is still loading, or it failed to load (see the Drape status).';
 
 export const DRAPE_CARVE_PENDING = 'The drape relief is still being remapped to the new Material Thickness or Relief Depth: export again in a moment (if this persists, the remap failed: see the Drape status and set the carve again).';
 

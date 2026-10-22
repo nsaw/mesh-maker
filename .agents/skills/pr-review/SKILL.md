@@ -18,12 +18,13 @@ work from the invariants, hot files, and cohorts below.
 | Voronoi relief target spec | `docs/voronoi-relief-target-spec.md` | yes |
 | Grasshopper native port notes | `grasshopper/VORONOI_RELIEF_NATIVE.md` | yes |
 | Parity contract (what "in lockstep" actually means) | `cli/grasshopper-parity.spec.ts` header | yes |
-| Repo conventions, commands, secrets | `.claude/CLAUDE.md` | **no — gitignored** |
+| Repo conventions, commands, gates, correctness rules | `.claude/CLAUDE.md` | yes |
+| File map, design decisions, manual checklist | `AGENTS.md` | yes |
 
-`.claude/CLAUDE.md` and `AGENTS.md` are both gitignored, so **neither exists in a fresh clone**
-and neither can be relied on in CI or on another machine. They are useful when present; do not
-route a reviewer to them as the primary source. The tracked source of truth for this repo is the
-specs and dossiers above plus the code itself.
+`.claude/CLAUDE.md` and `AGENTS.md` are both tracked (`git ls-files --error-unmatch .claude/CLAUDE.md
+AGENTS.md` lists both; `.gitignore` excludes `.claude/` and then re-includes this file and the skill
+trees). Route reviewers to them for the repo's enforcement rules and file map. Secrets are not in
+either: they live in the gitignored `.env`, which a review never needs.
 
 ### Subsystem dossiers — `CONTEXT/greptile/`
 

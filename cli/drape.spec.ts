@@ -14,9 +14,10 @@ import { bareDepth, offsetTowardViewer, PANEL_WINDOW, veiledDepth, RELIEF_BACKIN
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
 import { STATE } from '../src/state';
+import { downloadDrapeRelief } from '../src/drape-ui';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
-import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface } from '../src/export-surface';
-import { buildConfig, doSBPExport, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
+import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, getExportSurface } from '../src/export-surface';
+import { buildConfig, doSBPExport, safeZForStock, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MAX_CLOTH_QUADS, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
 let failures = 0;
@@ -395,8 +396,26 @@ async function main(): Promise<void> {
     const kept = SBP_STATE.safeZ;
     Object.assign(STATE, { drapeMaster: thick, drapeStock: 2, drapeReliefDepth: 1.25 });
     syncSbpSafeZIfStockMoved();
-    assert(at075 >= 0.8 && kept === 2 && SBP_STATE.safeZ > 2, 'Safe Z keeps a raised value on the same stock and moves above a new stock top',
+    assert(at075 === 0.9 && kept === 2 && SBP_STATE.safeZ === 2.1, 'Safe Z keeps a raised value on the same stock and moves above a new stock top',
       `0.75 in: ${at075}, kept ${kept}, 2 in: ${SBP_STATE.safeZ}`);
+    // Safe Z clears the stock top by at least 0.1 in, on the slider's 0.1 in grid (0.75 -> 0.9, not
+    // the 0.8 that rounding to the nearest tenth gave), and an exact tenth stays exact.
+    const cases: [number, number][] = [[0.75, 0.9], [0.8, 0.9], [0.25, 0.5], [1.0, 1.1], [1.37, 1.5], [3.95, 4.1], [5.95, 6]];
+    const bad = cases.filter(([s, z]) => safeZForStock(s) !== z || (s < 5.9 && safeZForStock(s) - s < 0.1 - 1e-9));
+    assert(bad.length === 0, 'Safe Z is the stock top plus at least 0.1 in, rounded up to 0.1 in', bad.map(([s]) => `${s} -> ${safeZForStock(s)}`).join(', ') || cases.map(([s, z]) => `${s}->${z}`).join(' '));
+    // D15: the .mcrelief download waits for the remap too, and DRAPE exports nothing before its relief.
+    Object.assign(STATE, { mode: 'drape', drapeMaster: thin, drapeStock: 2, drapeReliefDepth: 1.25 });
+    toast.textContent = '';
+    let dlThrew = '';
+    try { await downloadDrapeRelief(); } catch (e) { dlThrew = e instanceof Error ? e.message : String(e); }   // a download reaches the DOM
+    assert(toast.textContent === DRAPE_CARVE_PENDING && !dlThrew, 'the .mcrelief download refuses while the carve is pending',
+      dlThrew ? `went on to download (${dlThrew})` : toast.textContent.slice(0, 40));
+    Object.assign(STATE, { drapeMaster: null, vertices: [[0, 0], [0, 0]], cols: 2, rows: 2 });
+    const none = getExportSurface();
+    assert(none === DRAPE_NO_RELIEF, 'DRAPE exports nothing until its relief exists (not the previous tab\'s mesh)', typeof none === 'string' ? none : 'exported');
+    toast.textContent = '';
+    await downloadDrapeRelief();
+    assert(toast.textContent === DRAPE_NO_RELIEF, 'the .mcrelief download says why when there is no relief yet', toast.textContent || 'silent');
     Object.assign(STATE, keep);
   }
 

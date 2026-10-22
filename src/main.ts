@@ -1,5 +1,5 @@
-import { STATE, deserializeConfig, setDemoDepthMap } from './state';
-import { buildSidebar, fitMeshToAspect } from './ui';
+import { STATE, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
+import { buildSidebar, showDemoDepthMap } from './ui';
 import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
 import { setupInteraction } from './interaction';
 import { setupSponsorModal } from './sponsor';
@@ -13,14 +13,7 @@ function preloadDemoDepthMap(): void {
   img.onload = () => {
     setDemoDepthMap(img);
     if (STATE.mode === 'depthmap' && !STATE.depthMap && !STATE.reliefMaster) {
-      STATE.depthMap = img;
-      STATE.depthMapName = 'Mona Lisa (demo)';
-      fitMeshToAspect(img.width, img.height);
-      const zone = document.getElementById('uploadZone');
-      if (zone) {
-        zone.classList.add('has-image');
-        zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
-      }
+      showDemoDepthMap(img);
       buildSidebar();
       generateMesh();
     }
@@ -37,10 +30,12 @@ function init(): void {
   // string, the hash, OR a malformed path (`meshcraft.sawyerdesign.io/=eyJ...`) that some
   // copy-paste flows produce on iOS.
   const urlConfig = deserializeConfig(window.location);
+
   for (const [key, value] of Object.entries(urlConfig)) {
     (STATE as unknown as Record<string, unknown>)[key] = value;
   }
 
+  rememberLinkBoard(urlConfig);
   // Sync body class with potentially URL-overridden mode
   document.body.className = 'mode-' + STATE.mode;
 

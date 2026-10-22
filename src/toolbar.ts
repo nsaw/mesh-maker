@@ -1,8 +1,8 @@
-import { STATE, noiseDims, demoDepthMap, serializeConfig } from './state';
+import { STATE, demoDepthMap, restoreNoiseDims, saveNoiseDims, serializeConfig } from './state';
 import { generateMesh } from './mesh';
 import { renderViewport, setCameraFromState, resizeCanvas } from './render';
 import { doExport } from './export';
-import { applyPendingFit, applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed } from './ui';
+import { applyPendingFit, applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed, showDemoDepthMap } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
 import { ensureDrapeFigure, restoreSizeAfterDrape, setDrapeFrontView } from './drape-ui';
@@ -22,21 +22,9 @@ export function setupTabs(): void {
       // as if from the tab the user was on before DRAPE (a page opened on DRAPE counts as NOISE).
       if (prevMode === 'drape' && STATE.mode !== 'drape') { prevMode = restoreSizeAfterDrape() ?? 'noise'; buildSidebar(); }
 
-      // Save noise dimensions before depth map overwrites them
-      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'drape')) {
-        noiseDims.meshX = STATE.meshX;
-        noiseDims.meshY = STATE.meshY;
-        noiseDims.resolution = STATE.resolution;
-      }
-
-      // Restore noise dimensions when switching back
-      if (STATE.mode === 'noise' && prevMode !== 'noise') {
-        STATE.meshX = noiseDims.meshX;
-        STATE.meshY = noiseDims.meshY;
-        STATE.resolution = noiseDims.resolution;
-        STATE.aspectLocked = false;
-        buildSidebar();
-      }
+      // NOISE's board (size and material thickness) is kept while another tab owns the controls.
+      if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'drape')) saveNoiseDims();
+      if (STATE.mode === 'noise' && prevMode !== 'noise') { restoreNoiseDims(); buildSidebar(); }
 
       // A loaded relief master owns DEPTH MAP mode: restore its label, size and stock, and never
       // let the demo image stand in for it there.
@@ -51,14 +39,7 @@ export function setupTabs(): void {
 
       // Auto-apply demo depth map if switching to depthmap with no user image
       if (STATE.mode === 'depthmap' && !STATE.reliefMaster && !STATE.depthMap && demoDepthMap) {
-        STATE.depthMap = demoDepthMap;
-        STATE.depthMapName = 'Mona Lisa (demo)';
-        fitMeshToAspect(demoDepthMap.width, demoDepthMap.height);
-        const zone = document.getElementById('uploadZone');
-        if (zone) {
-          zone.classList.add('has-image');
-          zone.querySelector('.upload-text')!.textContent = STATE.depthMapName;
-        }
+        showDemoDepthMap(demoDepthMap);
         buildSidebar();
       }
 
@@ -187,7 +168,7 @@ function copyFallback(text: string): void {
   } finally {
     document.body.removeChild(ta);
   }
-  showToast(ok ? 'Link copied!' : 'Copy failed — use Ctrl+C');
+  showToast(ok ? 'Link copied!' : 'Copy failed: this browser blocked the clipboard');
 }
 
 

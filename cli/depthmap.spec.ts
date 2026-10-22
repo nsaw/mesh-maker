@@ -11,7 +11,7 @@
  */
 
 import { applyBackgroundCutoff, normalizeGrid, sampleLumaGrid } from '../src/geometry';
-import { STATE, deserializeConfig, serializeConfig, stockTopIn } from '../src/state';
+import { STATE, boardIsLinkBoard, deserializeConfig, rememberLinkBoard, restoreNoiseDims, saveNoiseDims, serializeConfig, stockTopIn } from '../src/state';
 import type { ReliefMaster } from '../src/relief-master';
 
 let failures = 0;
@@ -153,6 +153,35 @@ process.stdout.write('T15 share links\n');
     Object.assign(STATE, keep);
     assert(withMaster === 0.75 && noise === 2, 'the stock top is the master\'s while it drives the heights, Material Thickness otherwise',
       `drape ${withMaster}, noise ${noise}`);
+  }
+  // The board a link carries is clamped to the sliders (a meshX 200 link kept a 200 in board).
+  const wide = deserializeConfig(enc({ _v: 15, mode: 'depthmap', meshX: 200, meshY: -4, resolution: 1e6, baseThickness: 99 }));
+  assert(wide.meshX === 96 && wide.meshY === 1 && wide.resolution === 1024 && wide.baseThickness === 6, 'link board sizes clamp to their sliders', JSON.stringify(wide));
+  // The demo image keeps a DEPTH MAP link's board only while the board still is that size.
+  {
+    const keep = { ...STATE };
+    const link = deserializeConfig(enc({ _v: 15, mode: 'depthmap', meshX: 20, meshY: 10 }));
+    Object.assign(STATE, link); rememberLinkBoard(link);
+    const kept = boardIsLinkBoard();
+    Object.assign(STATE, { meshX: 36, meshY: 24 }); const changed = boardIsLinkBoard();
+    Object.assign(STATE, { meshX: 20, meshY: 10 }); const back = boardIsLinkBoard();
+    const noiseLink = deserializeConfig(enc({ _v: 15, mode: 'noise', meshX: 20, meshY: 10 }));
+    Object.assign(STATE, noiseLink); rememberLinkBoard(noiseLink); const noise = boardIsLinkBoard();
+    rememberLinkBoard({}); Object.assign(STATE, keep);
+    assert(kept && !changed && back && !noise, 'a DEPTH MAP link keeps its board for the demo image while the board is unchanged; other links do not',
+      JSON.stringify({ kept, changed, back, noise }));
+  }
+  // NOISE keeps its board, material thickness included, while DEPTH MAP (or a relief master) takes over
+  // the shared controls (a 0.75 in master used to leave NOISE at 0.75 in).
+  {
+    const keep = { ...STATE };
+    Object.assign(STATE, { meshX: 30, meshY: 20, resolution: 300, baseThickness: 1.5 });
+    saveNoiseDims();
+    Object.assign(STATE, { meshX: 12, meshY: 16, resolution: 400, baseThickness: 0.75, aspectLocked: true });
+    restoreNoiseDims();
+    const back = [STATE.meshX, STATE.meshY, STATE.resolution, STATE.baseThickness, STATE.aspectLocked];
+    Object.assign(STATE, keep);
+    assert(JSON.stringify(back) === JSON.stringify([30, 20, 300, 1.5, false]), 'NOISE gets its own size and material thickness back after DEPTH MAP', JSON.stringify(back));
   }
   // v15 made the gathered silk the default: a v14 drape link was the plain silk proof and stays it.
   const v14 = deserializeConfig(enc({ _v: 14, mode: 'drape', drapeTilt: 30 }));
