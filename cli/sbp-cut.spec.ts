@@ -21,6 +21,8 @@
  *       cutter type (quarter-point chord checks passed 1.1 thou under it).
  *   C9  a flat end mill (or radius-0 radiused cutter) is refused for finishing; a home Z below safe Z
  *       is refused; small-radius radiused cutters finish with finite, non-gouging moves.
+ *   C11 profileOf (the drop cutter's precomputed profile) equals toolZOffset bit for bit for every
+ *       tool in every library, plus edge shapes (no cone, no tip, a V-bit wider at the tip than its edge).
  *   C10 cli/stl-to-sbp.ts does not look up a tool named for a pass that is switched off (an unknown
  *       --finishing-tool with --roughing-only exported nothing and exited 1), and still refuses one
  *       for a pass that runs.
@@ -28,12 +30,12 @@
  * Every cut is simulated on a grid of at most 0.005 in, finer than the target, and compared with the
  * triangulated surface the export describes (cli/cut-sim.ts triangulatedTarget).
  */
-import { compensateForTool, createDropCutter, createTipLipschitzField } from '../src/sbp/compensate';
+import { compensateForTool, createDropCutter, createTipLipschitzField, profileOf, toolZOffset } from '../src/sbp/compensate';
 import { generateSBP } from '../src/sbp/generate';
 import { generateFinishing } from '../src/sbp/finishing';
 import { stateToHeightmap } from '../src/sbp/heightmap';
 import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
-import type { Heightmap, SbpConfig, ToolDef } from '../src/sbp/types';
+import { ToolType, type Heightmap, type SbpConfig, type ToolDef } from '../src/sbp/types';
 import { compareCut, cutterProfile, parseSbp, simulateCut, triangulatedTarget } from './cut-sim';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -402,6 +404,23 @@ process.stdout.write('C9 generateSBP refuses a flat end mill for finishing and a
     assert(msg === '' && nan === 0 && worst <= 0.0002, `${tool.name}: finite SBP, on or above the exact tip`,
       `${msg || 'generated'}; ${nan} non-finite values; worst ${worst.toExponential(2)} in over ${moves.length} moves`);
   }
+}
+
+// ---------- C11 the drop cutter's profile equals toolZOffset ----------
+process.stdout.write('C11 profileOf equals toolZOffset\n');
+{
+  const edgeShapes: ToolDef[] = [
+    { ...getEmbeddedTools()[0], name: 'V-bit a0 R0.2 D0.25', type: ToolType.VBit, halfAngle: 0, tipRadius: 0.2, diameter: 0.25 },
+    { ...getEmbeddedTools()[0], name: 'TBN a0 R0.05', type: ToolType.TaperedBallNose, halfAngle: 0, tipRadius: 0.05, diameter: 0.25 },
+    { ...getEmbeddedTools()[0], name: 'Radiused R0', type: ToolType.Radiused, tipRadius: 0, diameter: 0.25 },
+  ];
+  const tools = [...(['general', 'mdf', 'hardwood'] as const).flatMap(p => getEmbeddedTools(p)), ...edgeShapes];
+  let differ = 0, n = 0;
+  for (const t of tools) {
+    const f = profileOf(t);
+    for (let i = 0; i <= 4000; i++) { const d = i * 0.0001; n++; const a = f(d), b = toolZOffset(t, d); if (!(a === b || (a !== a && b !== b))) differ++; }
+  }
+  assert(differ === 0, 'profileOf equals toolZOffset for every library tool and edge shape', `${differ} of ${n} differ`);
 }
 
 // ---------- C10 stl-to-sbp skips the tool lookup for a pass that does not run ----------

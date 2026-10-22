@@ -61,10 +61,11 @@ export function profileOf(tool: ToolDef): (d: number) => number {
     case ToolType.BallNose: return ball;
     case ToolType.TaperedBallNose:
     case ToolType.VBit: {
-      const a = tool.halfAngle;
-      if (!(a > 0)) return ball;
-      const rT = R * Math.cos(a), z0 = R * (1 - Math.sin(a)), tanA = Math.tan(a);
+      // A V-bit's cutting edge ends at its diameter, also when it has no cone (toolZOffset checks it first).
       const edge = tool.type === ToolType.VBit ? tool.diameter / 2 : Infinity;
+      const a = tool.halfAngle;
+      if (!(a > 0)) return (d: number): number => (d > edge ? Infinity : ball(d));
+      const rT = R * Math.cos(a), z0 = R * (1 - Math.sin(a)), tanA = Math.tan(a);
       // Divided by tan a, as toolZOffset does, so the two agree to the last bit.
       return (d: number): number => (d > edge ? Infinity : d <= rT ? R - Math.sqrt(Math.max(0, R2 - d * d)) : z0 + (d - rT) / tanA);
     }
@@ -82,10 +83,10 @@ export function profileSlopeOf(tool: ToolDef): (d: number) => number {
     case ToolType.BallNose: return ball;
     case ToolType.TaperedBallNose:
     case ToolType.VBit: {
-      const a = tool.halfAngle;
-      if (!(a > 0)) return ball;
-      const rT = R * Math.cos(a), k = 1 / Math.tan(a);
       const edge = tool.type === ToolType.VBit ? tool.diameter / 2 : Infinity;
+      const a = tool.halfAngle;
+      if (!(a > 0)) return (d: number): number => (d > edge ? Infinity : ball(d));
+      const rT = R * Math.cos(a), k = 1 / Math.tan(a);
       return (d: number): number => (d > edge ? Infinity : d <= rT ? d / Math.sqrt(Math.max(1e-300, R2 - d * d)) : k);
     }
     case ToolType.Radiused: {
