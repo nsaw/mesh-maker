@@ -15,9 +15,12 @@
  */
 
 export const FIGURE_MAGIC = 'MCFIG';
-/** Jolt's collision mesh and the 1.9M-node extraction both scale with the figure: the most a browser
- *  tab is asked to hold. The bundled Venus has 141,642 triangles. */
-export const MAX_FIGURE_TRIANGLES = 2_000_000;
+/** Most triangles a figure may have: Jolt's collision mesh shares the fixed 128 MiB WASM heap with the
+ *  cloth. Measured with drape-run on a clustered 9.1 M-triangle STL (2026-10-23): 390,444 triangles ran
+ *  with the largest cloth the sliders allow (200 x 750 quads), 483,512 ran out of memory even with the
+ *  default cloth. 300,000 keeps a margin for meshes that weld less well. Uploads above it are simplified
+ *  (src/drape-sim/simplify.ts). The bundled Venus has 141,642 triangles. */
+export const MAX_FIGURE_TRIANGLES = 300_000;
 
 export interface FigureHeader {
   format: 'meshcraft-figure';

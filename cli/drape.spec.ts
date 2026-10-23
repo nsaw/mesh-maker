@@ -14,7 +14,8 @@ import { bareDepth, drapeFigure, FIGURE_FIT, offsetTowardViewer, PANEL_ASPECT, P
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
 import { STATE } from '../src/state';
-import { downloadDrapeRelief, FIGURE_EXTENSIONS, meshFromFile, toMaster } from '../src/drape-ui';
+import { binaryStlSoup, downloadDrapeRelief, FIGURE_EXTENSIONS, meshFromFile, toMaster } from '../src/drape-ui';
+import { simplifyMesh } from '../src/drape-sim/simplify';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, getExportSurface } from '../src/export-surface';
 import { buildConfig, doSBPExport, safeZForStock, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
@@ -207,6 +208,55 @@ async function main(): Promise<void> {
     const pts = await meshFromFile(fileBuffer('cli/fixtures/figure-formats/points.ply'), 'points.ply');
     assert(pts.tris.length === 0, 'a PLY point cloud comes back with no triangles (the upload refuses it)', `${pts.tris.length / 3} triangles`);
     assert(['.usdz', '.usd', '.usda', '.usdc', '.ply'].every(e => FIGURE_EXTENSIONS.includes(e)), 'the upload accepts USD and PLY files');
+  }
+
+  // ---------- D6c dense meshes are simplified, not refused ----------
+  process.stdout.write('D6c dense mesh simplification\n');
+  {
+    // A 300 x 200 quad dome as an unwelded soup (each triangle its own three corners, as a binary STL).
+    const N = 300, M = 200, soupPos: number[] = [];
+    const h = (i: number, j: number): number => Math.cos(((i / N) - 0.5) * Math.PI) * Math.cos(((j / M) - 0.5) * Math.PI) * 40;
+    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
+      const a = [i, j, h(i, j)], b = [i + 1, j, h(i + 1, j)], c = [i + 1, j + 1, h(i + 1, j + 1)], d = [i, j + 1, h(i, j + 1)];
+      soupPos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    }
+    const pos = Float32Array.from(soupPos), tris = Uint32Array.from({ length: pos.length / 3 }, (_, k) => k);
+    const same = simplifyMesh({ pos, tris }, tris.length / 3);
+    assert(same.pos === pos && same.tris === tris, 'a mesh at or under the cap is returned untouched');
+    const cap = 20_000, r = simplifyMesh({ pos, tris }, cap);
+    const nt = r.tris.length / 3;
+    let worst = 0;
+    for (let v = 0; v < r.pos.length; v += 3) worst = Math.max(worst, Math.abs(r.pos[v + 2] - h(r.pos[v], r.pos[v + 1])));
+    let degenerate = 0;
+    for (let t = 0; t < r.tris.length; t += 3) if (r.tris[t] === r.tris[t + 1] || r.tris[t + 1] === r.tris[t + 2] || r.tris[t] === r.tris[t + 2]) degenerate++;
+    assert(nt <= cap && nt >= cap / 4, '120,000 soup triangles cluster to under the cap without collapsing', `${nt.toLocaleString()} triangles`);
+    assert(r.pos.length / 3 < nt && degenerate === 0, 'the soup is welded (fewer vertices than triangles) and no triangle is degenerate',
+      `${(r.pos.length / 3).toLocaleString()} vertices, ${degenerate} degenerate`);
+    assert(worst < 1.5, 'clustered vertices stay on the surface (within a cell of it)', `worst ${worst.toFixed(3)} units off a 40-unit dome`);
+    assert(/no area/.test(thrown(() => simplifyMesh({ pos: new Float32Array(9), tris: new Uint32Array([0, 1, 2, 0, 1, 2]) }, 1))), 'a mesh with no area is refused');
+    // 5,000 needles (100 x 50 rows, 2 apart across, 1 apart down), each 1 long and 0.001 wide: tiny area,
+    // three far-apart corners, so the cell the area suggests keeps every needle, over the cap. The pass
+    // must be retried with a wider cell, never cut short at the cap, which would keep only the file's
+    // first rows and drape the wrong shape.
+    const needles = new Float32Array(5000 * 9);
+    for (let t = 0; t < 5000; t++) { const x = (t % 100) * 2, y = Math.floor(t / 100); needles.set([x, y, 0, x + 1, y, 0, x + 0.5, y + 0.001, 0], t * 9); }
+    const nd = simplifyMesh({ pos: needles, tris: Uint32Array.from({ length: 15000 }, (_, k) => k) }, 1000);
+    let spanY = 0;
+    for (let t = 0; t < nd.tris.length; t++) spanY = Math.max(spanY, nd.pos[nd.tris[t] * 3 + 1]);
+    assert(nd.tris.length / 3 <= 1000 && nd.tris.length / 3 >= 250 && spanY >= 45, 'an over-dense pass is retried, not cut short: what is kept spans the whole mesh',
+      `${nd.tris.length / 3} triangles reaching row ${spanY.toFixed(0)} of 49`);
+    // A coarse first guess is refined: the dome capped at 2,000 must still keep at least a quarter of it.
+    const tight = simplifyMesh({ pos, tris }, 2000).tris.length / 3;
+    assert(tight <= 2000 && tight >= 500, 'the cell search lands between a quarter of the cap and the cap', `${tight} of 2,000`);
+    // Binary STL read straight into positions; anything else (ASCII) goes to three's loader.
+    const bin = new ArrayBuffer(84 + 2 * 50), dv = new DataView(bin);
+    dv.setUint32(80, 2, true);
+    for (let t = 0; t < 2; t++) for (let k = 0; k < 9; k++) dv.setFloat32(84 + t * 50 + 12 + k * 4, t * 100 + k, true);
+    const soup = binaryStlSoup(bin);
+    assert(soup !== null && soup.pos[0] === 0 && soup.pos[8] === 8 && soup.pos[9] === 100 && soup.tris.length === 6 && soup.tris[5] === 5,
+      'a binary STL is read as its corners, skipping each triangle\'s normal', soup ? Array.from(soup.pos.slice(0, 3)).join(',') : 'null');
+    assert(binaryStlSoup(new TextEncoder().encode('solid x\nendsolid x\n'.padEnd(200, ' ')).buffer) === null && binaryStlSoup(bin.slice(0, 120)) === null,
+      'ASCII or a truncated file is not read as binary');
   }
 
   // ---------- D7 short cloth run ----------

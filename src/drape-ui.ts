@@ -17,6 +17,7 @@ import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, type Figure, type FigurePose } from './drape-sim/figure';
 import { bareDepth, FIGURE_FIT, reliefHeights } from './drape-sim/pipeline';
+import { simplifyMesh } from './drape-sim/simplify';
 import type { DrapeJob, DrapeWorkerMessage } from './drape-sim/messages';
 import { drapeCarveFor, drapeJob, MAX_CLOTH_QUADS, remapToCarve, type DrapeCarve } from './drape-controls';
 import type { BufferAttribute, BufferGeometry, Mesh, Object3D } from 'three';
@@ -367,17 +368,27 @@ export async function downloadDrapeRelief(): Promise<void> {
  *  and turn and fitted to the panel (figureFromMesh). glTF and USD carry their own up axis. */
 export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; turnDeg: number }): Promise<void> {
   const name = file.name, lower = name.toLowerCase(), seq = ++uploadSeq;
-  let noTriangles = false;
+  let noTriangles = false, simplifiedFrom = 0;
   try {
     let fig: Figure, buf = await file.arrayBuffer();
     if (seq !== uploadSeq) return;                                  // a newer upload started meanwhile
     if (lower.endsWith('.mcfig')) fig = parseFigure(buf);
     else {
-      const { pos, tris, up } = await meshFromFile(buf, lower);
+      const loaded = await meshFromFile(buf, lower);
       if (seq !== uploadSeq) return;
+      let { pos, tris } = loaded;
       if (tris.length === 0) { noTriangles = true; throw new Error('it has no triangles (a point cloud cannot be draped)'); }
-      if (tris.length / 3 > MAX_FIGURE_TRIANGLES) throw new Error(`${(tris.length / 3).toLocaleString()} triangles; decimate below ${MAX_FIGURE_TRIANGLES.toLocaleString()}`);
-      buf = encodeFigure(figureFromMesh(pos, tris, { up: up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT }));
+      if (tris.length / 3 > MAX_FIGURE_TRIANGLES) {
+        // A dense scan or CAD export: cluster it under the cap rather than refuse it (several seconds
+        // for millions of triangles, on this thread; the message is painted first).
+        simplifiedFrom = tris.length / 3;
+        const msg = `Simplifying ${simplifiedFrom.toLocaleString()} triangles to under ${MAX_FIGURE_TRIANGLES.toLocaleString()} for the drape...`;
+        setStatus(msg); showToast(msg, 6000);
+        await new Promise(r => setTimeout(r, 50));
+        ({ pos, tris } = simplifyMesh({ pos, tris }, MAX_FIGURE_TRIANGLES));
+        if (seq !== uploadSeq) return;
+      }
+      buf = encodeFigure(figureFromMesh(pos, tris, { up: loaded.up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT }));
       fig = parseFigure(buf);
     }
     // Build its bare relief before replacing the current figure, so a figure that cannot be shown
@@ -387,10 +398,18 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
     const { relief, master } = await bareRelief(fig, currentPose(), name);
     if (seq !== uploadSeq) return;
     useFigure(fig, buf, name, { relief, master, key });
+    if (simplifiedFrom) showToast(`${name}: simplified from ${simplifiedFrom.toLocaleString()} to ${fig.header.triangles.toLocaleString()} triangles for the drape.`, 5000);
   } catch (err) {
     if (seq !== uploadSeq) return;
+    if (simplifiedFrom) setStatus(drapeStatusText());
+    const why = err instanceof Error ? err.message : String(err);
+    // A loader chunk this tab cannot fetch: the site was updated since it opened (main.ts reloads once).
+    if (/dynamically imported module|Importing a module script failed/i.test(why)) {
+      showToast('MeshCraft was updated since this page opened: reload the page, then upload the figure again.', 8000);
+      return;
+    }
     const hint = lower.endsWith('.mcfig') || noTriangles ? '' : '. Check the up axis.';
-    showToast(`Could not use ${name} as a figure: ${err instanceof Error ? err.message : String(err)}${hint}`, 8000);
+    showToast(`Could not use ${name} as a figure: ${why}${hint}`, 8000);
   }
 }
 
@@ -419,6 +438,10 @@ export async function meshFromFile(buf: ArrayBuffer, lower: string): Promise<{ p
     return geoms;
   };
   if (lower.endsWith('.stl')) {
+    // Binary STL read straight into positions: three's loader also builds per-vertex normals, a second
+    // copy the size of the mesh (327 MB for a 9 M-triangle export), which the drape never uses.
+    const soup = binaryStlSoup(buf);
+    if (soup) return soup;
     const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js');
     return collect([new STLLoader().parse(buf)]);
   }
@@ -439,4 +462,18 @@ export async function meshFromFile(buf: ArrayBuffer, lower: string): Promise<{ p
   const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
   const gltf = await new GLTFLoader().parseAsync(buf, '');
   return { ...collect(sceneMeshes(gltf.scene)), up: 'y' };
+}
+
+/** A binary STL's triangles as an unwelded soup (three corners each), or null when the file is not a
+ *  binary STL (its size is not 84 + 50 bytes per triangle, so it is ASCII). */
+export function binaryStlSoup(buf: ArrayBuffer): { pos: Float32Array; tris: Uint32Array } | null {
+  if (buf.byteLength < 84) return null;
+  const view = new DataView(buf), n = view.getUint32(80, true);
+  if (n === 0 || buf.byteLength !== 84 + n * 50) return null;
+  const pos = new Float32Array(n * 9), tris = new Uint32Array(n * 3);
+  for (let t = 0, o = 84; t < n; t++, o += 50) {
+    for (let k = 0; k < 9; k++) pos[t * 9 + k] = view.getFloat32(o + 12 + k * 4, true);
+    tris[t * 3] = t * 3; tris[t * 3 + 1] = t * 3 + 1; tris[t * 3 + 2] = t * 3 + 2;
+  }
+  return { pos, tris };
 }

@@ -7,6 +7,24 @@ import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
 import { ensureDrapeFigure } from './drape-ui';
 
+/** A deploy replaces the hashed chunks, so a tab opened before it cannot import one it has not loaded
+ *  yet (the STL loader, the depth model): Cloudflare answers the old name with the HTML page. Reload once
+ *  to pick up the new build; a second failure within a minute is shown instead, so this cannot loop. */
+const CHUNK_RELOAD_KEY = 'meshcraft:chunk-reload';
+window.addEventListener('vite:preloadError', (e) => {
+  const now = Date.now();
+  let last: number;
+  try {
+    last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY)) || 0;
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, String(now));
+  } catch {
+    return;                                                     // no storage for the loop guard: show the error
+  }
+  if (now - last < 60_000) return;
+  e.preventDefault();
+  location.reload();
+});
+
 function preloadDemoDepthMap(): void {
   const img = new Image();
   img.crossOrigin = 'anonymous';
