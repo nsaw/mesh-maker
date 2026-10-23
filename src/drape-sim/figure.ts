@@ -21,6 +21,9 @@ export const FIGURE_MAGIC = 'MCFIG';
  *  default cloth. 300,000 keeps a margin for meshes that weld less well. Uploads above it are simplified
  *  (src/drape-sim/simplify.ts). The bundled Venus has 141,642 triangles. */
 export const MAX_FIGURE_TRIANGLES = 300_000;
+/** Most triangles an uploaded .mcfig may have before it is simplified to MAX_FIGURE_TRIANGLES: the size the
+ *  figure format accepted before that cap was measured. */
+export const MAX_MCFIG_UPLOAD_TRIANGLES = 2_000_000;
 
 export interface FigureHeader {
   format: 'meshcraft-figure';
@@ -32,6 +35,9 @@ export interface FigureHeader {
   name?: string;
   source?: string;
   license?: string;
+  /** Where the cloth hangs from (figureAnchor): absent = the crown, the highest point (the bundled and
+   *  Blender-exported figures); 'top-centre' = over the middle of the top region (uploaded meshes). */
+  anchor?: 'top-centre';
 }
 
 export interface Figure {
@@ -40,7 +46,8 @@ export interface Figure {
   triangles: Uint32Array;
 }
 
-export function parseFigure(buf: ArrayBuffer): Figure {
+/** Parse a .mcfig. `maxTriangles` is the drape's cap; an upload may parse with a larger one and simplify. */
+export function parseFigure(buf: ArrayBuffer, maxTriangles = MAX_FIGURE_TRIANGLES): Figure {
   const u8 = new Uint8Array(buf);
   const magic = String.fromCharCode(...u8.subarray(0, 5));
   if (u8.length < 12 || magic !== FIGURE_MAGIC || u8[5] !== 0 || u8[6] !== 0 || u8[7] !== 0) throw new Error('not a MeshCraft figure (.mcfig)');
@@ -53,9 +60,10 @@ export function parseFigure(buf: ArrayBuffer): Figure {
   if (header.format !== 'meshcraft-figure' || header.version !== 1) throw new Error('unsupported figure header');
   const nv = header.vertices, nt = header.triangles;
   if (!Number.isInteger(nv) || !Number.isInteger(nt) || nv < 3 || nt < 1) throw new Error('figure header has bad counts');
-  if (nt > MAX_FIGURE_TRIANGLES) throw new Error(`${nt.toLocaleString()} triangles; decimate below ${MAX_FIGURE_TRIANGLES.toLocaleString()}`);
+  if (nt > maxTriangles) throw new Error(`${nt.toLocaleString()} triangles; decimate below ${maxTriangles.toLocaleString()}`);
   const hc = header.head_centre;
   if (!Array.isArray(hc) || hc.length !== 3 || !hc.every(v => typeof v === 'number' && Number.isFinite(v))) throw new Error('figure head_centre must be three finite numbers');
+  if (header.anchor !== undefined && header.anchor !== 'top-centre') throw new Error('figure anchor must be "top-centre" when present');
   for (const key of ['name', 'source', 'license'] as const)                // carried into the relief master
     if (header[key] !== undefined && typeof header[key] !== 'string') throw new Error(`figure ${key} must be a string when present`);
   const start = Math.ceil((12 + len) / 8) * 8;
@@ -73,10 +81,25 @@ export function parseFigure(buf: ArrayBuffer): Figure {
  *  posed figure about its crown (1 or absent = as placed). */
 export interface FigurePose { tiltDeg: number; turnDeg: number; leanDeg: number; scale?: number }
 
+/** Where the cloth hangs from, for figure positions `pos`: the horizontal spot (x, y) that goes under
+ *  (0, 0), and `top`, the highest point, which goes to z = 1 so the sheet starts above everything.
+ *  'crown' (the bundled and Blender figures): the highest vertex, as the Blender proof hangs its veil.
+ *  'top-centre' (uploaded meshes): the middle across of everything within HEAD_HEIGHT of the top, at the
+ *  highest vertex's depth, so a bust still hangs from its head and a tilted tile or a vase from the
+ *  middle of its top rather than a corner beside it. */
+export function figureAnchor(pos: ArrayLike<number>, mode: 'crown' | 'top-centre'): { x: number; y: number; top: number } {
+  let top = -Infinity, ti = 0;
+  for (let i = 0; i < pos.length; i += 3) if (pos[i + 2] > top) { top = pos[i + 2]; ti = i; }
+  if (mode === 'crown') return { x: pos[ti], y: pos[ti + 1], top };
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < pos.length; i += 3) if (pos[i + 2] > top - HEAD_HEIGHT) { lo = Math.min(lo, pos[i]); hi = Math.max(hi, pos[i]); }
+  return { x: (lo + hi) / 2, y: pos[ti + 1], top };
+}
+
 /**
  * Pose the figure about its head centre (turn about Z, then tilt about X, then lean about Y), then move
- * the new highest point back to (0, 0, 1) and scale about it. Tilt alone is the construction of
- * scripts/drape/blender_drape.py.
+ * its anchor (figureAnchor) under (0, 0) with its highest point at z = 1, and scale about (0, 0, 1).
+ * Tilt alone is the construction of scripts/drape/blender_drape.py.
  */
 export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
   const t = (-pose.tiltDeg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
@@ -84,7 +107,6 @@ export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
   const l = (pose.leanDeg * Math.PI) / 180, cl = Math.cos(l), sl = Math.sin(l);
   const [hx, hy, hz] = fig.header.head_centre;
   const p = fig.positions, out = new Float32Array(p.length);
-  let top = -Infinity, ti = 0;
   for (let i = 0; i < p.length; i += 3) {
     let x = p[i] - hx, y = p[i + 1] - hy, z = p[i + 2] - hz;
     if (pose.turnDeg) { const x2 = x * cu - y * su; y = x * su + y * cu; x = x2; }
@@ -93,9 +115,8 @@ export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
     out[i] = pose.turnDeg || pose.leanDeg ? x + hx : p[i];
     out[i + 1] = y + hy;
     out[i + 2] = z + hz;
-    if (out[i + 2] > top) { top = out[i + 2]; ti = i; }
   }
-  const dx = out[ti], dy = out[ti + 1], dz = out[ti + 2] - 1;
+  const a = figureAnchor(out, fig.header.anchor ?? 'crown'), dx = a.x, dy = a.y, dz = a.top - 1;
   for (let i = 0; i < out.length; i += 3) { out[i] -= dx; out[i + 1] -= dy; out[i + 2] -= dz; }
   // Skipped at 1 so an unscaled pose stays bit for bit what the Blender parity runs were built from.
   const k = pose.scale ?? 1;
@@ -141,10 +162,11 @@ export interface MeshPlacement {
   fit: FigureFit;
 }
 
-/** Place an uploaded mesh the way export_figure.py places the bundled figure: Z up, turned about Z,
- *  crown at (0, 0, 1), head centre from the top HEAD_HEIGHT units. Its own units are ignored: it is
- *  scaled about the crown so it fits `fit` (the widest side of the crown, or the depth below it, fills its
- *  room), so any model starts the same size against the panel and the cloth. */
+/** Place an uploaded mesh much as export_figure.py places the bundled figure: Z up, turned about Z, the
+ *  middle of its width under x = 0, its highest point at (., 0, 1), head centre from the top HEAD_HEIGHT
+ *  units. Its own units are ignored: it is scaled about (0, 0, 1) so it fits `fit` (half its width, or its
+ *  depth below the top, fills its room), so any model starts the same size against the panel and the
+ *  cloth. It is marked 'top-centre', so posing hangs it from the middle of its top. */
 export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, p: MeshPlacement): Figure {
   const n = pos.length / 3, out = new Float32Array(pos.length);
   const a = (p.turnDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
@@ -154,9 +176,12 @@ export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, 
     if (p.up === 'y') { const t = y; y = -z; z = t; }                // Y-up model: its +Z (glTF front) faces the viewer
     out[i * 3] = x * c - y * s; out[i * 3 + 1] = x * s + y * c; out[i * 3 + 2] = z;
   }
-  let ti = 0;
-  for (let i = 0; i < n; i++) if (out[i * 3 + 2] > out[ti * 3 + 2]) ti = i;
-  const cx = out[ti * 3], cy = out[ti * 3 + 1], cz = out[ti * 3 + 2];
+  // Centred on its whole width (its own units are unknown here, so HEAD_HEIGHT means nothing yet); posing
+  // then hangs it from the middle of its top (figureAnchor 'top-centre', in scene units).
+  const crown = figureAnchor(out, 'crown');
+  let xlo = Infinity, xhi = -Infinity;
+  for (let i = 0; i < n; i++) { xlo = Math.min(xlo, out[i * 3]); xhi = Math.max(xhi, out[i * 3]); }
+  const cx = (xlo + xhi) / 2, cy = crown.y, cz = crown.top;
   let side = 0, below = 0;
   for (let i = 0; i < n; i++) { side = Math.max(side, Math.abs(out[i * 3] - cx)); below = Math.max(below, cz - out[i * 3 + 2]); }
   const k = Math.min(side > 0 ? p.fit.halfWidth / side : Infinity, below > 0 ? p.fit.below / below : Infinity);
@@ -168,6 +193,6 @@ export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, 
   }
   const triangles = Uint32Array.from(tris as ArrayLike<number>);
   const header: FigureHeader = { format: 'meshcraft-figure', version: 1, vertices: n, triangles: triangles.length / 3,
-    head_centre: [sx / m, sy / m, sz / m], head_height: HEAD_HEIGHT, name: p.name };
+    head_centre: [sx / m, sy / m, sz / m], head_height: HEAD_HEIGHT, name: p.name, anchor: 'top-centre' };
   return { header, positions: out, triangles };
 }

@@ -7,7 +7,7 @@
  */
 import { readFileSync } from 'node:fs';
 import initJolt from 'jolt-physics/wasm-compat';
-import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
 import { bareDepth, drapeFigure, FIGURE_FIT, offsetTowardViewer, PANEL_ASPECT, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
@@ -16,6 +16,7 @@ import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } 
 import { STATE } from '../src/state';
 import { binaryStlSoup, downloadDrapeRelief, FIGURE_EXTENSIONS, meshFromFile, toMaster } from '../src/drape-ui';
 import { simplifyMesh } from '../src/drape-sim/simplify';
+import { isChunkLoadError, updatedSinceLoad } from '../src/stale-build';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, getExportSurface } from '../src/export-surface';
 import { buildConfig, doSBPExport, safeZForStock, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
@@ -191,6 +192,26 @@ async function main(): Promise<void> {
       'the fit is 90% of the panel beside and below the crown');
   }
 
+  // ---------- D6d where an upload hangs from ----------
+  process.stdout.write('D6d upload anchor\n');
+  {
+    // A 10 x 10 x 2 tile turned 30 deg about Y so one top corner is highest: hung from that corner it sat
+    // beside the panel's middle and filled half of it. An upload hangs from the middle of its top instead.
+    const c = Math.cos(Math.PI / 6), sn = Math.sin(Math.PI / 6), tile: number[] = [];
+    for (const x of [-5, 5]) for (const y of [-1, 1]) for (const z of [-5, 5]) tile.push(x * c + z * sn, y, -x * sn + z * c);
+    const faces = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3];
+    const f = figureFromMesh(Float32Array.from(tile), faces, { up: 'z', turnDeg: 0, name: 'tile', fit: FIGURE_FIT });
+    const xs = (q: Float32Array): [number, number] => { let lo = Infinity, hi = -Infinity; for (let i = 0; i < q.length; i += 3) { lo = Math.min(lo, q[i]); hi = Math.max(hi, q[i]); } return [lo, hi]; };
+    const [lo, hi] = xs(f.positions), posed = poseFigure(f, { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }), [plo, phi] = xs(posed);
+    let top = -Infinity; for (let i = 2; i < posed.length; i += 3) top = Math.max(top, posed[i]);
+    assert(f.header.anchor === 'top-centre' && Math.abs(lo + hi) < 1e-5, 'an upload is centred across the panel, not hung beside a high corner', `x ${lo.toFixed(3)} to ${hi.toFixed(3)}`);
+    assert(Math.abs(plo + phi) < 0.5 && Math.abs(top - 1) < 1e-6, 'posed, it stays near the middle with its top at z = 1', `x ${plo.toFixed(3)} to ${phi.toFixed(3)}`);
+    assert(hi - lo > 1.8 * FIGURE_FIT.halfWidth * 0.95, 'centred, the tile fills the panel width', `${(hi - lo).toFixed(3)} of ${(2 * FIGURE_FIT.halfWidth).toFixed(3)}`);
+    assert(demo.header.anchor === undefined && poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }).every((v, i) => v === tiltFigure(demo, 25)[i]),
+      'the bundled figure still hangs from its crown (no anchor in its header)');
+    assert(/anchor/.test(thrown(() => parseFigure(encodeFigure({ ...f, header: { ...f.header, anchor: 'side' as never } })))), 'an unknown anchor is refused');
+  }
+
   // ---------- D6b upload formats ----------
   process.stdout.write('D6b upload formats\n');
   {
@@ -232,6 +253,16 @@ async function main(): Promise<void> {
     assert(nt <= cap && nt >= cap / 4, '120,000 soup triangles cluster to under the cap without collapsing', `${nt.toLocaleString()} triangles`);
     assert(r.pos.length / 3 < nt && degenerate === 0, 'the soup is welded (fewer vertices than triangles) and no triangle is degenerate',
       `${(r.pos.length / 3).toLocaleString()} vertices, ${degenerate} degenerate`);
+    // A sheet folded back on itself (the dome and its mirror, back to back) clusters onto the same cells:
+    // every triangle survives once, in either winding.
+    const folded = new Float32Array(pos.length * 2); folded.set(pos); folded.set(pos, pos.length);
+    for (let t = pos.length; t < folded.length; t += 9) { const x = folded[t + 3], y = folded[t + 4], z = folded[t + 5]; folded[t + 3] = folded[t + 6]; folded[t + 4] = folded[t + 7]; folded[t + 5] = folded[t + 8]; folded[t + 6] = x; folded[t + 7] = y; folded[t + 8] = z; }
+    const fr = simplifyMesh({ pos: folded, tris: Uint32Array.from({ length: folded.length / 3 }, (_, k) => k) }, cap);
+    const keys = new Set<string>();
+    for (let t = 0; t < fr.tris.length; t += 3) keys.add([fr.tris[t], fr.tris[t + 1], fr.tris[t + 2]].sort((a, b) => a - b).join(','));
+    assert(keys.size === fr.tris.length / 3, 'no triangle is kept twice (a duplicate in either winding is dropped)', `${fr.tris.length / 3} triangles, ${keys.size} distinct`);
+    const nanPos = Float32Array.from(pos); nanPos[4] = NaN;
+    assert(/non-finite/.test(thrown(() => simplifyMesh({ pos: nanPos, tris }, cap))), 'a mesh with a non-finite coordinate is refused with that reason');
     assert(worst < 1.5, 'clustered vertices stay on the surface (within a cell of it)', `worst ${worst.toFixed(3)} units off a 40-unit dome`);
     assert(/no area/.test(thrown(() => simplifyMesh({ pos: new Float32Array(9), tris: new Uint32Array([0, 1, 2, 0, 1, 2]) }, 1))), 'a mesh with no area is refused');
     // 5,000 needles (100 x 50 rows, 2 apart across, 1 apart down), each 1 long and 0.001 wide: tiny area,
@@ -257,6 +288,32 @@ async function main(): Promise<void> {
       'a binary STL is read as its corners, skipping each triangle\'s normal', soup ? Array.from(soup.pos.slice(0, 3)).join(',') : 'null');
     assert(binaryStlSoup(new TextEncoder().encode('solid x\nendsolid x\n'.padEnd(200, ' ')).buffer) === null && binaryStlSoup(bin.slice(0, 120)) === null,
       'ASCII or a truncated file is not read as binary');
+  }
+
+  // ---------- D6e an over-cap .mcfig and a page opened before a deploy ----------
+  process.stdout.write('D6e .mcfig cap and stale builds\n');
+  {
+    const n = MAX_FIGURE_TRIANGLES + 1, big: Figure = { header: { ...demo.header, vertices: 3, triangles: n }, positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 1]), triangles: new Uint32Array(n * 3).fill(0).map((_, k) => k % 3) };
+    const enc = encodeFigure(big);
+    assert(/decimate below 300,000/.test(thrown(() => parseFigure(enc))) && thrown(() => parseFigure(enc, MAX_MCFIG_UPLOAD_TRIANGLES)) === '',
+      'a .mcfig over the drape cap is refused by the drape but parses for an upload, which simplifies it');
+    // updatedSinceLoad compares this page's entry script with the live index.html.
+    const g = globalThis as unknown as { document: unknown; fetch: unknown };
+    const keepDoc = g.document, keepFetch = g.fetch;
+    const page = (src: string, live: string | Error | number) => {
+      g.document = { scripts: [{ src }] };
+      g.fetch = async () => { if (live instanceof Error) throw live; return typeof live === 'number' ? { ok: false } : { ok: true, text: async () => live }; };
+      return updatedSinceLoad();
+    };
+    const html = (h: string) => `<script type="module" crossorigin src="/assets/index-${h}.js"></script>`;
+    const r = [await page('https://x/assets/index-AAA.js', html('BBB')), await page('https://x/assets/index-AAA.js', html('AAA')),
+      await page('https://x/assets/index-AAA.js', new TypeError('Failed to fetch')), await page('https://x/assets/index-AAA.js', 404),
+      await page('http://localhost:5173/src/main.ts', html('BBB'))];
+    g.document = keepDoc; g.fetch = keepFetch;
+    assert(r[0] && !r[1] && !r[2] && !r[3] && !r[4], 'a new deploy is told apart from the same build, offline, a failed request and a development server', JSON.stringify(r));
+    assert(isChunkLoadError(new TypeError('Failed to fetch dynamically imported module: https://x/assets/STLLoader-a.js'))
+      && isChunkLoadError(new TypeError('Importing a module script failed.')) && !isChunkLoadError(new Error('no triangles')),
+      'Chromium\'s and Safari\'s failed-import errors are recognised, other errors are not');
   }
 
   // ---------- D7 short cloth run ----------

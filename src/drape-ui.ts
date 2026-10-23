@@ -15,9 +15,10 @@ import { showToast } from './toast';
 import { formatSliderValue } from './slider-utils';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
-import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, type Figure, type FigurePose } from './drape-sim/figure';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, type Figure, type FigurePose } from './drape-sim/figure';
 import { bareDepth, FIGURE_FIT, reliefHeights } from './drape-sim/pipeline';
 import { simplifyMesh } from './drape-sim/simplify';
+import { isChunkLoadError, UPDATED_MESSAGE, updatedSinceLoad } from './stale-build';
 import type { DrapeJob, DrapeWorkerMessage } from './drape-sim/messages';
 import { drapeCarveFor, drapeJob, MAX_CLOTH_QUADS, remapToCarve, type DrapeCarve } from './drape-controls';
 import type { BufferAttribute, BufferGeometry, Mesh, Object3D } from 'three';
@@ -334,7 +335,8 @@ export function generateDrape(): void {
   w.onerror = (err) => {
     if (worker !== w) return;
     w.terminate(); worker = null; syncButtons(); setStatus(drapeStatusText());
-    showToast(`Drape worker error: ${err.message}`, 8000);
+    // A Worker that cannot load has no message: most often the site was deployed since this page opened.
+    void updatedSinceLoad().then(updated => showToast(updated ? UPDATED_MESSAGE : `Drape worker error: ${err.message || 'the solver did not start'}`, 8000));
   };
   // The Worker gets its own copy: the figure stays loaded for the next run.
   const job: DrapeJob = { type: 'drape', figure: figureFile.slice(0), pose, params };
@@ -370,27 +372,41 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
   const name = file.name, lower = name.toLowerCase(), seq = ++uploadSeq;
   let noTriangles = false, simplifiedFrom = 0;
   try {
-    let fig: Figure, buf = await file.arrayBuffer();
+    let fig: Figure | null = null, buf = await file.arrayBuffer();
     if (seq !== uploadSeq) return;                                  // a newer upload started meanwhile
-    if (lower.endsWith('.mcfig')) fig = parseFigure(buf);
-    else {
-      const loaded = await meshFromFile(buf, lower);
+    // A mesh to place (and maybe simplify), or a .mcfig already placed. A .mcfig over the drape's cap is
+    // simplified in place, keeping its header (its anchor, head centre, name and licence).
+    let mesh: { pos: Float32Array; tris: Uint32Array; up?: 'y' } | null = null, placed: Figure['header'] | null = null;
+    if (lower.endsWith('.mcfig')) {
+      const f = parseFigure(buf, MAX_MCFIG_UPLOAD_TRIANGLES);
+      if (f.triangles.length / 3 <= MAX_FIGURE_TRIANGLES) fig = f;
+      else { mesh = { pos: f.positions, tris: f.triangles }; placed = f.header; }
+    } else {
+      mesh = await meshFromFile(buf, lower);
       if (seq !== uploadSeq) return;
-      let { pos, tris } = loaded;
+    }
+    if (mesh) {
+      buf = new ArrayBuffer(0);                                     // the file's bytes are in `mesh` now
+      let { pos, tris } = mesh;
+      const up = mesh.up;
+      mesh = null;
       if (tris.length === 0) { noTriangles = true; throw new Error('it has no triangles (a point cloud cannot be draped)'); }
       if (tris.length / 3 > MAX_FIGURE_TRIANGLES) {
-        // A dense scan or CAD export: cluster it under the cap rather than refuse it (several seconds
-        // for millions of triangles, on this thread; the message is painted first).
+        // A dense scan or CAD export: cluster it under the cap rather than refuse it (about a second for
+        // nine million triangles, on this thread; the message is painted first).
         simplifiedFrom = tris.length / 3;
         const msg = `Simplifying ${simplifiedFrom.toLocaleString()} triangles to under ${MAX_FIGURE_TRIANGLES.toLocaleString()} for the drape...`;
         setStatus(msg); showToast(msg, 6000);
         await new Promise(r => setTimeout(r, 50));
-        ({ pos, tris } = simplifyMesh({ pos, tris }, MAX_FIGURE_TRIANGLES));
         if (seq !== uploadSeq) return;
+        ({ pos, tris } = simplifyMesh({ pos, tris }, MAX_FIGURE_TRIANGLES));
       }
-      buf = encodeFigure(figureFromMesh(pos, tris, { up: loaded.up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT }));
+      buf = encodeFigure(placed
+        ? { header: { ...placed, vertices: pos.length / 3, triangles: tris.length / 3 }, positions: pos, triangles: tris }
+        : figureFromMesh(pos, tris, { up: up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT }));
       fig = parseFigure(buf);
     }
+    if (!fig) throw new Error('the file holds no figure');           // each branch above sets one
     // Build its bare relief before replacing the current figure, so a figure that cannot be shown
     // (wrong up axis, nothing in the panel, a header the relief master refuses) is refused and the
     // current one stays.
@@ -401,11 +417,14 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
     if (simplifiedFrom) showToast(`${name}: simplified from ${simplifiedFrom.toLocaleString()} to ${fig.header.triangles.toLocaleString()} triangles for the drape.`, 5000);
   } catch (err) {
     if (seq !== uploadSeq) return;
-    if (simplifiedFrom) setStatus(drapeStatusText());
+    setStatus(drapeStatusText());                                   // a superseded upload may have left "Simplifying..."
+
     const why = err instanceof Error ? err.message : String(err);
-    // A loader chunk this tab cannot fetch: the site was updated since it opened (main.ts reloads once).
-    if (/dynamically imported module|Importing a module script failed/i.test(why)) {
-      showToast('MeshCraft was updated since this page opened: reload the page, then upload the figure again.', 8000);
+    if (isChunkLoadError(err)) {
+      // The reader for this file type is fetched on first use: updated site, or no connection.
+      const updated = await updatedSinceLoad();
+      if (seq !== uploadSeq) return;
+      showToast(updated ? UPDATED_MESSAGE : `Could not load the reader for ${name}: check the connection and try again.`, 8000);
       return;
     }
     const hint = lower.endsWith('.mcfig') || noTriangles ? '' : '. Check the up axis.';

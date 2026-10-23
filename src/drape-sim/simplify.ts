@@ -17,9 +17,11 @@ const MAX_PASSES = 24;
 /** Fewest triangles kept, as a share of the cap: below it the clustering has erased the shape. */
 const MIN_KEPT = 0.25;
 
-/** One clustering pass at `cell`; null when it keeps more than `maxTris` triangles. */
+/** One clustering pass at `cell`; null when it keeps more than `maxTris` triangles, or when the grid has
+ *  more cells than a cell key can number exactly (2^53; a cell that fine keeps everything anyway). */
 function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: number[], cell: number, maxTris: number): MeshArrays | null {
   const nx = Math.floor((hi[0] - lo[0]) / cell) + 1, ny = Math.floor((hi[1] - lo[1]) / cell) + 1;
+  if (nx * ny * (Math.floor((hi[2] - lo[2]) / cell) + 1) > Number.MAX_SAFE_INTEGER) return null;
   const nv = pos.length / 3, vid = new Int32Array(nv), ids = new Map<number, number>();
   const sums: number[] = [], counts: number[] = [];
   for (let v = 0; v < nv; v++) {
@@ -38,6 +40,16 @@ function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: num
     if (k === out.length) return null;
     out[k++] = a; out[k++] = b; out[k++] = c;
   }
+  // Clustering maps neighbouring triangles onto the same three cells: keep one of each (any winding).
+  const seen = new Set<string>();
+  let w = 0;
+  for (let t = 0; t < k; t += 3) {
+    const a = out[t], b = out[t + 1], c = out[t + 2];
+    const key = a < b ? (b < c ? `${a},${b},${c}` : a < c ? `${a},${c},${b}` : `${c},${a},${b}`) : (a < c ? `${b},${a},${c}` : b < c ? `${b},${c},${a}` : `${c},${b},${a}`);
+    if (seen.has(key)) continue;
+    seen.add(key); out[w++] = a; out[w++] = b; out[w++] = c;
+  }
+  k = w;
   const p = new Float32Array(counts.length * 3);
   for (let c = 0; c < counts.length; c++) for (let i = 0; i < 3; i++) p[c * 3 + i] = sums[c * 3 + i] / counts[c];
   return { pos: p, tris: out.slice(0, k) };
@@ -48,6 +60,7 @@ function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: num
 export function simplifyMesh(m: MeshArrays, maxTris: number): MeshArrays {
   const { pos, tris } = m;
   if (tris.length / 3 <= maxTris) return m;
+  if (!pos.every(Number.isFinite)) throw new Error('the mesh has non-finite coordinates');
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < pos.length; i += 3) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], pos[i + a]); hi[a] = Math.max(hi[a], pos[i + a]); }
   let area = 0;

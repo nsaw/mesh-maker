@@ -10,6 +10,7 @@ import { generateMesh, debouncedGenerate } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from './sbp-export';
 import { updateExportControls } from './toolbar';
 import { estimateDepth } from './depth-estimate';
+import { isChunkLoadError, UPDATED_MESSAGE, updatedSinceLoad } from './stale-build';
 import { showToast } from './toast';
 import { applySurfaceMaterial } from './render';
 
@@ -1109,6 +1110,7 @@ async function runDepthEstimation(btn: HTMLButtonElement): Promise<void> {
     generateMesh();
     showToast('Depth map estimated');
   } catch (err) {
+    if (isChunkLoadError(err) && await updatedSinceLoad()) { showToast(UPDATED_MESSAGE, 8000); return; }
     const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
     showToast(`Depth estimation unavailable — using image luminance${reason}`, 4500);
   } finally {
