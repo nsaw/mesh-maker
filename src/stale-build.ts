@@ -16,7 +16,8 @@ export async function updatedSinceLoad(): Promise<boolean> {
   const mine = Array.from(document.scripts, s => s.src).find(src => ENTRY.test(src));
   if (!mine) return false;
   try {
-    const res = await fetch('/', { cache: 'no-store' });
+    // Bounded: a stalled request must not hold the caller's message (or a busy button) indefinitely.
+    const res = await fetch('/', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (!res.ok) return false;
     const live = (await res.text()).match(ENTRY)?.[0];
     return live !== undefined && !mine.endsWith(live);

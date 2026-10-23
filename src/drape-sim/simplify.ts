@@ -32,24 +32,25 @@ function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: num
     sums[c * 3] += x; sums[c * 3 + 1] += y; sums[c * 3 + 2] += z; counts[c]++;
     vid[v] = c;
   }
+  // Cluster ids key a triangle exactly while they fit in 24 bits (2^48 for the first two corners).
+  if (counts.length > 2 ** 24) return null;
   const out = new Uint32Array(Math.min(tris.length, maxTris * 3));
+  // Clustering maps neighbouring triangles (and coincident shells) onto the same three cells: keep one
+  // of each, in either winding, before counting against the cap.
+  const seen = new Map<number, Set<number>>();
   let k = 0;
   for (let t = 0; t < tris.length; t += 3) {
     const a = vid[tris[t]], b = vid[tris[t + 1]], c = vid[tris[t + 2]];
     if (a === b || b === c || a === c) continue;
+    const lo3 = Math.min(a, b, c), hi3 = Math.max(a, b, c), mid = a + b + c - lo3 - hi3;
+    const pair = lo3 * 2 ** 24 + mid;
+    let thirds = seen.get(pair);
+    if (!thirds) { thirds = new Set(); seen.set(pair, thirds); }
+    if (thirds.has(hi3)) continue;
+    thirds.add(hi3);
     if (k === out.length) return null;
     out[k++] = a; out[k++] = b; out[k++] = c;
   }
-  // Clustering maps neighbouring triangles onto the same three cells: keep one of each (any winding).
-  const seen = new Set<string>();
-  let w = 0;
-  for (let t = 0; t < k; t += 3) {
-    const a = out[t], b = out[t + 1], c = out[t + 2];
-    const key = a < b ? (b < c ? `${a},${b},${c}` : a < c ? `${a},${c},${b}` : `${c},${a},${b}`) : (a < c ? `${b},${a},${c}` : b < c ? `${b},${c},${a}` : `${c},${b},${a}`);
-    if (seen.has(key)) continue;
-    seen.add(key); out[w++] = a; out[w++] = b; out[w++] = c;
-  }
-  k = w;
   const p = new Float32Array(counts.length * 3);
   for (let c = 0; c < counts.length; c++) for (let i = 0; i < 3; i++) p[c * 3 + i] = sums[c * 3 + i] / counts[c];
   return { pos: p, tris: out.slice(0, k) };

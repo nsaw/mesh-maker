@@ -336,7 +336,7 @@ export function generateDrape(): void {
     if (worker !== w) return;
     w.terminate(); worker = null; syncButtons(); setStatus(drapeStatusText());
     // A Worker that cannot load has no message: most often the site was deployed since this page opened.
-    void updatedSinceLoad().then(updated => showToast(updated ? UPDATED_MESSAGE : `Drape worker error: ${err.message || 'the solver did not start'}`, 8000));
+    void updatedSinceLoad().then(updated => showToast(updated ? UPDATED_MESSAGE : `Drape worker error: ${err.message || 'the solver did not start (check the connection)'}`, 8000));
   };
   // The Worker gets its own copy: the figure stays loaded for the next run.
   const job: DrapeJob = { type: 'drape', figure: figureFile.slice(0), pose, params };
@@ -418,7 +418,6 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
   } catch (err) {
     if (seq !== uploadSeq) return;
     setStatus(drapeStatusText());                                   // a superseded upload may have left "Simplifying..."
-
     const why = err instanceof Error ? err.message : String(err);
     if (isChunkLoadError(err)) {
       // The reader for this file type is fetched on first use: updated site, or no connection.
@@ -427,7 +426,8 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
       showToast(updated ? UPDATED_MESSAGE : `Could not load the reader for ${name}: check the connection and try again.`, 8000);
       return;
     }
-    const hint = lower.endsWith('.mcfig') || noTriangles ? '' : '. Check the up axis.';
+    // The up axis matters only to placement: a file that could not be read or simplified gets no hint.
+    const hint = lower.endsWith('.mcfig') || noTriangles || /non-finite|no area|could not simplify/.test(why) ? '' : '. Check the up axis.';
     showToast(`Could not use ${name} as a figure: ${why}${hint}`, 8000);
   }
 }

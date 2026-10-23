@@ -207,7 +207,22 @@ async function main(): Promise<void> {
     assert(f.header.anchor === 'top-centre' && Math.abs(lo + hi) < 1e-5, 'an upload is centred across the panel, not hung beside a high corner', `x ${lo.toFixed(3)} to ${hi.toFixed(3)}`);
     assert(Math.abs(plo + phi) < 0.5 && Math.abs(top - 1) < 1e-6, 'posed, it stays near the middle with its top at z = 1', `x ${plo.toFixed(3)} to ${phi.toFixed(3)}`);
     assert(hi - lo > 1.8 * FIGURE_FIT.halfWidth * 0.95, 'centred, the tile fills the panel width', `${(hi - lo).toFixed(3)} of ${(2 * FIGURE_FIT.halfWidth).toFixed(3)}`);
-    assert(demo.header.anchor === undefined && poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }).every((v, i) => v === tiltFigure(demo, 25)[i]),
+    // An L (a tall post on one end of a long foot): it stays centred as it tilts, and a degree of tilt
+    // does not swing it sideways (the middle of its top used to jump between the post and the foot).
+    const L: number[] = [], Lf: number[] = [];
+    const box = (x0: number, x1: number, z0: number, z1: number): void => {
+      const b = L.length / 3;
+      for (const x of [x0, x1]) for (const y of [-1, 1]) for (const z of [z0, z1]) L.push(x, y, z);
+      for (const f of faces) Lf.push(b + f);
+    };
+    box(-10, 10, 0, 2); box(6, 10, 2, 14);
+    const lf = figureFromMesh(Float32Array.from(L), Lf, { up: 'z', turnDeg: 0, name: 'L', fit: FIGURE_FIT });
+    const mid = (t: number): number => { const [a, b] = xs(poseFigure(lf, { tiltDeg: t, turnDeg: 0, leanDeg: 0 })); return (a + b) / 2; };
+    const [l0, l1] = xs(poseFigure(lf, { tiltDeg: 0, turnDeg: 0, leanDeg: 0 }));
+    assert(Math.abs(l0 + l1) < 1e-5 && Math.abs(mid(25) - mid(26)) < 1e-3, 'an L-shaped upload stays centred as it tilts, without jumping a degree to the next',
+      `x ${l0.toFixed(3)} to ${l1.toFixed(3)}, middle at 25/26 deg ${mid(25).toFixed(4)} / ${mid(26).toFixed(4)}`);
+    const tilted = tiltFigure(demo, 25);
+    assert(demo.header.anchor === undefined && poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }).every((v, i) => v === tilted[i]),
       'the bundled figure still hangs from its crown (no anchor in its header)');
     assert(/anchor/.test(thrown(() => parseFigure(encodeFigure({ ...f, header: { ...f.header, anchor: 'side' as never } })))), 'an unknown anchor is refused');
   }
@@ -261,6 +276,11 @@ async function main(): Promise<void> {
     const keys = new Set<string>();
     for (let t = 0; t < fr.tris.length; t += 3) keys.add([fr.tris[t], fr.tris[t + 1], fr.tris[t + 2]].sort((a, b) => a - b).join(','));
     assert(keys.size === fr.tris.length / 3, 'no triangle is kept twice (a duplicate in either winding is dropped)', `${fr.tris.length / 3} triangles, ${keys.size} distinct`);
+    // Four coincident copies of the dome (a model exported with stacked shells) simplify like one.
+    const shells = new Float32Array(pos.length * 4); for (let q = 0; q < 4; q++) shells.set(pos, q * pos.length);
+    let shellCount = -1, shellErr = '';
+    try { shellCount = simplifyMesh({ pos: shells, tris: Uint32Array.from({ length: shells.length / 3 }, (_, k) => k) }, cap).tris.length / 3; } catch (e) { shellErr = e instanceof Error ? e.message : String(e); }
+    assert(shellCount >= cap / 4 && shellCount <= cap, 'coincident shells are deduplicated before counting against the cap', shellErr || `${shellCount} triangles`);
     const nanPos = Float32Array.from(pos); nanPos[4] = NaN;
     assert(/non-finite/.test(thrown(() => simplifyMesh({ pos: nanPos, tris }, cap))), 'a mesh with a non-finite coordinate is refused with that reason');
     assert(worst < 1.5, 'clustered vertices stay on the surface (within a cell of it)', `worst ${worst.toFixed(3)} units off a 40-unit dome`);

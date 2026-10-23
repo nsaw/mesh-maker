@@ -84,15 +84,16 @@ export interface FigurePose { tiltDeg: number; turnDeg: number; leanDeg: number;
 /** Where the cloth hangs from, for figure positions `pos`: the horizontal spot (x, y) that goes under
  *  (0, 0), and `top`, the highest point, which goes to z = 1 so the sheet starts above everything.
  *  'crown' (the bundled and Blender figures): the highest vertex, as the Blender proof hangs its veil.
- *  'top-centre' (uploaded meshes): the middle across of everything within HEAD_HEIGHT of the top, at the
- *  highest vertex's depth, so a bust still hangs from its head and a tilted tile or a vase from the
- *  middle of its top rather than a corner beside it. */
+ *  'top-centre' (uploaded meshes): the middle of the posed figure's whole width, at the highest vertex's
+ *  depth, so it stays centred in the panel as it is posed and a tilted tile hangs from the middle of its
+ *  top rather than a corner beside it. Where the surface under that spot is lower than the top, the
+ *  pinned cloth starts a little above it. */
 export function figureAnchor(pos: ArrayLike<number>, mode: 'crown' | 'top-centre'): { x: number; y: number; top: number } {
   let top = -Infinity, ti = 0;
   for (let i = 0; i < pos.length; i += 3) if (pos[i + 2] > top) { top = pos[i + 2]; ti = i; }
   if (mode === 'crown') return { x: pos[ti], y: pos[ti + 1], top };
   let lo = Infinity, hi = -Infinity;
-  for (let i = 0; i < pos.length; i += 3) if (pos[i + 2] > top - HEAD_HEIGHT) { lo = Math.min(lo, pos[i]); hi = Math.max(hi, pos[i]); }
+  for (let i = 0; i < pos.length; i += 3) { lo = Math.min(lo, pos[i]); hi = Math.max(hi, pos[i]); }
   return { x: (lo + hi) / 2, y: pos[ti + 1], top };
 }
 
@@ -176,12 +177,8 @@ export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, 
     if (p.up === 'y') { const t = y; y = -z; z = t; }                // Y-up model: its +Z (glTF front) faces the viewer
     out[i * 3] = x * c - y * s; out[i * 3 + 1] = x * s + y * c; out[i * 3 + 2] = z;
   }
-  // Centred on its whole width (its own units are unknown here, so HEAD_HEIGHT means nothing yet); posing
-  // then hangs it from the middle of its top (figureAnchor 'top-centre', in scene units).
-  const crown = figureAnchor(out, 'crown');
-  let xlo = Infinity, xhi = -Infinity;
-  for (let i = 0; i < n; i++) { xlo = Math.min(xlo, out[i * 3]); xhi = Math.max(xhi, out[i * 3]); }
-  const cx = (xlo + xhi) / 2, cy = crown.y, cz = crown.top;
+  // The same anchor posing uses, so the fitted margins hold at the default pose.
+  const anchor = figureAnchor(out, 'top-centre'), cx = anchor.x, cy = anchor.y, cz = anchor.top;
   let side = 0, below = 0;
   for (let i = 0; i < n; i++) { side = Math.max(side, Math.abs(out[i * 3] - cx)); below = Math.max(below, cz - out[i * 3 + 2]); }
   const k = Math.min(side > 0 ? p.fit.halfWidth / side : Infinity, below > 0 ? p.fit.below / below : Infinity);

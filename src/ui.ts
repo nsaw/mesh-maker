@@ -585,7 +585,7 @@ function buildDrapeSections(): HTMLElement[] {
   status.style.fontSize = '10px';
   status.style.color = 'var(--text2)';
   const about = createElement('div', undefined,
-    'Silk cloth hung from the crown under gravity, simulated in this tab (Jolt Physics). The relief is the front view at the X / Y size (3:4), cut to Material Thickness and Relief Depth.');
+    'Silk cloth hung from the top of the figure under gravity, simulated in this tab (Jolt Physics). The relief is the front view at the X / Y size (3:4), cut to Material Thickness and Relief Depth.');
   about.style.fontSize = '10px';
   about.style.color = 'var(--text3)';
 

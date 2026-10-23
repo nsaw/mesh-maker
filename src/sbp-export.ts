@@ -252,7 +252,7 @@ function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: 
     sbpWorkerRunning = false;
     // A Worker that cannot load has no message: most often the site was deployed since this page opened.
     void updatedSinceLoad().then(updated => showToast(updated ? UPDATED_MESSAGE
-      : `Worker error: ${err.message || 'the toolpath worker did not start'}.${input.kind === 'stl' ? ' Re-upload the STL and try again.' : ''}`, 8000));
+      : `Worker error: ${err.message || 'the toolpath worker did not start (check the connection)'}.${input.kind === 'stl' ? ' Re-upload the STL and try again.' : ''}`, 8000));
   };
 
   worker.postMessage(input, transfer);

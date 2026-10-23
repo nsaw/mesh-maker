@@ -38,7 +38,7 @@ npm run lint             # eslint src/ cli/
 npm run lint:fix
 npm run test:relief      # tsx cli/voronoi-relief.spec.ts
 npm run test:gh-parity   # tsx cli/grasshopper-parity.spec.ts
-npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~5 s)
+npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~20 s)
 npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drapes vs the Blender silk and gathered runs, ~2.5 min)
 npm run test:depthmap       # tsx cli/depthmap.spec.ts (luma sampling, orientation, cutoff, share links)
 npm run drape-run -- <figure.mcfig> --out <dir> [--preset silk|gathered] [--tilt 25] [--turn 0] [--lean 0] [--scale 100] [--param key=value]   # one web drape in Node
