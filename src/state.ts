@@ -1,7 +1,7 @@
 import type { SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
-import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, DRAPE_WIDTH_RANGE, MIN_DRAPE_BACKING_IN, type DrapeSettings, type DrapeWindMode } from './drape-controls';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, snapCarveWidth, type DrapeSettings, type DrapeWindMode } from './drape-controls';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 /** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
@@ -920,7 +920,12 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // crafted link must not raise them past the sliders.
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
-    if ('drapeCarveWidth' in result) clampField('drapeCarveWidth', DRAPE_WIDTH_RANGE[0], DRAPE_WIDTH_RANGE[1]);
+    // On the sliders' grid too, so the labels show the exact carve (an off-grid width drifted on a label click).
+    if ('drapeCarveWidth' in result) {
+      const n = toFiniteNumber(result.drapeCarveWidth);
+      if (n === null) delete (result as Record<string, unknown>).drapeCarveWidth;
+      else (result as Record<string, unknown>).drapeCarveWidth = snapCarveWidth(n);
+    }
     // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same
     // way); a link with a thin stock and no depth gets the default depth capped too.
     if ('drapeReliefDepth' in result || 'drapeStock' in result) {

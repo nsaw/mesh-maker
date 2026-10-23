@@ -161,6 +161,8 @@ process.stdout.write('T15 share links\n');
   const v16pos = deserializeConfig(enc({ _v: 16, mode: 'drape', drapeFaceX: 6, drapeCarveWidth: 40, drapeFigureScale: 1000 }));
   assert(v16pos.drapeFaceX === 6 && v16pos.drapeCarveWidth === 18 && v16pos.drapeFigureScale === 300,
     'a v16 link keeps its percentages; carve width and Figure Size clamp to their sliders', JSON.stringify(v16pos));
+  const offGrid = [9.1, 12.1875, 'x'].map(w => deserializeConfig(enc({ _v: 16, mode: 'drape', drapeCarveWidth: w })).drapeCarveWidth);
+  assert(offGrid[0] === 9 && offGrid[1] === 12 && offGrid[2] === undefined, 'a link\'s carve width snaps to the sliders\' 0.75 in grid (junk dropped)', JSON.stringify(offGrid));
   {
     const keep = { ...STATE };
     Object.assign(STATE, { mode: 'drape', drapeCarveWidth: 9, drapeFigureScale: 140 });

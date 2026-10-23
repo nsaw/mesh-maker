@@ -89,6 +89,12 @@ export const DRAPE_STOCK_RANGE: readonly [number, number] = [0.25, 4];
 /** Carve width range on the DRAPE tab, inches; the height is 4/3 of it, so 18 in wide is 24 in tall, the
  *  ShopBot bed's Y. */
 export const DRAPE_WIDTH_RANGE: readonly [number, number] = [3, 18];
+/** The carve width's grid, inches: 0.75 across is 1 in up at 3:4, so the X and Y sliders share it. */
+export const DRAPE_WIDTH_STEP = 0.75;
+/** A carve width on DRAPE_WIDTH_STEP within DRAPE_WIDTH_RANGE (the sliders and share links both use it). */
+export function snapCarveWidth(w: number): number {
+  return Math.min(DRAPE_WIDTH_RANGE[1], Math.max(DRAPE_WIDTH_RANGE[0], Math.round(w / DRAPE_WIDTH_STEP) * DRAPE_WIDTH_STEP));
+}
 
 export interface DrapeCarve { stockIn: number; depthIn: number; backingIn: number; widthIn: number; heightIn: number }
 

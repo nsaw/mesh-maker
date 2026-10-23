@@ -1,6 +1,6 @@
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, boardIsLinkBoard, reliefMasterActive, saveNoiseDims } from './state';
 import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
-import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, DRAPE_WIDTH_RANGE, drapeControlEffect, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, DRAPE_WIDTH_RANGE, DRAPE_WIDTH_STEP, drapeControlEffect, snapCarveWidth, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
 import { PANEL_ASPECT } from './drape-sim/pipeline';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
@@ -190,7 +190,7 @@ function buildPresetSection(): HTMLElement {
 /** DRAPE's carve size sliders. Their steps line up at 3:4 (0.75 in across is 1 in up), so a value set on
  *  one slider is exactly on the other's grid and its label, and a click on either label commits nothing
  *  new. They show and reset to the carve, not the board meshX / meshY hold for the other tabs. */
-export const CARVE_STEP: Record<'meshX' | 'meshY', number> = { meshX: 0.75, meshY: 1 };
+export const CARVE_STEP: Record<'meshX' | 'meshY', number> = { meshX: DRAPE_WIDTH_STEP, meshY: DRAPE_WIDTH_STEP / PANEL_ASPECT };
 function carveSlider(key: 'meshX' | 'meshY', value: number, reset: number): HTMLDivElement {
   const k = key === 'meshX' ? 1 : 1 / PANEL_ASPECT;
   const row = slider(key, `${key === 'meshX' ? 'X' : 'Y'} (inches)`, DRAPE_WIDTH_RANGE[0] * k, DRAPE_WIDTH_RANGE[1] * k, CARVE_STEP[key],
@@ -714,8 +714,7 @@ function wireControls(): void {
       if (STATE.mode === 'drape' && (key === 'meshX' || key === 'meshY')) {
         // Snapped to the shared 3:4 grid (CARVE_STEP), so both sliders and labels show exact values.
         const raw = parseFloat(sl.value), w = key === 'meshX' ? raw : raw * PANEL_ASPECT;
-        const snapped = Math.round(w / CARVE_STEP.meshX) * CARVE_STEP.meshX;
-        STATE.drapeCarveWidth = Math.min(DRAPE_WIDTH_RANGE[1], Math.max(DRAPE_WIDTH_RANGE[0], snapped));
+        STATE.drapeCarveWidth = snapCarveWidth(w);
         for (const [k, v] of [['meshX', STATE.drapeCarveWidth], ['meshY', STATE.drapeCarveWidth / PANEL_ASPECT]] as const) {
           const input = document.querySelector<HTMLInputElement>(`input[data-key="${k}"]`);
           if (input) input.value = String(v);
