@@ -10,6 +10,7 @@ import { generateMesh, debouncedGenerate } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from './sbp-export';
 import { updateExportControls } from './toolbar';
 import { estimateDepth } from './depth-estimate';
+import { isChunkLoadError, UPDATED_MESSAGE, updatedSinceLoad } from './stale-build';
 import { showToast } from './toast';
 import { applySurfaceMaterial } from './render';
 
@@ -584,7 +585,7 @@ function buildDrapeSections(): HTMLElement[] {
   status.style.fontSize = '10px';
   status.style.color = 'var(--text2)';
   const about = createElement('div', undefined,
-    'Silk cloth hung from the crown under gravity, simulated in this tab (Jolt Physics). The relief is the front view at the X / Y size (3:4), cut to Material Thickness and Relief Depth.');
+    'Silk cloth hung from the top of the figure under gravity, simulated in this tab (Jolt Physics). The relief is the front view at the X / Y size (3:4), cut to Material Thickness and Relief Depth.');
   about.style.fontSize = '10px';
   about.style.color = 'var(--text3)';
 
@@ -1109,6 +1110,7 @@ async function runDepthEstimation(btn: HTMLButtonElement): Promise<void> {
     generateMesh();
     showToast('Depth map estimated');
   } catch (err) {
+    if (isChunkLoadError(err) && await updatedSinceLoad()) { showToast(UPDATED_MESSAGE, 8000); return; }
     const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
     showToast(`Depth estimation unavailable — using image luminance${reason}`, 4500);
   } finally {

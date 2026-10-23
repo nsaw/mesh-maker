@@ -5,6 +5,7 @@ import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { updateStats } from './stats';
 import { updateExportControls } from './toolbar';
 import { showToast } from './toast';
+import { UPDATED_MESSAGE, updatedSinceLoad } from './stale-build';
 import type { MaterialProfile, SbpConfig, SbpStats } from './sbp/types';
 import type { SbpWorkerInput, SbpWorkerOutput } from './sbp/worker';
 
@@ -249,7 +250,9 @@ function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: 
   worker.onerror = (err) => {
     worker.terminate();
     sbpWorkerRunning = false;
-    showToast(`Worker error: ${err.message}.${input.kind === 'stl' ? ' Re-upload the STL and try again.' : ''}`, 8000);
+    // A Worker that cannot load has no message: most often the site was deployed since this page opened.
+    void updatedSinceLoad().then(updated => showToast(updated ? UPDATED_MESSAGE
+      : `Worker error: ${err.message || 'the toolpath worker did not start (check the connection)'}.${input.kind === 'stl' ? ' Re-upload the STL and try again.' : ''}`, 8000));
   };
 
   worker.postMessage(input, transfer);
