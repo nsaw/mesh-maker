@@ -16,8 +16,9 @@ const CELL_STEP = 1.3;
 const MAX_PASSES = 24;
 /** Fewest triangles kept, as a share of the cap: below it the clustering has erased the shape. */
 const MIN_KEPT = 0.25;
-/** Most clusters a pass may make: under V8's Map limit (2^24 entries; some builds stop at 2^23) and the
- *  24-bit cluster ids the duplicate check packs. A pass that needs more counts as too fine. */
+/** Most clusters a pass may make: half V8's Map limit (2^24 entries, Node 24.22 throws at exactly that),
+ *  a margin for engines that stop earlier, and within the 24-bit cluster ids the duplicate check packs.
+ *  A pass that needs more counts as too fine. */
 export const MAX_CLUSTERS = 2 ** 23;
 
 /** One clustering pass at `cell`; null when it keeps more than `maxTris` triangles, makes more than
