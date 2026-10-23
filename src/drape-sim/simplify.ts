@@ -16,10 +16,14 @@ const CELL_STEP = 1.3;
 const MAX_PASSES = 24;
 /** Fewest triangles kept, as a share of the cap: below it the clustering has erased the shape. */
 const MIN_KEPT = 0.25;
+/** Most clusters a pass may make: under V8's Map limit (2^24 entries; some builds stop at 2^23) and the
+ *  24-bit cluster ids the duplicate check packs. A pass that needs more counts as too fine. */
+export const MAX_CLUSTERS = 2 ** 23;
 
-/** One clustering pass at `cell`; null when it keeps more than `maxTris` triangles, or when the grid has
- *  more cells than a cell key can number exactly (2^53; a cell that fine keeps everything anyway). */
-function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: number[], cell: number, maxTris: number): MeshArrays | null {
+/** One clustering pass at `cell`; null when it keeps more than `maxTris` triangles, makes more than
+ *  `maxClusters` clusters, or has more cells than a cell key can number exactly (2^53). A cell that fine
+ *  keeps everything anyway. */
+function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: number[], cell: number, maxTris: number, maxClusters: number): MeshArrays | null {
   const nx = Math.floor((hi[0] - lo[0]) / cell) + 1, ny = Math.floor((hi[1] - lo[1]) / cell) + 1;
   if (nx * ny * (Math.floor((hi[2] - lo[2]) / cell) + 1) > Number.MAX_SAFE_INTEGER) return null;
   const nv = pos.length / 3, vid = new Int32Array(nv), ids = new Map<number, number>();
@@ -28,15 +32,17 @@ function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: num
     const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
     const key = Math.floor((x - lo[0]) / cell) + nx * (Math.floor((y - lo[1]) / cell) + ny * Math.floor((z - lo[2]) / cell));
     let c = ids.get(key);
-    if (c === undefined) { c = counts.length; ids.set(key, c); sums.push(0, 0, 0); counts.push(0); }
+    if (c === undefined) {
+      if (counts.length >= maxClusters) return null;
+      c = counts.length; ids.set(key, c); sums.push(0, 0, 0); counts.push(0);
+    }
     sums[c * 3] += x; sums[c * 3 + 1] += y; sums[c * 3 + 2] += z; counts[c]++;
     vid[v] = c;
   }
-  // Cluster ids key a triangle exactly while they fit in 24 bits (2^48 for the first two corners).
-  if (counts.length > 2 ** 24) return null;
   const out = new Uint32Array(Math.min(tris.length, maxTris * 3));
   // Clustering maps neighbouring triangles (and coincident shells) onto the same three cells: keep one
-  // of each, in either winding, before counting against the cap.
+  // of each, in either winding, before counting against the cap. Ids are under MAX_CLUSTERS, so the
+  // first two corners key exactly in 2^48.
   const seen = new Map<number, Set<number>>();
   let k = 0;
   for (let t = 0; t < tris.length; t += 3) {
@@ -57,8 +63,9 @@ function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: num
 }
 
 /** `m` itself when it has at most `maxTris` triangles, else a clustered copy keeping between MIN_KEPT of
- *  `maxTris` and `maxTris`. Throws if the mesh has no area, or no cell lands in that band. */
-export function simplifyMesh(m: MeshArrays, maxTris: number): MeshArrays {
+ *  `maxTris` and `maxTris`. Throws if the mesh has no area, or no cell lands in that band. `maxClusters`
+ *  is lowered only by the specs, to reach the cluster limit without millions of vertices. */
+export function simplifyMesh(m: MeshArrays, maxTris: number, maxClusters = MAX_CLUSTERS): MeshArrays {
   const { pos, tris } = m;
   if (tris.length / 3 <= maxTris) return m;
   if (!pos.every(Number.isFinite)) throw new Error('the mesh has non-finite coordinates');
@@ -75,7 +82,7 @@ export function simplifyMesh(m: MeshArrays, maxTris: number): MeshArrays {
   if (!(cell > 0) || !Number.isFinite(cell)) throw new Error('the mesh has no area to simplify');
   let tooFine = 0, tooCoarse = Infinity;                      // cells known to keep too many / too few
   for (let pass = 0; pass < MAX_PASSES; pass++) {
-    const r = clusterPass(pos, tris, lo, hi, cell, maxTris);
+    const r = clusterPass(pos, tris, lo, hi, cell, maxTris, maxClusters);
     if (r && r.tris.length / 3 >= MIN_KEPT * maxTris) return r;
     if (r) tooCoarse = cell; else tooFine = cell;
     cell = Number.isFinite(tooCoarse) && tooFine > 0 ? (tooFine + tooCoarse) / 2 : r ? cell / CELL_STEP : cell * CELL_STEP;

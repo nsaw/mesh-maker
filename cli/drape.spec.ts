@@ -215,12 +215,14 @@ async function main(): Promise<void> {
       for (const x of [x0, x1]) for (const y of [-1, 1]) for (const z of [z0, z1]) L.push(x, y, z);
       for (const f of faces) Lf.push(b + f);
     };
-    box(-10, 10, 0, 2); box(6, 10, 2, 14);
+    box(-10, 10, 0, 2); box(6, 10, 2, 60);
     const lf = figureFromMesh(Float32Array.from(L), Lf, { up: 'z', turnDeg: 0, name: 'L', fit: FIGURE_FIT });
     const mid = (t: number): number => { const [a, b] = xs(poseFigure(lf, { tiltDeg: t, turnDeg: 0, leanDeg: 0 })); return (a + b) / 2; };
     const [l0, l1] = xs(poseFigure(lf, { tiltDeg: 0, turnDeg: 0, leanDeg: 0 }));
-    assert(Math.abs(l0 + l1) < 1e-5 && Math.abs(mid(25) - mid(26)) < 1e-3, 'an L-shaped upload stays centred as it tilts, without jumping a degree to the next',
-      `x ${l0.toFixed(3)} to ${l1.toFixed(3)}, middle at 25/26 deg ${mid(25).toFixed(4)} / ${mid(26).toFixed(4)}`);
+    let jump = 0;
+    for (let t = -20; t < 60; t++) jump = Math.max(jump, Math.abs(mid(t + 1) - mid(t)));
+    assert(Math.abs(l0 + l1) < 1e-5 && jump < 1e-3, 'an L-shaped upload (a 58-unit post on a 20-unit foot) stays centred at every tilt, never jumping a degree to the next',
+      `x ${l0.toFixed(3)} to ${l1.toFixed(3)}, worst 1-degree move ${jump.toFixed(4)}`);
     const tilted = tiltFigure(demo, 25);
     assert(demo.header.anchor === undefined && poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }).every((v, i) => v === tilted[i]),
       'the bundled figure still hangs from its crown (no anchor in its header)');
@@ -281,6 +283,12 @@ async function main(): Promise<void> {
     let shellCount = -1, shellErr = '';
     try { shellCount = simplifyMesh({ pos: shells, tris: Uint32Array.from({ length: shells.length / 3 }, (_, k) => k) }, cap).tris.length / 3; } catch (e) { shellErr = e instanceof Error ? e.message : String(e); }
     assert(shellCount >= cap / 4 && shellCount <= cap, 'coincident shells are deduplicated before counting against the cap', shellErr || `${shellCount} triangles`);
+    // A pass needing more clusters than the limit counts as too fine (V8 throws past 2^23 or 2^24 Map
+    // entries): with a cap of 4,000 the dome keeps 1,332 vertices; limited to 1,000 clusters, the passes
+    // that need more are retried coarser until one fits.
+    const few = simplifyMesh({ pos, tris }, 4000, 1000);
+    assert(few.pos.length / 3 <= 1000 && few.tris.length / 3 >= 1000, 'a pass over the cluster limit is retried coarser, not thrown',
+      `${few.pos.length / 3} vertices, ${few.tris.length / 3} triangles`);
     const nanPos = Float32Array.from(pos); nanPos[4] = NaN;
     assert(/non-finite/.test(thrown(() => simplifyMesh({ pos: nanPos, tris }, cap))), 'a mesh with a non-finite coordinate is refused with that reason');
     assert(worst < 1.5, 'clustered vertices stay on the surface (within a cell of it)', `worst ${worst.toFixed(3)} units off a 40-unit dome`);
