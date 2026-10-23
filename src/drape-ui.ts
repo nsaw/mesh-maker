@@ -3,8 +3,8 @@
  * bare relief preview, and the cloth simulation run in a Worker (src/drape-sim/worker.ts) with the
  * settings of src/drape-controls.ts. Results become STATE.drapeMaster, an in-memory relief master, so
  * preview, stats, STL and SBP export all read the full-resolution heights through the same paths as an
- * imported .mcrelief. The carve (material thickness, relief depth) is applied when the master is built,
- * so changing it remaps the shown relief without simulating again.
+ * imported .mcrelief. The carve (material thickness, relief depth, width) is applied when the master is
+ * built, so changing it remaps the shown relief without simulating again.
  */
 import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
@@ -12,17 +12,18 @@ import { syncSbpSafeZIfStockMoved } from './sbp-export';
 import { syncAspectLockButton } from './ui';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
+import { formatSliderValue } from './slider-utils';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, type Figure, type FigurePose } from './drape-sim/figure';
-import { bareDepth, PANEL_HEIGHT_IN, PANEL_WIDTH_IN, reliefHeights } from './drape-sim/pipeline';
+import { bareDepth, FIGURE_FIT, reliefHeights } from './drape-sim/pipeline';
 import type { DrapeJob, DrapeWorkerMessage } from './drape-sim/messages';
 import { drapeCarveFor, drapeJob, MAX_CLOTH_QUADS, remapToCarve, type DrapeCarve } from './drape-controls';
-import type { BufferAttribute, BufferGeometry, Mesh } from 'three';
+import type { BufferAttribute, BufferGeometry, Mesh, Object3D } from 'three';
 
 export const DEMO_FIGURE_URL = '/demo/venus-de-milo.mcfig';
 export const DEMO_FIGURE_NAME = 'Venus de Milo bust (demo, CC0)';
-export const FIGURE_EXTENSIONS = ['.mcfig', '.stl', '.obj', '.glb', '.gltf'];
+export const FIGURE_EXTENSIONS = ['.mcfig', '.stl', '.obj', '.ply', '.glb', '.gltf', '.usdz', '.usd', '.usda', '.usdc'];
 
 let figure: Figure | null = null;
 let figureFile: ArrayBuffer | null = null;
@@ -35,8 +36,8 @@ let bareError: string | null = null;
 let demoLoading: Promise<void> | null = null;
 /** Bumped by every upload; a read that finishes after a newer upload started is dropped. */
 let uploadSeq = 0;
-/** The size controls as they were before the Drape tab took them over (its relief fixes the board at
- *  12 x 16 in and the stock at STATE.drapeStock), and the camera, which the Drape tab points straight at
+/** The size controls as they were before the Drape tab took them over (its relief sets the board to
+ *  STATE.drapeCarveWidth at 3:4 and the stock to STATE.drapeStock), and the camera, which the Drape tab points straight at
  *  the carve. Noise and Depth Map get them back on leaving, so a look at the Drape tab never changes the
  *  board another tab cuts or the view it had. */
 let sizeBeforeDrape: Pick<typeof STATE, 'meshX' | 'meshY' | 'resolution' | 'baseThickness' | 'aspectLocked' | 'depthMapAR'
@@ -94,23 +95,24 @@ export function drapeStatusText(): string {
 }
 
 function currentPose(): FigurePose {
-  return { tiltDeg: STATE.drapeTilt, turnDeg: STATE.drapeTurn, leanDeg: STATE.drapeLean };
+  return drapeJob(STATE, STATE.drapeWindMode).pose;
 }
 
 function poseText(p: FigurePose): string {
   const parts = [`tilt ${p.tiltDeg} deg`];
   if (p.turnDeg) parts.push(`turn ${p.turnDeg} deg`);
   if (p.leanDeg) parts.push(`lean ${p.leanDeg} deg`);
+  if (p.scale !== undefined && p.scale !== 1) parts.push(`size ${Math.round(p.scale * 100)}%`);
   return parts.join(', ');
 }
 
-/** The carve the relief is cut to: STATE.drapeStock of material with STATE.drapeReliefDepth of relief
- *  (src/drape-controls.ts drapeCarveFor). */
+/** The carve the relief is cut to: STATE.drapeStock of material with STATE.drapeReliefDepth of relief,
+ *  STATE.drapeCarveWidth wide (src/drape-controls.ts drapeCarveFor). */
 export function drapeCarve(): DrapeCarve {
-  return drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth);
+  return drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth, STATE.drapeCarveWidth);
 }
 
-/** Point the size controls at the drape relief (12 x 16 in, its stock): the mesh preview reads them
+/** Point the size controls at the drape relief (its width, height and stock): the mesh preview reads them
  *  from the master, and the sliders must show the same numbers. */
 function syncSizeControls(m: ReliefMaster): void {
   STATE.meshX = m.widthIn; STATE.meshY = m.heightIn; STATE.baseThickness = m.stockIn;
@@ -119,7 +121,7 @@ function syncSizeControls(m: ReliefMaster): void {
     const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
     if (sl) sl.value = String(v);
     const val = document.getElementById(`val_${key}`);
-    if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : String(Math.round(v * 100) / 100);
+    if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : formatSliderValue(v, sl ? parseFloat(sl.step) : 1);
   }
   syncAspectLockButton();
   // Safe Z follows the stock top when it moves; a new drape on the same stock keeps the user's Safe Z.
@@ -139,12 +141,12 @@ function present(m: ReliefMaster, kind: 'bare' | 'draped', label: string): void 
 }
 
 /** The relief master of `r` (heights in the standard RELIEF_BACKING_IN + RELIEF_SPAN_IN mapping),
- *  remapped linearly onto the current carve. */
-async function toMaster(r: NonNullable<typeof lastRelief>): Promise<ReliefMaster> {
+ *  remapped linearly onto the carve the controls show and cut at its size. Exported for cli/drape.spec.ts. */
+export async function toMaster(r: NonNullable<typeof lastRelief>): Promise<ReliefMaster> {
   const IN = 0.0254, carve = drapeCarve(), heights = remapToCarve(r.heightsM, carve);
   const buf = await encodeReliefMaster({
     format: 'meshcraft-relief', version: 1, units: 'm', cols: 1201, rows: 1601,
-    width: PANEL_WIDTH_IN * IN, height: PANEL_HEIGHT_IN * IN, dtype: 'float32', rowOrder: 'top-down',
+    width: carve.widthIn * IN, height: carve.heightIn * IN, dtype: 'float32', rowOrder: 'top-down',
     heightOrigin: 'panel-back', backing: carve.backingIn * IN, stock: carve.stockIn * IN,
     triangulation: 'tr-bl', mask: true, name: r.name, source: r.fig.header.source, license: r.fig.header.license,
   }, heights, r.mask);
@@ -161,7 +163,7 @@ async function showRelief(r: NonNullable<typeof lastRelief>, rev: number): Promi
 /** A relief that could not be built: say so instead of leaving the last status line up. Returns the
  *  status line. */
 function reliefFailed(what: string, err: unknown): string {
-  const status = `${what} failed. Check the figure placement (units, up axis) or try another pose.`;
+  const status = `${what} failed. Check the figure placement (up axis, turn) or try another pose.`;
   setStatus(status);
   showToast(`${what} failed: ${err instanceof Error ? err.message : String(err)}`, 8000);
   return status;
@@ -243,7 +245,7 @@ export function ensureDrapeFigure(fromMode: typeof STATE.mode | null = null): Pr
         if (!figure) useFigure(parseFigure(buf), buf, DEMO_FIGURE_NAME);
       } catch (err) {
         demoLoading = null;
-        bareError = 'Could not load the demo figure. Upload a figure (.mcfig, .stl, .obj, .glb).';
+        bareError = `Could not load the demo figure. Upload a figure (${FIGURE_EXTENSIONS.join(', ')}).`;
         setStatus(bareError);
         showToast(`Could not load the demo figure: ${err instanceof Error ? err.message : String(err)}`, 6000);
       }
@@ -361,23 +363,25 @@ export async function downloadDrapeRelief(): Promise<void> {
   triggerDownload(new Blob([buf], { type: 'application/octet-stream' }), `${STATE.filename || 'drape'}.mcrelief`);
 }
 
-/** Upload a figure: .mcfig as is, or an STL / OBJ / glTF mesh placed with the sidebar's units, up axis
- *  and turn. */
-export async function loadFigureFile(file: File, placement: { metresPerUnit: number; up: 'z' | 'y'; turnDeg: number }): Promise<void> {
+/** Upload a figure: .mcfig as is, or a mesh (STL, OBJ, PLY, glTF, USD) turned with the sidebar's up axis
+ *  and turn and fitted to the panel (figureFromMesh). glTF and USD carry their own up axis. */
+export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; turnDeg: number }): Promise<void> {
   const name = file.name, lower = name.toLowerCase(), seq = ++uploadSeq;
+  let noTriangles = false;
   try {
     let fig: Figure, buf = await file.arrayBuffer();
     if (seq !== uploadSeq) return;                                  // a newer upload started meanwhile
     if (lower.endsWith('.mcfig')) fig = parseFigure(buf);
     else {
-      const { pos, tris } = await meshFromFile(buf, lower);
+      const { pos, tris, up } = await meshFromFile(buf, lower);
       if (seq !== uploadSeq) return;
+      if (tris.length === 0) { noTriangles = true; throw new Error('it has no triangles (a point cloud cannot be draped)'); }
       if (tris.length / 3 > MAX_FIGURE_TRIANGLES) throw new Error(`${(tris.length / 3).toLocaleString()} triangles; decimate below ${MAX_FIGURE_TRIANGLES.toLocaleString()}`);
-      buf = encodeFigure(figureFromMesh(pos, tris, { ...placement, name }));
+      buf = encodeFigure(figureFromMesh(pos, tris, { up: up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT }));
       fig = parseFigure(buf);
     }
     // Build its bare relief before replacing the current figure, so a figure that cannot be shown
-    // (wrong units, nothing in the panel, a header the relief master refuses) is refused and the
+    // (wrong up axis, nothing in the panel, a header the relief master refuses) is refused and the
     // current one stays.
     const key = bareKey();
     const { relief, master } = await bareRelief(fig, currentPose(), name);
@@ -385,12 +389,15 @@ export async function loadFigureFile(file: File, placement: { metresPerUnit: num
     useFigure(fig, buf, name, { relief, master, key });
   } catch (err) {
     if (seq !== uploadSeq) return;
-    const hint = lower.endsWith('.mcfig') ? '' : '. Check the units and up axis.';
+    const hint = lower.endsWith('.mcfig') || noTriangles ? '' : '. Check the up axis.';
     showToast(`Could not use ${name} as a figure: ${err instanceof Error ? err.message : String(err)}${hint}`, 8000);
   }
 }
 
-async function meshFromFile(buf: ArrayBuffer, lower: string): Promise<{ pos: Float32Array; tris: Uint32Array }> {
+/** The triangles of an uploaded mesh file, merged, in the file's own units. `up` is set for the formats
+ *  that fix their up axis (glTF is Y-up by specification; three's USD loader turns a Z-up stage to Y-up),
+ *  and left to the sidebar for the rest. A PLY point cloud has no faces and comes back with no triangles. */
+export async function meshFromFile(buf: ArrayBuffer, lower: string): Promise<{ pos: Float32Array; tris: Uint32Array; up?: 'y' }> {
   const collect = (geoms: BufferGeometry[]): { pos: Float32Array; tris: Uint32Array } => {
     let nv = 0, nt = 0;
     for (const g of geoms) { nv += g.getAttribute('position').count; nt += g.index ? g.index.count : g.getAttribute('position').count; }
@@ -404,22 +411,32 @@ async function meshFromFile(buf: ArrayBuffer, lower: string): Promise<{ pos: Flo
     }
     return { pos, tris };
   };
+  /** Every mesh under `root`, in world space. */
+  const sceneMeshes = (root: Object3D): BufferGeometry[] => {
+    const geoms: BufferGeometry[] = [];
+    root.updateMatrixWorld(true);
+    root.traverse(o => { const m = o as Mesh; if (m.isMesh) geoms.push(m.geometry.clone().applyMatrix4(m.matrixWorld)); });
+    return geoms;
+  };
   if (lower.endsWith('.stl')) {
     const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js');
     return collect([new STLLoader().parse(buf)]);
   }
   if (lower.endsWith('.obj')) {
     const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
-    const root = new OBJLoader().parse(new TextDecoder().decode(buf));
-    const geoms: BufferGeometry[] = [];
-    root.updateMatrixWorld(true);
-    root.traverse(o => { const m = o as Mesh; if (m.isMesh) geoms.push(m.geometry.clone().applyMatrix4(m.matrixWorld)); });
-    return collect(geoms);
+    return collect(sceneMeshes(new OBJLoader().parse(new TextDecoder().decode(buf))));
+  }
+  if (lower.endsWith('.ply')) {
+    const { PLYLoader } = await import('three/examples/jsm/loaders/PLYLoader.js');
+    const g = new PLYLoader().parse(buf);
+    // Without faces the loader returns bare vertices, which collect() would read as triangles.
+    return g.index ? collect([g]) : { pos: new Float32Array(0), tris: new Uint32Array(0) };
+  }
+  if (/\.usd[acz]?$/.test(lower)) {
+    const { USDLoader } = await import('three/examples/jsm/loaders/USDLoader.js');
+    return { ...collect(sceneMeshes(new USDLoader().parse(buf))), up: 'y' };
   }
   const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
   const gltf = await new GLTFLoader().parseAsync(buf, '');
-  const geoms: BufferGeometry[] = [];
-  gltf.scene.updateMatrixWorld(true);
-  gltf.scene.traverse(o => { const m = o as Mesh; if (m.isMesh) geoms.push(m.geometry.clone().applyMatrix4(m.matrixWorld)); });
-  return collect(geoms);
+  return { ...collect(sceneMeshes(gltf.scene)), up: 'y' };
 }

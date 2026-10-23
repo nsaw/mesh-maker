@@ -154,6 +154,22 @@ process.stdout.write('T15 share links\n');
     assert(withMaster === 0.75 && noise === 2, 'the stock top is the master\'s while it drives the heights, Material Thickness otherwise',
       `drape ${withMaster}, noise ${noise}`);
   }
+  // v16: face and wind positions are percentages of the carve. A v15 link held inches on the 12 x 16 in panel.
+  const v15pos = deserializeConfig(enc({ _v: 15, mode: 'drape', drapeFaceX: 6, drapeFaceY: 4, drapeFaceRadius: 3, drapeWindX: 3, drapeWindY: 12, drapeWindRadius: 'x' }));
+  assert(v15pos.drapeFaceX === 50 && v15pos.drapeFaceY === 25 && v15pos.drapeFaceRadius === 25 && v15pos.drapeWindX === 25 && v15pos.drapeWindY === 75
+    && !('drapeWindRadius' in v15pos), 'a v15 link\'s inch positions open as the same spots in percent (junk dropped)', JSON.stringify(v15pos));
+  const v16pos = deserializeConfig(enc({ _v: 16, mode: 'drape', drapeFaceX: 6, drapeCarveWidth: 40, drapeFigureScale: 1000 }));
+  assert(v16pos.drapeFaceX === 6 && v16pos.drapeCarveWidth === 18 && v16pos.drapeFigureScale === 300,
+    'a v16 link keeps its percentages; carve width and Figure Size clamp to their sliders', JSON.stringify(v16pos));
+  const offGrid = [9.1, 12.1875, 'x'].map(w => deserializeConfig(enc({ _v: 16, mode: 'drape', drapeCarveWidth: w })).drapeCarveWidth);
+  assert(offGrid[0] === 9 && offGrid[1] === 12 && offGrid[2] === undefined, 'a link\'s carve width snaps to the sliders\' 0.75 in grid (junk dropped)', JSON.stringify(offGrid));
+  {
+    const keep = { ...STATE };
+    Object.assign(STATE, { mode: 'drape', drapeCarveWidth: 9, drapeFigureScale: 140 });
+    const back = deserializeConfig('?c=' + serializeConfig());
+    Object.assign(STATE, keep);
+    assert(back.drapeCarveWidth === 9 && back.drapeFigureScale === 140, 'carve width and Figure Size round-trip through a share link');
+  }
   // The board a link carries is clamped to the sliders (a meshX 200 link kept a 200 in board).
   const wide = deserializeConfig(enc({ _v: 15, mode: 'depthmap', meshX: 200, meshY: -4, resolution: 1e6, baseThickness: 99 }));
   assert(wide.meshX === 96 && wide.meshY === 1 && wide.resolution === 1024 && wide.baseThickness === 6, 'link board sizes clamp to their sliders', JSON.stringify(wide));

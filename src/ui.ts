@@ -1,6 +1,7 @@
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, boardIsLinkBoard, reliefMasterActive, saveNoiseDims } from './state';
 import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
-import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, drapeControlEffect, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, DRAPE_WIDTH_RANGE, DRAPE_WIDTH_STEP, drapeControlEffect, snapCarveWidth, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
+import { PANEL_ASPECT } from './drape-sim/pipeline';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
@@ -186,10 +187,29 @@ function buildPresetSection(): HTMLElement {
   return buildSection('Presets', [controlRow, buttonRow], false, 'noise-only');
 }
 
+/** DRAPE's carve size sliders. Their steps line up at 3:4 (0.75 in across is 1 in up), so a value set on
+ *  one slider is exactly on the other's grid and its label, and a click on either label commits nothing
+ *  new. They show and reset to the carve, not the board meshX / meshY hold for the other tabs. */
+export const CARVE_STEP: Record<'meshX' | 'meshY', number> = { meshX: DRAPE_WIDTH_STEP, meshY: DRAPE_WIDTH_STEP / PANEL_ASPECT };
+function carveSlider(key: 'meshX' | 'meshY', value: number, reset: number): HTMLDivElement {
+  const k = key === 'meshX' ? 1 : 1 / PANEL_ASPECT;
+  const row = slider(key, `${key === 'meshX' ? 'X' : 'Y'} (inches)`, DRAPE_WIDTH_RANGE[0] * k, DRAPE_WIDTH_RANGE[1] * k, CARVE_STEP[key],
+    key === 'meshX' ? 'Carve width' : 'Carve height');
+  const input = row.querySelector<HTMLInputElement>('input')!;
+  input.value = String(value);
+  input.dataset.default = String(reset);
+  const val = row.querySelector<HTMLElement>(`#val_${key}`);
+  if (val) val.textContent = formatSliderValue(value, CARVE_STEP[key]);
+  return row;
+}
+
 function buildMeshDimensionsSection(): HTMLElement {
   const inlineRow = createElement('div', 'inline-row');
+  // DRAPE: the board is the carve, 3:4, up to 18 x 24 in (the bed's Y); both sliders set its width.
+  const drape = STATE.mode === 'drape';
   inlineRow.append(
-    slider('meshX', 'X (inches)', 1, 96, 1, 'ShopBot: 36" max'),
+    drape ? carveSlider('meshX', STATE.drapeCarveWidth, DEFAULTS.drapeCarveWidth)
+      : slider('meshX', 'X (inches)', 1, 96, 1, 'ShopBot: 36" max'),
   );
 
   const lockButton = createElement('button', `aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}`);
@@ -199,7 +219,8 @@ function buildMeshDimensionsSection(): HTMLElement {
   inlineRow.append(lockButton);
 
   inlineRow.append(
-    slider('meshY', 'Y (inches)', 1, 48, 1, 'ShopBot: 24" max'),
+    drape ? carveSlider('meshY', STATE.drapeCarveWidth / PANEL_ASPECT, DEFAULTS.drapeCarveWidth / PANEL_ASPECT)
+      : slider('meshY', 'Y (inches)', 1, 48, 1, 'ShopBot: 24" max'),
   );
 
   const note = createElement('div');
@@ -482,9 +503,10 @@ function buildDepthMapSection(): HTMLElement {
   ], false, 'depth-map-only');
 }
 
-/** Units, up axis and turn applied to the next uploaded STL / OBJ / glTF figure (a .mcfig is
- *  already placed). Kept across sidebar rebuilds, not in share links. */
-const figurePlacement = { metresPerUnit: 0.001, up: 'z' as 'z' | 'y', turnDeg: 0 };
+/** Up axis and turn applied to the next uploaded mesh figure (a .mcfig is already placed; glTF and USD
+ *  carry their own up axis). Its size is fitted to the panel. Kept across sidebar rebuilds, not in share
+ *  links. */
+const figurePlacement = { up: 'z' as 'z' | 'y', turnDeg: 0 };
 
 /** DRAPE: a silk veil simulated over a 3D figure (src/drape-ui.ts, src/drape-sim), the web
  *  version of the Blender drapes in scripts/drape. One section runs it; the others hold its controls
@@ -495,7 +517,7 @@ function buildDrapeSections(): HTMLElement[] {
   zone.tabIndex = 0;
   zone.setAttribute('role', 'button');
   zone.setAttribute('aria-label', 'Upload a 3D figure to drape');
-  const text = createElement('div', 'upload-text', STATE.drapeFigureName || 'Click or drag a 3D figure (.mcfig, .stl, .obj, .glb)');
+  const text = createElement('div', 'upload-text', STATE.drapeFigureName || 'Click or drag a 3D figure (STL, OBJ, PLY, GLB, USDZ, MCFIG)');
   const input = createElement('input') as HTMLInputElement;
   input.type = 'file';
   input.id = 'drapeFigureInput';
@@ -518,11 +540,6 @@ function buildDrapeSections(): HTMLElement[] {
   placeRow.style.display = 'flex';
   placeRow.style.gap = '6px';
   placeRow.style.margin = '6px 0';
-  const units = createElement('select') as HTMLSelectElement;
-  units.setAttribute('aria-label', 'Units of an uploaded mesh');
-  for (const [v, l] of [['0.001', 'mm'], ['0.01', 'cm'], ['1', 'm'], ['0.0254', 'in']]) units.add(new Option(l, v));
-  units.value = String(figurePlacement.metresPerUnit);
-  units.addEventListener('change', () => { figurePlacement.metresPerUnit = parseFloat(units.value); });
   const up = createElement('select') as HTMLSelectElement;
   up.setAttribute('aria-label', 'Up axis of an uploaded mesh');
   up.add(new Option('Z up', 'z')); up.add(new Option('Y up', 'y'));
@@ -535,8 +552,9 @@ function buildDrapeSections(): HTMLElement[] {
   turn.setAttribute('aria-label', 'Turn of an uploaded mesh, degrees');
   turn.style.width = '64px';
   turn.addEventListener('change', () => { const v = parseFloat(turn.value); figurePlacement.turnDeg = Number.isFinite(v) ? Math.max(-180, Math.min(180, v)) : 0; });
-  placeRow.append(units, up, turn);
-  const placeNote = createElement('div', undefined, 'Upload placement: units, up axis, turn (deg). Applied when a mesh is loaded.');
+  placeRow.append(up, turn);
+  const placeNote = createElement('div', undefined,
+    'Upload placement: up axis (STL, OBJ, PLY; glTF and USD carry their own) and turn (deg), applied when a mesh is loaded. Any mesh is scaled to fit the panel; Figure Size and the X / Y size then resize it.');
   placeNote.style.fontSize = '10px';
   placeNote.style.color = 'var(--text3)';
 
@@ -566,7 +584,7 @@ function buildDrapeSections(): HTMLElement[] {
   status.style.fontSize = '10px';
   status.style.color = 'var(--text2)';
   const about = createElement('div', undefined,
-    'Silk cloth hung from the crown under gravity, simulated in this tab (Jolt Physics). The relief is the front view, 12 x 16 in, cut to Material Thickness and Relief Depth.');
+    'Silk cloth hung from the crown under gravity, simulated in this tab (Jolt Physics). The relief is the front view at the X / Y size (3:4), cut to Material Thickness and Relief Depth.');
   about.style.fontSize = '10px';
   about.style.color = 'var(--text3)';
 
@@ -579,8 +597,8 @@ function buildDrapeSections(): HTMLElement[] {
     b.title = preset.about;
     b.dataset.drapePreset = id;
     b.addEventListener('click', () => {
-      // A preset sets the drape, not the carve: Relief Depth stays as the user set it.
-      const { drapeReliefDepth: _carve, ...settings } = preset.settings;
+      // A preset sets the drape, not the carve or the figure's size: both stay as the user set them.
+      const { drapeReliefDepth: _carve, drapeFigureScale: _size, ...settings } = preset.settings;
       Object.assign(STATE, settings, { drapeWindMode: preset.windMode });
       buildSidebar();
       // One toast: the cancel notice (if a drape was running) would be replaced by the preset's at once.
@@ -606,7 +624,7 @@ function buildDrapeSections(): HTMLElement[] {
 
   return [
     buildSection('Drape', [zone, placeRow, placeNote, presetRow, btnRow, dl, status, about], false, 'drape-section'),
-    buildSection('Drape: Figure', [...group('figure'), note('Changing the pose shows the bare figure again.')], false, 'drape-section'),
+    buildSection('Drape: Figure', [...group('figure'), note('Changing the pose or size shows the bare figure again. An uploaded mesh loads fitted to the panel; the bundled bust loads at its proof size.')], false, 'drape-section'),
     buildSection('Drape: Cloth', [...group('cloth'),
       note('Sizes are life size (the bust is about 2.4 head-units of 12.5 cm). Fabric Thickness thickens the carved veil toward you; the solve treats the cloth as a sheet. Higher resolution takes longer.')],
     false, 'drape-section'),
@@ -692,11 +710,24 @@ function wireControls(): void {
         onDrapeCarveChanged();
         return;
       }
+      // DRAPE: X and Y set the carve's width (the height is 4/3 of it); the figure scales with the carve.
+      if (STATE.mode === 'drape' && (key === 'meshX' || key === 'meshY')) {
+        // Snapped to the shared 3:4 grid (CARVE_STEP), so both sliders and labels show exact values.
+        const raw = parseFloat(sl.value), w = key === 'meshX' ? raw : raw * PANEL_ASPECT;
+        STATE.drapeCarveWidth = snapCarveWidth(w);
+        for (const [k, v] of [['meshX', STATE.drapeCarveWidth], ['meshY', STATE.drapeCarveWidth / PANEL_ASPECT]] as const) {
+          const input = document.querySelector<HTMLInputElement>(`input[data-key="${k}"]`);
+          if (input) input.value = String(v);
+          const val = document.getElementById(`val_${k}`);
+          if (val) val.textContent = formatSliderValue(v, CARVE_STEP[k]);
+        }
+        // The master is rebuilt at the new size; STATE.meshX / meshY follow it there (syncSizeControls).
+        onDrapeCarveChanged();
+        return;
+      }
       if (reliefMasterActive() && RELIEF_LOCKED_KEYS.has(key)) {
         sl.value = String(STATE[key as keyof typeof STATE]);
-        showToast(STATE.mode === 'drape'
-          ? 'The drape relief is 12 x 16 in. Set its material thickness here and its depth under Drape: Carve.'
-          : 'A relief master fixes size, stock and heights. Load an image to change them.', 3000);
+        showToast('A relief master fixes size, stock and heights. Load an image to change them.', 3000);
         return;
       }
       const v = parseFloat(sl.value);

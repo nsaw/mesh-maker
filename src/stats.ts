@@ -17,7 +17,7 @@ export function zoomExtents(): void {
   STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85));
   STATE.panX = 0; STATE.panY = 0;
   STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
-  // DRAPE looks straight at the carve; its default zoom frames the 12 x 16 in panel.
+  // DRAPE looks straight at the carve; its default zoom frames the panel at any carve size.
   if (STATE.mode === 'drape') setDrapeFrontView();
 
   ['orbit','tilt','roll','zoom'].forEach(k => {
@@ -67,7 +67,7 @@ export function updateStats(): void {
       ['Vertices', verts.toLocaleString()],
       ['Triangles', totalTris.toLocaleString()],
       ...(master ? [['Preview', `${cols} x ${rows} of ${ec} x ${er}`] as [string, string],
-        ['Preview error', `${STATE.reliefPreviewErrorIn.toFixed(4)}"`] as [string, string]] : []),
+        ['Preview error (p99)', `${STATE.reliefPreviewErrorIn.toFixed(4)}"`] as [string, string]] : []),
       ['Gen time', `${genTime.toFixed(0)}ms`],
       ['Est. size', formatBytes(estSize)],
     ];

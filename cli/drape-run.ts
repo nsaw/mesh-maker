@@ -2,7 +2,7 @@
  * Run the browser drape solver (src/drape-sim) in Node on a figure and write the same arrays the Blender
  * proof's extraction writes (scripts/drape/blender_drape.py), for parity comparison.
  *
- *   npm run drape-run -- FIGURE.mcfig --out DIR [--preset silk|gathered] [--tilt 25] [--turn 0] [--lean 0]
+ *   npm run drape-run -- FIGURE.mcfig --out DIR [--preset silk|gathered] [--tilt 25] [--turn 0] [--lean 0] [--scale 100]
  *     [--param key=value]...  (one --param per pair; keys are the ClothParams in src/drape-sim/cloth.ts)
  *
  * Writes DIR/veiled-depth.f32, bare-depth.f32 (float32, NaN = no hit, rows top-down), cloth-front.u8,
@@ -15,10 +15,11 @@ import initJolt from 'jolt-physics/wasm-compat';
 import { parseFigure } from '../src/drape-sim/figure';
 import { SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { drapeFigure, PANEL_WINDOW } from '../src/drape-sim/pipeline';
+import { DRAPE_CONTROLS } from '../src/drape-controls';
 
-const USAGE = 'usage: drape-run FIGURE.mcfig --out DIR [--preset silk|gathered] [--tilt DEG] [--turn DEG] [--lean DEG] [--param key=value] ...';
+const USAGE = 'usage: drape-run FIGURE.mcfig --out DIR [--preset silk|gathered] [--tilt DEG] [--turn DEG] [--lean DEG] [--scale PERCENT] [--param key=value] ...';
 const PRESETS: Record<string, ClothParams> = { silk: SILK, gathered: SILK_GATHERED };
-const SINGLE = ['--out', '--preset', '--tilt', '--turn', '--lean'];
+const SINGLE = ['--out', '--preset', '--tilt', '--turn', '--lean', '--scale'];
 
 /** A finite number, or an error naming the flag it came from. */
 function finite(text: string, what: string): number {
@@ -48,7 +49,11 @@ async function main(): Promise<void> {
   const presetName = one.get('--preset') ?? 'silk';
   if (!Object.hasOwn(PRESETS, presetName)) throw new Error(`unknown preset ${JSON.stringify(presetName)} (silk or gathered)`);
   const angle = (flag: string, def: number): number => { const t = one.get(flag); return t === undefined ? def : finite(t, flag); };
-  const pose = { tiltDeg: angle('--tilt', 25), turnDeg: angle('--turn', 0), leanDeg: angle('--lean', 0) };
+  // --scale is the Drape tab's Figure Size, percent about the crown (100 = as placed).
+  const pose = { tiltDeg: angle('--tilt', 25), turnDeg: angle('--turn', 0), leanDeg: angle('--lean', 0), scale: angle('--scale', 100) / 100 };
+  // The Drape tab's range: far past it Jolt spends unbounded time building the figure's shape.
+  const size = DRAPE_CONTROLS.find(c => c.key === 'drapeFigureScale')!;
+  if (!(pose.scale * 100 >= size.min && pose.scale * 100 <= size.max)) throw new Error(`--scale must be ${size.min} to ${size.max} (percent)`);
   const params: ClothParams = { ...PRESETS[presetName] };
   for (const kv of pairs) {
     const eq = kv.indexOf('=');

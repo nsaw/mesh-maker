@@ -25,21 +25,22 @@ export function getExportSurface(forToolpath = false): ExportSurface | string {
   return { z, cols, rows, meshX, meshY, diagonal: 'shortest', watertight: STATE.watertight };
 }
 
-/** True when relief master `m` was not cut to the drape carve the controls show (STATE.drapeStock and
- *  STATE.drapeReliefDepth), within 1e-6 in. */
+/** True when relief master `m` was not cut to the drape carve the controls show (STATE.drapeStock,
+ *  STATE.drapeReliefDepth and STATE.drapeCarveWidth), within 1e-6 in. */
 export function masterOffCarve(m: ReliefMaster): boolean {
-  const c = drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth);
-  return Math.abs(m.stockIn - c.stockIn) > 1e-6 || Math.abs(m.backingIn - c.backingIn) > 1e-6;
+  const c = drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth, STATE.drapeCarveWidth);
+  return Math.abs(m.stockIn - c.stockIn) > 1e-6 || Math.abs(m.backingIn - c.backingIn) > 1e-6
+    || Math.abs(m.widthIn - c.widthIn) > 1e-6 || Math.abs(m.heightIn - c.heightIn) > 1e-6;
 }
 
 /** Why DRAPE exports or downloads nothing before its relief exists. */
 export const DRAPE_NO_RELIEF = 'There is no drape relief to export yet: the figure is still loading, or it failed to load (see the Drape status).';
 
-export const DRAPE_CARVE_PENDING = 'The drape relief is still being remapped to the new Material Thickness or Relief Depth: export again in a moment (if this persists, the remap failed: see the Drape status and set the carve again).';
+export const DRAPE_CARVE_PENDING = 'The drape relief is still being remapped to the new size, Material Thickness or Relief Depth: export again in a moment (if this persists, the remap failed: see the Drape status and set the carve again).';
 
-/** On the DRAPE tab, Material Thickness and Relief Depth are applied by rebuilding the relief master,
- *  debounced. Until that lands (or if it fails) the master's stock top and heights are not the ones
- *  the controls show, so every export refuses rather than pair one with the other. */
+/** On the DRAPE tab, the carve size, Material Thickness and Relief Depth are applied by rebuilding the
+ *  relief master, debounced. Until that lands (or if it fails) the master's size, stock top and heights
+ *  are not the ones the controls show, so every export refuses rather than pair one with the other. */
 export function drapeCarvePending(): boolean {
   return STATE.mode === 'drape' && STATE.drapeMaster !== null && masterOffCarve(STATE.drapeMaster);
 }
