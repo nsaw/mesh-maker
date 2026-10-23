@@ -15,6 +15,7 @@ import initJolt from 'jolt-physics/wasm-compat';
 import { parseFigure } from '../src/drape-sim/figure';
 import { SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { drapeFigure, PANEL_WINDOW } from '../src/drape-sim/pipeline';
+import { DRAPE_CONTROLS } from '../src/drape-controls';
 
 const USAGE = 'usage: drape-run FIGURE.mcfig --out DIR [--preset silk|gathered] [--tilt DEG] [--turn DEG] [--lean DEG] [--scale PERCENT] [--param key=value] ...';
 const PRESETS: Record<string, ClothParams> = { silk: SILK, gathered: SILK_GATHERED };
@@ -50,7 +51,9 @@ async function main(): Promise<void> {
   const angle = (flag: string, def: number): number => { const t = one.get(flag); return t === undefined ? def : finite(t, flag); };
   // --scale is the Drape tab's Figure Size, percent about the crown (100 = as placed).
   const pose = { tiltDeg: angle('--tilt', 25), turnDeg: angle('--turn', 0), leanDeg: angle('--lean', 0), scale: angle('--scale', 100) / 100 };
-  if (!(pose.scale > 0)) throw new Error('--scale must be above 0');
+  // The Drape tab's range: far past it Jolt spends unbounded time building the figure's shape.
+  const size = DRAPE_CONTROLS.find(c => c.key === 'drapeFigureScale')!;
+  if (!(pose.scale * 100 >= size.min && pose.scale * 100 <= size.max)) throw new Error(`--scale must be ${size.min} to ${size.max} (percent)`);
   const params: ClothParams = { ...PRESETS[presetName] };
   for (const kv of pairs) {
     const eq = kv.indexOf('=');
