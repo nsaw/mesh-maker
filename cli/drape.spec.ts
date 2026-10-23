@@ -283,9 +283,9 @@ async function main(): Promise<void> {
     let shellCount = -1, shellErr = '';
     try { shellCount = simplifyMesh({ pos: shells, tris: Uint32Array.from({ length: shells.length / 3 }, (_, k) => k) }, cap).tris.length / 3; } catch (e) { shellErr = e instanceof Error ? e.message : String(e); }
     assert(shellCount >= cap / 4 && shellCount <= cap, 'coincident shells are deduplicated before counting against the cap', shellErr || `${shellCount} triangles`);
-    // A pass needing more clusters than the limit counts as too fine (V8 throws past 2^23 or 2^24 Map
-    // entries): with a cap of 4,000 the dome keeps 1,332 vertices; limited to 1,000 clusters, the passes
-    // that need more are retried coarser until one fits.
+    // A pass needing more clusters than the limit counts as too fine (V8 throws at 2^24 Map entries;
+    // MAX_CLUSTERS is half that). With a cap of 4,000 the dome keeps 1,332 vertices; limited to 1,000
+    // clusters, the passes that need more are retried coarser until one fits.
     const few = simplifyMesh({ pos, tris }, 4000, 1000);
     assert(few.pos.length / 3 <= 1000 && few.tris.length / 3 >= 1000, 'a pass over the cluster limit is retried coarser, not thrown',
       `${few.pos.length / 3} vertices, ${few.tris.length / 3} triangles`);
