@@ -10,7 +10,7 @@ import initJolt from 'jolt-physics/wasm-compat';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
-import { bareDepth, FIGURE_FIT, offsetTowardViewer, PANEL_ASPECT, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
+import { bareDepth, drapeFigure, FIGURE_FIT, offsetTowardViewer, PANEL_ASPECT, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
 import { STATE } from '../src/state';
@@ -251,6 +251,8 @@ async function main(): Promise<void> {
       bigTop = Math.max(bigTop, big[i + 2]);
     }
     assert(worst < 1e-5 && Math.abs(bigTop - 1) < 1e-6, 'Figure Size 200% doubles every distance from the crown, which stays at z = 1', `worst ${worst.toExponential(1)}`);
+    assert(/out of range/.test(thrown(() => drapeFigure(null as never, demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0, scale: 1e40 }, SILK))),
+      'a size that overflows float32 is refused before the solver sees the figure');
     assert(drapeJob({ ...DRAPE_PRESETS.gathered.settings, drapeFigureScale: 150 }, 'off').pose.scale === 1.5 && drapeControlEffect('drapeFigureScale') === 'pose',
       'the Figure Size control is a pose: it reaches the solver and rebuilds the bare figure');
   }

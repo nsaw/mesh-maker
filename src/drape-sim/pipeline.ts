@@ -97,6 +97,8 @@ export interface DrapeRun {
 export function drapeFigure(J: Jolt, fig: Figure, pose: FigurePose, params: ClothParams,
   onFrame?: (frame: number, frames: number) => boolean | void): DrapeRun {
   const pos = poseFigure(fig, pose);
+  // A huge Figure Size (drape-run --scale; the Drape tab stops at 300%) overflows float32: Jolt must not see it.
+  if (!pos.every(Number.isFinite)) throw new Error('the figure size puts the figure out of range (non-finite coordinates)');
   let completed = true;
   const res = simulateCloth(J, pos, fig.triangles, params, (f, n) => {
     if (onFrame && onFrame(f, n) === false) { completed = false; return false; }
