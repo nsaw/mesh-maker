@@ -187,12 +187,28 @@ function buildPresetSection(): HTMLElement {
   return buildSection('Presets', [controlRow, buttonRow], false, 'noise-only');
 }
 
+/** DRAPE's carve size sliders. Their steps line up at 3:4 (0.75 in across is 1 in up), so a value set on
+ *  one slider is exactly on the other's grid and its label, and a click on either label commits nothing
+ *  new. They show and reset to the carve, not the board meshX / meshY hold for the other tabs. */
+export const CARVE_STEP: Record<'meshX' | 'meshY', number> = { meshX: 0.75, meshY: 1 };
+function carveSlider(key: 'meshX' | 'meshY', value: number, reset: number): HTMLDivElement {
+  const k = key === 'meshX' ? 1 : 1 / PANEL_ASPECT;
+  const row = slider(key, `${key === 'meshX' ? 'X' : 'Y'} (inches)`, DRAPE_WIDTH_RANGE[0] * k, DRAPE_WIDTH_RANGE[1] * k, CARVE_STEP[key],
+    key === 'meshX' ? 'Carve width' : 'Carve height');
+  const input = row.querySelector<HTMLInputElement>('input')!;
+  input.value = String(value);
+  input.dataset.default = String(reset);
+  const val = row.querySelector<HTMLElement>(`#val_${key}`);
+  if (val) val.textContent = formatSliderValue(value, CARVE_STEP[key]);
+  return row;
+}
+
 function buildMeshDimensionsSection(): HTMLElement {
   const inlineRow = createElement('div', 'inline-row');
   // DRAPE: the board is the carve, 3:4, up to 18 x 24 in (the bed's Y); both sliders set its width.
   const drape = STATE.mode === 'drape';
   inlineRow.append(
-    drape ? slider('meshX', 'X (inches)', DRAPE_WIDTH_RANGE[0], DRAPE_WIDTH_RANGE[1], 0.25, 'Carve width')
+    drape ? carveSlider('meshX', STATE.drapeCarveWidth, DEFAULTS.drapeCarveWidth)
       : slider('meshX', 'X (inches)', 1, 96, 1, 'ShopBot: 36" max'),
   );
 
@@ -203,7 +219,7 @@ function buildMeshDimensionsSection(): HTMLElement {
   inlineRow.append(lockButton);
 
   inlineRow.append(
-    drape ? slider('meshY', 'Y (inches)', DRAPE_WIDTH_RANGE[0] / PANEL_ASPECT, DRAPE_WIDTH_RANGE[1] / PANEL_ASPECT, 0.25, 'Carve height')
+    drape ? carveSlider('meshY', STATE.drapeCarveWidth / PANEL_ASPECT, DEFAULTS.drapeCarveWidth / PANEL_ASPECT)
       : slider('meshY', 'Y (inches)', 1, 48, 1, 'ShopBot: 24" max'),
   );
 
@@ -696,13 +712,15 @@ function wireControls(): void {
       }
       // DRAPE: X and Y set the carve's width (the height is 4/3 of it); the figure scales with the carve.
       if (STATE.mode === 'drape' && (key === 'meshX' || key === 'meshY')) {
+        // Snapped to the shared 3:4 grid (CARVE_STEP), so both sliders and labels show exact values.
         const raw = parseFloat(sl.value), w = key === 'meshX' ? raw : raw * PANEL_ASPECT;
-        STATE.drapeCarveWidth = Math.min(DRAPE_WIDTH_RANGE[1], Math.max(DRAPE_WIDTH_RANGE[0], w));
+        const snapped = Math.round(w / CARVE_STEP.meshX) * CARVE_STEP.meshX;
+        STATE.drapeCarveWidth = Math.min(DRAPE_WIDTH_RANGE[1], Math.max(DRAPE_WIDTH_RANGE[0], snapped));
         for (const [k, v] of [['meshX', STATE.drapeCarveWidth], ['meshY', STATE.drapeCarveWidth / PANEL_ASPECT]] as const) {
-          const other = document.querySelector<HTMLInputElement>(`input[data-key="${k}"]`);
-          if (other && k !== key) other.value = String(v);
+          const input = document.querySelector<HTMLInputElement>(`input[data-key="${k}"]`);
+          if (input) input.value = String(v);
           const val = document.getElementById(`val_${k}`);
-          if (val) val.textContent = String(Math.round(v * 100) / 100);
+          if (val) val.textContent = formatSliderValue(v, CARVE_STEP[k]);
         }
         // The master is rebuilt at the new size; STATE.meshX / meshY follow it there (syncSizeControls).
         onDrapeCarveChanged();

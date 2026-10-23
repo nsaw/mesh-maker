@@ -12,6 +12,7 @@ import { syncSbpSafeZIfStockMoved } from './sbp-export';
 import { syncAspectLockButton } from './ui';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
+import { formatSliderValue } from './slider-utils';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, type Figure, type FigurePose } from './drape-sim/figure';
@@ -120,7 +121,7 @@ function syncSizeControls(m: ReliefMaster): void {
     const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
     if (sl) sl.value = String(v);
     const val = document.getElementById(`val_${key}`);
-    if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : String(Math.round(v * 100) / 100);
+    if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : formatSliderValue(v, sl ? parseFloat(sl.step) : 1);
   }
   syncAspectLockButton();
   // Safe Z follows the stock top when it moves; a new drape on the same stock keeps the user's Safe Z.
@@ -140,8 +141,7 @@ function present(m: ReliefMaster, kind: 'bare' | 'draped', label: string): void 
 }
 
 /** The relief master of `r` (heights in the standard RELIEF_BACKING_IN + RELIEF_SPAN_IN mapping),
- *  remapped linearly onto the current carve. */
-/** The relief master of `r` cut to the carve the controls show (exported for cli/drape.spec.ts). */
+ *  remapped linearly onto the carve the controls show and cut at its size. Exported for cli/drape.spec.ts. */
 export async function toMaster(r: NonNullable<typeof lastRelief>): Promise<ReliefMaster> {
   const IN = 0.0254, carve = drapeCarve(), heights = remapToCarve(r.heightsM, carve);
   const buf = await encodeReliefMaster({
@@ -163,7 +163,7 @@ async function showRelief(r: NonNullable<typeof lastRelief>, rev: number): Promi
 /** A relief that could not be built: say so instead of leaving the last status line up. Returns the
  *  status line. */
 function reliefFailed(what: string, err: unknown): string {
-  const status = `${what} failed. Check the figure placement (units, up axis) or try another pose.`;
+  const status = `${what} failed. Check the figure placement (up axis, turn) or try another pose.`;
   setStatus(status);
   showToast(`${what} failed: ${err instanceof Error ? err.message : String(err)}`, 8000);
   return status;
@@ -245,7 +245,7 @@ export function ensureDrapeFigure(fromMode: typeof STATE.mode | null = null): Pr
         if (!figure) useFigure(parseFigure(buf), buf, DEMO_FIGURE_NAME);
       } catch (err) {
         demoLoading = null;
-        bareError = 'Could not load the demo figure. Upload a figure (.mcfig, .stl, .obj, .glb).';
+        bareError = `Could not load the demo figure. Upload a figure (${FIGURE_EXTENSIONS.join(', ')}).`;
         setStatus(bareError);
         showToast(`Could not load the demo figure: ${err instanceof Error ? err.message : String(err)}`, 6000);
       }
@@ -367,6 +367,7 @@ export async function downloadDrapeRelief(): Promise<void> {
  *  and turn and fitted to the panel (figureFromMesh). glTF and USD carry their own up axis. */
 export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; turnDeg: number }): Promise<void> {
   const name = file.name, lower = name.toLowerCase(), seq = ++uploadSeq;
+  let noTriangles = false;
   try {
     let fig: Figure, buf = await file.arrayBuffer();
     if (seq !== uploadSeq) return;                                  // a newer upload started meanwhile
@@ -374,7 +375,7 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
     else {
       const { pos, tris, up } = await meshFromFile(buf, lower);
       if (seq !== uploadSeq) return;
-      if (tris.length === 0) throw new Error('it has no triangles (a point cloud cannot be draped)');
+      if (tris.length === 0) { noTriangles = true; throw new Error('it has no triangles (a point cloud cannot be draped)'); }
       if (tris.length / 3 > MAX_FIGURE_TRIANGLES) throw new Error(`${(tris.length / 3).toLocaleString()} triangles; decimate below ${MAX_FIGURE_TRIANGLES.toLocaleString()}`);
       buf = encodeFigure(figureFromMesh(pos, tris, { up: up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT }));
       fig = parseFigure(buf);
@@ -388,7 +389,7 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
     useFigure(fig, buf, name, { relief, master, key });
   } catch (err) {
     if (seq !== uploadSeq) return;
-    const hint = lower.endsWith('.mcfig') ? '' : '. Check the up axis.';
+    const hint = lower.endsWith('.mcfig') || noTriangles ? '' : '. Check the up axis.';
     showToast(`Could not use ${name} as a figure: ${err instanceof Error ? err.message : String(err)}${hint}`, 8000);
   }
 }

@@ -123,8 +123,8 @@ export interface MeshState extends DrapeSettings {
   /** Material thickness of the drape carve, inches. Material Thickness sets it on the DRAPE tab, where
    *  baseThickness follows it; the other tabs keep their own baseThickness. */
   drapeStock: number;
-  /** Width of the drape carve, inches (DRAPE_WIDTH_RANGE); its height is 4/3 of it. The Width and Height
-   *  sliders set it on the DRAPE tab, and the figure scales with the carve. */
+  /** Width of the drape carve, inches (DRAPE_WIDTH_RANGE); its height is 4/3 of it. The X and Y sliders
+   *  set it on the DRAPE tab, and the figure scales with the carve. */
   drapeCarveWidth: number;
   /** The relief DRAPE mode shows and exports: the bare figure until a drape is generated, then the
    *  draped figure. Built in memory as a relief master (src/relief-master.ts). Never serialized. */
