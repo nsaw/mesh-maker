@@ -1,7 +1,7 @@
 import type { SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
-import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, type DrapeSettings, type DrapeWindMode } from './drape-controls';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, DRAPE_WIDTH_RANGE, MIN_DRAPE_BACKING_IN, type DrapeSettings, type DrapeWindMode } from './drape-controls';
 import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 /** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
@@ -107,7 +107,8 @@ export interface MeshState extends DrapeSettings {
   reliefMaster: ReliefMaster | null;
   /** File name the relief master was loaded from (the label shown while it is active). */
   reliefMasterName: string;
-  /** Largest preview-vs-master height difference at the master's nodes, inches (previewErrorIn). */
+  /** 99th percentile of the preview-vs-master height difference at the master's nodes, inches
+   *  (previewErrorIn). */
   reliefPreviewErrorIn: number;
   dmHeightScale: number;
   dmOffset: number;
@@ -122,6 +123,9 @@ export interface MeshState extends DrapeSettings {
   /** Material thickness of the drape carve, inches. Material Thickness sets it on the DRAPE tab, where
    *  baseThickness follows it; the other tabs keep their own baseThickness. */
   drapeStock: number;
+  /** Width of the drape carve, inches (DRAPE_WIDTH_RANGE); its height is 4/3 of it. The Width and Height
+   *  sliders set it on the DRAPE tab, and the figure scales with the carve. */
+  drapeCarveWidth: number;
   /** The relief DRAPE mode shows and exports: the bare figure until a drape is generated, then the
    *  draped figure. Built in memory as a relief master (src/relief-master.ts). Never serialized. */
   drapeMaster: ReliefMaster | null;
@@ -247,6 +251,7 @@ export const DEFAULTS: MeshState = {
   ...DRAPE_PRESETS.gathered.settings,
   drapeWindMode: 'off',
   drapeStock: 0.75,
+  drapeCarveWidth: 12,
   drapeMaster: null,
   drapeMasterKind: null,
   drapeMasterLabel: '',
@@ -387,13 +392,13 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefRadialMode',
   'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
   'baseThickness', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'dmBackgroundCutoff',
-  ...DRAPE_CONTROLS.map(c => c.key), 'drapeWindMode', 'drapeStock', 'watertight',
+  ...DRAPE_CONTROLS.map(c => c.key), 'drapeWindMode', 'drapeStock', 'drapeCarveWidth', 'watertight',
   'viewMode', 'viewMaterial', 'activePreset', 'activeProfile',
 ];
 
 // Payload version: bump when DEFAULTS change to preserve old share links.
 // Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 15;
+const CURRENT_PAYLOAD_VERSION = 16;
 /** The payload version from which starburst links already hold the current preset values (the version
  *  current when the starburst migration was last due); later bumps that touch other keys leave it. */
 const STARBURST_CURRENT_SINCE = 14;
@@ -902,10 +907,20 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('meshY' in result) clampField('meshY', 1, 48);
     if ('resolution' in result) clampField('resolution', 16, 1024, true);
     if ('baseThickness' in result) clampField('baseThickness', 0.25, 6);
+    // v15->v16: the face and wind positions became percentages of the carve, which now takes any width.
+    // A v15 link held inches on the 12 x 16 in panel (radii in inches of its 12 in width).
+    if (payloadVersion < 16) {
+      for (const [k, spanIn] of [['drapeFaceX', 12], ['drapeFaceY', 16], ['drapeFaceRadius', 12],
+        ['drapeWindX', 12], ['drapeWindY', 16], ['drapeWindRadius', 12]] as const) {
+        const n = k in parsed ? toFiniteNumber(parsed[k]) : null;
+        if (n !== null) (result as Record<string, unknown>)[k] = (n / spanIn) * 100;
+      }
+    }
     // DRAPE controls: the slider ranges. Cloth resolution and frames set the solver's work, so a
     // crafted link must not raise them past the sliders.
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
+    if ('drapeCarveWidth' in result) clampField('drapeCarveWidth', DRAPE_WIDTH_RANGE[0], DRAPE_WIDTH_RANGE[1]);
     // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same
     // way); a link with a thin stock and no depth gets the default depth capped too.
     if ('drapeReliefDepth' in result || 'drapeStock' in result) {

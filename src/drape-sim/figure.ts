@@ -66,12 +66,14 @@ export function parseFigure(buf: ArrayBuffer): Figure {
 
 /** How the figure is posed for the drape, degrees: `tiltDeg` tips the face back (positive = face looks
  *  up), `turnDeg` turns it about the vertical axis (positive = face turns toward the viewer's right),
- *  `leanDeg` leans the head sideways (positive = crown toward the viewer's right). */
-export interface FigurePose { tiltDeg: number; turnDeg: number; leanDeg: number }
+ *  `leanDeg` leans the head sideways (positive = crown toward the viewer's right). `scale` sizes the
+ *  posed figure about its crown (1 or absent = as placed). */
+export interface FigurePose { tiltDeg: number; turnDeg: number; leanDeg: number; scale?: number }
 
 /**
  * Pose the figure about its head centre (turn about Z, then tilt about X, then lean about Y), then move
- * the new highest point back to (0, 0, 1). Tilt alone is the construction of scripts/drape/blender_drape.py.
+ * the new highest point back to (0, 0, 1) and scale about it. Tilt alone is the construction of
+ * scripts/drape/blender_drape.py.
  */
 export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
   const t = (-pose.tiltDeg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
@@ -92,6 +94,9 @@ export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
   }
   const dx = out[ti], dy = out[ti + 1], dz = out[ti + 2] - 1;
   for (let i = 0; i < out.length; i += 3) { out[i] -= dx; out[i + 1] -= dy; out[i + 2] -= dz; }
+  // Skipped at 1 so an unscaled pose stays bit for bit what the Blender parity runs were built from.
+  const k = pose.scale ?? 1;
+  if (k !== 1) for (let i = 0; i < out.length; i += 3) { out[i] *= k; out[i + 1] *= k; out[i + 2] = 1 + (out[i + 2] - 1) * k; }
   return out;
 }
 
@@ -120,33 +125,42 @@ export const SCENE_UNITS_PER_M = 8;
 /** Height of the head region below the crown used for the tilt pivot, scene units. */
 export const HEAD_HEIGHT = 2.6;
 
+/** Room an uploaded mesh is fitted into, scene units from its crown at (0, 0, 1): `halfWidth` either
+ *  side of it and `below` it (src/drape-sim/pipeline.ts FIGURE_FIT, from the panel). */
+export interface FigureFit { halfWidth: number; below: number }
+
 export interface MeshPlacement {
-  /** Metres per model unit (0.001 for millimetres). */
-  metresPerUnit: number;
   /** Which model axis points up. */
   up: 'z' | 'y';
   /** Turn about the vertical axis so the face looks toward -Y (the viewer), degrees. */
   turnDeg: number;
   name: string;
+  fit: FigureFit;
 }
 
-/** Place an uploaded mesh the way export_figure.py places the bundled figure: Z up, scaled to scene
- *  units, turned about Z, crown at (0, 0, 1), head centre from the top HEAD_HEIGHT units. */
+/** Place an uploaded mesh the way export_figure.py places the bundled figure: Z up, turned about Z,
+ *  crown at (0, 0, 1), head centre from the top HEAD_HEIGHT units. Its own units are ignored: it is
+ *  scaled about the crown so it fits `fit` (the widest side of the crown, or the depth below it, fills its
+ *  room), so any model starts the same size against the panel and the cloth. */
 export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, p: MeshPlacement): Figure {
   const n = pos.length / 3, out = new Float32Array(pos.length);
-  const k = p.metresPerUnit * SCENE_UNITS_PER_M, a = (p.turnDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  const a = (p.turnDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
   for (let i = 0; i < n; i++) {
-    const x = pos[i * 3] * k;
-    let y = pos[i * 3 + 1] * k, z = pos[i * 3 + 2] * k;
+    const x = pos[i * 3];
+    let y = pos[i * 3 + 1], z = pos[i * 3 + 2];
     if (p.up === 'y') { const t = y; y = -z; z = t; }                // Y-up model: its +Z (glTF front) faces the viewer
     out[i * 3] = x * c - y * s; out[i * 3 + 1] = x * s + y * c; out[i * 3 + 2] = z;
   }
   let ti = 0;
   for (let i = 0; i < n; i++) if (out[i * 3 + 2] > out[ti * 3 + 2]) ti = i;
-  const dx = out[ti * 3], dy = out[ti * 3 + 1], dz = out[ti * 3 + 2] - 1;
+  const cx = out[ti * 3], cy = out[ti * 3 + 1], cz = out[ti * 3 + 2];
+  let side = 0, below = 0;
+  for (let i = 0; i < n; i++) { side = Math.max(side, Math.abs(out[i * 3] - cx)); below = Math.max(below, cz - out[i * 3 + 2]); }
+  const k = Math.min(side > 0 ? p.fit.halfWidth / side : Infinity, below > 0 ? p.fit.below / below : Infinity);
+  if (!Number.isFinite(k)) throw new Error('the mesh has no width or height to fit');
   let sx = 0, sy = 0, sz = 0, m = 0;
   for (let i = 0; i < n; i++) {
-    out[i * 3] -= dx; out[i * 3 + 1] -= dy; out[i * 3 + 2] -= dz;
+    out[i * 3] = (out[i * 3] - cx) * k; out[i * 3 + 1] = (out[i * 3 + 1] - cy) * k; out[i * 3 + 2] = 1 + (out[i * 3 + 2] - cz) * k;
     if (out[i * 3 + 2] > 1 - HEAD_HEIGHT) { sx += out[i * 3]; sy += out[i * 3 + 1]; sz += out[i * 3 + 2]; m++; }
   }
   const triangles = Uint32Array.from(tris as ArrayLike<number>);

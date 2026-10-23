@@ -236,18 +236,38 @@ export function reliefPreviewGrid(m: ReliefMaster, cols: number, rows: number): 
   return out;
 }
 
-/** Largest height difference, at the master's nodes, between the master and a preview grid drawn
- *  with the master's diagonal. 0 at native resolution. */
-export function previewErrorIn(m: ReliefMaster, preview: number[][], cols: number, rows: number): number {
+/** Height difference, at the master's nodes, between the master and a preview grid drawn with the
+ *  master's diagonal: its `quantile` over all nodes (1, the default, is the largest; nearest rank). 0 at
+ *  native resolution. The largest is dominated by vertical walls, where a preview cell's sideways
+ *  offset reads as the wall's full height, so the stats panel shows the 99th percentile. */
+export function previewErrorIn(m: ReliefMaster, preview: number[][], cols: number, rows: number, quantile = 1): number {
   const flat = new Float64Array(cols * rows);
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) flat[j * cols + i] = preview[j][i];
-  let worst = 0;
+  const err = new Float64Array(m.rows * m.cols);
   for (let j = 0; j < m.rows; j++) {
     const y = (j / (m.rows - 1)) * m.heightIn;
     for (let i = 0; i < m.cols; i++) {
       const p = triangulatedHeight(flat, cols, rows, m.widthIn, m.heightIn, m.diagonalZ00Z11, (i / (m.cols - 1)) * m.widthIn, y);
-      worst = Math.max(worst, Math.abs(p - m.heightsIn[j * m.cols + i]));
+      err[j * m.cols + i] = Math.abs(p - m.heightsIn[j * m.cols + i]);
     }
   }
-  return worst;
+  return selectKth(err, Math.max(0, Math.min(err.length - 1, Math.ceil(quantile * err.length) - 1)));
+}
+
+/** The k-th smallest value of `a` (0-based), reordering `a` in place: Hoare quickselect, median of three. */
+function selectKth(a: Float64Array, k: number): number {
+  let lo = 0, hi = a.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const x = a[lo], y = a[mid], z = a[hi];
+    const pivot = x < y ? (y < z ? y : x < z ? z : x) : (x < z ? x : y < z ? z : y);
+    let i = lo, j = hi;
+    while (i <= j) {
+      while (a[i] < pivot) i++;
+      while (a[j] > pivot) j--;
+      if (i <= j) { const t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; }
+    }
+    if (k <= j) hi = j; else if (k >= i) lo = i; else return a[k];
+  }
+  return a[k];
 }

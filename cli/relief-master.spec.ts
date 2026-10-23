@@ -323,6 +323,17 @@ async function main(): Promise<void> {
         brute = Math.max(brute, Math.abs(p - topDown.heightsIn[j * COLS + i]));
       }
     assert(err > 0 && Math.abs(err - brute) < 1e-12, 'a reduced preview reports its measured error', `${err.toFixed(4)} in`);
+    // The stats panel's figure is a percentile (a wall's sideways offset makes the largest read as its height).
+    const all: number[] = [];
+    for (let j = 0; j < ROWS; j++)
+      for (let i = 0; i < COLS; i++) {
+        const p = triangulatedHeight(Float64Array.from(coarse.flat()), 11, 8, 4, 3, true, i * 0.1, j * 0.1);
+        all.push(Math.abs(p - topDown.heightsIn[j * COLS + i]));
+      }
+    all.sort((a, b) => a - b);
+    const qs = [0, 0.5, 0.9, 0.99, 1].map(q => [previewErrorIn(topDown, coarse, 11, 8, q), all[Math.max(0, Math.ceil(q * all.length) - 1)]]);
+    assert(qs.every(([a, b]) => Math.abs(a - b) < 1e-12) && qs[3][0] < qs[4][0], 'the error percentile is the nearest-rank value of every node\'s error',
+      qs.map(([a]) => a.toFixed(4)).join(', '));
   }
 
   if (failures === 0) {

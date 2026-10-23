@@ -41,7 +41,7 @@ npm run test:gh-parity   # tsx cli/grasshopper-parity.spec.ts
 npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~5 s)
 npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drapes vs the Blender silk and gathered runs, ~2.5 min)
 npm run test:depthmap       # tsx cli/depthmap.spec.ts (luma sampling, orientation, cutoff, share links)
-npm run drape-run -- <figure.mcfig> --out <dir> [--preset silk|gathered] [--tilt 25] [--turn 0] [--lean 0] [--param key=value]   # one web drape in Node
+npm run drape-run -- <figure.mcfig> --out <dir> [--preset silk|gathered] [--tilt 25] [--turn 0] [--lean 0] [--scale 100] [--param key=value]   # one web drape in Node
 npm run test:cut         # tsx cli/sbp-cut.spec.ts (compensation oracles + SBP cut replay, ~7 min)
 npm run test:relief-master  # tsx cli/relief-master.spec.ts (.mcrelief contract, export fidelity)
 npm run relief-roundtrip -- <master.mcrelief> --out <dir> [--crop ...] [--sbp] [--replay f.sbp] [--sim-factor N] [--offset x,y] [--face ...]

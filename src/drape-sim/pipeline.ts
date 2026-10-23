@@ -3,19 +3,22 @@
  * (scripts/drape/blender_drape.py + workflow.py). Pure: no DOM; used by the drape Worker, the Node
  * runner (cli/drape-run.ts) and the specs.
  *
- * Panel: the figure seen from the front (-Y) over x -2.1..2.1 scene units, z 1.2 down to -4.4 (12 x 16
- * aspect), 1201 x 1601 nodes, rows top-down. Heights map linearly: the deepest visible point (figure or
+ * Panel: the figure seen from the front (-Y) over x -2.1..2.1 scene units, z 1.2 down to -4.4 (3:4,
+ * carved at any width the Drape tab sets, 12 x 16 in by default), 1201 x 1601 nodes, rows top-down. Heights map linearly: the deepest visible point (figure or
  * veil) to the frontmost point spans RELIEF_SPAN_IN above a RELIEF_BACKING_IN backing (the accepted Monti
  * mapping), so every height lies in [backing, backing + span].
  */
 import { simulateCloth, type ClothParams, type Jolt } from './cloth';
-import { poseFigure, type Figure, type FigurePose } from './figure';
+import { poseFigure, type Figure, type FigureFit, type FigurePose } from './figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from './raster';
 import { gridTriangles, subdivideGrid } from './subdiv';
 
 export const PANEL_WINDOW: DepthWindow = { x0: -2.1, x1: 2.1, zTop: 1.2, zBottom: 1.2 - 4.2 * 16 / 12, cols: 1201, rows: 1601 };
-export const PANEL_WIDTH_IN = 12;
-export const PANEL_HEIGHT_IN = 16;
+/** The panel's width to height (the drape relief keeps it at every carve size). */
+export const PANEL_ASPECT = 12 / 16;
+/** An uploaded mesh fills 90% of the panel beside and below its crown (at z = 1), so all of it is seen
+ *  with a margin (src/drape-sim/figure.ts figureFromMesh). */
+export const FIGURE_FIT: FigureFit = { halfWidth: 0.9 * (PANEL_WINDOW.x1 - PANEL_WINDOW.x0) / 2, below: 0.9 * (1 - PANEL_WINDOW.zBottom) };
 export const RELIEF_BACKING_IN = 0.125;
 export const RELIEF_SPAN_IN = 0.625;
 /** Display subdivision levels applied to the solved cloth before extraction (as in the proof); the

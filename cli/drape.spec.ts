@@ -10,15 +10,15 @@ import initJolt from 'jolt-physics/wasm-compat';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
-import { bareDepth, offsetTowardViewer, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
+import { bareDepth, FIGURE_FIT, offsetTowardViewer, PANEL_ASPECT, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
 import { STATE } from '../src/state';
-import { downloadDrapeRelief } from '../src/drape-ui';
+import { downloadDrapeRelief, FIGURE_EXTENSIONS, meshFromFile, toMaster } from '../src/drape-ui';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, getExportSurface } from '../src/export-surface';
 import { buildConfig, doSBPExport, safeZForStock, SBP_STATE, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from '../src/sbp-export';
-import { DRAPE_CONTROLS, DRAPE_PRESETS, drapeCarveFor, drapeControlEffect, drapeJob, MAX_CLOTH_QUADS, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
+import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_WIDTH_RANGE, drapeCarveFor, drapeControlEffect, drapeJob, MAX_CLOTH_QUADS, MIN_DRAPE_BACKING_IN, remapToCarve } from '../src/drape-controls';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -170,11 +170,43 @@ async function main(): Promise<void> {
   {
     // A 300 mm tall Y-up box whose front (+Z, glTF convention) must end up facing the viewer (-Y).
     const p = new Float32Array([-100, 0, 50, 100, 0, 50, 0, 300, 50, 0, 0, -50]);
-    const f = figureFromMesh(p, [0, 1, 2, 0, 2, 3], { metresPerUnit: 0.001, up: 'y', turnDeg: 0, name: 'box' });
+    const f = figureFromMesh(p, [0, 1, 2, 0, 2, 3], { up: 'y', turnDeg: 0, name: 'box', fit: FIGURE_FIT });
     const ys = [f.positions[1], f.positions[4], f.positions[10]];
     assert(Math.abs(f.positions[8] - 1) < 1e-6, 'the highest point becomes the crown at z = 1');
     assert(ys[0] < ys[2] && ys[1] < ys[2], 'a Y-up model\'s front (+Z) faces the viewer (-Y)', ys.map(v => v.toFixed(2)).join(','));
-    assert(Math.abs((f.positions[8] - f.positions[2]) - 0.3 * 8) < 1e-5, '300 mm becomes 2.4 scene units (8 per metre)');
+    // 300 tall and 100 either side: the depth below the crown binds (4.86 / 300 < 1.89 / 100).
+    assert(Math.abs((f.positions[8] - f.positions[2]) - FIGURE_FIT.below) < 1e-5, 'a tall model is fitted to the panel\'s depth below the crown',
+      `${(f.positions[8] - f.positions[2]).toFixed(4)} of ${FIGURE_FIT.below}`);
+    // The same box in metres, and a wide one: units do not matter, and the width binds when it is wider.
+    const m = figureFromMesh(p.map(v => v / 1000), [0, 1, 2, 0, 2, 3], { up: 'y', turnDeg: 0, name: 'box', fit: FIGURE_FIT });
+    assert(m.positions.every((v, i) => Math.abs(v - f.positions[i]) < 1e-5), 'the fit ignores the model\'s units (millimetres and metres place the same)');
+    const wide = figureFromMesh(new Float32Array([-1000, 0, 0, 1000, 0, 0, 0, 10, 0]), [0, 1, 2], { up: 'y', turnDeg: 0, name: 'wide', fit: FIGURE_FIT });
+    assert(Math.abs(wide.positions[3] - FIGURE_FIT.halfWidth) < 1e-5 && Math.abs(wide.positions[0] + FIGURE_FIT.halfWidth) < 1e-5,
+      'a wide model is fitted to the panel\'s width either side of the crown', `x ${wide.positions[0].toFixed(3)} to ${wide.positions[3].toFixed(3)}`);
+    assert(/no width or height/.test(thrown(() => figureFromMesh(new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]), [0, 1, 2], { up: 'z', turnDeg: 0, name: 'dot', fit: FIGURE_FIT }))),
+      'a mesh with no extent is refused');
+    // The fit leaves a margin inside the panel window (90%).
+    assert(Math.abs(FIGURE_FIT.halfWidth - 0.9 * 2.1) < 1e-12 && Math.abs(FIGURE_FIT.below - 0.9 * (1 - PANEL_WINDOW.zBottom)) < 1e-12,
+      'the fit is 90% of the panel beside and below the crown');
+  }
+
+  // ---------- D6b upload formats ----------
+  process.stdout.write('D6b upload formats\n');
+  {
+    // The same 0.65 m bust (a head on shoulders, Z up, face toward -Y) exported by Blender 5.2.2 as USDZ and PLY.
+    const usd = await meshFromFile(fileBuffer('cli/fixtures/figure-formats/bust.usdz'), 'bust.usdz');
+    const ply = await meshFromFile(fileBuffer('cli/fixtures/figure-formats/bust.ply'), 'bust.ply');
+    const place = (r: { pos: Float32Array; tris: Uint32Array; up?: 'y' }): Figure => figureFromMesh(r.pos, r.tris, { up: r.up ?? 'z', turnDeg: 0, name: 'bust', fit: FIGURE_FIT });
+    const fu = place(usd), fp = place(ply);
+    const box = (q: Float32Array): number[] => { const b = [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity]; for (let i = 0; i < q.length; i += 3) for (let a = 0; a < 3; a++) { b[a * 2] = Math.min(b[a * 2], q[i + a]); b[a * 2 + 1] = Math.max(b[a * 2 + 1], q[i + a]); } return b; };
+    const bu = box(fu.positions), bp = box(fp.positions);
+    assert(usd.tris.length / 3 === 236 && ply.tris.length / 3 === 236 && usd.up === 'y' && ply.up === undefined,
+      'USDZ and PLY load all 236 triangles (USD comes back Y-up, PLY takes the sidebar\'s axis)', `${usd.tris.length / 3} / ${ply.tris.length / 3}`);
+    assert(bu.every((v, i) => Math.abs(v - bp[i]) < 1e-5), 'the USDZ and the PLY of one model place identically', bu.map(v => v.toFixed(3)).join(','));
+    assert(bu[2] < -0.5 && Math.abs(bu[3] - 0.748) < 0.01, 'the USDZ\'s front (-Y in the stage) faces the viewer', `y ${bu[2].toFixed(3)} to ${bu[3].toFixed(3)}`);
+    const pts = await meshFromFile(fileBuffer('cli/fixtures/figure-formats/points.ply'), 'points.ply');
+    assert(pts.tris.length === 0, 'a PLY point cloud comes back with no triangles (the upload refuses it)', `${pts.tris.length / 3} triangles`);
+    assert(['.usdz', '.usd', '.usda', '.usdc', '.ply'].every(e => FIGURE_EXTENSIONS.includes(e)), 'the upload accepts USD and PLY files');
   }
 
   // ---------- D7 short cloth run ----------
@@ -209,6 +241,18 @@ async function main(): Promise<void> {
     assert(cl / n < ct / n - 0.3, 'leaning the crown right swings the body below it to the left (-X)', `body x ${(ct / n).toFixed(2)} -> ${(cl / n).toFixed(2)}`);
     let top = -Infinity; for (let i = 2; i < lean.length; i += 3) top = Math.max(top, lean[i]);
     assert(Math.abs(top - 1) < 1e-6, 'a posed figure keeps its crown at z = 1');
+    // Figure Size scales the posed figure about its crown; 1 leaves it bit for bit.
+    const one = poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0, scale: 1 });
+    assert(one.every((v, i) => v === t[i]), 'Figure Size 100% is the plain pose, bit for bit');
+    const big = poseFigure(demo, { tiltDeg: 25, turnDeg: 0, leanDeg: 0, scale: 2 });
+    let worst = 0, bigTop = -Infinity;
+    for (let i = 0; i < t.length; i += 3) {
+      worst = Math.max(worst, Math.abs(big[i] - 2 * t[i]), Math.abs(big[i + 1] - 2 * t[i + 1]), Math.abs(big[i + 2] - 1 - 2 * (t[i + 2] - 1)));
+      bigTop = Math.max(bigTop, big[i + 2]);
+    }
+    assert(worst < 1e-5 && Math.abs(bigTop - 1) < 1e-6, 'Figure Size 200% doubles every distance from the crown, which stays at z = 1', `worst ${worst.toExponential(1)}`);
+    assert(drapeJob({ ...DRAPE_PRESETS.gathered.settings, drapeFigureScale: 150 }, 'off').pose.scale === 1.5 && drapeControlEffect('drapeFigureScale') === 'pose',
+      'the Figure Size control is a pose: it reaches the solver and rebuilds the bare figure');
   }
 
   // ---------- D9 force timing ----------
@@ -345,11 +389,18 @@ async function main(): Promise<void> {
       'the largest cloth the sliders allow is over the solver cap, the default and 200 across are under it', `${huge.cellsX} x ${huge.cellsY}`);
     assert(fine.cellsX === 200 && fine.cellsY === 320 && Math.abs(mass(fine) - mass(SILK)) < 1e-9, 'a finer cloth keeps its mass per area', `${fine.cellsX} x ${fine.cellsY}`);
     const IN = 0.0254, std = new Float32Array([RELIEF_BACKING_IN * IN, (RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN]);
-    const c4 = drapeCarveFor(4, 3), out = remapToCarve(std, c4);
+    const c4 = drapeCarveFor(4, 3, 12), out = remapToCarve(std, c4);
     assert(Math.abs(out[0] / IN - 1) < 1e-6 && Math.abs(out[1] / IN - 4) < 1e-6, 'a 4 in board with 3 in of relief spans 1 to 4 in', `${(out[0] / IN).toFixed(4)} to ${(out[1] / IN).toFixed(4)} in`);
-    const thin = drapeCarveFor(1, 3);
+    const thin = drapeCarveFor(1, 3, 12);
     assert(Math.abs(thin.backingIn - MIN_DRAPE_BACKING_IN) < 1e-12 && thin.stockIn === 1, 'relief depth is capped to keep the minimum backing', JSON.stringify(thin));
-    assert(drapeCarveFor(9, 0.5).stockIn === 4 && drapeCarveFor(0.1, 0.05).stockIn === 0.25, 'material thickness stays within 0.25 to 4 in');
+    assert(drapeCarveFor(9, 0.5, 12).stockIn === 4 && drapeCarveFor(0.1, 0.05, 12).stockIn === 0.25, 'material thickness stays within 0.25 to 4 in');
+    const w9 = drapeCarveFor(0.75, 0.625, 9), wBig = drapeCarveFor(0.75, 0.625, 40), wSmall = drapeCarveFor(0.75, 0.625, 1);
+    assert(w9.widthIn === 9 && w9.heightIn === 12 && wBig.widthIn === DRAPE_WIDTH_RANGE[1] && wBig.heightIn === 24 && wSmall.widthIn === DRAPE_WIDTH_RANGE[0]
+      && Math.abs(PANEL_ASPECT - 0.75) < 1e-15, 'the carve keeps 3:4 and its width stays within 3 to 18 in (24 in tall at most, the bed)', JSON.stringify([w9, wBig.heightIn, wSmall.widthIn]));
+    // Face and wind positions are percentages of the panel: the gathered face region lands where the solver preset has it.
+    const gp = drapeJob(DRAPE_PRESETS.gathered.settings, 'off').params;
+    assert(Math.abs(gp.faceX - SILK_GATHERED.faceX) < 1e-3 && Math.abs(gp.faceZ - SILK_GATHERED.faceZ) < 1e-3 && Math.abs(gp.faceRadius - SILK_GATHERED.faceRadius) < 1e-3,
+      'percent positions map back onto the preset\'s face region within 0.001 units', `${gp.faceX.toFixed(4)}, ${gp.faceZ.toFixed(4)}, ${gp.faceRadius.toFixed(4)}`);
   }
 
   // ---------- D14 export safety on the Drape tab ----------
@@ -387,6 +438,24 @@ async function main(): Promise<void> {
     // Relief Depth alone (same stock top, new backing) is a pending carve too.
     Object.assign(STATE, { drapeMaster: thick, drapeStock: 2, drapeReliefDepth: 1.0 });
     assert(drapeCarvePending() && typeof getExportSurface(true) === 'string', 'a Relief Depth change alone also holds exports until its remap lands');
+    // So is a new carve size: the master is still 12 x 16 in.
+    Object.assign(STATE, { drapeMaster: thick, drapeStock: 2, drapeReliefDepth: 1.25, drapeCarveWidth: 9 });
+    const resized = drapeCarvePending();
+    Object.assign(STATE, { drapeCarveWidth: 12 });
+    assert(resized && !drapeCarvePending(), 'a carve size change holds exports until the master is rebuilt at that size');
+    // The rebuilt master is cut at the carve size: 9 in wide is 12 in tall, the heights unchanged.
+    {
+      const n = PANEL_WINDOW.cols * PANEL_WINDOW.rows, heightsM = new Float32Array(n).fill(RELIEF_BACKING_IN * IN), mask = new Uint8Array(n).fill(1);
+      heightsM[n >> 1] = (RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN;
+      const r = { heightsM, mask, name: 'probe', fig: demo, kind: 'bare' as const, label: 'probe' };
+      Object.assign(STATE, { drapeCarveWidth: 9, drapeStock: 0.75, drapeReliefDepth: 0.625 });
+      const m9 = await toMaster(r);
+      Object.assign(STATE, { drapeCarveWidth: 12 });
+      const m12 = await toMaster(r);
+      assert(Math.abs(m9.widthIn - 9) < 1e-6 && Math.abs(m9.heightIn - 12) < 1e-6 && Math.abs(m12.widthIn - 12) < 1e-6 && Math.abs(m12.heightIn - 16) < 1e-6
+        && Math.abs(m9.heightsIn.reduce((a, b) => Math.max(a, b), 0) - 0.75) < 1e-6, 'the drape master is cut at the carve size (9 x 12 in, or 12 x 16 in), its stock top unchanged',
+        `${m9.widthIn.toFixed(3)} x ${m9.heightIn.toFixed(3)} in`);
+    }
     // Safe Z follows the stock top when it moves, and keeps a raised value when it does not.
     Object.assign(STATE, { drapeMaster: thin, drapeStock: 0.75, drapeReliefDepth: 0.625 });
     syncSbpSafeZ();
