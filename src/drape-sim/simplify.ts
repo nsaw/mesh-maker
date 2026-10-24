@@ -63,6 +63,37 @@ function clusterPass(pos: Float32Array, tris: Uint32Array, lo: number[], hi: num
   return { pos: p, tris: out.slice(0, k) };
 }
 
+/** `m` with bit-identical vertices merged (a binary STL repeats every corner once per triangle, six times
+ *  over on a closed surface), so the full-resolution copy kept for the carve takes about a third of the
+ *  memory. Consumes `m`: the unique vertices are compacted into the front of `m.pos` (a unique vertex is
+ *  never written past the one being read) and `m.tris` is renumbered in place. Open addressing on the
+ *  coordinates' bit patterns; the table doubles past half full. */
+export function weldVertices(m: MeshArrays): MeshArrays {
+  const { pos, tris } = m, nv = pos.length / 3, bits = new Uint32Array(pos.buffer, pos.byteOffset, pos.length);
+  const hash = (u: number): number => {
+    let h = Math.imul(bits[u * 3], 0x9e3779b1) ^ Math.imul(bits[u * 3 + 1], 0x85ebca77) ^ Math.imul(bits[u * 3 + 2], 0xc2b2ae3d);
+    h ^= h >>> 15; return Math.imul(h, 0x27d4eb2f) ^ (h >>> 13);
+  };
+  let size = 1 << 16, table = new Int32Array(size).fill(-1), unique = 0;
+  const remap = new Uint32Array(nv);
+  for (let v = 0; v < nv; v++) {
+    // Compare against the slot `unique` would take: copy v there first, then look it up.
+    bits[unique * 3] = bits[v * 3]; bits[unique * 3 + 1] = bits[v * 3 + 1]; bits[unique * 3 + 2] = bits[v * 3 + 2];
+    let s = hash(unique) & (size - 1), found = -1;
+    for (let u = table[s]; u >= 0; s = (s + 1) & (size - 1), u = table[s]) {
+      if (bits[u * 3] === bits[unique * 3] && bits[u * 3 + 1] === bits[unique * 3 + 1] && bits[u * 3 + 2] === bits[unique * 3 + 2]) { found = u; break; }
+    }
+    if (found >= 0) { remap[v] = found; continue; }
+    table[s] = unique; remap[v] = unique++;
+    if (unique * 2 > size) {
+      size *= 2; table = new Int32Array(size).fill(-1);
+      for (let u = 0; u < unique; u++) { let t = hash(u) & (size - 1); while (table[t] >= 0) t = (t + 1) & (size - 1); table[t] = u; }
+    }
+  }
+  for (let i = 0; i < tris.length; i++) tris[i] = remap[tris[i]];
+  return { pos: pos.slice(0, unique * 3), tris };
+}
+
 /** `m` itself when it has at most `maxTris` triangles, else a clustered copy keeping between MIN_KEPT of
  *  `maxTris` and `maxTris`. Throws if the mesh has no area, or no cell lands in that band. `maxClusters`
  *  is lowered only by the specs, to reach the cluster limit without millions of vertices. */

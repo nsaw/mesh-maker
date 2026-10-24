@@ -8,6 +8,9 @@ export interface DrapeJob {
   figure: ArrayBuffer;
   pose: FigurePose;
   params: ClothParams;
+  /** The full-resolution figure the drape figure was simplified from (splitForDrape), copied: the relief
+   *  is extracted over it. Its header is the drape figure's apart from the counts. */
+  detail?: { positions: Float32Array; triangles: Uint32Array };
 }
 
 export type DrapeWorkerMessage =

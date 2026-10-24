@@ -12,9 +12,10 @@ const post = (m: DrapeWorkerMessage, transfer: Transferable[] = []): void => (se
 
 self.onmessage = async (e: MessageEvent<DrapeJob>) => {
   try {
-    const fig = parseFigure(e.data.figure);
+    const fig = parseFigure(e.data.figure), d = e.data.detail;
+    const detail = d ? { header: { ...fig.header, vertices: d.positions.length / 3, triangles: d.triangles.length / 3 }, positions: d.positions, triangles: d.triangles } : null;
     const J = await initJolt();
-    const run = drapeFigure(J, fig, e.data.pose, e.data.params, (frame, frames) => { post({ type: 'progress', frame, frames }); });
+    const run = drapeFigure(J, fig, e.data.pose, e.data.params, (frame, frames) => { post({ type: 'progress', frame, frames }); }, detail);
     const { heightsM, mask, veil } = run.relief;
     post({ type: 'done', heightsM, mask, veil, seconds: run.seconds, lastFrameMotion: run.lastFrameMotion },
       [heightsM.buffer, mask.buffer, veil.buffer]);

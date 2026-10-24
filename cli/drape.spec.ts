@@ -7,15 +7,15 @@
  */
 import { readFileSync } from 'node:fs';
 import initJolt from 'jolt-physics/wasm-compat';
-import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, poseWithDetail, splitForDrape, tiltFigure, windsInward, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
 import { bareDepth, drapeFigure, FIGURE_FIT, offsetTowardViewer, PANEL_ASPECT, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
 import { STATE } from '../src/state';
-import { binaryStlSoup, downloadDrapeRelief, FIGURE_EXTENSIONS, meshFromFile, toMaster } from '../src/drape-ui';
-import { simplifyMesh } from '../src/drape-sim/simplify';
+import { binaryStlSoup, downloadDrapeRelief, FIGURE_EXTENSIONS, loadFigureFile, meshFromFile, toMaster } from '../src/drape-ui';
+import { simplifyMesh, weldVertices } from '../src/drape-sim/simplify';
 import { isChunkLoadError, updatedSinceLoad } from '../src/stale-build';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, getExportSurface } from '../src/export-surface';
@@ -342,6 +342,97 @@ async function main(): Promise<void> {
     assert(isChunkLoadError(new TypeError('Failed to fetch dynamically imported module: https://x/assets/STLLoader-a.js'))
       && isChunkLoadError(new TypeError('Importing a module script failed.')) && !isChunkLoadError(new Error('no triangles')),
       'Chromium\'s and Safari\'s failed-import errors are recognised, other errors are not');
+  }
+
+  // ---------- D6f the carve reads the full-resolution figure ----------
+  process.stdout.write('D6f full-resolution carve of a simplified figure\n');
+  {
+    // Weld: a 250 x 250 quad soup (375,000 corners, 63,001 distinct, past the table's first doubling).
+    const N = 250, corner = (i: number, j: number): number[] => [i * 0.01, j * 0.01, Math.sin(i * 0.3) * Math.cos(j * 0.2)];
+    const soup: number[] = [];
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) soup.push(...corner(i, j), ...corner(i + 1, j), ...corner(i + 1, j + 1), ...corner(i, j), ...corner(i + 1, j + 1), ...corner(i, j + 1));
+    const orig = Float32Array.from(soup), w = weldVertices({ pos: Float32Array.from(orig), tris: Uint32Array.from({ length: orig.length / 3 }, (_, k) => k) });
+    let moved = 0;
+    for (let c = 0; c < w.tris.length; c++) for (let a = 0; a < 3; a++) if (w.pos[w.tris[c] * 3 + a] !== orig[c * 3 + a]) moved++;
+    assert(w.pos.length / 3 === (N + 1) * (N + 1) && moved === 0, 'a triangle soup welds to its distinct vertices, every corner where it was',
+      `${w.pos.length / 3} vertices, ${moved} coordinates moved`);
+    const nearly = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1e-7, 1, 0, 0, 0, 1, 0]);
+    assert(weldVertices({ pos: nearly, tris: Uint32Array.from([0, 1, 2, 3, 4, 5]) }).pos.length === 12, 'only bit-identical vertices merge (1e-7 apart stay two)');
+    // 70,000 vertices on one vertical line, twice over: they differ only in z, so every probe compares all
+    // three coordinates, and the table must grow past 65,536 slots twice.
+    const tower = new Float32Array(140_000 * 3);
+    for (let k = 0; k < 140_000; k++) tower[k * 3 + 2] = (k % 70_000) * 0.001;
+    const tw = weldVertices({ pos: tower, tris: Uint32Array.from({ length: 140_000 }, (_, k) => k) });
+    assert(tw.pos.length / 3 === 70_000 && tw.tris[70_123] === tw.tris[123] && tw.pos[tw.tris[70_123] * 3 + 2] === Math.fround(0.123),
+      'vertices that differ only in z stay apart, and repeats of them merge', `${tw.pos.length / 3} vertices`);
+
+    // splitForDrape: Venus under the cap drapes as it is; a figure over it collides with a simplified copy.
+    const under = splitForDrape(demo);
+    assert(under.figure === demo && under.detail === null, 'a figure under the cap is draped as it is, with no detail');
+    const quads = 400, grid: number[] = [], gtris: number[] = [];
+    for (let j = 0; j <= quads; j++) for (let i = 0; i <= quads; i++) grid.push((i / quads - 0.5) * 3, 0.3 * Math.cos((i / quads - 0.5) * 3) + 0.01 * Math.sin(i * 0.9), 1 - (j / quads) * 4);
+    for (let j = 0; j < quads; j++) for (let i = 0; i < quads; i++) { const a = j * (quads + 1) + i; gtris.push(a, a + 1, a + quads + 2, a, a + quads + 2, a + quads + 1); }
+    const dense = figureFromMesh(grid, Uint32Array.from(gtris), { up: 'z', turnDeg: 0, name: 'sheet', fit: FIGURE_FIT });
+    const split = splitForDrape(dense), { figure: coarse, detail } = split;
+    const { vertices: _v, triangles: _t, ...kept } = coarse.header, { vertices: _dv, triangles: _dt, ...dkept } = dense.header;
+    assert(detail === dense && coarse.header.triangles <= MAX_FIGURE_TRIANGLES && coarse.header.triangles === coarse.triangles.length / 3
+      && JSON.stringify(kept) === JSON.stringify(dkept), 'a figure over the cap collides with a simplified copy that keeps its header, and is kept as the detail',
+      `${dense.header.triangles.toLocaleString()} -> ${coarse.header.triangles.toLocaleString()} triangles`);
+
+    // One rigid motion for both: the detail poses exactly as on its own, and a vertex the two share lands
+    // in the same place in both. The simplified copy's own anchor would not keep them registered.
+    const shared = new Float32Array([...dense.positions.slice(0, 3)]), probe: Figure = { header: coarse.header,
+      positions: Float32Array.from([...coarse.positions, ...shared]), triangles: coarse.triangles };
+    let identical = true, together = true, ownApart = false;
+    for (const pose of [{ tiltDeg: 25, turnDeg: 0, leanDeg: 0 }, { tiltDeg: -10, turnDeg: 30, leanDeg: 12, scale: 1.4 }, { tiltDeg: 60, turnDeg: -45, leanDeg: 0, scale: 0.5 }]) {
+      const p = poseWithDetail(probe, dense, pose), own = poseFigure(dense, pose), alone = poseFigure(probe, pose), last = probe.positions.length - 3;
+      if (!own.every((v, i) => v === p.detailPos[i])) identical = false;
+      for (let a = 0; a < 3; a++) { if (p.pos[last + a] !== p.detailPos[a]) together = false; if (Math.abs(alone[last + a] - p.detailPos[a]) > 1e-4) ownApart = true; }
+    }
+    assert(identical && together, 'the detail poses bit for bit as on its own, and a vertex both figures share lands on the same point');
+    assert(ownApart, 'negative control: the simplified copy posed on its own anchor lands elsewhere');
+    assert(/not placed like/.test(thrown(() => poseWithDetail({ ...coarse, header: { ...coarse.header, head_centre: [0, 0, 0] } }, dense, { tiltDeg: 0, turnDeg: 0, leanDeg: 0 }))),
+      'a detail placed differently from the drape figure is refused');
+    assert(/non-finite/.test(thrown(() => figureFromMesh([0, 0, 0, 1, 0, 0, 0, NaN, 1], [0, 1, 2], { up: 'z', turnDeg: 0, name: 'nan', fit: FIGURE_FIT }))),
+      'a mesh with a non-finite coordinate is refused with that reason before it is placed');
+
+    // Winding: Jolt collides with a triangle's front only, so an inward mesh is turned outward on upload; an
+    // open sheet (a flat relief, either winding) encloses nothing and is left alone.
+    const cubeP = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1];
+    const outward = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
+    const inward = outward.map((v, k) => k % 3 === 1 ? outward[k + 1] : k % 3 === 2 ? outward[k - 1] : v);
+    const sheetT = [0, 1, 2, 0, 2, 3], sheetP = [0, 0, 0, 1, 0, 0, 1, 1, 0.01, 0, 1, 0];
+    assert(!windsInward(cubeP, outward) && windsInward(cubeP, inward) && !windsInward(sheetP, sheetT) && !windsInward(sheetP, [0, 2, 1, 0, 3, 2]),
+      'an inward cube is found; an outward cube and a flat sheet (either winding) are not');
+    const fixedCube = figureFromMesh(cubeP, Uint32Array.from(inward), { up: 'z', turnDeg: 0, name: 'inward', fit: FIGURE_FIT });
+    const keptCube = figureFromMesh(cubeP, Uint32Array.from(outward), { up: 'z', turnDeg: 0, name: 'outward', fit: FIGURE_FIT });
+    assert(!windsInward(fixedCube.positions, fixedCube.triangles) && keptCube.triangles.every((v, k) => v === outward[k]),
+      'an inward upload is turned outward, an outward one keeps its triangles as they were');
+
+    // A file the browser cannot read (permissions, a file moved after it was picked) is not a placement
+    // problem: its toast carries no up-axis hint.
+    {
+      const g = globalThis as unknown as { document: unknown };
+      const keep = g.document, toast = { textContent: '', style: { display: '' }, classList: { add: () => undefined, remove: () => undefined } };
+      g.document = { getElementById: (id: string) => id === 'toast' ? toast : null, querySelector: () => null };
+      const unreadable = { name: 'scan.stl', arrayBuffer: async () => { throw new Error('The requested file could not be read'); } } as unknown as File;
+      await loadFigureFile(unreadable, { up: 'z', turnDeg: 0 });
+      g.document = keep;
+      assert(/could not be read/.test(toast.textContent) && !/up axis/.test(toast.textContent), 'an unreadable file is reported without the up-axis hint', toast.textContent);
+    }
+
+    // The drape: the cloth collides with the simplified copy, the depths are the detail's.
+    const J = await initJolt(), pose = { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }, short = { ...SILK, frames: 3, cellsX: 20, cellsY: 32 };
+    const run = drapeFigure(J, coarse, pose, short, undefined, detail);
+    const fullBare = bareDepth(poseFigure(dense, pose), dense.triangles), coarseBare = bareDepth(poseFigure(coarse, pose), coarse.triangles);
+    let same = true, under2 = 0, differs = 0;
+    for (let k = 0; k < fullBare.length; k++) {
+      if (!Object.is(run.bare[k], fullBare[k])) same = false;
+      if (run.veiled[k] < fullBare[k]) under2++;
+      if (Number.isFinite(fullBare[k]) && Number.isFinite(coarseBare[k]) && Math.abs(fullBare[k] - coarseBare[k]) > 1e-3) differs++;
+    }
+    assert(same && under2 === 0, 'the drape\'s bare depth is the full-resolution figure\'s, and nothing extracted lies behind it');
+    assert(differs > 10_000, 'negative control: the simplified copy\'s depth differs from the detail\'s', `${differs.toLocaleString()} nodes over 0.001 units`);
   }
 
   // ---------- D7 short cloth run ----------

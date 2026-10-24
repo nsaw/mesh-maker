@@ -15,9 +15,9 @@ import { showToast } from './toast';
 import { formatSliderValue } from './slider-utils';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
-import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, type Figure, type FigurePose } from './drape-sim/figure';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, splitForDrape, type Figure, type FigurePose } from './drape-sim/figure';
 import { bareDepth, FIGURE_FIT, reliefHeights } from './drape-sim/pipeline';
-import { simplifyMesh } from './drape-sim/simplify';
+import { weldVertices } from './drape-sim/simplify';
 import { isChunkLoadError, UPDATED_MESSAGE, updatedSinceLoad } from './stale-build';
 import type { DrapeJob, DrapeWorkerMessage } from './drape-sim/messages';
 import { drapeCarveFor, drapeJob, MAX_CLOTH_QUADS, remapToCarve, type DrapeCarve } from './drape-controls';
@@ -29,6 +29,10 @@ export const FIGURE_EXTENSIONS = ['.mcfig', '.stl', '.obj', '.ply', '.glb', '.gl
 
 let figure: Figure | null = null;
 let figureFile: ArrayBuffer | null = null;
+/** The full-resolution figure `figure` was simplified from (splitForDrape), or null when Jolt holds the
+ *  figure as it is. The bare relief and the drape's extraction read it, so the carve keeps every triangle;
+ *  only the cloth collides with the simplified `figure`. */
+let figureDetail: Figure | null = null;
 /** Bumped whenever the figure or pose changes; a result built from an older revision is discarded. */
 let revision = 0;
 let worker: Worker | null = null;
@@ -171,9 +175,10 @@ function reliefFailed(what: string, err: unknown): string {
   return status;
 }
 
-/** The bare-figure relief of `fig` in `pose`, and its master, as the viewport and exports read it. */
-async function bareRelief(fig: Figure, pose: FigurePose, name: string): Promise<{ relief: NonNullable<typeof lastRelief>; master: ReliefMaster }> {
-  const bare = bareDepth(poseFigure(fig, pose), fig.triangles);
+/** The bare-figure relief of `fig` in `pose` (seen at full resolution: its `detail` when it has one), and
+ *  its master, as the viewport and exports read it. */
+async function bareRelief(fig: Figure, pose: FigurePose, name: string, detail: Figure | null): Promise<{ relief: NonNullable<typeof lastRelief>; master: ReliefMaster }> {
+  const seen = detail ?? fig, bare = bareDepth(poseFigure(seen, pose), seen.triangles);
   const r = reliefHeights(bare, bare), label = poseText(pose);
   const relief = { heightsM: r.heightsM, mask: r.mask, name: `${name}, bare, ${label}`, fig, kind: 'bare' as const, label };
   return { relief, master: await toMaster(relief) };
@@ -184,7 +189,7 @@ async function showBare(): Promise<void> {
   if (!figure) return;
   const rev = revision;
   try {
-    const { relief, master } = await bareRelief(figure, currentPose(), STATE.drapeFigureName);
+    const { relief, master } = await bareRelief(figure, currentPose(), STATE.drapeFigureName, figureDetail);
     if (rev !== revision) return;
     lastRelief = relief;
     present(master, 'bare', relief.label);
@@ -200,10 +205,10 @@ async function showBare(): Promise<void> {
 /** Make `fig` the draped figure. `bare` is its bare relief when the caller already built it (an
  *  upload is built before it replaces anything), used if the pose and carve have not moved since. */
 function useFigure(fig: Figure, file: ArrayBuffer, name: string,
-  bare?: { relief: NonNullable<typeof lastRelief>; master: ReliefMaster; key: string }): void {
+  bare?: { relief: NonNullable<typeof lastRelief>; master: ReliefMaster; key: string }, detail: Figure | null = null): void {
   cancelDrape(false);
   revision++;
-  figure = fig; figureFile = file; STATE.drapeFigureName = name; bareError = null;
+  figure = fig; figureFile = file; figureDetail = detail; STATE.drapeFigureName = name; bareError = null;
   // The previous figure's relief must not stay exportable under the new name while (or if) the new
   // one is built.
   STATE.drapeMaster = null; STATE.drapeMasterKind = null; lastRelief = null;
@@ -338,8 +343,10 @@ export function generateDrape(): void {
     // A Worker that cannot load has no message: most often the site was deployed since this page opened.
     void updatedSinceLoad().then(updated => showToast(updated ? UPDATED_MESSAGE : `Drape worker error: ${err.message || 'the solver did not start (check the connection)'}`, 8000));
   };
-  // The Worker gets its own copy: the figure stays loaded for the next run.
-  const job: DrapeJob = { type: 'drape', figure: figureFile.slice(0), pose, params };
+  // The Worker gets its own copy: the figure stays loaded for the next run. The detail is copied too (not
+  // transferred) by the structured clone.
+  const job: DrapeJob = { type: 'drape', figure: figureFile.slice(0), pose, params,
+    ...(figureDetail ? { detail: { positions: figureDetail.positions, triangles: figureDetail.triangles } } : {}) };
   w.postMessage(job, [job.figure]);
 }
 
@@ -370,51 +377,47 @@ export async function downloadDrapeRelief(): Promise<void> {
  *  and turn and fitted to the panel (figureFromMesh). glTF and USD carry their own up axis. */
 export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; turnDeg: number }): Promise<void> {
   const name = file.name, lower = name.toLowerCase(), seq = ++uploadSeq;
-  let noTriangles = false, simplifiedFrom = 0;
+  let noTriangles = false, read = false;
   try {
-    let fig: Figure | null = null, buf = await file.arrayBuffer();
+    let buf = await file.arrayBuffer();
+    read = true;
     if (seq !== uploadSeq) return;                                  // a newer upload started meanwhile
-    // A mesh to place (and maybe simplify), or a .mcfig already placed. A .mcfig over the drape's cap is
-    // simplified in place, keeping its header (its anchor, head centre, name and licence).
-    let mesh: { pos: Float32Array; tris: Uint32Array; up?: 'y' } | null = null, placed: Figure['header'] | null = null;
-    if (lower.endsWith('.mcfig')) {
-      const f = parseFigure(buf, MAX_MCFIG_UPLOAD_TRIANGLES);
-      if (f.triangles.length / 3 <= MAX_FIGURE_TRIANGLES) fig = f;
-      else { mesh = { pos: f.positions, tris: f.triangles }; placed = f.header; }
-    } else {
-      mesh = await meshFromFile(buf, lower);
+    // The figure as placed, at full resolution: a .mcfig as it is (up to its upload cap), or a mesh turned
+    // and fitted to the panel. `buf` stays the file only for a .mcfig the drape takes as it is.
+    let full: Figure;
+    if (lower.endsWith('.mcfig')) full = parseFigure(buf, MAX_MCFIG_UPLOAD_TRIANGLES);
+    else {
+      let mesh: { pos: Float32Array; tris: Uint32Array; up?: 'y' } = await meshFromFile(buf, lower);
+      if (seq !== uploadSeq) return;
+      buf = new ArrayBuffer(0);                                     // the file's bytes are in `mesh` now
+      if (mesh.tris.length === 0) { noTriangles = true; throw new Error('it has no triangles (a point cloud cannot be draped)'); }
+      // A dense mesh is kept for the carve: weld a triangle soup (a binary STL) to a third of its size first.
+      if (mesh.tris.length / 3 > MAX_FIGURE_TRIANGLES) mesh = { ...weldVertices(mesh), up: mesh.up };
+      full = figureFromMesh(mesh.pos, mesh.tris, { up: mesh.up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT });
+    }
+    const dense = full.triangles.length / 3 > MAX_FIGURE_TRIANGLES;
+    if (dense) {
+      // A dense scan or CAD export: the cloth collides with a clustered copy under Jolt's cap, the carve
+      // reads every triangle (about two seconds for nine million, on this thread; the message is painted first).
+      const msg = `Simplifying ${full.header.triangles.toLocaleString()} triangles to under ${MAX_FIGURE_TRIANGLES.toLocaleString()} for the cloth to collide with...`;
+      setStatus(msg); showToast(msg, 6000);
+      await new Promise(r => setTimeout(r, 50));
       if (seq !== uploadSeq) return;
     }
-    if (mesh) {
-      buf = new ArrayBuffer(0);                                     // the file's bytes are in `mesh` now
-      let { pos, tris } = mesh;
-      const up = mesh.up;
-      mesh = null;
-      if (tris.length === 0) { noTriangles = true; throw new Error('it has no triangles (a point cloud cannot be draped)'); }
-      if (tris.length / 3 > MAX_FIGURE_TRIANGLES) {
-        // A dense scan or CAD export: cluster it under the cap rather than refuse it (about a second for
-        // nine million triangles, on this thread; the message is painted first).
-        simplifiedFrom = tris.length / 3;
-        const msg = `Simplifying ${simplifiedFrom.toLocaleString()} triangles to under ${MAX_FIGURE_TRIANGLES.toLocaleString()} for the drape...`;
-        setStatus(msg); showToast(msg, 6000);
-        await new Promise(r => setTimeout(r, 50));
-        if (seq !== uploadSeq) return;
-        ({ pos, tris } = simplifyMesh({ pos, tris }, MAX_FIGURE_TRIANGLES));
-      }
-      buf = encodeFigure(placed
-        ? { header: { ...placed, vertices: pos.length / 3, triangles: tris.length / 3 }, positions: pos, triangles: tris }
-        : figureFromMesh(pos, tris, { up: up ?? placement.up, turnDeg: placement.turnDeg, name, fit: FIGURE_FIT }));
-      fig = parseFigure(buf);
-    }
-    if (!fig) throw new Error('the file holds no figure');           // each branch above sets one
+    const split = splitForDrape(full), detail = split.detail;
+    // The Worker parses a file, so the same parser checks every figure it gets.
+    if (dense || !lower.endsWith('.mcfig')) buf = encodeFigure(split.figure);
+    const fig = parseFigure(buf);
     // Build its bare relief before replacing the current figure, so a figure that cannot be shown
     // (wrong up axis, nothing in the panel, a header the relief master refuses) is refused and the
     // current one stays.
     const key = bareKey();
-    const { relief, master } = await bareRelief(fig, currentPose(), name);
+    const { relief, master } = await bareRelief(fig, currentPose(), name, detail);
     if (seq !== uploadSeq) return;
-    useFigure(fig, buf, name, { relief, master, key });
-    if (simplifiedFrom) showToast(`${name}: simplified from ${simplifiedFrom.toLocaleString()} to ${fig.header.triangles.toLocaleString()} triangles for the drape.`, 5000);
+    useFigure(fig, buf, name, { relief, master, key }, detail);
+    if (detail) {
+      showToast(`${name}: the cloth collides with a ${fig.header.triangles.toLocaleString()}-triangle copy; the carve keeps all ${detail.header.triangles.toLocaleString()} triangles.`, 6000);
+    }
   } catch (err) {
     if (seq !== uploadSeq) return;
     setStatus(drapeStatusText());                                   // a superseded upload may have left "Simplifying..."
@@ -427,7 +430,7 @@ export async function loadFigureFile(file: File, placement: { up: 'z' | 'y'; tur
       return;
     }
     // The up axis matters only to placement: a file that could not be read or simplified gets no hint.
-    const hint = lower.endsWith('.mcfig') || noTriangles || /non-finite|no area|could not simplify/.test(why) ? '' : '. Check the up axis.';
+    const hint = !read || lower.endsWith('.mcfig') || noTriangles || /non-finite|no area|could not simplify/.test(why) ? '' : '. Check the up axis.';
     showToast(`Could not use ${name} as a figure: ${why}${hint}`, 8000);
   }
 }

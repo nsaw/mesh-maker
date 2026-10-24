@@ -5,6 +5,9 @@
  *   npm run drape-run -- FIGURE.mcfig --out DIR [--preset silk|gathered] [--tilt 25] [--turn 0] [--lean 0] [--scale 100]
  *     [--param key=value]...  (one --param per pair; keys are the ClothParams in src/drape-sim/cloth.ts)
  *
+ * A figure over the drape's triangle cap (up to MAX_MCFIG_UPLOAD_TRIANGLES) is split as the Drape tab
+ * splits it (splitForDrape): the cloth collides with a simplified copy, the depths read every triangle.
+ *
  * Writes DIR/veiled-depth.f32, bare-depth.f32 (float32, NaN = no hit, rows top-down), cloth-front.u8,
  * cloth.f32 (simulated node positions) and drape.json. Window: x -2.1..2.1, z 1.2 down 5.6 (12 x 16 aspect),
  * 1201 x 1601 nodes, as in the Blender proof.
@@ -12,7 +15,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import initJolt from 'jolt-physics/wasm-compat';
-import { parseFigure } from '../src/drape-sim/figure';
+import { MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, splitForDrape } from '../src/drape-sim/figure';
 import { SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { drapeFigure, PANEL_WINDOW } from '../src/drape-sim/pipeline';
 import { DRAPE_CONTROLS } from '../src/drape-controls';
@@ -63,15 +66,17 @@ async function main(): Promise<void> {
     (params as unknown as Record<string, number>)[k] = finite(kv.slice(eq + 1), `--param ${k}`);
   }
   mkdirSync(out, { recursive: true });
-  const buf = readFileSync(file); const fig = parseFigure(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  const buf = readFileSync(file);
+  const { figure: fig, detail } = splitForDrape(parseFigure(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), MAX_MCFIG_UPLOAD_TRIANGLES));
+  if (detail) process.stdout.write(`cloth collides with ${fig.header.triangles} of the figure's ${detail.header.triangles} triangles\n`);
   const J = await initJolt();
   // The same pipeline the Drape tab runs (src/drape-sim/pipeline.ts): tilt, cloth, smoothing, extraction.
-  const run = drapeFigure(J, fig, pose, params, f => { if (f % 20 === 0) process.stdout.write(`frame ${f}\n`); });
+  const run = drapeFigure(J, fig, pose, params, f => { if (f % 20 === 0) process.stdout.write(`frame ${f}\n`); }, detail);
   writeFileSync(join(out, 'veiled-depth.f32'), Buffer.from(new Float32Array(run.veiled).buffer));
   writeFileSync(join(out, 'bare-depth.f32'), Buffer.from(new Float32Array(run.bare).buffer));
   writeFileSync(join(out, 'cloth-front.u8'), Buffer.from(run.relief.veil.buffer));
   writeFileSync(join(out, 'cloth.f32'), Buffer.from(new Float32Array(run.cloth).buffer));
-  const meta = { figure: file, preset: presetName, pose, params, window: PANEL_WINDOW, seconds: run.seconds, lastFrameMotion: run.lastFrameMotion };
+  const meta = { figure: file, collisionTriangles: fig.header.triangles, detailTriangles: detail?.header.triangles ?? null, preset: presetName, pose, params, window: PANEL_WINDOW, seconds: run.seconds, lastFrameMotion: run.lastFrameMotion };
   writeFileSync(join(out, 'drape.json'), JSON.stringify(meta, null, 1));
   process.stdout.write(`${JSON.stringify({ seconds: run.seconds, lastFrameMotion: run.lastFrameMotion })}\n`);
 }

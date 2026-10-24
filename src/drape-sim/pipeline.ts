@@ -9,7 +9,7 @@
  * mapping), so every height lies in [backing, backing + span].
  */
 import { simulateCloth, type ClothParams, type Jolt } from './cloth';
-import { poseFigure, type Figure, type FigureFit, type FigurePose } from './figure';
+import { poseFigure, poseWithDetail, type Figure, type FigureFit, type FigurePose } from './figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from './raster';
 import { gridTriangles, subdivideGrid } from './subdiv';
 
@@ -93,19 +93,25 @@ export interface DrapeRun {
 }
 
 /** Drape the figure in `pose` and extract its relief. `onFrame` may return false to stop (the result is
- *  then marked incomplete and should be discarded by the caller). */
+ *  then marked incomplete and should be discarded by the caller). With a `detail` (splitForDrape), the
+ *  cloth collides with `fig` and the relief is extracted over the detail, posed by the same motion: the
+ *  bare figure keeps every triangle, and where the detail stands proud of the simplified surface the
+ *  frontmost-depth merge lifts the touching cloth onto it. */
 export function drapeFigure(J: Jolt, fig: Figure, pose: FigurePose, params: ClothParams,
-  onFrame?: (frame: number, frames: number) => boolean | void): DrapeRun {
-  const pos = poseFigure(fig, pose);
+  onFrame?: (frame: number, frames: number) => boolean | void, detail: Figure | null = null): DrapeRun {
+  const posed = detail ? poseWithDetail(fig, detail, pose) : { pos: poseFigure(fig, pose), detailPos: null };
+  const pos = posed.pos;
   // A pose that overflows float32 (a huge scale, or a figure already near the limit) is refused here
   // rather than handed to Jolt. The Drape tab and drape-run also cap Figure Size at 25 to 300%.
-  if (!pos.every(Number.isFinite)) throw new Error('the posed figure is out of range (non-finite coordinates): check its size');
+  if (!pos.every(Number.isFinite) || (posed.detailPos && !posed.detailPos.every(Number.isFinite))) {
+    throw new Error('the posed figure is out of range (non-finite coordinates): check its size');
+  }
   let completed = true;
   const res = simulateCloth(J, pos, fig.triangles, params, (f, n) => {
     if (onFrame && onFrame(f, n) === false) { completed = false; return false; }
     return true;
   });
-  const bare = bareDepth(pos, fig.triangles);
+  const bare = detail && posed.detailPos ? bareDepth(posed.detailPos, detail.triangles) : bareDepth(pos, fig.triangles);
   const { depth, veil } = veiledDepth(bare, res.positions, res.rows, res.cols, PANEL_WINDOW, params.fabricThickness, params.displaySubdivisions);
   return { relief: reliefHeights(depth, bare, veil), cloth: res.positions, clothRows: res.rows, clothCols: res.cols,
     bare, veiled: depth, seconds: res.seconds, lastFrameMotion: res.lastFrameMotion, completed };
