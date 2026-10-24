@@ -14,12 +14,14 @@
  * point) at (0, 0, 1). One scene unit is 1/8 m for the bundled Venus.
  */
 
+import { simplifyMesh } from './simplify';
+
 export const FIGURE_MAGIC = 'MCFIG';
 /** Most triangles a figure may have: Jolt's collision mesh shares the fixed 128 MiB WASM heap with the
  *  cloth. Measured with drape-run on a clustered 9.1 M-triangle STL (2026-10-23): 390,444 triangles ran
  *  with the largest cloth the sliders allow (200 x 750 quads), 483,512 ran out of memory even with the
- *  default cloth. 300,000 keeps a margin for meshes that weld less well. Uploads above it are simplified
- *  (src/drape-sim/simplify.ts). The bundled Venus has 141,642 triangles. */
+ *  default cloth. 300,000 keeps a margin for meshes that weld less well. Above it, the cloth collides with a
+ *  simplified copy and the carve reads the figure itself (splitForDrape). The bundled Venus has 141,642 triangles. */
 export const MAX_FIGURE_TRIANGLES = 300_000;
 /** Most triangles an uploaded .mcfig may have before it is simplified to MAX_FIGURE_TRIANGLES: the size the
  *  figure format accepted before that cap was measured. */
@@ -97,12 +99,8 @@ export function figureAnchor(pos: ArrayLike<number>, mode: 'crown' | 'top-centre
   return { x: (lo + hi) / 2, y: pos[ti + 1], top };
 }
 
-/**
- * Pose the figure about its head centre (turn about Z, then tilt about X, then lean about Y), then move
- * its anchor (figureAnchor) under (0, 0) with its highest point at z = 1, and scale about (0, 0, 1).
- * Tilt alone is the construction of scripts/drape/blender_drape.py.
- */
-export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
+/** Turn about Z, then tilt about X, then lean about Y, all about the head centre (poseFigure's first step). */
+function rotateForPose(fig: Figure, pose: FigurePose): Float32Array {
   const t = (-pose.tiltDeg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
   const u = (pose.turnDeg * Math.PI) / 180, cu = Math.cos(u), su = Math.sin(u);
   const l = (pose.leanDeg * Math.PI) / 180, cl = Math.cos(l), sl = Math.sin(l);
@@ -117,12 +115,59 @@ export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
     out[i + 1] = y + hy;
     out[i + 2] = z + hz;
   }
-  const a = figureAnchor(out, fig.header.anchor ?? 'crown'), dx = a.x, dy = a.y, dz = a.top - 1;
+  return out;
+}
+
+/** Move rotated positions so anchor `a` goes under (0, 0) with its top at z = 1, then scale about (0, 0, 1). */
+function placeOnAnchor(out: Float32Array, a: { x: number; y: number; top: number }, pose: FigurePose): void {
+  const dx = a.x, dy = a.y, dz = a.top - 1;
   for (let i = 0; i < out.length; i += 3) { out[i] -= dx; out[i + 1] -= dy; out[i + 2] -= dz; }
   // Skipped at 1 so an unscaled pose stays bit for bit what the Blender parity runs were built from.
   const k = pose.scale ?? 1;
   if (k !== 1) for (let i = 0; i < out.length; i += 3) { out[i] *= k; out[i + 1] *= k; out[i + 2] = 1 + (out[i + 2] - 1) * k; }
+}
+
+/**
+ * Pose the figure about its head centre (turn about Z, then tilt about X, then lean about Y), then move
+ * its anchor (figureAnchor) under (0, 0) with its highest point at z = 1, and scale about (0, 0, 1).
+ * Tilt alone is the construction of scripts/drape/blender_drape.py.
+ */
+export function poseFigure(fig: Figure, pose: FigurePose): Float32Array {
+  const out = rotateForPose(fig, pose);
+  placeOnAnchor(out, figureAnchor(out, fig.header.anchor ?? 'crown'), pose);
   return out;
+}
+
+/** Pose a simplified figure and its full-resolution `detail` (splitForDrape) by one rigid motion: both
+ *  take the detail's anchor, so the cloth solved against `fig` lies where it would on the detail, whose
+ *  own pose is exactly poseFigure(detail, pose). Each figure's own anchor would differ by the
+ *  simplification (a cluster's mean sits below the highest vertex it replaced). */
+export function poseWithDetail(fig: Figure, detail: Figure, pose: FigurePose): { pos: Float32Array; detailPos: Float32Array } {
+  const a = fig.header, b = detail.header;
+  if (a.anchor !== b.anchor || a.head_centre.some((v, i) => v !== b.head_centre[i])) throw new Error('the detail figure is not placed like the drape figure');
+  const pos = rotateForPose(fig, pose), detailPos = rotateForPose(detail, pose);
+  const anchor = figureAnchor(detailPos, b.anchor ?? 'crown');
+  placeOnAnchor(pos, anchor, pose); placeOnAnchor(detailPos, anchor, pose);
+  return { pos, detailPos };
+}
+
+/** Most bytes the full-resolution figure kept for the carve may take (positions and indices). The Drape tab
+ *  holds it for as long as the figure is loaded and copies it to the Worker for every drape. A 9.1 M-triangle
+ *  STL welds to about 160 MB; an export whose repeated corners differ in their last bits does not weld and
+ *  would keep three times that. */
+export const MAX_DETAIL_BYTES = 256 * 2 ** 20;
+
+/** A figure ready for the drape: itself when Jolt can hold it (MAX_FIGURE_TRIANGLES), else a simplified
+ *  copy for the cloth to collide with plus the figure itself as `detail`, which the bare relief and the
+ *  extraction read so the carve keeps every triangle. The copy shares the header (placement, anchor, head
+ *  centre, name and licence) apart from its counts. A figure over `maxDetailBytes` is carved from the copy
+ *  too (`detailDropped`). */
+export function splitForDrape(fig: Figure, maxDetailBytes = MAX_DETAIL_BYTES): { figure: Figure; detail: Figure | null; detailDropped: boolean } {
+  if (fig.triangles.length / 3 <= MAX_FIGURE_TRIANGLES) return { figure: fig, detail: null, detailDropped: false };
+  const s = simplifyMesh({ pos: fig.positions, tris: fig.triangles }, MAX_FIGURE_TRIANGLES);
+  const keep = fig.positions.byteLength + fig.triangles.byteLength <= maxDetailBytes;
+  return { figure: { header: { ...fig.header, vertices: s.pos.length / 3, triangles: s.tris.length / 3 }, positions: s.pos, triangles: s.tris },
+    detail: keep ? fig : null, detailDropped: !keep };
 }
 
 /** Tip the face back by `tiltDeg` only (the Blender proof's pose). */
@@ -163,13 +208,59 @@ export interface MeshPlacement {
   fit: FigureFit;
 }
 
+/** Least agreement (windsInward) before a mesh's winding is trusted to say which side is out. Measured: a
+ *  sphere 1, a smooth open tube 20 radii long 0.3, a rough or folded surface about half its smooth value. */
+const INWARD_MIN_AGREEMENT = 0.05;
+/** Most openness (|sum of area vectors| / total area) a mesh may have for its winding to be judged: a closed
+ *  surface 0, the bundled bust 0.095, a bust open at the bottom (a cap over a neck three radii long) 0.125,
+ *  a bust cut across a wide chest about 0.37, a hemisphere 0.5, a tray with walls a quarter of its width
+ *  about 0.54, a relief plaque near 1. An open surface cannot be
+ *  judged: a front-wound bowl or tray and an inward-wound dome are the same shape with the same winding
+ *  sense, and on a sheet the sign follows where the centroid falls, which tessellation moves. */
+const INWARD_MAX_OPENNESS = 0.4;
+
+/** True when the triangles wind inward. Agreement is the area-weighted cosine between each triangle's normal
+ *  and its direction from the area-weighted centroid, sum(A n.r) / sum(A |r|): 1 for an outward sphere, -1
+ *  inward. Below -INWARD_MIN_AGREEMENT, on a mesh no more open than INWARD_MAX_OPENNESS, the mesh is inward.
+ *  Jolt collides the cloth with a triangle's front only, so an inward mesh (a flipped export) lets the cloth
+ *  fall through it. */
+export function windsInward(pos: ArrayLike<number>, tris: ArrayLike<number>): boolean {
+  // One scratch for every triangle (a dense upload has millions): the normal (|n| = 2 x area), then the centroid.
+  const q = new Float64Array(6);
+  const normal = (t: number): void => {
+    const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
+    q[0] = uy * wz - uz * wy; q[1] = uz * wx - ux * wz; q[2] = ux * wy - uy * wx;
+    q[3] = (pos[a] + pos[b] + pos[c]) / 3; q[4] = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3; q[5] = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3;
+  };
+  let area = 0, mx = 0, my = 0, mz = 0, vx = 0, vy = 0, vz = 0;
+  for (let t = 0; t < tris.length; t += 3) {
+    normal(t);
+    const w = Math.hypot(q[0], q[1], q[2]);
+    area += w; mx += w * q[3]; my += w * q[4]; mz += w * q[5]; vx += q[0]; vy += q[1]; vz += q[2];
+  }
+  if (!(area > 0) || Math.hypot(vx, vy, vz) / area > INWARD_MAX_OPENNESS) return false;
+  mx /= area; my /= area; mz /= area;
+  let along = 0, reach = 0;
+  for (let t = 0; t < tris.length; t += 3) {
+    normal(t);
+    const rx = q[3] - mx, ry = q[4] - my, rz = q[5] - mz;
+    along += q[0] * rx + q[1] * ry + q[2] * rz;
+    reach += Math.hypot(q[0], q[1], q[2]) * Math.hypot(rx, ry, rz);
+  }
+  return reach > 0 && along / reach < -INWARD_MIN_AGREEMENT;
+}
+
 /** Place an uploaded mesh much as export_figure.py places the bundled figure: Z up, turned about Z, the
  *  middle of its width under x = 0, its highest point at (., 0, 1), head centre from the top HEAD_HEIGHT
  *  units. Its own units are ignored: it is scaled about (0, 0, 1) so it fits `fit` (half its width, or its
  *  depth below the top, fills its room), so any model starts the same size against the panel and the
- *  cloth. It is marked 'top-centre', so posing hangs it from the middle of its top. */
+ *  cloth. It is marked 'top-centre', so posing hangs it from the middle of its top. A mesh that winds inward
+ *  (windsInward) is turned outward; a Uint32Array `tris` is used, and so reordered, in place. */
 export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, p: MeshPlacement): Figure {
   const n = pos.length / 3, out = new Float32Array(pos.length);
+  for (let i = 0; i < pos.length; i++) if (!Number.isFinite(pos[i])) throw new Error('the mesh has non-finite coordinates');
   const a = (p.turnDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
   for (let i = 0; i < n; i++) {
     const x = pos[i * 3];
@@ -188,7 +279,9 @@ export function figureFromMesh(pos: ArrayLike<number>, tris: ArrayLike<number>, 
     out[i * 3] = (out[i * 3] - cx) * k; out[i * 3 + 1] = (out[i * 3 + 1] - cy) * k; out[i * 3 + 2] = 1 + (out[i * 3 + 2] - cz) * k;
     if (out[i * 3 + 2] > 1 - HEAD_HEIGHT) { sx += out[i * 3]; sy += out[i * 3 + 1]; sz += out[i * 3 + 2]; m++; }
   }
-  const triangles = Uint32Array.from(tris as ArrayLike<number>);
+  // Taken as is when it already is one: a dense upload's index list is the largest array it has.
+  const triangles = tris instanceof Uint32Array ? tris : Uint32Array.from(tris);
+  if (windsInward(out, triangles)) for (let t = 0; t < triangles.length; t += 3) { const k = triangles[t + 1]; triangles[t + 1] = triangles[t + 2]; triangles[t + 2] = k; }
   const header: FigureHeader = { format: 'meshcraft-figure', version: 1, vertices: n, triangles: triangles.length / 3,
     head_centre: [sx / m, sy / m, sz / m], head_height: HEAD_HEIGHT, name: p.name, anchor: 'top-centre' };
   return { header, positions: out, triangles };

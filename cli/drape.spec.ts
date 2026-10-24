@@ -7,15 +7,15 @@
  */
 import { readFileSync } from 'node:fs';
 import initJolt from 'jolt-physics/wasm-compat';
-import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, tiltFigure, type Figure } from '../src/drape-sim/figure';
+import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, poseWithDetail, splitForDrape, tiltFigure, windsInward, type Figure } from '../src/drape-sim/figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from '../src/drape-sim/raster';
 import { gridTriangles, subdivideGrid } from '../src/drape-sim/subdiv';
-import { bareDepth, drapeFigure, FIGURE_FIT, offsetTowardViewer, PANEL_ASPECT, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
+import { bareDepth, drapeFigure, FIGURE_FIT, runDrapeJob, offsetTowardViewer, PANEL_ASPECT, PANEL_WINDOW, veiledDepth, RELIEF_BACKING_IN, RELIEF_SPAN_IN, reliefHeights } from '../src/drape-sim/pipeline';
 import { EFFECTOR_ACCEL, ramp, sheetOffsetY, simulateCloth, SILK, SILK_GATHERED, type ClothParams } from '../src/drape-sim/cloth';
 import { buildNearestField, closestOnTriangle, MAX_FIELD_VOXELS, nearestPoint } from '../src/drape-sim/nearest';
 import { STATE } from '../src/state';
-import { binaryStlSoup, downloadDrapeRelief, FIGURE_EXTENSIONS, meshFromFile, toMaster } from '../src/drape-ui';
-import { simplifyMesh } from '../src/drape-sim/simplify';
+import { binaryStlSoup, downloadDrapeRelief, drapeJobFor, FIGURE_EXTENSIONS, loadFigureFile, meshFromFile, toMaster } from '../src/drape-ui';
+import { simplifyMesh, weldVertices } from '../src/drape-sim/simplify';
 import { isChunkLoadError, updatedSinceLoad } from '../src/stale-build';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, getExportSurface } from '../src/export-surface';
@@ -342,6 +342,173 @@ async function main(): Promise<void> {
     assert(isChunkLoadError(new TypeError('Failed to fetch dynamically imported module: https://x/assets/STLLoader-a.js'))
       && isChunkLoadError(new TypeError('Importing a module script failed.')) && !isChunkLoadError(new Error('no triangles')),
       'Chromium\'s and Safari\'s failed-import errors are recognised, other errors are not');
+  }
+
+  // ---------- D6f the carve reads the full-resolution figure ----------
+  process.stdout.write('D6f full-resolution carve of a simplified figure\n');
+  {
+    // Weld: a 250 x 250 quad soup (375,000 corners, 63,001 distinct, past the table's first doubling).
+    const N = 250, corner = (i: number, j: number): number[] => [i * 0.01, j * 0.01, Math.sin(i * 0.3) * Math.cos(j * 0.2)];
+    const soup: number[] = [];
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) soup.push(...corner(i, j), ...corner(i + 1, j), ...corner(i + 1, j + 1), ...corner(i, j), ...corner(i + 1, j + 1), ...corner(i, j + 1));
+    const orig = Float32Array.from(soup), w = weldVertices({ pos: Float32Array.from(orig), tris: Uint32Array.from({ length: orig.length / 3 }, (_, k) => k) });
+    let moved = 0;
+    for (let c = 0; c < w.tris.length; c++) for (let a = 0; a < 3; a++) if (w.pos[w.tris[c] * 3 + a] !== orig[c * 3 + a]) moved++;
+    assert(w.pos.length / 3 === (N + 1) * (N + 1) && moved === 0, 'a triangle soup welds to its distinct vertices, every corner where it was',
+      `${w.pos.length / 3} vertices, ${moved} coordinates moved`);
+    const nearly = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1e-7, 1, 0, 0, 0, 1, 0]);
+    assert(weldVertices({ pos: nearly, tris: Uint32Array.from([0, 1, 2, 3, 4, 5]) }).pos.length === 12, 'only bit-identical vertices merge (1e-7 apart stay two)');
+    // 70,000 vertices on one vertical line, twice over: they differ only in z, so every probe compares all
+    // three coordinates, and the table must grow past 65,536 slots twice.
+    const tower = new Float32Array(140_000 * 3);
+    for (let k = 0; k < 140_000; k++) tower[k * 3 + 2] = (k % 70_000) * 0.001;
+    const tw = weldVertices({ pos: tower, tris: Uint32Array.from({ length: 140_000 }, (_, k) => k) });
+    assert(tw.pos.length / 3 === 70_000 && tw.tris[70_123] === tw.tris[123] && tw.pos[tw.tris[70_123] * 3 + 2] === Math.fround(0.123),
+      'vertices that differ only in z stay apart, and repeats of them merge', `${tw.pos.length / 3} vertices`);
+
+    // splitForDrape: Venus under the cap drapes as it is; a figure over it collides with a simplified copy.
+    const under = splitForDrape(demo);
+    assert(under.figure === demo && under.detail === null, 'a figure under the cap is draped as it is, with no detail');
+    const quads = 400, grid: number[] = [], gtris: number[] = [];
+    for (let j = 0; j <= quads; j++) for (let i = 0; i <= quads; i++) grid.push((i / quads - 0.5) * 3, 0.3 * Math.cos((i / quads - 0.5) * 3) + 0.01 * Math.sin(i * 0.9), 1 - (j / quads) * 4);
+    for (let j = 0; j < quads; j++) for (let i = 0; i < quads; i++) { const a = j * (quads + 1) + i; gtris.push(a, a + 1, a + quads + 2, a, a + quads + 2, a + quads + 1); }
+    const dense = figureFromMesh(grid, Uint32Array.from(gtris), { up: 'z', turnDeg: 0, name: 'sheet', fit: FIGURE_FIT });
+    const split = splitForDrape(dense), { figure: coarse, detail } = split;
+    const over = splitForDrape(dense, dense.positions.byteLength + dense.triangles.byteLength - 1);
+    assert(over.detail === null && over.detailDropped && over.figure.header.triangles === coarse.header.triangles && !split.detailDropped,
+      'a full mesh over the bytes the tab keeps is carved from the simplified copy, and says so');
+    const { vertices: _v, triangles: _t, ...kept } = coarse.header, { vertices: _dv, triangles: _dt, ...dkept } = dense.header;
+    assert(detail === dense && coarse.header.triangles <= MAX_FIGURE_TRIANGLES && coarse.header.triangles === coarse.triangles.length / 3
+      && JSON.stringify(kept) === JSON.stringify(dkept), 'a figure over the cap collides with a simplified copy that keeps its header, and is kept as the detail',
+      `${dense.header.triangles.toLocaleString()} -> ${coarse.header.triangles.toLocaleString()} triangles`);
+
+    // One rigid motion for both: the detail poses exactly as on its own, and a vertex the two share lands
+    // in the same place in both. The simplified copy's own anchor would not keep them registered.
+    const shared = new Float32Array([...dense.positions.slice(0, 3)]), probe: Figure = { header: coarse.header,
+      positions: Float32Array.from([...coarse.positions, ...shared]), triangles: coarse.triangles };
+    let identical = true, together = true, ownApart = false;
+    for (const pose of [{ tiltDeg: 25, turnDeg: 0, leanDeg: 0 }, { tiltDeg: -10, turnDeg: 30, leanDeg: 12, scale: 1.4 }, { tiltDeg: 60, turnDeg: -45, leanDeg: 0, scale: 0.5 }]) {
+      const p = poseWithDetail(probe, dense, pose), own = poseFigure(dense, pose), alone = poseFigure(probe, pose), last = probe.positions.length - 3;
+      if (!own.every((v, i) => v === p.detailPos[i])) identical = false;
+      for (let a = 0; a < 3; a++) { if (p.pos[last + a] !== p.detailPos[a]) together = false; if (Math.abs(alone[last + a] - p.detailPos[a]) > 1e-4) ownApart = true; }
+    }
+    assert(identical && together, 'the detail poses bit for bit as on its own, and a vertex both figures share lands on the same point');
+    assert(ownApart, 'negative control: the simplified copy posed on its own anchor lands elsewhere');
+    assert(/not placed like/.test(thrown(() => poseWithDetail({ ...coarse, header: { ...coarse.header, head_centre: [0, 0, 0] } }, dense, { tiltDeg: 0, turnDeg: 0, leanDeg: 0 }))),
+      'a detail placed differently from the drape figure is refused');
+    assert(/non-finite/.test(thrown(() => figureFromMesh([0, 0, 0, 1, 0, 0, 0, NaN, 1], [0, 1, 2], { up: 'z', turnDeg: 0, name: 'nan', fit: FIGURE_FIT }))),
+      'a mesh with a non-finite coordinate is refused with that reason before it is placed');
+
+    // Winding: Jolt collides with a triangle's front only, so an inward mesh is turned outward on upload; an
+    // open sheet (a flat relief, either winding) encloses nothing and is left alone.
+    const cubeP = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1];
+    const outward = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
+    const inward = outward.map((v, k) => k % 3 === 1 ? outward[k + 1] : k % 3 === 2 ? outward[k - 1] : v);
+    const sheetT = [0, 1, 2, 0, 2, 3], sheetP = [0, 0, 0, 1, 0, 0, 1, 1, 0.01, 0, 1, 0];
+    assert(!windsInward(cubeP, outward) && windsInward(cubeP, inward) && !windsInward(sheetP, sheetT) && !windsInward(sheetP, [0, 2, 1, 0, 3, 2]),
+      'an inward cube is found; an outward cube and a flat sheet (either winding) are not');
+    const farCube = cubeP.map(v => v + 1000);                         // CAD coordinates far from the origin
+    assert(windsInward(farCube, inward) && !windsInward(farCube, outward), 'winding is judged about the mesh itself, not the file origin');
+    const fixedCube = figureFromMesh(cubeP, Uint32Array.from(inward), { up: 'z', turnDeg: 0, name: 'inward', fit: FIGURE_FIT });
+    const keptCube = figureFromMesh(cubeP, Uint32Array.from(outward), { up: 'z', turnDeg: 0, name: 'outward', fit: FIGURE_FIT });
+    assert(!windsInward(fixedCube.positions, fixedCube.triangles) && keptCube.triangles.every((v, k) => v === outward[k]),
+      'an inward upload is turned outward, an outward one keeps its triangles as they were');
+    // Shapes a scan produces: a rough sphere (bumps that double its area) and a folded tube 20 radii long,
+    // open at both ends, each in both windings.
+    const lathe = (rows: number, cols: number, at: (u: number, v: number) => number[], flip: boolean): { p: number[]; t: number[] } => {
+      const p: number[] = [], t: number[] = [];
+      for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols; i++) p.push(...at(i / cols, j / rows));
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const a = j * (cols + 1) + i, b = a + 1, c = a + cols + 2, d = a + cols + 1;
+        t.push(...(flip ? [a, b, c, a, c, d] : [a, c, b, a, d, c]));
+      }
+      return { p, t };
+    };
+    const rough = (u: number, v: number): number[] => { const th = Math.PI * v, ph = 2 * Math.PI * u, r = 1 + 0.06 * Math.sin(40 * ph) * Math.sin(30 * th);
+      return [r * Math.sin(th) * Math.cos(ph), r * Math.sin(th) * Math.sin(ph), r * Math.cos(th)]; };
+    const tube = (u: number, v: number): number[] => { const ph = 2 * Math.PI * u, r = 1 + 0.15 * Math.sin(12 * ph);
+      return [r * Math.cos(ph), r * Math.sin(ph), 20 * v]; };
+    const [ro, ri, to, ti] = [lathe(120, 240, rough, false), lathe(120, 240, rough, true), lathe(60, 240, tube, false), lathe(60, 240, tube, true)];
+    const sense = [windsInward(ro.p, ro.t), windsInward(ri.p, ri.t), windsInward(to.p, to.t), windsInward(ti.p, ti.t)];
+    assert(sense[0] !== sense[1] && sense[2] !== sense[3] && (sense[0] || sense[1]) && (sense[2] || sense[3]),
+      'a rough sphere and a slender folded tube are each found inward in exactly one winding', JSON.stringify(sense));
+    // Open surfaces are never turned, in either winding: a 4 x 4 plaque with a narrow bump 1 high and its grid
+    // denser in the middle (which moves its centroid), and a hemisphere (also a bowl). A bust open at the
+    // bottom (a cap over a neck three radii long) is nearly closed and is judged.
+    const warp = (u: number): number => 16 * (u - 0.5) ** 3;                // -2..2, cells finest in the middle
+    const plaque = (u: number, v: number): number[] => { const x = warp(u), y = warp(v); return [x, y, Math.exp(-(x * x + y * y) * 8)]; };
+    const hemi = (u: number, v: number): number[] => { const th = Math.PI / 2 * v, ph = 2 * Math.PI * u; return [Math.sin(th) * Math.cos(ph), Math.sin(th) * Math.sin(ph), Math.cos(th)]; };
+    const bust = (u: number, v: number): number[] => { const ph = 2 * Math.PI * u; if (v < 0.5) { const th = Math.PI * v;
+      return [Math.sin(th) * Math.cos(ph), Math.sin(th) * Math.sin(ph), Math.cos(th)]; } return [Math.cos(ph), Math.sin(ph), -6 * (v - 0.5)]; };
+    // A tall head cut across its widest section (openness 0.29, as a bust cut across the chest) is judged too.
+    const tall = (u: number, v: number): number[] => { const th = Math.PI / 2 * v, ph = 2 * Math.PI * u; return [Math.sin(th) * Math.cos(ph), Math.sin(th) * Math.sin(ph), 2 * Math.cos(th)]; };
+    const shapes = [lathe(80, 80, plaque, false), lathe(80, 80, plaque, true), lathe(40, 160, hemi, false), lathe(40, 160, hemi, true),
+      lathe(80, 160, bust, false), lathe(80, 160, bust, true), lathe(60, 160, tall, false), lathe(60, 160, tall, true)];
+    const open = shapes.map(m => windsInward(m.p, m.t));
+    assert(open.slice(0, 4).every(v => !v) && open[4] !== open[5] && open[6] !== open[7],
+      'a relief plaque and a hemisphere are never turned (either winding, uneven grid); busts open at the neck or chest are judged', JSON.stringify(open));
+
+    // A file the browser cannot read (permissions, a file moved after it was picked) is not a placement
+    // problem: its toast carries no up-axis hint.
+    {
+      const g = globalThis as unknown as { document: unknown };
+      const keep = g.document, toast = { textContent: '', style: { display: '' }, classList: { add: () => undefined, remove: () => undefined } };
+      g.document = { getElementById: (id: string) => id === 'toast' ? toast : null, querySelector: () => null };
+      const unreadable = { name: 'scan.stl', arrayBuffer: async () => { throw new Error('The requested file could not be read'); } } as unknown as File;
+      await loadFigureFile(unreadable, { up: 'z', turnDeg: 0 });
+      g.document = keep;
+      assert(/could not be read/.test(toast.textContent) && !/up axis/.test(toast.textContent), 'an unreadable file is reported without the up-axis hint', toast.textContent);
+    }
+
+    // The drape: the cloth collides with the simplified copy, the depths are the detail's.
+    const J = await initJolt(), pose = { tiltDeg: 25, turnDeg: 0, leanDeg: 0 }, short = { ...SILK, frames: 3, cellsX: 20, cellsY: 32 };
+    const run = drapeFigure(J, coarse, pose, short, undefined, detail);
+    const fullBare = bareDepth(poseFigure(dense, pose), dense.triangles), coarseBare = bareDepth(poseFigure(coarse, pose), coarse.triangles);
+    let same = true, under2 = 0, differs = 0;
+    for (let k = 0; k < fullBare.length; k++) {
+      if (!Object.is(run.bare[k], fullBare[k])) same = false;
+      if (run.veiled[k] < fullBare[k]) under2++;
+      if (Number.isFinite(fullBare[k]) && Number.isFinite(coarseBare[k]) && Math.abs(fullBare[k] - coarseBare[k]) > 1e-3) differs++;
+    }
+    assert(same && under2 === 0, 'the drape\'s bare depth is the full-resolution figure\'s, and nothing extracted lies behind it');
+    assert(differs > 10_000, 'negative control: the simplified copy\'s depth differs from the detail\'s', `${differs.toLocaleString()} nodes over 0.001 units`);
+  }
+
+  // ---------- D6g a dense upload through the Drape tab and the Worker's job ----------
+  process.stdout.write('D6g dense upload to Worker job\n');
+  {
+    // A ridged sphere as a binary STL soup, 302,500 triangles (over the cap), loaded as the Drape tab loads it.
+    const N = 550, M = 275, at = (i: number, j: number): number[] => { const th = Math.PI * j / M, ph = 2 * Math.PI * i / N, r = 1.5 + 0.02 * Math.sin(80 * th);
+      return [r * Math.sin(th) * Math.cos(ph), r * Math.sin(th) * Math.sin(ph), r * Math.cos(th)]; };
+    const n = 2 * N * M, stl = new ArrayBuffer(84 + 50 * n), dv = new DataView(stl);
+    dv.setUint32(80, n, true);
+    let t = 0;
+    const put = (...cs: number[][]): void => { cs.forEach((c, k) => c.forEach((v, a) => dv.setFloat32(84 + t * 50 + 12 + (k * 3 + a) * 4, v, true))); t++; };
+    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) { put(at(i, j), at(i + 1, j + 1), at(i + 1, j)); put(at(i, j), at(i, j + 1), at(i + 1, j + 1)); }
+    const g = globalThis as unknown as { document: unknown };
+    const keepDoc = g.document, keep = { m: STATE.drapeMaster, k: STATE.drapeMasterKind, l: STATE.drapeMasterLabel, name: STATE.drapeFigureName };
+    const toast = { textContent: '', style: { display: '' }, classList: { add: () => undefined, remove: () => undefined } };
+    g.document = { getElementById: (id: string) => id === 'toast' ? toast : null, querySelector: () => null };
+    await loadFigureFile({ name: 'ball.stl', arrayBuffer: async () => stl } as unknown as File, { up: 'z', turnDeg: 0 });
+    g.document = keepDoc;
+    const { pose } = drapeJob(STATE, STATE.drapeWindMode), short = { ...SILK, frames: 2, cellsX: 16, cellsY: 26 };
+    const job = drapeJobFor(pose, short), shown = STATE.drapeMaster;
+    assert(job !== null && job.detail !== undefined && job.detail.triangles.length / 3 === n && job.detail.positions.length / 3 <= (N + 1) * (M + 1),
+      'the uploaded soup is welded and kept whole, and the Worker\'s job carries it', job?.detail ? `${job.detail.positions.length / 3} vertices, ${job.detail.triangles.length / 3} triangles` : toast.textContent);
+    if (job?.detail && shown) {
+      const coarse = parseFigure(job.figure);
+      const full: Figure = { header: { ...coarse.header, vertices: job.detail.positions.length / 3, triangles: n }, positions: job.detail.positions, triangles: job.detail.triangles };
+      const reliefOf = async (f: Figure): Promise<Float64Array> => {
+        const d = bareDepth(poseFigure(f, pose), f.triangles), r = reliefHeights(d, d);
+        return (await toMaster({ heightsM: r.heightsM, mask: r.mask, name: 'x', fig: coarse, kind: 'bare', label: 'x' })).heightsIn;
+      };
+      const want = await reliefOf(full), coarseWant = await reliefOf(coarse);
+      assert(shown.heightsIn.every((v, k) => v === want[k]) && !shown.heightsIn.every((v, k) => v === coarseWant[k]),
+        'the bare relief the upload shows is the full mesh\'s, not the simplified copy\'s');
+      const run = runDrapeJob(await initJolt(), job), fullBare = bareDepth(poseFigure(full, pose), full.triangles);
+      assert(run.bare.every((v, k) => Object.is(v, fullBare[k])), 'the Worker\'s job extracts over the full mesh');
+    }
+    Object.assign(STATE, { drapeMaster: keep.m, drapeMasterKind: keep.k, drapeMasterLabel: keep.l, drapeFigureName: keep.name });
   }
 
   // ---------- D7 short cloth run ----------
