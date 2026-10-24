@@ -225,25 +225,29 @@ const INWARD_MAX_OPENNESS = 0.4;
  *  Jolt collides the cloth with a triangle's front only, so an inward mesh (a flipped export) lets the cloth
  *  fall through it. */
 export function windsInward(pos: ArrayLike<number>, tris: ArrayLike<number>): boolean {
-  const normal = (t: number): number[] => {
+  // One scratch for every triangle (a dense upload has millions): the normal (|n| = 2 x area), then the centroid.
+  const q = new Float64Array(6);
+  const normal = (t: number): void => {
     const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3;
     const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
     const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
-    return [uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx,                       // |n| = 2 x area
-      (pos[a] + pos[b] + pos[c]) / 3, (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3, (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3];
+    q[0] = uy * wz - uz * wy; q[1] = uz * wx - ux * wz; q[2] = ux * wy - uy * wx;
+    q[3] = (pos[a] + pos[b] + pos[c]) / 3; q[4] = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3; q[5] = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3;
   };
   let area = 0, mx = 0, my = 0, mz = 0, vx = 0, vy = 0, vz = 0;
   for (let t = 0; t < tris.length; t += 3) {
-    const [nx, ny, nz, cx, cy, cz] = normal(t), w = Math.hypot(nx, ny, nz);
-    area += w; mx += w * cx; my += w * cy; mz += w * cz; vx += nx; vy += ny; vz += nz;
+    normal(t);
+    const w = Math.hypot(q[0], q[1], q[2]);
+    area += w; mx += w * q[3]; my += w * q[4]; mz += w * q[5]; vx += q[0]; vy += q[1]; vz += q[2];
   }
   if (!(area > 0) || Math.hypot(vx, vy, vz) / area > INWARD_MAX_OPENNESS) return false;
   mx /= area; my /= area; mz /= area;
   let along = 0, reach = 0;
   for (let t = 0; t < tris.length; t += 3) {
-    const [nx, ny, nz, cx, cy, cz] = normal(t), rx = cx - mx, ry = cy - my, rz = cz - mz;
-    along += nx * rx + ny * ry + nz * rz;
-    reach += Math.hypot(nx, ny, nz) * Math.hypot(rx, ry, rz);
+    normal(t);
+    const rx = q[3] - mx, ry = q[4] - my, rz = q[5] - mz;
+    along += q[0] * rx + q[1] * ry + q[2] * rz;
+    reach += Math.hypot(q[0], q[1], q[2]) * Math.hypot(rx, ry, rz);
   }
   return reach > 0 && along / reach < -INWARD_MIN_AGREEMENT;
 }
