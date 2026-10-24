@@ -151,14 +151,23 @@ export function poseWithDetail(fig: Figure, detail: Figure, pose: FigurePose): {
   return { pos, detailPos };
 }
 
+/** Most bytes the full-resolution figure kept for the carve may take (positions and indices). The Drape tab
+ *  holds it for as long as the figure is loaded and copies it to the Worker for every drape. A 9.1 M-triangle
+ *  STL welds to about 160 MB; an export whose repeated corners differ in their last bits does not weld and
+ *  would keep three times that. */
+export const MAX_DETAIL_BYTES = 256 * 2 ** 20;
+
 /** A figure ready for the drape: itself when Jolt can hold it (MAX_FIGURE_TRIANGLES), else a simplified
  *  copy for the cloth to collide with plus the figure itself as `detail`, which the bare relief and the
  *  extraction read so the carve keeps every triangle. The copy shares the header (placement, anchor, head
- *  centre, name and licence) apart from its counts. */
-export function splitForDrape(fig: Figure): { figure: Figure; detail: Figure | null } {
-  if (fig.triangles.length / 3 <= MAX_FIGURE_TRIANGLES) return { figure: fig, detail: null };
+ *  centre, name and licence) apart from its counts. A figure over `maxDetailBytes` is carved from the copy
+ *  too (`detailDropped`). */
+export function splitForDrape(fig: Figure, maxDetailBytes = MAX_DETAIL_BYTES): { figure: Figure; detail: Figure | null; detailDropped: boolean } {
+  if (fig.triangles.length / 3 <= MAX_FIGURE_TRIANGLES) return { figure: fig, detail: null, detailDropped: false };
   const s = simplifyMesh({ pos: fig.positions, tris: fig.triangles }, MAX_FIGURE_TRIANGLES);
-  return { figure: { header: { ...fig.header, vertices: s.pos.length / 3, triangles: s.tris.length / 3 }, positions: s.pos, triangles: s.tris }, detail: fig };
+  const keep = fig.positions.byteLength + fig.triangles.byteLength <= maxDetailBytes;
+  return { figure: { header: { ...fig.header, vertices: s.pos.length / 3, triangles: s.tris.length / 3 }, positions: s.pos, triangles: s.tris },
+    detail: keep ? fig : null, detailDropped: !keep };
 }
 
 /** Tip the face back by `tiltDeg` only (the Blender proof's pose). */
@@ -199,29 +208,44 @@ export interface MeshPlacement {
   fit: FigureFit;
 }
 
-/** Least enclosed volume, as a share of (surface area)^1.5, before a mesh's winding is trusted to say which
- *  side is out: a closed sphere encloses 0.094, a flat sheet next to 0. */
-const INWARD_MIN_VOLUME = 0.01;
+/** Least agreement (windsInward) before a mesh's winding is trusted to say which side is out. Measured: a
+ *  sphere 1, a smooth open tube 20 radii long 0.3, a rough or folded surface about half its smooth value. */
+const INWARD_MIN_AGREEMENT = 0.05;
+/** Most openness (|sum of area vectors| / total area) a mesh may have for its winding to be judged: a closed
+ *  surface 0, the bundled bust 0.095, a bust open at the bottom (a cap over a neck three radii long) 0.125,
+ *  a bust cut across a wide chest about 0.37, a hemisphere 0.5, a tray with walls a quarter of its width
+ *  about 0.54, a relief plaque near 1. An open surface cannot be
+ *  judged: a front-wound bowl or tray and an inward-wound dome are the same shape with the same winding
+ *  sense, and on a sheet the sign follows where the centroid falls, which tessellation moves. */
+const INWARD_MAX_OPENNESS = 0.4;
 
-/** True when the triangles wind inward: the volume they enclose, signed by their winding and measured about
- *  the vertices' mean, is negative and at least INWARD_MIN_VOLUME x area^1.5. Jolt collides the cloth with a
- *  triangle's front only, so an inward mesh (a flipped export) lets the cloth fall through it. An open sheet
- *  such as a flat relief encloses next to nothing and is left as it is. */
+/** True when the triangles wind inward. Agreement is the area-weighted cosine between each triangle's normal
+ *  and its direction from the area-weighted centroid, sum(A n.r) / sum(A |r|): 1 for an outward sphere, -1
+ *  inward. Below -INWARD_MIN_AGREEMENT, on a mesh no more open than INWARD_MAX_OPENNESS, the mesh is inward.
+ *  Jolt collides the cloth with a triangle's front only, so an inward mesh (a flipped export) lets the cloth
+ *  fall through it. */
 export function windsInward(pos: ArrayLike<number>, tris: ArrayLike<number>): boolean {
-  const n = pos.length / 3;
-  let mx = 0, my = 0, mz = 0;
-  for (let i = 0; i < n; i++) { mx += pos[i * 3]; my += pos[i * 3 + 1]; mz += pos[i * 3 + 2]; }
-  mx /= n; my /= n; mz /= n;
-  let v6 = 0, area2 = 0;
-  for (let t = 0; t < tris.length; t += 3) {
+  const normal = (t: number): number[] => {
     const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3;
-    const ax = pos[a] - mx, ay = pos[a + 1] - my, az = pos[a + 2] - mz, bx = pos[b] - mx, by = pos[b + 1] - my, bz = pos[b + 2] - mz;
-    const cx = pos[c] - mx, cy = pos[c + 1] - my, cz = pos[c + 2] - mz;
-    v6 += ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx);
-    const ux = bx - ax, uy = by - ay, uz = bz - az, wx = cx - ax, wy = cy - ay, wz = cz - az;
-    area2 += Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx);
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
+    return [uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx,                       // |n| = 2 x area
+      (pos[a] + pos[b] + pos[c]) / 3, (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3, (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3];
+  };
+  let area = 0, mx = 0, my = 0, mz = 0, vx = 0, vy = 0, vz = 0;
+  for (let t = 0; t < tris.length; t += 3) {
+    const [nx, ny, nz, cx, cy, cz] = normal(t), w = Math.hypot(nx, ny, nz);
+    area += w; mx += w * cx; my += w * cy; mz += w * cz; vx += nx; vy += ny; vz += nz;
   }
-  return v6 / 6 < -INWARD_MIN_VOLUME * (area2 / 2) ** 1.5;
+  if (!(area > 0) || Math.hypot(vx, vy, vz) / area > INWARD_MAX_OPENNESS) return false;
+  mx /= area; my /= area; mz /= area;
+  let along = 0, reach = 0;
+  for (let t = 0; t < tris.length; t += 3) {
+    const [nx, ny, nz, cx, cy, cz] = normal(t), rx = cx - mx, ry = cy - my, rz = cz - mz;
+    along += nx * rx + ny * ry + nz * rz;
+    reach += Math.hypot(nx, ny, nz) * Math.hypot(rx, ry, rz);
+  }
+  return reach > 0 && along / reach < -INWARD_MIN_AGREEMENT;
 }
 
 /** Place an uploaded mesh much as export_figure.py places the bundled figure: Z up, turned about Z, the

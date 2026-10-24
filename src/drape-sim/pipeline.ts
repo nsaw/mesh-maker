@@ -9,8 +9,9 @@
  * mapping), so every height lies in [backing, backing + span].
  */
 import { simulateCloth, type ClothParams, type Jolt } from './cloth';
-import { poseFigure, poseWithDetail, type Figure, type FigureFit, type FigurePose } from './figure';
+import { parseFigure, poseFigure, poseWithDetail, type Figure, type FigureFit, type FigurePose } from './figure';
 import { emptyDepth, rasterizeFrontmost, type DepthWindow } from './raster';
+import type { DrapeJob } from './messages';
 import { gridTriangles, subdivideGrid } from './subdiv';
 
 export const PANEL_WINDOW: DepthWindow = { x0: -2.1, x1: 2.1, zTop: 1.2, zBottom: 1.2 - 4.2 * 16 / 12, cols: 1201, rows: 1601 };
@@ -115,4 +116,12 @@ export function drapeFigure(J: Jolt, fig: Figure, pose: FigurePose, params: Clot
   const { depth, veil } = veiledDepth(bare, res.positions, res.rows, res.cols, PANEL_WINDOW, params.fabricThickness, params.displaySubdivisions);
   return { relief: reliefHeights(depth, bare, veil), cloth: res.positions, clothRows: res.rows, clothCols: res.cols,
     bare, veiled: depth, seconds: res.seconds, lastFrameMotion: res.lastFrameMotion, completed };
+}
+
+/** The drape Worker's job: parse the figure file, rebuild the full-resolution detail (its header is the
+ *  figure's apart from the counts) and drape. Pure, so the specs run what the Worker runs. */
+export function runDrapeJob(J: Jolt, job: DrapeJob, onFrame?: (frame: number, frames: number) => boolean | void): DrapeRun {
+  const fig = parseFigure(job.figure), d = job.detail;
+  const detail = d ? { header: { ...fig.header, vertices: d.positions.length / 3, triangles: d.triangles.length / 3 }, positions: d.positions, triangles: d.triangles } : null;
+  return drapeFigure(J, fig, job.pose, job.params, onFrame, detail);
 }
