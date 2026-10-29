@@ -357,6 +357,11 @@ Before declaring a round complete, verify:
      }' -f owner="{owner}" -f repo="{repo}" -F number={number}
    # If pageInfo.hasNextPage is true, re-query with -f after="{endCursor}"
    # and accumulate all nodes until hasNextPage is false.
+   # Judge whether the fetch worked from the response, never from the thread count
+   # (nsaw/thoughtmarks#319): zero threads is valid. gh exiting non-zero (it does on a
+   # GraphQL error, and still prints the body), an `errors` key on any page even beside
+   # partial `data`, or a last page without hasNextPage false is a FAILED fetch, never
+   # "no open threads".
    ```
 
 3. **Parse embedded comments from `<details>` dropdowns in comment bodies**:
