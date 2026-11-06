@@ -33,33 +33,67 @@ input. Plan from those.
 </rules>
 
 <pre-existing-issue-sweep>
-PRE-EXISTING ISSUES — MANDATORY INCLUSION IN PLAN
+PRE-EXISTING ISSUES: EVERY ONE GETS A DISPOSITION, BY SEVERITY
 
-If the investigation or critique surfaced pre-existing issues in files being
-touched (tagged [PRE-EXISTING] in MISSING findings), these MUST be included
-in the plan as additional fixes. They are NOT out of scope.
+Every [PRE-EXISTING] item from the investigation or critique gets exactly one
+disposition in the plan, decided by this severity floor (a repo's CLAUDE.md may tighten it):
+
+- **Critical or Major** (data loss or corruption, a leak, a crash, or wrong
+  behavior on a reachable path stated as a concrete sequence): a Fix section
+  in THIS plan.
+- **Minor or Trivial**: a GitHub issue, created when the plan is written, with
+  file:line evidence. List each one under a "Filed, not in this change"
+  heading with its issue link.
+
+An item with no disposition is the failure. So is a "deferred" line with no
+issue behind it.
 
 FORBIDDEN language in plans:
-- "Out of scope for this change"
-- "Deferred to a separate PR/ticket"
-- "Pre-existing, not addressing in this plan"
-- "Beyond the scope of this fix"
-- "Tracked separately"
+- "Pre-existing, not addressing in this plan" (with no issue link)
+- "Tracked separately" (with no issue link)
+- "TBD" or "later" for any item
 
-If an issue was found in a file we are already modifying, it is cheaper to fix
-it now than to discover it later. Scope blindness from narrow focus is a bigger
-risk than scope creep from thoroughness.
+Why the floor: when every nearby Minor joins the plan, the plan grows to dozens
+of fixes, the PR grows with it, and the review loop runs for days because each
+fix exposes more edge cases. Measured on thoughtmarks #364 (39 review rounds)
+and #394 (9 rounds and open), 2026-11-06.
 
-Pre-existing fixes should be:
+Pre-existing fixes that made the floor should be:
 1. Listed as their own Fix sections (not buried in footnotes)
-2. Tagged with [PRE-EXISTING] in the short description
+2. Tagged with [PRE-EXISTING] and the severity in the short description
 3. Ordered by dependency alongside the primary fixes
 4. Given the same verification rigor as primary fixes
 
-The only acceptable reason to exclude a pre-existing issue from the plan is
-if fixing it requires changes to files COMPLETELY UNRELATED to the current
-work (zero file overlap). If there is ANY file overlap, it goes in the plan.
+If a grade is borderline, state the concrete path. If you cannot state one,
+it is Minor.
 </pre-existing-issue-sweep>
+
+<pr-shape>
+PR SHAPE: ONE MECHANISM PER PR, DECIDED HERE
+
+Count the mechanisms in this plan. A mechanism is one root cause or one
+behavior change that can be reviewed and reverted on its own. Issues share a
+PR only when one fix closes all of them. A dependency or SDK migration, an
+infra or data operation (cutover, backfill, bulk deletion) and a new feature
+are each their own PR and never ride along with bug fixes.
+
+- One mechanism: one PR. Write its done contract in the output below.
+- More than one: split into PR slices, each with its own branch, its own done
+  contract and its own Fix sections, in dependency order. Slices with no
+  dependency between them may run in parallel only if they share no files.
+- Size tripwire: a slice over 40 files or 2,000 changed lines of hand-written
+  code (lockfiles, vendored pods, generated files and snapshots excluded) needs
+  a "Why this is one PR" line that names what stops the split.
+
+Write the done contract now, while scope is still a decision rather than a
+running total: what the PR must do, what it must not break, and what is
+explicitly out of scope, with the issue links from "Filed, not in this change".
+triage-pr-comments freezes this paragraph verbatim at round 1.
+
+Why: on thoughtmarks, single-mechanism PRs took 2 to 3 review rounds. #394,
+which bundled eight issues, an infra cutover and a feature, was 9 rounds in and
+still open, and #364 took 39 (RCA 2026-11-06).
+</pr-shape>
 
 <output-format>
 ## Plan: write to the session plan, or to the directory this project designates
@@ -95,6 +129,20 @@ work (zero file overlap). If there is ANY file overlap, it goes in the plan.
 ### Dependency Order
 [which fixes depend on others, or "no dependencies — can be parallelized"]
 
+### Filed, not in this change
+[Outside-contract Minor/Trivial items under the severity floor, each with its GitHub issue link.
+ "None" is a valid answer.]
+
+### PR Slices
+| Slice | Branch | Issues closed | Fix sections | Depends on | Est. files |
+[One row when the plan is one mechanism. Any slice over the size tripwire carries its
+ "Why this is one PR" line here.]
+
+### Done Contract
+[Per slice, one short paragraph: Must do / Must not break / Out of scope (with issue links).
+ triage-pr-comments freezes it verbatim at round 1; changing it later is said out loud to the
+ user, never edited in place.]
+
 ### Unknowns / Flags
 [ONLY the items the Risk Closure gate below admits — everything else must have been
  closed before this plan was presented, and a decision only the user can make belongs in
@@ -120,9 +168,10 @@ surfaced mid-build.
   user can make does NOT belong here: it goes in the Decisions round below, where
   it carries a default and is therefore not unknown.
 - Every surviving item gets a concrete resolution step and the phase that gates on it.
-- Any defect discovered while closing a risk becomes an in-scope work item in
-  THIS plan — not a known issue, not a follow-up ticket. Game day: if you found
-  it, you fix it.
+- Any defect discovered while closing a risk gets a disposition by the severity
+  floor above: inside the contract, or Critical/Major
+  outside it, it becomes a work item in THIS plan; an outside-contract Minor or
+  Trivial becomes a linked GitHub issue. Never a bare "known issue".
 - "Sized via telemetry," "verify later on device," and "TBD" are rejected
   phrasings. Resolve or justify.
 
