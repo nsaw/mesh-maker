@@ -38,10 +38,12 @@ PRE-EXISTING ISSUES: EVERY ONE GETS A DISPOSITION, BY SEVERITY
 Every [PRE-EXISTING] item from the investigation or critique gets exactly one
 disposition in the plan, decided by this severity floor (a repo's CLAUDE.md may tighten it):
 
-- **Critical or Major** (data loss or corruption, a leak, a crash, or wrong
+- **Inside the contract** (the issue this plan is for, or its acceptance criteria): a Fix
+  section in THIS plan, at every severity. Only items outside it go by severity below.
+- **Outside it, Critical or Major** (data loss or corruption, a leak, a crash, or wrong
   behavior on a reachable path stated as a concrete sequence): a Fix section
   in THIS plan.
-- **Minor or Trivial**: a GitHub issue, created when the plan is written, with
+- **Outside it, Minor or Trivial**: a GitHub issue, created when the plan is written, with
   file:line evidence. List each one under a "Filed, not in this change"
   heading with its issue link.
 
@@ -81,6 +83,9 @@ are each their own PR and never ride along with bug fixes.
 - More than one: split into PR slices, each with its own branch, its own done
   contract and its own Fix sections, in dependency order. Slices with no
   dependency between them may run in parallel only if they share no files.
+  Each slice is built, gated and opened on its own: 6a-implement and the
+  pre-PR gate take one slice (its Fix sections and done contract), and "built"
+  means that slice's Fix sections, not the whole plan's.
 - Size tripwire: a slice over 40 files or 2,000 changed lines of hand-written
   code (lockfiles, vendored pods, generated files and snapshots excluded) needs
   a "Why this is one PR" line that names what stops the split.
