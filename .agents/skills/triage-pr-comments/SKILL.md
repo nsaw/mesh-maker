@@ -968,17 +968,22 @@ final output summary regardless of whether autofix mode is active.
 </comment-sources>
 
 <pre-existing-issues>
-While investigating and reading files deeply, if you encounter pre-existing
-issues — bugs, anti-patterns, missing error handling, stale code — in files
-you are ALREADY modifying for fixes, include them in the fix scope.
+While investigating and reading files deeply, you will find pre-existing
+issues (bugs, anti-patterns, missing error handling, stale code). Each one
+gets a disposition by severity, the same floor the root skill's frozen
+contract uses:
 
-This is a small codebase (13 source files). If you found a problem in a file
-you're already editing, fix it now rather than deferring.
+- Inside the PR's contract: fix it, at every severity.
+- Outside it, Critical or Major (data loss or corruption, a leak, a crash, or
+  wrong behavior on a reachable path you can state as a concrete sequence):
+  fix it in this PR.
+- Outside it, Minor or Trivial: `gh issue create` with file:line evidence in
+  the same turn, linked from the ledger and the thread reply.
 
 FORBIDDEN:
-- "Out of scope for this PR"
-- "Pre-existing, will address separately"
-- "Not related to the reviewer's comment"
+- Leaving a found issue with no disposition
+- "Will address separately" with no issue link
+- A TODO in code standing in for either
 </pre-existing-issues>
 
 <self-critique>
