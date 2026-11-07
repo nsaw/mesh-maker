@@ -15,7 +15,7 @@ and the Node CLI and must stay free of Node-only imports.
 
 ## Architecture: read AGENTS.md, do not duplicate it
 
-For project artwork/Blender studies and animations, also follow AGENTS.md's **Project artwork, Blender studies and handoff files** section. Do not create durable scenes, bakes, renders or animation assets under `.claude/` or `.codex/`. Use the art project's working/revision folders and mapped Dropbox/media locations; keep reusable MeshCraft code and intentional software fixtures in this repo. The full cross-project convention is `../sawyer-design/business/studio/Design revisions and shop handoff.md`.
+For project artwork/Blender studies and animations, also follow AGENTS.md's **Project artwork, Blender studies and handoff files** section. Do not create durable scenes, bakes, renders or animation assets under `.claude/` or `.codex/`. Use the art project's working/revision folders and mapped Dropbox/media locations; keep reusable MeshCraft code and intentional software fixtures in this repo. The full cross-project convention is `../sawyer-design/sd-studio/Reference/SD-Studio rules.md`.
 
 The file-by-file map, the key design decisions, and the external-resource table live in
 `AGENTS.md` at the repo root. That is the single copy on purpose. Read it before touching
