@@ -5,6 +5,8 @@ description: "Use this skill when the user asks to write, debug, or optimize GhP
 
 # Rhino 7 / Grasshopper / GhPython Scripting Skill
 
+> **Scripts and references are the same in every copy.** A project copy differs only where its header says so; run the scripts from `~/.claude/skills/rhino-grasshopper-ghpython/scripts/` wherever you read the text.
+>
 > **Root skill — project copy wins.** This is the broad root version. If the project you're working in (`~/Code/<project>/`) ships its own `rhino-grasshopper-ghpython` skill, that project copy is authoritative and supersedes this one: load it and let it win where they differ; use this file only for general principles the project copy doesn't cover. (Umbrella rule: "Skill precedence" in `~/Code/CLAUDE.md`.)
 
 ## Where this runs, and the rule before any API call
@@ -78,6 +80,13 @@ centroids = area_result.centroid
 ```
 
 **Limitation:** Not compatible with `ghpythonlib.parallel` (causes memory leaks). Cannot be used in parallel workflows.
+
+**Function names are derived, not guessed.** The name is the component's Name (not its nickname)
+with every character outside `[a-zA-Z0-9]` removed, except `|` becomes `X`: "Brep | Brep" is
+`ghcomp.BrepXBrep`, "Remap Numbers" is `ghcomp.RemapNumbers`, "Isotrim" is `ghcomp.Isotrim`. A
+one-item result is unwrapped to the bare item and an empty one becomes `None`; use
+`ghcomp.trees.<Name>` to keep trees. Full rule and its source: `references/grasshopper-sdk.md`,
+"Discovering Component Names".
 
 ### Tier 2: rhinoscriptsyntax (Mid-level)
 Convenience wrapper around RhinoCommon. Works through document object references (GUIDs). Best for: interactive scripts, automation, when you want simple function calls.
@@ -304,6 +313,13 @@ success, curves, pts = Intersection.BrepBrep(brep1, brep2, tolerance)
 
 # Curve-Plane
 events = Intersection.CurvePlane(crv, plane, tolerance)
+
+# Line-Mesh: the 2-argument call returns the hit POINTS only. Face ids are an out array on a
+# second overload, and IronPython will not hand it back implicitly because the 2-argument
+# overload also exists. Select it with clr.Reference (executed in Rhino 7.38, 2026-11-10):
+import clr, System
+ids = clr.Reference[System.Array[int]]()
+points = Intersection.MeshLine(mesh, line, ids); face_ids = ids.Value
 ```
 
 ### Mesh Operations
@@ -614,7 +630,7 @@ Rhino upgrade with `scripts/verify-rhino-claims.sh "/Applications/Rhino N.app"`.
 
 ## Tolerances
 
-Always read tolerances from the document. Never hardcode them. Requires `import Rhino` at top of script.
+Always read tolerances from the document. Never hardcode them. Requires `import Rhino` at top of script. (A tolerance the task itself specifies, such as a fit deviation, is a design value: take it as a parameter with that default.)
 
 ```python
 import Rhino
