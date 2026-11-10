@@ -1,0 +1,64 @@
+{
+ "MeshLine_clr_Reference": {
+  "face_ids": [
+   3, 
+   555
+  ], 
+  "points": 2
+ }, 
+ "CurveBrep_3arg": [
+  "bool", 
+  "Array[Curve]", 
+  "Array[Point3d]"
+ ], 
+ "CreateHeadless": true, 
+ "transform_order": [
+  0.0, 
+  1.0, 
+  0.0
+ ], 
+ "RemapToPlaneSpace": [
+  "bool", 
+  "Point3d"
+ ], 
+ "ipy": "2.7.12", 
+ "ClosestPoint_1arg": "Point3d", 
+ "Counter": {
+  "b": 1, 
+  "a": 2
+ }, 
+ "ClosestPoint_2arg": [
+  "int", 
+  "Point3d"
+ ], 
+ "GetOutlines_sphere_r2": {
+  "closed": [
+   true
+  ], 
+  "count": 1, 
+  "pts": [
+   25
+  ], 
+  "bbox": [
+   -2.0, 
+   2.0, 
+   -2.0, 
+   2.0
+  ]
+ }, 
+ "mesh_checks": {
+  "unify": 0, 
+  "closed": true, 
+  "manifold": [
+   true, 
+   true, 
+   false
+  ], 
+  "naked": null, 
+  "volume": 32.987000000000002
+ }, 
+ "CapPlanarHoles_returns": "Brep", 
+ "version": "7.38.24338.17002", 
+ "MeshLine_2arg_type": "Array[Point3d]", 
+ "Line_Direction_len": 5.0
+}

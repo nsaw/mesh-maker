@@ -145,37 +145,75 @@ Copy the compiled DLL to ALL of these locations:
 
 **MUST RESTART RHINO** after updating the DLL. GH caches loaded assemblies.
 
-### DLL Loading Pattern (robust, two-fallback)
+### DLL Loading Pattern (two lookups, every failure reported)
+
+Replaced 2026-11-10. The earlier pattern here resolved the definition folder from `ghdoc.Path` and
+wrapped both attempts in bare `except: pass`. Both are wrong: `ghdoc` is the script's geometry
+document, not the `.gh` file, and a swallowed loader exception leaves a node that silently does
+nothing. The pattern below is condensed from the loader that passed native acceptance on
+2026-11-04 (positive, missing and invalid DLL cases, after a fresh Rhino start):
+`~/Code/sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/ghpy/scripts/meshcraft.node1.noise.dll-loader.py`.
+Read that file and its README before changing a real loader.
 
 ```python
-import clr, os
+#! python 2
+import clr, os, traceback
+import Grasshopper as gh
 
 _dll_name = "MeshCraftNoise"
-_loaded = False
 
-# Try 1: GH Libraries folder (by name)
-try:
-    clr.AddReference(_dll_name)
-    _loaded = True
-except:
-    pass
+def _load():
+    attempts = []
+    try:                                              # 1. by assembly name (GH Libraries folder)
+        clr.AddReference(_dll_name)
+        return
+    except Exception:
+        attempts.append('Assembly name ' + _dll_name + ':\n' + traceback.format_exc())
+    document = ghenv.Component.OnPingDocument()       # the owning .gh definition
+    path = document.FilePath if document is not None else None
+    if not path:
+        attempts.append('Adjacent DLL lookup unavailable: the definition is unsaved')
+    else:
+        candidate = os.path.abspath(os.path.join(os.path.dirname(path), _dll_name + '.dll'))
+        if not os.path.isfile(candidate):
+            attempts.append('Adjacent DLL does not exist: ' + candidate)
+        else:
+            try:                                      # 2. next to the .gh file
+                clr.AddReferenceToFileAndPath(candidate)
+                return
+            except Exception:
+                attempts.append('Adjacent DLL ' + candidate + ':\n' + traceback.format_exc())
+    raise RuntimeError('\n'.join(attempts))           # every attempted path and its cause
 
-# Try 2: Next to .gh file (by path)
-if not _loaded:
-    try:
-        _gh_dir = os.path.dirname(ghdoc.Path) if ghdoc.Path else ""
-        if _gh_dir:
-            dll_path = os.path.join(_gh_dir, _dll_name + ".dll")
-            if os.path.exists(dll_path):
-                clr.AddReferenceToFileAndPath(dll_path)
-                _loaded = True
-    except:
-        pass
+z_values = None                                       # clear outputs first: a failed solve must
+try:                                                  # not leave the previous grid on the wire
+    _load()
+    import MeshCraftNoise as _impl
+    assembly = clr.GetClrType(_impl).Assembly
+    ghenv.Component.Message = 'DLL ' + str(assembly.GetName().Version)
+    # ... call _impl.Generate(...) and assign outputs here ...
+except Exception:
+    ghenv.Component.Message = 'DLL/input error'
+    ghenv.Component.AddRuntimeMessage(gh.Kernel.GH_RuntimeMessageLevel.Error, traceback.format_exc())
+```
 
-if not _loaded:
-    _msg(_err, "Cannot find " + _dll_name + ".dll")
-else:
-    from MeshCraftNoise import Generate, Shape, Smooth, BuildFaces
+Rules that came with it: validate values after GH type hints (a failed conversion must not become
+a default), take column and row counts from the DLL's returned tuple instead of recomputing them
+with Python rounding (CLR midpoint rounding can differ), and restart Rhino after deliberately
+changing a DLL because loaded assemblies are cached.
+
+### The `_msg` helper used in the snippets above
+
+The diagnostic snippets in this file call `_msg(_warn, ...)` and `_msg(_err, ...)`. Until
+2026-11-10 they were never defined here, so a copied snippet raised `NameError`. Define them once
+at the top of the node:
+
+```python
+import Grasshopper as gh
+_warn = gh.Kernel.GH_RuntimeMessageLevel.Warning
+_err = gh.Kernel.GH_RuntimeMessageLevel.Error
+def _msg(level, text):
+    ghenv.Component.AddRuntimeMessage(level, text)
 ```
 
 ### IronPython Tuple-Return for .NET Out Parameters
@@ -288,10 +326,13 @@ When a C# Script Component is unavoidable:
   - Outputs pts as DataTree[Point3d]
   - Passes through cols, rows as scalars
 
-[C# Script Node 3: Smooth]
+[C# Script Node 3: Smooth]   (as it stood in the MeshCraft definition this was written from)
   - Receives pts as List<Point3d>
   - Weighted neighbor smoothing on Z values
   - Outputs smoothed List<Point3d>
+  Note: this node contradicts this file's own rule against C# Script components, and the DLL
+  already exposes Smooth() (see "Chain DLL Calls Without GH Wires"). For new work call
+  Smooth() from Node 2 and drop this node.
 
 [GhPython Node 4: Surface]
   - Loads DLL, calls BuildFaces()

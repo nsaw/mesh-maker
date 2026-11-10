@@ -1,0 +1,88 @@
+# Members the references rely on, asserted against the shipped assemblies by:
+#   scripts/rhino-api.sh --check scripts/verified-members.txt
+# One per line. Prefix gh: for Grasshopper.dll. Add a line whenever a reference gains an API claim.
+# First generated 2026-11-10 against RhinoCommon / Grasshopper 7.38.24338.17002.
+
+# value types
+Rhino.Geometry.Line::Direction
+Rhino.Geometry.Line::UnitTangent
+Rhino.Geometry.Interval::IncludesParameter
+Rhino.Geometry.Interval::IncludesInterval
+Rhino.Geometry.Plane::RemapToPlaneSpace
+Rhino.Geometry.BoundingBox::Union
+Rhino.Geometry.Transform::Multiply
+Rhino.Geometry.Transform::Scale
+Rhino.Geometry.Cylinder::ToBrep
+Rhino.Geometry.Cone::ToBrep
+Rhino.Geometry.Sphere::ToBrep
+
+# curves
+Rhino.Geometry.Curve::Fit
+Rhino.Geometry.Curve::CreateBooleanUnion
+Rhino.Geometry.Curve::CreateBooleanDifference
+Rhino.Geometry.Curve::CreateBooleanIntersection
+Rhino.Geometry.Curve::JoinCurves
+Rhino.Geometry.NurbsCurve::Create
+
+# surfaces and breps
+Rhino.Geometry.Surface::Reverse
+Rhino.Geometry.Surface::Transpose
+Rhino.Geometry.BrepFace::OrientationIsReversed
+Rhino.Geometry.Brep::CreatePatch
+Rhino.Geometry.Brep::CreateOffsetBrep
+Rhino.Geometry.Brep::CapPlanarHoles
+Rhino.Geometry.Brep::CreateBooleanDifference
+Rhino.Geometry.Brep::CreateBooleanIntersection
+Rhino.Geometry.Brep::IsPointInside
+
+# meshes
+Rhino.Geometry.Mesh::ClosestPoint
+Rhino.Geometry.Mesh::Flip
+Rhino.Geometry.Mesh::Weld
+Rhino.Geometry.Mesh::ExplodeAtUnweldedEdges
+Rhino.Geometry.Mesh::SplitDisjointPieces
+Rhino.Geometry.Mesh::GetOutlines
+Rhino.Geometry.Mesh::GetNakedEdges
+Rhino.Geometry.Mesh::IsClosed
+Rhino.Geometry.Mesh::IsManifold
+Rhino.Geometry.Mesh::Volume
+Rhino.Geometry.Mesh::FillHoles
+Rhino.Geometry.Mesh::HealNakedEdges
+Rhino.Geometry.Mesh::UnifyNormals
+Rhino.Geometry.Mesh::Reduce
+Rhino.Geometry.Mesh::CreateContourCurves
+Rhino.Geometry.Mesh::CreateFromPlanarBoundary
+Rhino.Geometry.Mesh::IsPointInside
+Rhino.Geometry.MeshingParameters::Coarse
+Rhino.Geometry.MeshingParameters::Smooth
+
+# intersections
+Rhino.Geometry.Intersect.Intersection::MeshLine
+Rhino.Geometry.Intersect.Intersection::MeshRay
+Rhino.Geometry.Intersect.Intersection::CurveBrep
+Rhino.Geometry.Intersect.Intersection::BrepPlane
+Rhino.Geometry.Intersect.Intersection::MeshMeshAccurate
+
+# documents and files
+Rhino.RhinoDoc::OpenHeadless
+Rhino.RhinoDoc::CreateHeadless
+Rhino.RhinoDoc::Import
+Rhino.RhinoDoc::Export
+Rhino.FileIO.File3dmLayerTable::Add
+Rhino.DocObjects.Tables.LayerTable::FindByFullPath
+Rhino.Display.ViewCapture::CaptureToBitmap
+Rhino.Geometry.HiddenLineDrawing::Compute
+
+# grasshopper
+gh:Grasshopper.Kernel.GH_Document::FilePath
+gh:Grasshopper.Kernel.GH_Document::PreviewMeshType
+gh:Grasshopper.Kernel.GH_Document::DestroyPreviewMeshes
+
+# rhino-mac-execution-and-mesh.md
+Rhino.Geometry.Collections.MeshFaceList::TriangleCount
+Rhino.Geometry.Collections.MeshFaceList::QuadCount
+Rhino.RhinoApp::RunScript
+Rhino.RhinoDoc::ModelUnitSystem
+Rhino.Geometry.Intersect.Intersection::MeshPlane
+Rhino.Geometry.Curve::DuplicateSegments
+Rhino.Geometry.BrepFace::DuplicateFace

@@ -1,5 +1,18 @@
 # RhinoCommon Geometry Reference (Rhino 7)
 
+> **Verification status.** On 2026-11-10 this file was checked against RhinoCommon
+> `7.38.24338.17002` by reflection. Four members and four overloads it named did not exist, and
+> seven entries had the wrong return shape. Those are corrected below and marked `# corrected`.
+> The members listed in `scripts/verified-members.txt` are asserted by
+> `scripts/rhino-api.sh --check scripts/verified-members.txt`. **Every other line in this file is
+> still unverified recall.** The corrected return shapes (out parameters, transform order,
+> `GetOutlines`, `CapPlanarHoles`, `Line.Direction`) were also EXECUTED in Rhino 7.38 on 2026-11-10;
+> the output is `scripts/rhino-probe-result-261110.json`. Before the first use of any member in a script, run
+> `scripts/rhino-api.sh 'Type::Member'` and read the overloads it prints.
+>
+> **IronPython and `out` parameters.** A .NET `out` or `ref` parameter (shown as `ByRef` by the
+> lookup) is not passed as an argument. IronPython returns it: `ok, a, b = Method(x)`.
+
 ## Table of Contents
 1. [Primitives and Value Types](#primitives)
 2. [Curves](#curves)
@@ -54,7 +67,7 @@ plane.Normal                    # normal vector
 plane.XAxis, plane.YAxis        # basis vectors
 plane.ClosestPoint(pt)          # project point onto plane
 plane.DistanceTo(pt)            # signed distance
-plane.RemapToPlaneSpace(pt)     # convert world pt to plane coordinates
+ok, pt_local = plane.RemapToPlaneSpace(pt)  # corrected: out param, returns (bool, Point3d)
 ```
 
 ### Line (struct)
@@ -63,7 +76,8 @@ line = rg.Line(pt_from, pt_to)
 line = rg.Line(pt_from, direction, length)
 line.From, line.To              # endpoints
 line.Length                      # length
-line.Direction                   # unit direction vector
+line.Direction                   # corrected: To - From, length = segment length (NOT unit)
+line.UnitTangent                 # the unit direction vector
 line.PointAt(t)                  # parameter 0.0 = From, 1.0 = To
 line.ClosestPoint(pt, limited)   # nearest point on line
 line.DistanceTo(pt, limited)     # distance from point
@@ -100,8 +114,11 @@ cylinder = rg.Cylinder(circle, height)
 cone = rg.Cone(plane, height, radius)
 torus = rg.Torus(plane, major_radius, minor_radius)
 
-# All have .ToBrep() or .ToRevSurface() for conversion
+# Conversion. corrected: the signatures differ per type.
 brep = sphere.ToBrep()
+brep = cylinder.ToBrep(True, True)      # (capBottom, capTop)
+brep = cone.ToBrep(True)                # (capBottom)
+rev = torus.ToRevSurface()              # Torus has no ToBrep
 ```
 
 ---
@@ -154,8 +171,8 @@ nc = rg.NurbsCurve.Create(is_periodic, degree, control_points)
 nc = rg.Curve.CreateInterpolatedCurve(points, degree)
 nc = rg.Curve.CreateInterpolatedCurve(points, degree, knot_style, start_tan, end_tan)
 
-# Create fitted
-nc = rg.Curve.CreateFitCurve(points, degree, tolerance)
+# Fit. corrected: there is no Curve.CreateFitCurve. Fit is an instance method on an existing curve.
+fitted = crv.Fit(degree, fit_tolerance, angle_tolerance)   # returns a new Curve, or None
 
 # Properties
 nc.Degree                       # polynomial degree
@@ -198,9 +215,11 @@ polyline.ClosestPoint(pt)        # nearest point
 ```python
 rg.Curve.JoinCurves(curves, tolerance)    # join curves end-to-end
 rg.Curve.CreateFilletCurves(c1, pt1, c2, pt2, radius, join, trim, arc_ext, tolerance, angle_tol)
-rg.Curve.CreateBooleanUnion(curves, plane)
-rg.Curve.CreateBooleanDifference(curve1, curves2, plane)
-rg.Curve.CreateBooleanIntersection(curve1, curve2, plane)
+# corrected: none of the curve booleans takes a plane. Curves must be planar and coplanar.
+rg.Curve.CreateBooleanUnion(curves, tolerance)                 # also (curves)
+rg.Curve.CreateBooleanDifference(curve_a, curve_b, tolerance)  # also (curve_a, curves_b[, tolerance])
+rg.Curve.CreateBooleanIntersection(curve_a, curve_b, tolerance)
+# All return Curve[]; an empty array or None means failure.
 rg.Curve.ProjectToBrep(curves, breps, direction, tolerance)
 rg.Curve.PullToBrepFace(curve, face, tolerance)
 ```
@@ -218,8 +237,8 @@ srf.FrameAt(u, v)                # full frame at (u,v)
 srf.IsoCurve(direction, param)   # extract iso-parametric curve
 srf.GetBoundingBox(accurate)     # bounding box
 srf.IsSolid                      # True if closed solid
-srf.Reverse(direction)           # flip orientation (0=U, 1=V)
-srf.Transpose()                  # swap U and V
+flipped = srf.Reverse(direction) # corrected: RETURNS a new Surface (0=U, 1=V); srf is unchanged
+swapped = srf.Transpose()        # corrected: RETURNS a new Surface with U and V swapped
 srf.ClosestPoint(pt)             # returns (success, u, v)
 srf.GetSurfaceSize()             # returns (success, width, height)
 ```
@@ -258,8 +277,11 @@ breps = rg.Brep.CreateFromLoft(curves, start_pt, end_pt, loft_type, closed)
 rg.Brep.CreateFromSweep(rail, shapes, closed, tolerance)
 rg.Brep.CreateFromSweep(rail1, rail2, shapes, closed, tolerance)
 
-# Patch
-rg.Brep.CreatePatch(geometry, start_srf, spans, flexibility, trim, tangency, tolerance)
+# Patch. corrected: three overloads, none with seven arguments.
+rg.Brep.CreatePatch(geometry, starting_surface, tolerance)
+rg.Brep.CreatePatch(geometry, u_spans, v_spans, tolerance)
+rg.Brep.CreatePatch(geometry, starting_surface, u_spans, v_spans, trim, tangency,
+                    point_spacing, flexibility, surface_pull, fix_edges, tolerance)  # fix_edges: bool[4]
 
 # Edge surface (from 2, 3, or 4 edge curves)
 rg.Brep.CreateEdgeSurface(curves)
@@ -292,7 +314,7 @@ vertex = brep.Vertices[i]
 face.DuplicateSurface()          # underlying untrimmed surface
 face.OuterLoop                   # outer trim loop
 face.Loops                       # all trim loops
-face.IsReversed                  # face orientation vs surface
+face.OrientationIsReversed       # corrected (was IsReversed): face orientation vs surface
 
 # Edge operations
 edge.DuplicateCurve()            # 3D edge curve
@@ -311,11 +333,11 @@ brep = rg.Brep.CreateFromBox(corners)  # 8 corner points
 # Join multiple breps
 joined = rg.Brep.JoinBreps(breps, tolerance)
 
-# Cap planar holes
-brep.CapPlanarHoles(tolerance)
+# Cap planar holes. corrected: returns a NEW Brep (None on failure); the original is unchanged.
+capped = brep.CapPlanarHoles(tolerance)
 
-# Offset surface
-rg.Brep.CreateOffsetBrep(brep, distance, solid, extend, tolerance)
+# Offset. corrected: two out arrays come back as extra tuple items.
+offsets, blends, walls = rg.Brep.CreateOffsetBrep(brep, distance, solid, extend, tolerance)
 ```
 
 ### Brep Booleans
@@ -413,10 +435,21 @@ mesh.TopologyEdges                # edge connectivity
 
 # Modification
 mesh.Weld(angle_tolerance)        # merge nearby vertices
-mesh.Flip(true, true, true)       # flip normals, faces, edge order
+mesh.Flip(True, True, True)       # corrected: Python True. (vertexNormals, faceNormals, faceOrientation)
 mesh.RebuildNormals()
-mesh.Explode()                    # separate disconnected parts
+pieces = mesh.SplitDisjointPieces()       # corrected: Mesh.Explode() does not exist. Disconnected parts.
+pieces = mesh.ExplodeAtUnweldedEdges()    # split along unwelded edges
 mesh.Split(cutter_mesh)
+
+# Validation and outline, the calls a handoff needs (all in scripts/verified-members.txt)
+mesh.IsClosed                     # property: no naked edges
+mesh.IsManifold()                 # also IsManifold(topologicalTest) -> (bool, isOriented, hasBoundary)
+mesh.GetNakedEdges()              # Polyline[] of edges with one face; None "on error" per the XML doc
+mesh.Volume()                     # meaningful only when closed and consistently oriented
+mesh.UnifyNormals()               # fixes face winding, returns the number of faces modified;
+                                  # does not touch vertex normals, so call Normals.ComputeNormals() after
+mesh.FillHoles(); mesh.HealNakedEdges(distance)
+outlines = mesh.GetOutlines(rg.Plane.WorldXY)   # Polyline[] silhouette in that plane. PLURAL.
 
 # Mesh booleans
 rg.Mesh.CreateBooleanUnion(meshes)
@@ -427,7 +460,8 @@ rg.Mesh.CreateBooleanIntersection(mesh_a_list, mesh_b_list)
 amp = rg.AreaMassProperties.Compute(mesh)
 vmp = rg.VolumeMassProperties.Compute(mesh)
 mesh.GetBoundingBox(accurate)
-mesh.ClosestPoint(pt)             # returns (pt, face_index)
+mesh.ClosestPoint(pt)             # corrected: returns Point3d only
+face_index, pt_on_mesh = mesh.ClosestPoint(pt, max_distance)   # this overload gives the face index
 ```
 
 ### Mesh Vertex Colors
@@ -471,7 +505,8 @@ xf = rg.Transform.PlanarProjection(plane)  # project onto plane
 # Identity
 xf = rg.Transform.Identity
 
-# Combine transforms (matrix multiplication)
+# Combine transforms (matrix multiplication). The RIGHT operand is applied first.
+# RhinoCommon.xml on Transform.Multiply(a, b): the result acts as B applied first, then A.
 combined = xf_b * xf_a  # apply xf_a first, then xf_b
 
 # Apply to geometry
@@ -503,18 +538,24 @@ for e in events:
 # Curve-Plane
 events = Intersection.CurvePlane(crv, plane, tol)
 
+# corrected: the out arrays are RETURNED in IronPython, not passed in. Same form as SKILL.md.
 # Curve-Brep
-success = Intersection.CurveBrep(crv, brep, tol, overlap_curves, intersection_pts)
-# overlap_curves and intersection_pts are output arrays
+success, overlap_curves, intersection_pts = Intersection.CurveBrep(crv, brep, tol)
 
 # Brep-Brep
-success = Intersection.BrepBrep(brep1, brep2, tol, curves, pts)
+success, curves, pts = Intersection.BrepBrep(brep1, brep2, tol)
 
 # Brep-Plane
-success = Intersection.BrepPlane(brep, plane, tol, curves, pts)
+success, curves, pts = Intersection.BrepPlane(brep, plane, tol)
 
-# Line-Mesh
-face_ids = Intersection.MeshLine(mesh, line)
+# Line-Mesh. corrected: returns the hit POINTS, not face ids.
+points = Intersection.MeshLine(mesh, line)
+# The face ids are an out array on a second overload. Because a 2-argument overload also exists,
+# IronPython will not hand the out value back implicitly; select the overload with clr.Reference.
+# (Executed in Rhino 7.38 on 2026-11-10: returned 2 points and face ids [3, 555] on a test sphere.)
+import clr, System
+ids = clr.Reference[System.Array[int]]()
+points = Intersection.MeshLine(mesh, line, ids); face_ids = ids.Value
 
 # Mesh-Mesh
 polylines = Intersection.MeshMeshAccurate(mesh1, mesh2, tol)
@@ -552,5 +593,5 @@ interval.Length                   # t1 - t0
 interval.Mid                     # midpoint parameter
 interval.ParameterAt(t)          # normalized t in [0,1] to actual parameter
 interval.NormalizedParameterAt(t) # actual parameter to normalized [0,1]
-interval.Contains(value)          # check if value is in interval
+interval.IncludesParameter(value) # corrected (was Contains): True if value is in the interval
 ```
