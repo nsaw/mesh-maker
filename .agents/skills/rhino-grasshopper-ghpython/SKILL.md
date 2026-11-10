@@ -5,7 +5,33 @@ description: "Use this skill when the user asks to write, debug, or optimize GhP
 
 # Rhino 7 / Grasshopper / GhPython Scripting Skill
 
+> **Scripts and references are the same in every copy.** A project copy differs only where its header says so; run the scripts from `~/.claude/skills/rhino-grasshopper-ghpython/scripts/` wherever you read the text.
+>
 > **Root skill — project copy wins.** This is the broad root version. If the project you're working in (`~/Code/<project>/`) ships its own `rhino-grasshopper-ghpython` skill, that project copy is authoritative and supersedes this one: load it and let it win where they differ; use this file only for general principles the project copy doesn't cover. (Umbrella rule: "Skill precedence" in `~/Code/CLAUDE.md`.)
+
+## Where this runs, and the rule before any API call
+
+**Rhino 7 and Grasshopper run on the Mac, and only on the Mac.** Installed and checked 2026-11-10:
+Rhino `7.38`, RhinoCommon and Grasshopper `7.38.24338.17002`, IronPython `2.7.12.0`. The Windows shop
+laptop runs Aspire and ShopBot control and nothing else; no Rhino work is ever planned for it.
+Rhino 8 is not installed, so nothing here may assume the Rhino 8 script component or CPython.
+
+**Look it up, do not recall it.** Before the first use of any RhinoCommon or Grasshopper member in a
+script, run the lookup against the shipped assembly and read what it prints:
+
+```bash
+~/.claude/skills/rhino-grasshopper-ghpython/scripts/rhino-api.sh 'Mesh::GetOutlines'
+~/.claude/skills/rhino-grasshopper-ghpython/scripts/rhino-api.sh --doc 'Transform.Multiply'
+~/.claude/skills/rhino-grasshopper-ghpython/scripts/rhino-api.sh --gh 'GH_Document::FilePath'
+```
+
+It prints every overload, the return type, and near misses when the name is wrong. It reads the DLL
+and does not launch Rhino, so it is safe while Nick has Rhino open. A recalled name that was one
+letter off (`GetOutline` for `GetOutlines`) cost a session four failed approaches on 2026-11-05, and
+a recalled "Rhino 8 only" for `RhinoDoc.CreateHeadless` was wrong (the shipped docs say since 7.0).
+
+For running scripts, validating meshes and exporting for the shop, read
+`references/rhino-mac-execution-and-mesh.md` first.
 
 ## Critical: Rhino 7 = IronPython 2.7
 
@@ -54,6 +80,13 @@ centroids = area_result.centroid
 ```
 
 **Limitation:** Not compatible with `ghpythonlib.parallel` (causes memory leaks). Cannot be used in parallel workflows.
+
+**Function names are derived, not guessed.** The name is the component's Name (not its nickname)
+with every character outside `[a-zA-Z0-9]` removed, except `|` becomes `X`: "Brep | Brep" is
+`ghcomp.BrepXBrep`, "Remap Numbers" is `ghcomp.RemapNumbers`, "Isotrim" is `ghcomp.Isotrim`. A
+one-item result is unwrapped to the bare item and an empty one becomes `None`; use
+`ghcomp.trees.<Name>` to keep trees. Full rule and its source: `references/grasshopper-sdk.md`,
+"Discovering Component Names".
 
 ### Tier 2: rhinoscriptsyntax (Mid-level)
 Convenience wrapper around RhinoCommon. Works through document object references (GUIDs). Best for: interactive scripts, automation, when you want simple function calls.
@@ -220,9 +253,14 @@ xform_scale = rg.Transform.Scale(center_pt, factor)
 # Apply: returns True/False for success
 geometry.Transform(xform)
 
-# Chain transforms by multiplying
-combined = xform_rot * xform  # rotation then translation
+# Chain transforms by multiplying. The RIGHT operand is applied first:
+# RhinoCommon documents Transform.Multiply(a, b) as B applied first, then A.
+combined = xform_rot * xform  # translation first, then rotation
+combined = xform * xform_rot  # rotation first, then translation
 ```
+
+(Corrected 2026-11-10. This comment previously read "rotation then translation" for
+`xform_rot * xform`, which is backwards and contradicted `references/rhinocommon-geometry.md`.)
 
 ### Boolean Operations
 
@@ -275,6 +313,13 @@ success, curves, pts = Intersection.BrepBrep(brep1, brep2, tolerance)
 
 # Curve-Plane
 events = Intersection.CurvePlane(crv, plane, tolerance)
+
+# Line-Mesh: the 2-argument call returns the hit POINTS only. Face ids are an out array on a
+# second overload, and IronPython will not hand it back implicitly because the 2-argument
+# overload also exists. Select it with clr.Reference (executed in Rhino 7.38, 2026-11-10):
+import clr, System
+ids = clr.Reference[System.Array[int]]()
+points = Intersection.MeshLine(mesh, line, ids); face_ids = ids.Value
 ```
 
 ### Mesh Operations
@@ -527,7 +572,7 @@ Each .py file corresponds to one GhPython component. The mapping between .gh and
 ### Importing Shared Code Between Components
 ```python
 import sys
-sys.path.append(r"C:\path\to\your\scripts")
+sys.path.append("/Users/sawyer/Code/<project>/scripts")   # Rhino and Grasshopper run on the Mac
 import utils  # shared across multiple components
 
 # Or use os.path relative to the script location
@@ -568,6 +613,8 @@ For deeper API details, read:
 - `references/ironpython-27-guide.md` -- IronPython 2.7 survival guide (.NET interop, missing modules, Python 2 vs 3 pitfalls)
 - `references/rhino-commands-macros.md` -- Rhino command macros and RhinoScript (VBScript) reference
 - `references/ghpython-dll-optimization.md` -- Compiled C# DLL pattern for eliminating IronPython bottlenecks, silent output data loss fixes, DLL compilation/deployment, optimization workflow (read this FIRST for any performance work)
+- `references/rhino-mac-execution-and-mesh.md` -- How a script actually gets run on the Mac, headless documents, mesh validation and outline calls, STL/DXF handoff checks, and the recorded failures each rule comes from (read this FIRST for any export or automation work)
+- `scripts/rhino-api.sh` -- member lookup against the shipped assemblies; `scripts/verified-members.txt` is the list of members the references are checked against
 
 Canvas-side references (how Grasshopper itself behaves, as opposed to what you write inside a node):
 - `references/grasshopper-geometry-orientation.md` -- Plane-driven orientation, Plane Normal vs Construct Plane, the perpendicular-cylinder trap, and the cone whose base (not tip) lands on your plane
@@ -583,7 +630,7 @@ Rhino upgrade with `scripts/verify-rhino-claims.sh "/Applications/Rhino N.app"`.
 
 ## Tolerances
 
-Always read tolerances from the document. Never hardcode them. Requires `import Rhino` at top of script.
+Always read tolerances from the document. Never hardcode them. Requires `import Rhino` at top of script. (A tolerance the task itself specifies, such as a fit deviation, is a design value: take it as a parameter with that default.)
 
 ```python
 import Rhino

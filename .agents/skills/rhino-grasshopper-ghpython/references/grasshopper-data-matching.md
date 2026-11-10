@@ -42,22 +42,36 @@ A: {0}[1,2,3,4,5]   B: {0}[a,b]
 → (1,a) (2,b) (3,b) (4,b) (5,b)      5 results, b repeats
 ```
 
-**Different paths** — cross product. Every branch of A meets every branch of B:
+**Different branch counts.** Branches are paired **in order**, and the tree with fewer branches
+repeats its **last branch**. Then each pair is longest-list matched as above. Paths are not
+compared; only branch order matters.
 
 ```
 A: {0}[1,2,3]   B: {0}[a] {1}[b] {2}[c]
-→ 9 results
+→ A's one branch repeats against B's three: (1,a)(2,a)(3,a) (1,b)(2,b)(3,b) (1,c)(2,c)(3,c) = 9
+
+A: {0}[1,2] {1}[3,4]   B: {0}[a] {1}[b] {2}[c]
+→ pairs are A0-B0, A1-B1, A1-B2: 3 branch pairs, 6 results. NOT 2 x 3 = 6 branch pairs.
 ```
+
+Corrected 2026-11-10. This section used to say "Different paths: cross product. Every branch of A
+meets every branch of B." That is wrong, and its single example hid the error because one branch
+against three gives 9 under both rules. Source: McNeel's developer guide, "Advanced Data
+Structures", section 3.3 Tree matching (last branch of the shorter tree is repeated, then
+corresponding branches are matched by repeating the last element). For a true cross product use
+the Cross Reference component.
 
 ## The N×M problem
 
 **Symptom:** you have N items and M items, you expect N×M results, you get `max(N,M)`.
 
-**Cause:** both inputs are flat and sit at the same path, so they longest-list match instead of
-cross-producting.
+**Cause:** both inputs are flat single branches, so they longest-list match item for item.
 
-**Fix:** graft one input. Grafting puts each item in its own branch, which makes the paths differ,
-which triggers the cross product.
+**Fix:** graft **one** input, and only one. Grafting puts each of its N items in its own branch.
+The other input's single branch then repeats against all N branches, and each pairing yields M
+results: N x M. Graft **both** and you are back to `max(N, M)`, because the N branches now pair
+in order with the M branches. (Corrected 2026-11-10: the earlier wording said grafting works
+because "the paths differ", which predicts N x M for the both-grafted case and is wrong.)
 
 This is the single most common data-tree bug in Grasshopper and it is silent — you get a valid
 result of the wrong size, not an error.
@@ -80,7 +94,7 @@ know, which is why the question has to be asked deliberately.
 
 | Operation | Effect | Reach for it when |
 |---|---|---|
-| Graft | Each item becomes its own branch | You need the cross product |
+| Graft | Each item becomes its own branch | You need every A against every B (graft one side only) |
 | Flatten | All branches collapse to one list | You genuinely want to discard grouping |
 | Simplify | Strips redundant path levels | Cleaning up; use sparingly, it can erase meaning |
 | Path Mapper | Arbitrary path rewriting | Precise restructuring |

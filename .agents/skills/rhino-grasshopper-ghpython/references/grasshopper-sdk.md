@@ -45,7 +45,7 @@ Right-click each input parameter to configure:
 | Tree | Full DataTree object | When branch structure matters |
 
 ### Output Configuration
-Right-click outputs to set type hints. Usually leave as default (no hint) and let Grasshopper infer the type. The `out` output captures print statements -- remove it if unused (saves performance).
+Right-click outputs to set type hints. Usually leave as default (no hint) and let Grasshopper infer the type. The `out` output captures print statements and tracebacks. Keep it while developing; strip it only from finished definitions that run unattended (same rule as `SKILL.md`, Performance, item 2. This line previously said to remove it when unused, which contradicted that rule).
 
 ---
 
@@ -129,7 +129,7 @@ Call any native Grasshopper component as a Python function:
 import ghpythonlib.components as ghcomp
 
 # Geometry operations
-result = ghcomp.BrepBrep(brep1, brep2)
+result = ghcomp.BrepXBrep(brep1, brep2)   # corrected: component "Brep | Brep", and "|" becomes "X"
 curves = ghcomp.Voronoi(points)
 area = ghcomp.Area(geometry)
 
@@ -141,7 +141,7 @@ area_result.area        # numeric area
 area_result.centroid    # centroid point
 
 # Math / utility
-ghcomp.Remap(value, source_domain, target_domain)
+ghcomp.RemapNumbers(value, source_domain, target_domain)  # corrected: component Name is "Remap Numbers" ("ReMap" is only its nickname)
 ghcomp.Bounds(numbers)  # domain from min to max
 ghcomp.Range(domain, steps)  # evenly spaced values
 ghcomp.Series(start, step, count)
@@ -157,7 +157,7 @@ ghcomp.Contour(geometry, point, direction, distance)
 ghcomp.Loft(curves, options)
 ghcomp.Extrude(base, direction)
 ghcomp.SurfaceSplit(surface, curves)
-ghcomp.IsoTrim(surface, domain)
+ghcomp.Isotrim(surface, domain)           # corrected: component Name is "Isotrim"; names are case-sensitive
 ghcomp.EvaluateSurface(surface, uv)
 
 # Mesh
@@ -180,6 +180,26 @@ ghcomp.PointInBrep(point, brep, strict)
 
 ### Discovering Component Names
 The function names match Grasshopper component names. If unsure of exact name, look at the component's full name in Grasshopper (hover over it). Spaces are removed and CamelCase is used.
+
+**The exact rule, read from the shipped `ghpythonlib/components.py` (lines 204-217, Rhino 7.38):**
+the function name is the component's **Name** (never its nickname) with every character outside
+`[a-zA-Z0-9]` deleted, except that `|` becomes `X`, `+` and `-` become `_`, `*` becomes `x`, and
+superscript digits become digits. A name that would start with a non-letter gets an `x` prefix.
+So "Brep | Brep" is `BrepXBrep`, "Remap Numbers" is `RemapNumbers`, "Isotrim" is `Isotrim`.
+
+Three behaviors of the generated functions, from the same file (lines 129-173):
+
+- A result list with exactly one item is unwrapped to that item, and an empty one becomes `None`.
+  Code that expects a list back must handle a bare item and `None`.
+- `ghcomp.trees.<Name>` is the same function with trees kept intact on input and output. Use it
+  when branch structure matters; the plain form flattens.
+- Component warnings are printed and attached to the calling component, not raised.
+
+Two components can share a Name. "Flip" exists as a curve component and as a surface component
+(both verified in the shipped `CurveComponents.gha` and `SurfaceComponents.gha`), and both map to
+`ghcomp.Flip`; the last one registered wins. "Explode" is the curve component; the Brep
+equivalent is "Deconstruct Brep". When a `ghcomp` call returns something of the wrong kind, print
+`ghcomp.<Name>.__doc__` in the component before assuming your inputs are wrong.
 
 ### Limitations
 - Cannot use with `ghpythonlib.parallel` (memory leak risk)
@@ -368,9 +388,10 @@ Quick reference for translating between visual GH components and Python code:
 | Surface Normal | part of EvaluateSurface result | `srf.NormalAt(u, v)` |
 | Brep Join | `ghcomp.BrepJoin(breps)` | `rg.Brep.JoinBreps(breps, tol)` |
 | Flip | `ghcomp.Flip(srf)` | `srf.Reverse(0)` / `srf.Reverse(1)` |
-| Explode | `ghcomp.Explode(brep)` | iterate `brep.Faces` with `DuplicateFace` |
+| Explode (curve) | `ghcomp.Explode(curve)` | `curve.DuplicateSegments()` |
+| Deconstruct Brep | `ghcomp.DeconstructBrep(brep)` | iterate `brep.Faces` with `DuplicateFace` (corrected: "Explode" is a curve component, not a Brep one) |
 | Cull Pattern | `ghcomp.CullPattern(list, pattern)` | list comprehension with zip |
 | List Item | `ghcomp.ListItem(list, index)` | `list[index]` |
 | Dispatch | `ghcomp.Dispatch(list, pattern)` | two list comps with condition |
 | Sort | `ghcomp.SortList(keys, list)` | `sorted(zip(keys, list))` |
-| Remap | `ghcomp.Remap(val, src, tgt)` | manual: `(val-s0)/(s1-s0)*(t1-t0)+t0` |
+| Remap Numbers | `ghcomp.RemapNumbers(val, src, tgt)` | manual: `(val-s0)/(s1-s0)*(t1-t0)+t0` |

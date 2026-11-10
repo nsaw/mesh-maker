@@ -216,7 +216,7 @@ IronPython 2.7 is missing or has incomplete versions of several CPython modules:
 - `json` -- works
 - `re` -- works
 - `datetime` -- works
-- `collections` -- partially (OrderedDict works, no Counter)
+- `collections` -- `OrderedDict`, `namedtuple` and `Counter` are all defined in the bundled `Lib/collections.py` (lines 38, 305, 407 in Rhino 7.38). Corrected 2026-11-10: this line used to say "no Counter". Executed in Rhino 7.38 on 2026-11-10: `Counter('aab')` returned `{'a': 2, 'b': 1}`.
 - `itertools` -- works
 - `functools` -- partial (reduce is builtin, partial works)
 - `copy` -- works
@@ -234,7 +234,7 @@ If you need numpy/scipy/etc., you can't use them directly in IronPython. Options
 3. **Use .NET alternatives** -- Math.NET Numerics (available via clr.AddReference)
 
 ### Performance Notes
-- IronPython is JIT-compiled to .NET IL, so it's generally faster than CPython 2.7 for computation
+- For tight numeric loops IronPython is the bottleneck, not a speedup. `SKILL.md` and `ghpython-dll-optimization.md` record the MeshCraft case where moving a loop to compiled C# was the fix. (Corrected 2026-11-10: this line used to claim IronPython is "generally faster than CPython 2.7 for computation", with no measurement, and contradicted those two files. Neither that claim nor the "1000-7000x" figure in the other files has a benchmark attached. Measure the node before quoting either.)
 - But startup/import time is slower
 - .NET interop (RhinoCommon calls) is very fast because there's no marshaling layer
 - String concatenation with `+` is slow for large strings (same as CPython) -- use `"".join(list)`
