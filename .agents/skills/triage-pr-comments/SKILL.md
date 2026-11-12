@@ -38,7 +38,7 @@ arguments (e.g. PR number) are passed through normally.
 
 Examples: `/triage-pr-comments autofix`, `/triage-pr-comments autofix 29`
 
-When `autofix` is present, after completing Phase 6 (deploy to production):
+When `autofix` is present, after completing Phase 5 (commit, push, and the step 4b replies):
 
 1. **Report round completion**: "Round [N] complete. Waiting 12 minutes for
    reviewers to re-analyze the push..."
@@ -203,13 +203,12 @@ The autofix loop summary should include all rounds:
 Rounds completed: [N]
 Total comments addressed: [N]
 Total commits: [list]
-Deploys: [N] (meshcraft.sawyerdesign.io)
 Greptile confidence: [score]
 Mergeable: [MERGEABLE | CONFLICTING]  Checks: [N/N SUCCESS]
 Status: [CLEAN | CAPPED at round N with M remaining | CONFIDENCE_LOW | NOT_MERGEABLE | CHECKS_FAILING]
 ```
 
-If `autofix` is NOT in $ARGUMENTS, run a single pass (Phases 0–6) as normal.
+If `autofix` is NOT in $ARGUMENTS, run a single pass (Phases 0–5) as normal.
 </autofix-mode>
 
 <mandatory-coverage>
@@ -526,11 +525,11 @@ For EACH unresolved comment, in file order (to batch related fixes):
 For each VALID BUG or VALID IMPROVEMENT:
 - **Search for the same pattern** across the codebase — if the bug exists here, it likely exists elsewhere
 - **Trace call sites** — if you change a function signature or return type, find ALL callers
-- **Check related files** — this is a 13-file codebase, so cross-referencing is fast:
+- **Check related files**: the file map is in `AGENTS.md`. The main couplings:
   - `state.ts` ↔ every file (STATE singleton)
   - `mesh.ts` ↔ `render.ts` ↔ `ui.ts` (generate → render pipeline)
   - `export.ts` reads from STATE.vertices
-  - `interaction.ts` modifies STATE.orbit/tilt/zoom → triggers renderViewport
+  - `interaction.ts` modifies STATE.orbit/tilt/zoom, then calls `setCameraFromState()` (`render.ts`), which requests the render
   - `toolbar.ts` binds buttons that call into mesh/render/export
 
 ## Phase 2: Fix Valid Issues
@@ -540,7 +539,7 @@ For each VALID BUG and VALID IMPROVEMENT:
 1. **Apply the minimal surgical fix** that addresses the reviewer's concern
 2. Follow existing code patterns and project rules:
    - **No `console.log`** — this is a production tool
-   - **Escape user input in innerHTML** — `STATE.depthMapName` is user-controlled
+   - **No `innerHTML` for user-influenced content**: render `STATE.depthMapName` with DOM nodes and `textContent`
    - **Revoke object URLs** — every `createObjectURL()` must have a matching `revokeObjectURL()`
    - **No degenerate triangles** — enforce minimum material thickness (0.01") for watertight exports
    - **No TODO/FIXME in production paths**
@@ -848,28 +847,14 @@ the fixed-finding replies are waiting on the hash this phase produces.
 6. Return to step **4b**: reply to the fixed findings with the pushed hash, post
    the consolidated comment, write the ledger keys, resolve those threads.
 
-## Phase 6: Deploy to Production
+## No production deploy from the PR branch
 
-After step 4b completes — commit pushed, fixed findings replied to and resolved —
-deploy to the live site. Not merely after Phase 5: deploying first publishes while the
-PR still has unanswered fixed-finding threads, and a deploy failure then leaves the
-round half-reported.
+Triage does not deploy. `npm run deploy` publishes with `--branch=main`, which is
+production, and CI deploys `main` after merge (`.github/workflows/deploy.yml`).
+To show a fix on the real CDN, publish a preview and report the URL wrangler prints:
 
 ```bash
-npm run deploy
-```
-
-`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` are exported via `~/.zshenv`.
-
-Runs in BOTH modes:
-- **Single-pass mode**: Deploy once after Phase 5 completes
-- **Autofix mode**: Deploy at the end of EACH round, before the wait cycle
-
-Verify wrangler reports a successful deployment URL before proceeding.
-
-Report deploy status:
-```text
-Deployed to meshcraft.sawyerdesign.io [success/failed]
+npm run build && npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=<branch>
 ```
 
 </workflow>
@@ -970,19 +955,22 @@ final output summary regardless of whether autofix mode is active.
 <pre-existing-issues>
 While investigating and reading files deeply, you will find pre-existing
 issues (bugs, anti-patterns, missing error handling, stale code). Each one
-gets a disposition by severity, the same floor the root skill's frozen
-contract uses:
+gets a disposition under the root skill's scope rule ("Scope: inside, related,
+unrelated" in `~/.claude/skills/triage-pr-comments/SKILL.md`):
 
-- Inside the PR's contract: fix it, at every severity.
-- Outside it, Critical or Major (data loss or corruption, a leak, a crash, or
+- Inside the PR's contract, or related to it (same file or function, same
+  feature or flow, same defect class, or newly reachable through this PR): fix
+  it in this PR, at every severity.
+- Unrelated, Critical or Major (data loss or corruption, a leak, a crash, or
   wrong behavior on a reachable path you can state as a concrete sequence):
-  fix it in this PR.
-- Outside it, Minor or Trivial: `gh issue create` with file:line evidence in
-  the same turn, linked from the ledger and the thread reply.
+  fix it now, as its own linked PR.
+- Unrelated, Minor or Trivial: list it with file:line in the ledger and under
+  "Found, not fixed here" in the PR body. At most one issue per PR collects
+  those, and only when one is a defect someone would act on.
 
 FORBIDDEN:
 - Leaving a found issue with no disposition
-- "Will address separately" with no issue link
+- "Will address separately" with no disposition
 - A TODO in code standing in for either
 </pre-existing-issues>
 

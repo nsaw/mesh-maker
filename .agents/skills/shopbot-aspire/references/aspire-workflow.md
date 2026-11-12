@@ -195,7 +195,7 @@ Levels also have combine modes. The level mode controls how the entire level's c
 |--------|-------|
 | STL | Universal mesh format. No color/texture. Most common for CNC. |
 | OBJ | Mesh format with material support. |
-| 3DM (Rhino) | NURBS-based. High quality import if using Rhino for design. |
+| 3DM (Rhino) | UNVERIFIED. Not on the V12 help page's list of importable 3D formats (checked 2026-11-10). Export STL from Rhino instead. |
 | SKP (SketchUp) | Supported with limitations. Convert to STL if issues. |
 
 ### Image Formats (for tracing or texture)
@@ -206,8 +206,32 @@ Levels also have combine modes. The level mode controls how the entire level's c
 ### Importing 3D Models
 - When importing STL/OBJ, Aspire offers orientation and scaling options
 - Choose how the model maps to the XYZ plane
-- Models taller than the material thickness will be scaled/clipped
 - Complex models may need simplification for clean toolpathing
+
+Corrected and extended 2026-11-10 from Vectric's V12 Aspire help ("Import a Component or 3D
+Model", "Positioning an Imported Model"). The earlier line "Models taller than the material
+thickness will be scaled/clipped" had no source and is removed.
+
+- **Aspire holds relief only.** The help says it "only represents base-relief" and cannot work
+  with a fully 3D object. An imported mesh becomes one height per XY position.
+- **Undercuts are lost.** Anything that sits under another part of the model is discarded and
+  replaced by a vertical wall dropped from the top-view silhouette to the zero plane. The
+  **Highlight Undercuts** checkbox shows what will be lost in dark purple, and also flags faces
+  with normal problems (inside-out areas).
+- **Zero Plane Position In Model** is a slider (with Middle and Bottom buttons) that sets where
+  the model is cut off. For a relief that should be imported whole, Bottom.
+- **Discard data below zero plane** removes everything below the model's original zero level.
+  Untick it for a dished or recessed model, or the recess is gone.
+- **Create both sides** makes a second component looking up from below, for a two-sided job.
+- **Re-import**: right-click the component and choose reimport to change size, position or
+  slicing plane without starting over.
+- 3D formats listed on that page: STL, DXF (3D mesh), 3DS, OBJ, SKP, plus Vectric's own CRV3D,
+  3DCLIP and V3M. **3DM is not on the V12 list.** This file and `SKILL.md` have long said Aspire
+  imports Rhino 3DM; that is unverified. Send STL.
+- STL has no units. The receiving job decides inches or millimetres, so the handoff sidecar must
+  state them and the shop must check one known dimension after import.
+
+What this means for anything modeled on the Mac for carving is in `relief-machinability.md`.
 
 ---
 

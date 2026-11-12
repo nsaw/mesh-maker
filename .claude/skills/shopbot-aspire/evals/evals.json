@@ -1,0 +1,20 @@
+{
+  "skill_name": "shopbot-aspire",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need to cut a batch of cabinet door panels out of 3/4\" baltic birch. The panels are 14\" x 18\" with a 1/4\" roundover on the top edges. What's my full workflow in Aspire and what tool/feeds should I use? I want to use my ATC to do it all in one file.",
+      "expected_output": "Should recommend Machine Bed Z-zero, Whiteside UD2102 compression spiral for profile cuts with tabs, appropriate conservative feeds for baltic birch on the Desktop MAX ATC, correct ATC post-processor (ShopBot TC), and proper toolpath ordering (pockets/roundover before profile cutout)."
+    },
+    {
+      "id": 2,
+      "prompt": "I'm getting chatter on my 3D finish pass in walnut. Using a 1/4\" ball nose at 16000 RPM and 2 IPS with 10% stepover. What should I try?",
+      "expected_output": "Should identify that 2 IPS may be too aggressive for walnut on the Desktop MAX ATC, recommend reducing to 1.2-1.5 IPS, check bit sharpness, verify material hold-down, possibly reduce RPM to 14000-15000, and note the machine's 1HP spindle limitations. Should NOT recommend generic PRS-level feeds."
+    },
+    {
+      "id": 3,
+      "prompt": "I want to V-carve a sign in hard maple with my 90-degree V-bit. The lettering is a mix of thin script and thick block text. How should I set this up in Aspire?",
+      "expected_output": "Should recommend Advanced V-Carve with a flat-bottom clearance tool for the thick block text areas, standard V-carve for the thin script, conservative feeds for hard maple (around 10000 RPM, 0.8-1.2 IPS per the owner's database), Machine Bed Z-zero, and note that maple is hard enough to warrant the slower end of the range."
+    }
+  ]
+}

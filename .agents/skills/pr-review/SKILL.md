@@ -72,7 +72,7 @@ code, those win. Verify before citing one as a violation.
   leaked secrets. It does NOT run `typecheck:cli`, so CLI-only type errors escape it —
   verify `npm run typecheck:cli` explicitly when touching `cli/` or `src/sbp/`.
 - **Some values are intentional**: `serializeConfig()` returning `''` — the empty string, meaning
-  "default config, emit no `?c=`" when the only key left is `_v` (`src/state.ts:381-382`) — and
+  "default config, emit no `?c=`" when the only key left is `_v` (`serializeConfig` in `src/state.ts`) — and
   `.section-title` using `var(--warn)` are deliberate. Check `references/learnings.md`, then
   `references/superseded.md`, before flagging an odd-looking constant.
 - **Never validate a build through a pipe** — `cmd | tail` returns tail's exit status, so a

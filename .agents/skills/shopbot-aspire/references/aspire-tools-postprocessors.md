@@ -145,7 +145,15 @@ The 7-position ATC rack is organized by function. Each position holds one ISO20 
 
 **Boneyard** (extras sorted by material suitability): Plastic-specific (O-flutes), Wood-specific (spirals), Aluminum-specific (ZrN-coated single-flute).
 
-**Tool database location**: `~/Library/CloudStorage/Dropbox/ShopBot [DROPBOX]/[DB] TOOL DATABASE/tooldb.vtdb`
+**Tool database location** (live, on the Windows shop laptop where Aspire actually runs):
+`C:\ProgramData\Vectric\Aspire\V12.0\ToolDatabase\tools.vtdb`
+
+Dated copies land in `C:\ProgramData\Vectric\Aspire\V12.0\Backups\ToolDatabase\tools_YYYY-MM-DD.vtdb`.
+Alongside the live file are `tools.vtdb.upload` (cloud-sync staging) and `tools.vtdb.vectric`
+(vendor baseline) — do not edit either directly.
+
+A Mac Dropbox path was recorded here previously. It was wrong: Aspire does not run on the
+Mac, so no path under `/Users/...` can be this database.
 
 ---
 

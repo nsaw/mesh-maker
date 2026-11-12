@@ -21,10 +21,9 @@ The file-by-file map, the key design decisions, and the external-resource table 
 `AGENTS.md` at the repo root. That is the single copy on purpose. Read it before touching
 `src/` or `cli/`.
 
-Two known staleness points in that map, both verified 2026-08-05: its tree predates
-`grasshopper/`, `CONTEXT/`, `sourceTruth/`, `verification/`, `docs/` and `assets/`, and it
-lists five noise algorithms where `src/noise/generators.ts` carries fourteen-plus. Correct
-`AGENTS.md` when you touch those areas rather than forking a second description here.
+Its tree omits the top-level `grasshopper/`, `CONTEXT/`, `sourceTruth/`, `verification/`,
+`docs/`, `assets/` and `scripts/` directories. Correct `AGENTS.md` when you touch those areas
+rather than forking a second description here.
 
 ## Commands
 
@@ -131,8 +130,9 @@ npm run test:relief-master
 npm run stl-to-sbp -- <input.stl> --dry-run
 ```
 
-`.github/workflows/ci.yml` runs lint, both typechecks, `test:relief`, `test:gh-parity`,
-`test:depthmap`, `test:drape`, `test:drape-parity`, `test:cut`, `test:relief-master` and the build on every pull request.
+`.github/workflows/ci.yml` runs the drape Python tests
+(`python3 -m unittest discover -s scripts/drape -p 'test_*.py'`), lint, both typechecks,
+`test:relief`, `test:gh-parity`, `test:depthmap`, `test:drape`, `test:drape-parity`, `test:cut`, `test:relief-master` and the build on every pull request.
 `test:drape-parity` runs two full cloth simulations of the bundled bust against the Blender references
 (`cli/fixtures/drape-silk-tilt25`, `cli/fixtures/drape-silk-gathered`); after any change under `src/drape-sim/`, paste its numbers in the PR.
 The references come from Blender (`scripts/drape/workflow.py`) and are never regenerated from the web solver.
@@ -146,9 +146,8 @@ the voronoi-relief work in May 2026 passed all 22 assertions while being a visib
 
 - Branch from `main`. Do not commit directly to `main`: CI deploys `dist/` to Cloudflare Pages
   on every push to `main`, so a direct push is a production deploy.
-- The Cloudflare Pages deploy failed repeatedly in August 2026 (last failure 2026-08-28) and has
-  succeeded on every `main` push since 2026-10-03. A green local build is still not a deploy:
-  check the run with `gh run list --workflow=deploy.yml --limit 5`.
+- A green local build is not a deploy: check the run with
+  `gh run list --workflow=deploy.yml --limit 5`.
 - Preview a branch on the real CDN without touching production:
   `npm run build && npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=<branch>`
   (credentials from `~/.zshenv`). Wrangler prints the preview URL.
@@ -158,15 +157,21 @@ the voronoi-relief work in May 2026 passed all 22 assertions while being a visib
 
 ## Skills
 
-Seven skills are mirrored across `.claude/skills/`, `.agents/skills/` and `.codex/skills/`,
-kept in step by `sync-skills`. Present here: `frontend-design`, `plan`, `pr-review`,
-`rhino-grasshopper-ghpython`, `shopbot-aspire`, `triage-pr-comments`, `voice-system`.
+Seven skills are mirrored across `.claude/skills/` and `.agents/skills/`: `frontend-design`,
+`plan`, `pr-review`, `rhino-grasshopper-ghpython`, `shopbot-aspire`, `triage-pr-comments`,
+`voice-system`. Keep each `.agents` copy byte-identical to its `.claude` copy. `sync-skills`
+keeps them in step except `frontend-design` and `triage-pr-comments`, which carry a
+`.skill-sync-ignore` pin because they are customized for this repo; mirror those two by hand.
+Each name also exists in `~/.claude/skills/`, and in Claude Code the personal copy shadows the
+project copy, so `Skill` loads the user-level one. Reach a project copy with `Read` by its path.
 
 - `rhino-grasshopper-ghpython` for anything under `grasshopper/`, GhPython, RhinoCommon,
   `.gh` or `.3dm`. Mandatory there. IronPython 2.7 constraints apply, not Python 3.
 - `shopbot-aspire` for toolpaths, feeds and speeds, bit selection, OpenSBP, `.sbp` output,
   and anything about the physical machine.
-- `frontend-design` for the browser UI. The MESHCRAFT 3000 design system is documented there.
+- `frontend-design` for the browser UI. The MESHCRAFT 3000 tokens and conventions are in
+  `.claude/skills/frontend-design/SKILL.md`; read that file, since the `frontend-design` skill
+  name resolves to the user-level judgment layer.
 - `pr-review` and `triage-pr-comments` for review work. These two are the only skills the
   `.gitignore` comment claims are tracked; in practice all seven are tracked.
 - `voice-system` for any user-facing copy, including sponsor-facing and README text.

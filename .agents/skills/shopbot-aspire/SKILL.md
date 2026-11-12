@@ -5,26 +5,155 @@ description: "Comprehensive CNC routing skill covering ShopBot CNC routers (Desk
 
 # ShopBot CNC + Vectric Aspire Skill
 
+> ## STOP. READ THIS BEFORE YOU QUOTE A SINGLE NUMBER.
+>
+> **No machining value leaves this skill without a citation and a declared unit.**
+> Feed rate, plunge rate, RPM, chip load, depth of cut, stepover. Every one, every time.
+> On the shop laptop `~/.claude/rules/cnc-safety.md` is loaded in every session and outranks this
+> file. On the Mac it is not auto-loaded: read `~/.claude/windows/rules/cnc-safety.md` before
+> stating any machining value.
+>
+> **The numbers in this skill are Nick's conservative starting points for THIS machine.
+> They are not manufacturer specification.** They are already dialled back 15-25% from
+> published figures because a 1HP spindle on stepper drives cannot hold industrial feeds.
+> Never present them as spec. Never write them into `tools.vtdb` as sourced data. Never
+> apply them to a different machine, tool, or material.
+>
+> **Units.** SB3 is inches per SECOND. Bit catalogs publish inches per MINUTE. `IPM/60=IPS`.
+> A catalog number dropped into an IPS field is 60x too fast. Show the arithmetic.
+>
+> **Drills only plunge.** A drill gets plunge rate, peck depth, retract. Never a feed rate.
+>
+> **Never bulk-edit the tool database.** One tool at a time, each value cited, shown to Nick
+> before it is written. A PreToolUse hook blocks the write; that hook is the system working.
+>
+> **Never claim you verified something you did not.** If you say you read a row, the tool
+> call is in the transcript. In August 2026 a claimed line-by-line verification that never
+> happened put ~30x feed rates in front of a live spindle. That is what these rules exist
+> to prevent.
+>
+> **Which machine you are on decides what you can do.** This body is shared with the shop
+> laptop's copy (`~/.claude/windows/skills/shopbot-vectric-aspire/`, verified at the machine
+> 2026-08-05 to 2026-08-09). Paths beginning `C:` or `Z:` are on the laptop.
+>
+> **On the Mac (where all modeling happens) you cannot touch the machine, Aspire or SB3.** Your
+> job ends at a handoff packet: geometry that can be machined, with its units and limits stated.
+> Read `references/relief-machinability.md` for that. Aspire toolpaths and cut files are authored
+> at the laptop. The tool database lives in Vectric's cloud. Every file under
+> `Dropbox/ShopBot [DROPBOX]/` and `Dropbox/shopbot-dump/` is stale and inactive (Nick, 2026-11-10);
+> do not read tooling or machine values from them.
+>
+> **Tooling numbers are not a Mac concern.** Feeds, speeds and tool choice are set in Aspire at
+> the laptop. The current shop-laptop skills, including `cnc-tooling`, are on the dotclaude branch
+> `windows/shopbot-skill-and-export-fixes`; read them with
+> `git -C ~/.claude show origin/windows/shopbot-skill-and-export-fixes:skills/cnc-tooling/SKILL.md`
+> and never leave `~/.claude` checked out on that branch. The feed tables further down this file
+> are older than that skill and disagree with it; do not quote them as recommendations.
+
 This skill covers the complete CNC routing workflow: designing in Vectric Aspire, generating toolpaths, configuring post-processors for ShopBot machines, and operating the machine safely and effectively. It is organized as a reference system -- read the relevant section for the task at hand.
 
-**Owner's machine**: ShopBot Desktop MAX ATC V2, 36" x 24" cutting area, 1HP spindle, ISO20/ER-20 ATC system. All feeds/speeds recommendations and operational guidance are optimized for this specific machine unless otherwise noted.
+**Owner's machine**: ShopBot Desktop MAX ATC V2. Aspire and SB3 both run on the Windows shop
+laptop (`shopbot`); the Mac never touches the machine.
+
+Verified from the live config on 2026-08-05 (`shopbot.ini`, `ShopBot_PRSDesktopMAX3624.sbd`,
+`ATC_variables.sbc`):
+
+- SB3 v3.9.14, control box firmware 224, USB serial on COM3.
+- Nominal work area 36 x 24 (the factory profile is literally named `...DesktopMAX3624`), but
+  **travel is larger than the work area**. The ATC clips sit at X 39.718, outside the 36"
+  work area.
+
+  **`VL` X max is 38, not 40. Re-verified against live `shopbot.ini` 2026-08-09:**
+  `VL, -1.003, 38, -1.003, 26, -3.3439, 8`. An earlier version of this file said 40 and
+  Z -3.0154; both were stale.
+
+  **38 is Nick's deliberate workaround, not a factory value. Do not "restore" it to 40.**
+  Factory for this machine is 40/26 (X extended to cover the toolbar at 39.569-39.75;
+  Y is the usual 24+2). The 38 pulls the default limit back inside the ATC zone so ordinary
+  operation cannot wander in, while the ATC routines set 40/26 for themselves when they need
+  it. **Any new ATC-adjacent routine must either set `VL,,40,,26` itself or use `SF,0`, or it
+  will be blocked at 38.** Audited: `DT_ATC.sbp` and `DT_ATC_Zzero.sbp` set 40/26,
+  `DT_ATC_Calibrate.sbp` uses `SF,0`, `ATC_Get_PlateOffset.sbp` never reaches the toolbar.
+
+  **X boundary map:** 36 = table edge (`VP` param 2), ~37 = X prox sensor, 38 = soft limit,
+  39.569 / 39.609 = Z plate / tool clips. **An X prox sits between the table and the ATC
+  zone, and parking outside table bounds maroons the head** -- it will not home or jog back
+  on. Single-tool Z-zero must park inside table bounds; the all-tools path must stay in the
+  ATC zone. Those two paths are deliberately inconsistent. Do not "fix" that.
+- ATC: `&ATC = 7`, 28 clip positions, `&MinTool = 1`, `&MaxTool = 7` (tools 1-7 have real
+  measured Z offsets; 8+ are placeholder -5).
+- Spindle commanded at 18000 RPM by the current post output (`TR,18000`).
+- **Table Base Coordinate Z has DRIFTED and is not stable. Read it, never cache it.**
+  -2.995 across jobs to May 2026, -3.3179 on 2026-08-07, **-3.3239 in live `shopbot.ini`
+  on 2026-08-09** (`VA` param 8). That is 0.33" of movement, and safe-Z math is computed
+  from it: `safeZ = -%(8) - &proxClearance - %(63)`. At the current value that yields
+  **3.074**. A stale `%(8)` is exactly what turns an absolute `JZ` clearance move into a
+  plunge, so any clearance move must be written as a guarded lift:
+  `IF %(3) < &x THEN JZ, &x`.
+- `%(28)` is Safe-Z (`VC` param 4, currently 2) and governs **only** `[MH]`, `[JH]`,
+  movement-block reloads and tabbing -- **never** ordinary jogs or `J2`/`JX`/`JY`. Lifting
+  Z before an XY move must be coded explicitly.
+- Cutter diameter is `%(20)` per `ComRef.pdf`.
+- X, Y and Z prox all share **input 3** on this machine (`ATC_Settings.sbc:259-261`).
+  Generic ShopBot docs say 2/3/5. The live file wins.
+- `VN,0` (limit switches off) **persists to disk**; only `VL`/`SF` limit *checking*
+  auto-reverts at file end. Several ATC exit paths leave it disabled.
+
+Confirmed against ShopBot's published Desktop MAX ATC V2 specs: 1HP ATC spindle with
+pneumatically actuated drawbar, ISO20 tool holders, a toolbar of **seven** ER-20 toolholders
+taking shanks to 1/2", 120V household power, and **an air supply of 4 CFM at 90 PSI is
+required for the toolchanger**. The seven holders line up exactly with `&MaxTool = 7` in the
+live config, which is a good cross-check that the machine is configured as shipped.
 
 **Owner's preferences**:
-- Z-zero is ALWAYS machine bed (spoilboard surface), never top of material. Aspire job setup must use "Machine Bed" for Z-zero position.
+- Z-zero is ALWAYS machine bed (spoilboard surface), never top of material. Aspire job setup
+  must use "Machine Bed" for Z-zero position. Confirmed in live post output:
+  `&PWZorigin = Table Surface` and header `Home Position Information = Bottom Left Corner, Table Surface`.
 - Primary materials: hardwoods (oak, maple, walnut) and hard sheet goods (baltic birch plywood). MDF only for templates.
-- The standard/published feeds and speeds for the Desktop MAX ATC are typically too aggressive on feed rates. This machine's 1HP spindle and stepper drives can't sustain the same feeds as a PRS or industrial router. When in doubt, reduce feeds by 15-25% from published starting points.
-- Tool database location: `~/Library/CloudStorage/Dropbox/ShopBot [DROPBOX]/[DB] TOOL DATABASE/tooldb.vtdb`
+- The standard/published feeds and speeds for the Desktop MAX ATC are typically too aggressive on feed rates. This machine's spindle and stepper drives can't sustain the same feeds as a PRS or industrial router. When in doubt, reduce feeds by 15-25% from published starting points.
+- **Tool database (live, on the machine where Aspire actually runs):**
+  `C:\ProgramData\Vectric\Aspire\V12.0\ToolDatabase\tools.vtdb`
+  Aspire keeps dated copies in `...\V12.0\Backups\ToolDatabase\tools_YYYY-MM-DD.vtdb`. Those
+  backups cover the tool database only — **there is no autosave or recovery for `.crv3d`
+  project files.**
+
+## Before you assert anything about this machine
+
+Today's failure mode, twice over, was answering from a stale file and from an unverified
+reading of a dialog. Three rules:
+
+1. **Live SB3 config is `C:\ProgramData\ShopBot\ShopBot 3\shopbot.ini`.** Every
+   `CustomSettings*.sbd` on the box is a stale export. Diff against the factory profile
+   `Settings\ShopBot_PRSDesktopMAX3624.sbd`, never against `default.sbd` (that one is for a
+   96x48 tool).
+2. **The shipped PDFs are older than this machine.** The ATC PDF's `&ATC` value list stops at
+   2; this machine is 7. Prefer the live `.sbc` files.
+3. **A blank entry in the Custom menu does not mean unassigned.** The label is just the first
+   comment line of the `.sbc`.
+4. **Know which version you are quoting.** Shipped PDFs are 2015, the shipped README stops at
+   3.8.74 (Nov 2022), the running binary is **3.9.14**, and current is **3.9.20** (9/24/25).
+   Live files beat manuals every time. An upgrade overwrites Custom #2,3,5,6,7,9 and #70+,
+   which is the entire ATC chain — see `references/sb3-versions-and-maintenance.md` before
+   suggesting one.
 
 ## Quick Reference: Where to Look
 
 | Task | Reference File |
 |------|---------------|
+| **A cut aborted, a settings dialog fired, "where is the config"** | **`references/sb3-config-logs-and-recovery.md`** |
+| **ATC calibration, tool measurement, plate offset, toolchange failures** | **`references/atc-desktop-max-v2.md`** |
+| **Version differences, upgrade risk, chip load, maintenance, troubleshooting triage** | **`references/sb3-versions-and-maintenance.md`** |
+| **Which post produced a file, tool database layout, Aspire logs, toolpath defaults** | **`references/aspire-installation-layout.md`** |
+| OpenSBP commands, full V-command parameter lists | `references/opensbp-commands.md` |
+| Part-file logic, variables, GOSUB/RETURN, move stacks, `Custom*.sbc` | `references/sbp-programming.md` |
 | Machine specs, ATC setup, hardware | `references/shopbot-hardware.md` |
-| OpenSBP commands (MZ, MS, SO, etc.) | `references/opensbp-commands.md` |
 | Zeroing, coordinates, speeds, safety | `references/shopbot-operations.md` |
 | Aspire job setup, design, 3D modeling | `references/aspire-workflow.md` |
 | Toolpath types and parameters | `references/aspire-toolpaths.md` |
 | Tool database, post-processors | `references/aspire-tools-postprocessors.md` |
+
+**Resuming an aborted cut is `[FG]` — go to line, then Run from Here. Do not prime the
+console first.** Full procedure and the reasons in `references/sb3-config-logs-and-recovery.md`.
 
 ## The CNC Routing Pipeline
 
@@ -50,7 +179,16 @@ Understanding the end-to-end workflow is critical for giving good advice. Each s
 - Preview/simulate to verify before cutting
 
 ### 4. Post-Processing (Aspire -> ShopBot)
-- Select the ShopBot post-processor (e.g., "ShopBot Arc (inch) w/speed")
+- Select a **toolchange-capable** ShopBot post. Everything else produces a file with no `C9`
+  and therefore no toolchange at all. On this machine the post actually used is
+  **`ShopBot TC (inch)(*.sbp)`**, which lives in the machine-configuration database
+  `PostP\postp.ppdb`, not in the `PostP\02-ShopBot` folder. Confirmed from the Aspire log,
+  which names the post on every save and correlates to the `.sbp` mtime within 200 ms.
+  The legacy folder equivalents are `ShopBot(inch)(Toolchange)w/speed(*.sbp)` and its MM
+  twin — the only two of the 26 `.pp` files that emit `C9`.
+  **Do not infer the post from the output's shape**; the database and legacy posts produce
+  near-identical files. Read `Aspire\V12.0\Logs\debug_<date>_0.log`. See
+  `references/aspire-installation-layout.md`.
 - Save toolpath as .sbp file
 - Post-processor translates XYZ coordinates into OpenSBP commands
 
@@ -104,6 +242,16 @@ These are non-negotiable. Include them in any operational advice:
 **Not surfacing the spoilboard**: An unsurfaced spoilboard is not flat relative to the gantry plane. This means Z-zero varies across the table. Surface with TU command before precision work.
 
 ## Material-Specific Guidance
+
+> **These are NOT manufacturer specifications.** Every number below is Nick's own
+> conservative starting point for the Desktop MAX ATC V2, arrived at by cutting. Feeds are
+> in **IPS (inches per second)**, which is what SB3 uses. Bit catalogs publish IPM. Do not
+> mix them: `IPM/60 = IPS`.
+>
+> Quote these only as "Nick's starting point, not a manufacturer spec." Do not write them
+> into `tools.vtdb` as sourced data. Do not extend them to a tool, material, or machine not
+> listed here. If you need a value for something not on this page, read the manufacturer
+> catalog. Do not interpolate from these.
 
 The owner primarily cuts hardwoods and baltic birch plywood, with MDF only for templates. When advising on feeds/speeds, default to these materials. The Desktop MAX ATC's 1HP spindle and stepper drives can't sustain the same feeds as PRS or industrial machines -- published "starting points" from ShopBot and bit manufacturers often need to be dialed back 15-25% on feed rates.
 

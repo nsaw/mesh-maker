@@ -16,7 +16,7 @@ reasoning is still sound and only a version, path, or status code moved.
 
 **Learning says:** the CDN pin is `rhino3dm@8.4.0`.
 
-**Live code:** `src/export.ts:166` loads
+**Live code:** `RHINO3DM_URL` in `src/export.ts` loads
 `https://cdn.jsdelivr.net/npm/rhino3dm@8.17.0/rhino3dm.module.min.js`.
 
 **Still true:** the *pattern* — loading rhino3dm from a CDN at runtime with an OBJ fallback is
@@ -60,3 +60,29 @@ for a reviewer:
 fixed in `SKILL.md` (invariant 2) in commit `6b8d32c`, but `learnings.md` is generated and cannot
 carry the correction, so it needed an entry here. Verified 2026-07-30 against
 `cli/grasshopper-parity.spec.ts`.*
+
+---
+
+## `src/render.ts` and the AGENTS.md checklist: Canvas renderer, pan, noise and preset counts
+
+**Learnings say:** `learnings-mined.md` (AGENTS.md block) "Use Canvas 2D rendering instead of
+WebGL for mesh visualization", "All noise algorithms must generate correctly: Simplex, Perlin,
+Ridged, FBM, and Voronoi" and "All 15 CNC presets must apply correctly". `learnings-mined.md`
+(sourceTruth) and `learnings.md` (sourceTruth, PR #7): `STATE.panX`/`STATE.panY` are "consumed
+directly by `renderViewport()` as a canvas translation".
+
+**Live code:** `src/render.ts` renders with `THREE.WebGLRenderer`. Pan is applied in
+`setCameraFromState()`, which converts the pixel offsets to a world-space shift of the camera
+and its target. `createNoiseGen()` in `src/noise/generators.ts` dispatches 15 named types plus
+the `simplex` default, and `CNC_PRESETS` in `src/noise/presets.ts` has 19 entries.
+
+**Still true:** pan is screen-space by design, with no orbit-angle compensation on the pan
+deltas. Do not flag that. Every noise type and every preset must still work.
+
+**No longer true:** the renderer, where pan is applied, and the counts. Do not flag WebGL or
+Three.js in `src/render.ts` as a violation, and do not ask for exactly five algorithms or
+fifteen presets. `AGENTS.md`'s checklist now names the source of truth instead of a count.
+
+*Source: prompt audit 2026-11-12. The two learnings files are generated and cannot carry the
+correction. Verified 2026-11-12 against `src/render.ts`, `src/noise/generators.ts` and
+`src/noise/presets.ts`.*

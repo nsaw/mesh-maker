@@ -146,8 +146,19 @@ For creating male/female inlay pairs using V-carving:
 Removes bulk material to rough out 3D shapes. Leaves a specified allowance for the finishing pass. Always run roughing before finishing on 3D projects.
 
 ### Strategy
-- **Offset (recommended)**: Concentric passes that follow the 3D contour. Efficient and leaves an even allowance.
-- **Raster**: Parallel passes in X or Y direction. Simple but may leave more material in some areas.
+
+Corrected 2026-11-10 against Vectric's V12 Aspire help ("3D Rough Toolpath"). This section used to
+name the roughing strategies "Offset (recommended)" and "Raster". Those are not the V12 names.
+
+- **Z Level Strategy**: a stack of 2D pocket passes that respect the 3D model and clear around it.
+  Options: **Profile** (First, Last or None, relative to the raster on each level) and **Order**
+  (Level by level, the default, or Depth-first by region). Vectric describes it as typically the
+  more efficient choice for deeper parts.
+- **3D Raster Strategy**: one 3D pass over the whole model. Leaves a more even allowance for the
+  finish cut and can take much longer on deep parts. Vectric suggests it for shallow parts where
+  roughing takes only one or two passes.
+- **Raster direction** (Along X or Along Y), **Reverse step direction** (Z Level only) and
+  **Avoid Machined Areas** are the other strategy options on the form.
 
 ### Key Parameters
 - **Machining Allowance**: How much material to leave for finishing (typically 0.01" - 0.03")
@@ -157,10 +168,13 @@ Removes bulk material to rough out 3D shapes. Leaves a specified allowance for t
 - **Machining Boundary**: The area to machine. Can be the model boundary, selected vectors, or a custom boundary with offset.
 - **Raster Angle**: For raster strategy, the angle of the parallel passes
 
-### Boundary Options
-- **Model Boundary**: Machines the entire 3D model area
-- **Selected Vector(s)**: Only machine within the selected boundary vectors
-- **Boundary Offset**: Add extra distance outside the boundary for clean edges
+### Boundary Options (Machining Limit Boundary, per the V12 help)
+- **Model Boundary**: the combined boundary of every component in the job, not just the selected ones
+- **Material Boundary**: the whole material block
+- **Selected Vector(s)**: only machine within the selected boundary vectors
+- **Selected Level**: the combined boundary of the components on one named level
+- **Boundary Offset**: enlarges the boundary so the tool can run past a raised edge. The tool tip,
+  not its cutting side, stays inside the boundary
 
 ---
 
@@ -174,8 +188,21 @@ Creates the final smooth surface on 3D models. Run after roughing.
   - Raster angle 90 = passes along Y axis
   - Raster angle 45 = diagonal passes
   - Sometimes running two finish passes at different angles (0 and 90) gives the best result
-- **Offset**: Concentric passes following the 3D contour. Good for round/organic shapes.
-- **3D Offset**: Follows the 3D surface contours more precisely than standard offset.
+- **Offset**: Concentric passes following the 3D contour. Good for round/organic shapes. Has a
+  **Stepover Retract** value that lifts the tool between contours to avoid perpendicular marks.
+
+Corrected 2026-11-10 against Vectric's V12 Aspire help ("3D Finish Toolpath"): the form offers two
+fill patterns, Offset and Raster. A third entry, "3D Offset", was listed here and is not on that
+page; it has been removed.
+
+**The finishing toolpath is always a single pass and ignores the tool's pass depth** (same page).
+So the roughing **Machining Allowance** is the full depth the finishing bit will take anywhere on
+the model. Set it for the finishing bit, not by habit, or a small ball nose gets buried.
+
+**Rest machining.** Selecting more than one tool in the 3D Finish form makes each later tool cut
+only what the earlier ones could not reach. **Minimum Detail** sets how small a leftover area is
+ignored, and a per-tool **Boundary Offset** grows or merges those areas. Tools must be listed in
+the order they will run.
 
 ### Key Parameters
 - **Stepover**: The critical parameter for finish quality. Controls the distance between adjacent passes.
