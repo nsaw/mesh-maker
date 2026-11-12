@@ -21,8 +21,8 @@ The file-by-file map, the key design decisions, and the external-resource table 
 `AGENTS.md` at the repo root. That is the single copy on purpose. Read it before touching
 `src/` or `cli/`.
 
-Its tree omits the top-level `grasshopper/`, `CONTEXT/`, `sourceTruth/`, `verification/`,
-`docs/`, `assets/` and `scripts/` directories. Correct `AGENTS.md` when you touch those areas
+Its tree omits the top-level `grasshopper/`, `CONTEXT/`, `sourceTruth/`, `docs/`, `assets/`
+and `scripts/` directories (`verification/` is gitignored, so it is not part of the repo). Correct `AGENTS.md` when you touch those areas
 rather than forking a second description here.
 
 ## Commands
@@ -145,15 +145,17 @@ the voronoi-relief work in May 2026 passed all 22 assertions while being a visib
 ## Git
 
 - Branch from `main`. Do not commit directly to `main`: CI deploys `dist/` to Cloudflare Pages
-  on every push to `main`, so a direct push is a production deploy.
+  on every push to `main` that touches site files, so a direct push is a production deploy.
+  `deploy.yml` `paths-ignore` skips pushes that only touch `.claude/**`, `.agents/**`, `.codex/**`,
+  `CONTEXT/**`, `docs/**`, `README.md` or `AGENTS.md`; no deploy run for those is expected.
 - A green local build is not a deploy: check the run with
   `gh run list --workflow=deploy.yml --limit 5`.
 - Preview a branch on the real CDN without touching production:
   `npm run build && npx wrangler@4 pages deploy dist --project-name=meshcraft --branch=<branch>`
   (credentials from `~/.zshenv`). Wrangler prints the preview URL.
 - Review the diff on both surfaces before committing: the browser path and the SBP/CLI path.
-- Never commit `.env`, screenshots, or temp files. `verification/` holds intentional
-  screenshots; new ones do not belong there by default.
+- Never commit `.env`, screenshots, or temp files. `verification/` is gitignored and local only;
+  it holds intentional screenshots on this machine.
 
 ## Skills
 

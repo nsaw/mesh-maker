@@ -343,5 +343,5 @@ When adding a new component, follow this checklist:
    must all still work after UI changes.
 
 7. **Verify in a browser** and say that you did. Visual and interaction items are
-   not covered by any suite. `verification/` holds intentional screenshots only;
+   not covered by any suite. `verification/` (gitignored, local only) holds intentional screenshots only;
    new captures do not go there by default (`.claude/CLAUDE.md`, Git).

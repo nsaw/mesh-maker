@@ -1,6 +1,6 @@
 # Superseded learnings — mesh-maker
 
-Entries in `learnings.md` that the code has since moved past. That file is generated from the
+Entries in `learnings.md` or `learnings-mined.md` that the code has since moved past. That file is generated from the
 CodeRabbit export and is overwritten on every import, so corrections live here instead.
 
 **Read this before citing anything from `learnings.md`.** A settled rule the implementation has

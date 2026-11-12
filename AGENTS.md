@@ -137,7 +137,7 @@ meshcraft/
 **Custom domain**: `meshcraft.sawyerdesign.io`
 **Account ID**: supply `CLOUDFLARE_ACCOUNT_ID` via local environment or CI secrets
 
-**CI/CD**: GitHub Actions on push to `main` — runs `npm ci && npm run build`, deploys `dist/`.
+**CI/CD**: GitHub Actions on push to `main` runs `npm ci`, `npm run lint` and `npm run build`, then deploys `dist/`. `deploy.yml` `paths-ignore` skips pushes that only touch agent and doc files (`.claude/**`, `.agents/**`, `.codex/**`, `CONTEXT/**`, `docs/**`, `README.md`, `AGENTS.md`).
 
 **Manual deploy**:
 
