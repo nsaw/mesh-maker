@@ -8,7 +8,7 @@ This reference documents critical GhPython behaviors and the compiled DLL patter
 
 ## The Core Problem
 
-IronPython 2.7 interprets every operation. For tight numeric loops over 10K+ items, it is 1000-7000x slower than compiled C#. JavaScript V8 JIT is also dramatically faster than IronPython for the same reason. If a GhPython node takes seconds and processes thousands of items in a loop, the fix is always: move the loop to compiled C#.
+IronPython 2.7 interprets every operation. For tight numeric loops over 10K+ items, it is far slower than compiled C# (no benchmark is recorded; measure the node). JavaScript V8 JIT is also dramatically faster than IronPython for the same reason. If a GhPython node takes seconds and processes thousands of items in a loop, the fix is always: move the loop to compiled C#.
 
 **Diagnosis**: If a GhPython node shows >10% of total pipeline time AND contains a `for k in xrange(total):` loop over thousands of items, it's an IronPython bottleneck. The fix is never "optimize the Python" -- it's "don't use Python for that loop."
 
@@ -20,7 +20,7 @@ IronPython 2.7 interprets every operation. For tight numeric loops over 10K+ ite
 
 ### What Happens
 
-When a GhPython script assigns a value to an output variable, GhPython's runtime serializes it into a GH DataTree for the wire. For large collections (10K+ items), this serialization SILENTLY FAILS for certain types:
+When a GhPython script assigns a value to an output variable, GhPython's runtime serializes it into a GH DataTree for the wire. For certain output types this serialization silently fails. The trigger is the type, not a size threshold (see the mechanism note in `SKILL.md`); 10K+ is where it was noticed:
 
 | Output Type | Behavior |
 |---|---|
@@ -204,9 +204,8 @@ changing a DLL because loaded assemblies are cached.
 
 ### The `_msg` helper used in the snippets above
 
-The diagnostic snippets in this file call `_msg(_warn, ...)` and `_msg(_err, ...)`. Until
-2026-11-10 they were never defined here, so a copied snippet raised `NameError`. Define them once
-at the top of the node:
+The diagnostic snippets in this file call `_msg(_warn, ...)` and `_msg(_err, ...)`. Define them
+once at the top of the node:
 
 ```python
 import Grasshopper as gh

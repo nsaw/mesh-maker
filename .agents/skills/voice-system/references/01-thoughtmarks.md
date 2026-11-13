@@ -29,10 +29,8 @@ remember it later. That's the entire reason I built Thoughtmarks. Bookmarks for 
 
 > **Scope: SELLING SURFACES ONLY** — App Store copy, ads, pricing, CTAs. Non-selling Thoughtmarks
 > copy (changelogs, documentation, support, in-app microcopy) is held to the **Written** gate alone
-> and must NOT be failed against the `I:you` and you-words thresholds above. `SKILL.md`'s surface
-> table has always said so; this sheet stated the gate without the qualifier, so copy that this
-> reference legitimately covers could be failed against a gate that does not apply to it.
-> (fix)PR#115 round 8.
+> and must NOT be failed against the `I:you` and you-words thresholds above. This matches the
+> surface table in `SKILL.md`.
 
 His build VO runs I:you around 6.0. His real product pitch runs 0.40. That inversion is the difference between a pitch that sounds like him and one that reads as him talking about himself. His verdict on a draft that got this wrong: "this feels like reading about me. I want to make it about the user."
 

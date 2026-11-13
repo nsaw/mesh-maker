@@ -45,7 +45,7 @@ Right-click each input parameter to configure:
 | Tree | Full DataTree object | When branch structure matters |
 
 ### Output Configuration
-Right-click outputs to set type hints. Usually leave as default (no hint) and let Grasshopper infer the type. The `out` output captures print statements and tracebacks. Keep it while developing; strip it only from finished definitions that run unattended (same rule as `SKILL.md`, Performance, item 2. This line previously said to remove it when unused, which contradicted that rule).
+Right-click outputs to set type hints. Usually leave as default (no hint) and let Grasshopper infer the type. The `out` output captures print statements and tracebacks. Keep it while developing; strip it only from finished definitions that run unattended (same rule as `SKILL.md`, Performance, item 2).
 
 ---
 

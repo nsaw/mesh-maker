@@ -137,11 +137,11 @@ Test that last claim against your own bottom ten: LEVEL UP Your Box Making, Rive
 
 ---
 
-## What this changes about the earlier advice
+## Where Salomone and jeopardy fit
 
-The Salomone document told you to find your version of "worst into best." That's now P1, one option of six, and it may not be your best one. **Your own channel data says P4 and P5 are your proven packages**, and they're the two you stopped making. Salomone's model is worth studying for the mechanics of how he executes a package, not because P1 is the package you should run.
+"Worst into best" is P1, one option of six, and it may not be your best one. **Your own channel data says P4 and P5 are your proven packages**, and they're the two you stopped making. Study Salomone for how he executes a package, not as the package to run.
 
-The cold-open findings are unchanged and apply to all six. What changes is that "open with jeopardy" was package-specific advice I gave as universal. P5 doesn't open on jeopardy, it opens on the material. P4 opens on the argument. The universal rule is narrower than I said: **whatever the package promises, the first thirty seconds states it and the next five minutes does not abandon it.**
+Opening on jeopardy belongs to P3. P5 opens on the material. P4 opens on the argument. The rule for all six: **whatever the package promises, the first thirty seconds states it and the next five minutes does not abandon it.**
 
 ---
 

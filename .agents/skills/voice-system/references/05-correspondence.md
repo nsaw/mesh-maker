@@ -15,9 +15,7 @@ Nick's brief: emails, pitches, commission query responses. He hates corporate or
 - Burstiness runs low, around 0.60, and that is correct. The label structure creates even blocks by design.
 - Hedges present, 12-15 per 1k.
 - Zero profanity. No emoji.
-- **At most one joke per email, and zero is correct too.** His own specimen: "as long as you don't judge the hurricane."
-  
-  Corrected: this read "exactly one", which the approved exemplar below contradicts — Nick marked it "Approved without changes" and it contains no joke at all. A rule that its own SHIP-marked specimen fails is worse than no rule, because it pushes a joke into a register where the approved sample chose restraint. The ceiling is real; the floor is not.
+- **At most one joke per email, and zero is correct too.** His own specimen: "as long as you don't judge the hurricane." The approved exemplar below has none.
 
 ## Rules
 

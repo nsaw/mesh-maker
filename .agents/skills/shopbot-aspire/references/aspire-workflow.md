@@ -136,7 +136,7 @@ For freeform 3D editing after creating base shapes:
 ### 3D Clipart
 - Aspire includes a clipart library of 3D components
 - Additional clipart available from Vectric and third parties
-- Import any STL, 3DM (Rhino), or OBJ file as a component
+- Import STL or OBJ files as components (3DM is not on the V12 import list; see Import Formats)
 - Imported 3D models can be scaled, positioned, and combined with other components
 
 ---
@@ -208,9 +208,8 @@ Levels also have combine modes. The level mode controls how the entire level's c
 - Choose how the model maps to the XYZ plane
 - Complex models may need simplification for clean toolpathing
 
-Corrected and extended 2026-11-10 from Vectric's V12 Aspire help ("Import a Component or 3D
-Model", "Positioning an Imported Model"). The earlier line "Models taller than the material
-thickness will be scaled/clipped" had no source and is removed.
+Checked 2026-11-10 against Vectric's V12 Aspire help ("Import a Component or 3D Model",
+"Positioning an Imported Model").
 
 - **Aspire holds relief only.** The help says it "only represents base-relief" and cannot work
   with a fully 3D object. An imported mesh becomes one height per XY position.
@@ -226,8 +225,7 @@ thickness will be scaled/clipped" had no source and is removed.
 - **Re-import**: right-click the component and choose reimport to change size, position or
   slicing plane without starting over.
 - 3D formats listed on that page: STL, DXF (3D mesh), 3DS, OBJ, SKP, plus Vectric's own CRV3D,
-  3DCLIP and V3M. **3DM is not on the V12 list.** This file and `SKILL.md` have long said Aspire
-  imports Rhino 3DM; that is unverified. Send STL.
+  3DCLIP and V3M. **3DM is not on the V12 list**, so Rhino 3DM import is unverified. Send STL.
 - STL has no units. The receiving job decides inches or millimetres, so the handoff sidecar must
   state them and the shop must check one known dimension after import.
 

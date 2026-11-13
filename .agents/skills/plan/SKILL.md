@@ -7,23 +7,25 @@ description: Turns confirmed investigation findings into a concrete implementati
 
 
 > **Reach a repo layer with `Read`, never with `Skill`.** A same-named skill inside a project is
-> shadowed by this one and cannot be invoked by name; the path above is the only route.
+> shadowed by this one and cannot be invoked by name; the path below is the only route.
 
 **Repo layer.** `~/.claude/skills/plan/references/thoughtmarks.md` carries the Thoughtmarks-specific planning rules. Read it when planning in that repo.
+
+**Shadowed project copy.** `~/Code/sawyerdesign-io/.claude/skills/plan/SKILL.md` is a pinned sawyerdesign.io variant (Astro, Cloudflare Worker and pnpm phases, that repo's severity floor, its own risk-closure section). This skill shadows it, so when planning in sawyerdesign-io, `Read` it by path and let it win on project specifics (umbrella rule: "Skill precedence" in `~/Code/CLAUDE.md`). mesh-maker's copy is an unpinned stale fork that `sync-skills` refreshes from this file; it carries nothing of its own.
 
 Turn confirmed findings into an implementation plan. This is the planning stage:
 no code is written here.
 
-**FIRST ACTION — before reading findings, before any file reads or greps:**
-Call the `EnterPlanMode` tool. Do not skip this step. Do not proceed until plan
-mode is active.
+Call `EnterPlanMode` before reading findings or files. Where the tool is absent (a
+`claude -p` run, some subagents), continue without it and write the plan to the output
+path below.
 
 The findings, requirements, or issue description you were invoked with are your
 input. Plan from those.
 
 <rules>
-- **NO SUBAGENTS.** Do NOT use the Task tool to spawn Explore, Plan, or any other subagent. Do ALL file reads, greps, and globs yourself directly. Subagents are unreliable for planning — they miss files, return incomplete results, and waste time. Use Read, Grep, Glob tools directly.
-- Max 750 lines. If exceeded, you're including investigation or justification that belongs in findings, not the plan.
+- Do not use subagents (Explore, Plan or any other) for planning. Do every read, grep and glob yourself: a plan built on a subagent's summary inherits whatever files it missed.
+- Keep the plan to 750 lines or fewer. A longer plan is usually carrying investigation or justification that belongs in the findings it cites.
 - One section per fix. Each fix must have:
   - Target file(s)
   - What to change (specific enough to implement, not pseudocode)
@@ -52,9 +54,9 @@ disposition in the plan, decided by this scope rule (a repo's CLAUDE.md may defi
 - **Unrelated, Critical or Major** (data loss or corruption, a leak, a crash, or wrong
   behavior on a reachable path stated as a concrete sequence): a Fix section, shipped as
   its own PR slice.
-- **Unrelated, Minor or Trivial**: listed under "Found, not fixed here" with file:line.
-  At most one GitHub issue per PR (per slice) collects them, and only when one is a
-  defect someone would act on.
+- **Unrelated, Minor or Trivial**: a defect someone would act on gets a GitHub issue opened before merge (one per
+  mechanism, never one per finding) and linked under "Found, not fixed here"; a PR-body list
+  alone is not tracking. Style preferences are listed, not filed.
 
 An item with no disposition is the failure. So is a related item pushed to an issue.
 
@@ -64,9 +66,8 @@ FORBIDDEN language in plans:
 - "TBD" or "later" for any item
 
 Why the scope rule: a related find joins the plan because filing each one as its own issue meant
-closing one issue opened several (owner feedback, 2026-11-07). The plan stays bounded because an
-unrelated find is listed, not fixed. The rule before that one, fix everything anywhere, drove
-thoughtmarks #364 to 39 review rounds and #394 to 9.
+closing one issue opened several. The plan stays bounded because an unrelated find is listed,
+not fixed: fixing everything anywhere is what drives a PR into dozens of review rounds.
 
 Pre-existing fixes that get a Fix section should be:
 1. Listed as their own Fix sections (not buried in footnotes)
@@ -144,8 +145,8 @@ still open, and #364 took 39 (RCA 2026-11-06).
 [which fixes depend on others, or "no dependencies — can be parallelized"]
 
 ### Found, not fixed here
-[Unrelated Minor/Trivial items under the scope rule, each with file:line, plus the one
- collecting issue link if one was opened. "None" is a valid answer.]
+[Unrelated Minor/Trivial defects under the scope rule, each with file:line and the
+ `Refs #N` link to its issue (one issue per mechanism, opened before merge). "None" is a valid answer.]
 
 ### PR Slices
 | Slice | Branch | Issues closed | Fix sections | Depends on | Est. files |
@@ -184,11 +185,11 @@ surfaced mid-build.
 - Every surviving item gets a concrete resolution step and the phase that gates on it.
   An item that needs a device resolves BEFORE merge, as a named check in the repo's
   pre-merge device gate when its layer defines one (thoughtmarks: Device Hub, see
-  `references/thoughtmarks.md`). "Verify on device after merge" is not a resolution step.
+  `~/.claude/skills/plan/references/thoughtmarks.md`). "Verify on device after merge" is not a resolution step.
 - Any defect discovered while closing a risk gets a disposition by the scope
   rule above: inside or related to the contract, or an unrelated Critical/Major,
-  it becomes a work item in THIS plan; an unrelated Minor or Trivial is listed
-  under "Found, not fixed here". Never a bare "known issue".
+  it becomes a work item in THIS plan; an unrelated Minor or Trivial defect gets a
+  GitHub issue, referenced under "Found, not fixed here". Never a bare "known issue".
 - "Sized via telemetry," "verify later on device," and "TBD" are rejected
   phrasings. Resolve or justify.
 

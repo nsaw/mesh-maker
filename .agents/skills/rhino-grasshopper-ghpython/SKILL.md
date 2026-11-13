@@ -5,9 +5,9 @@ description: "Use this skill when the user asks to write, debug, or optimize GhP
 
 # Rhino 7 / Grasshopper / GhPython Scripting Skill
 
-> **Scripts and references are the same in every copy.** A project copy differs only where its header says so; run the scripts from `~/.claude/skills/rhino-grasshopper-ghpython/scripts/` wherever you read the text.
+> **Run the scripts from `~/.claude/skills/rhino-grasshopper-ghpython/scripts/`** wherever you read the text. The mesh-maker copy (`~/Code/mesh-maker/.claude/skills/rhino-grasshopper-ghpython/`) is unpinned, so `sync-skills` overwrites it from this one on its next run; until that run it can lag this copy. The sawyer-design copy is frozen and its `SKILL.md` and some references differ.
 >
-> **Root skill — project copy wins.** This is the broad root version. If the project you're working in (`~/Code/<project>/`) ships its own `rhino-grasshopper-ghpython` skill, that project copy is authoritative and supersedes this one: load it and let it win where they differ; use this file only for general principles the project copy doesn't cover. (Umbrella rule: "Skill precedence" in `~/Code/CLAUDE.md`.)
+> **sawyer-design copy, read by path.** This user-level skill shadows `~/Code/sawyer-design/.claude/skills/rhino-grasshopper-ghpython/SKILL.md`, so that copy cannot be invoked by name. When working in sawyer-design, `Read` it by path and let its project specifics win where the two differ. Where this file records a newer dated execution result than an unverified claim there, the execution result wins. (Umbrella rule: "Skill precedence" in `~/Code/CLAUDE.md`.)
 
 ## Where this runs, and the rule before any API call
 
@@ -259,9 +259,6 @@ combined = xform_rot * xform  # translation first, then rotation
 combined = xform * xform_rot  # rotation first, then translation
 ```
 
-(Corrected 2026-11-10. This comment previously read "rotation then translation" for
-`xform_rot * xform`, which is backwards and contradicted `references/rhinocommon-geometry.md`.)
-
 ### Boolean Operations
 
 Boolean methods have multiple overloads. The most common mistake is passing wrong argument types.
@@ -496,7 +493,7 @@ pts = pt_tree  # output variable
 
 ### IronPython Loop Bottleneck -> Compiled C# DLL Pattern
 
-IronPython 2.7 interprets every operation. For tight numeric loops over 10K+ items, it is 1000-7000x slower than compiled C#. If a GhPython node takes seconds and the profiler shows >10% of total pipeline time on a node with a `for k in xrange(total):` loop over thousands of items, the fix is never "optimize the Python" -- it's "move the loop to compiled C#."
+IronPython 2.7 interprets every operation. For tight numeric loops over 10K+ items, it is far slower than compiled C# (no benchmark is recorded; measure the node). If a GhPython node takes seconds and the profiler shows >10% of total pipeline time on a node with a `for k in xrange(total):` loop over thousands of items, the fix is never "optimize the Python" -- it's "move the loop to compiled C#."
 
 The recommended architecture is: **GhPython wrapper (thin I/O) + compiled C# DLL (heavy math)**. This eliminates IronPython bottlenecks while keeping GhPython's easy input/output and DataTree handling. Avoid replacing GhPython nodes with C# Script Components -- they require manual setup of every input parameter and can't have same-named inputs and outputs.
 
@@ -553,7 +550,7 @@ import Rhino.Geometry as rg
 a = process(x, y)
 ```
 
-**Every script must start with `#! python 2` on line 1.** This header tells the script component which language version to use. Without it, the component may default to the wrong interpreter. For Rhino 7, always use `python 2`. Put it before the docstring, before imports, before everything.
+**Start every script with `#! python 2` on line 1.** Rhino 7's GhPython component reads it as a comment; Rhino 8's Script component uses it to select IronPython, so the header keeps the file correct if it is opened there. Put it before the docstring, before imports, before everything.
 
 ### Project Organization
 When managing .py files in a repo alongside .gh definitions:

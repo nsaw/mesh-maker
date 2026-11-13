@@ -58,7 +58,7 @@ Move commands execute at the current **Move/Cut speed** (set with [MS] or [VS]).
 - Absolute vs Relative mode set by [SA] / [SR]
 - Z values: positive = up (away from material), negative = down (into material)
 - [MH] always moves to absolute 0,0 regardless of relative mode
-- If Z is below Safe-Z height, Z retracts first before XY move
+- Ordinary moves and jogs do not retract to Safe-Z first. Safe-Z (`%(28)`) applies only to `[MH]`, `[JH]`, movement-block reloads and tabbing, so lift Z explicitly before an XY move
 
 ---
 

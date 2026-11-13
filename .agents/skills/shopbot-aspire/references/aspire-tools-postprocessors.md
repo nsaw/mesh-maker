@@ -29,7 +29,7 @@ The tool database stores all your bit definitions with their geometry and cuttin
 5. Name it descriptively (e.g., "1/4 Upcut Spiral 2-Flute")
 
 ### Tool Database Location
-- Stored in the Vectric AppData folder
+- Stored at `C:\ProgramData\Vectric\Aspire\V12.0\ToolDatabase\tools.vtdb` on the shop laptop (see below)
 - Backs up with the database export function
 - Can be shared between machines via export/import
 
@@ -152,8 +152,7 @@ Dated copies land in `C:\ProgramData\Vectric\Aspire\V12.0\Backups\ToolDatabase\t
 Alongside the live file are `tools.vtdb.upload` (cloud-sync staging) and `tools.vtdb.vectric`
 (vendor baseline) — do not edit either directly.
 
-A Mac Dropbox path was recorded here previously. It was wrong: Aspire does not run on the
-Mac, so no path under `/Users/...` can be this database.
+Aspire does not run on the Mac, so no path under `/Users/...` is this database.
 
 ---
 
@@ -164,6 +163,11 @@ Mac, so no path under `/Users/...` can be this database.
 These are conservative starting points tuned for this specific machine. Published ShopBot feeds are often too aggressive for the Desktop MAX ATC -- its 1HP spindle and stepper drives can't sustain the same feeds as PRS or industrial machines. When in doubt, reduce feeds by 15-25% from published values.
 
 #### Owner's Actual Tool Database Settings (from tooldb.vtdb)
+
+The `tooldb.vtdb` named here is a Dropbox export under `ShopBot [DROPBOX]/[DB] TOOL DATABASE/` (last
+modified 2026-03-30), not the live library. The live library is `tools.vtdb` on the shop laptop
+(`aspire-installation-layout.md`), and everything under `Dropbox/ShopBot [DROPBOX]/` is stale
+(`SKILL.md`). Read the values below as a historical snapshot.
 
 These are the owner's real values. They represent tested, conservative settings for this specific machine.
 
@@ -232,14 +236,13 @@ Or when saving toolpaths, select from the dropdown.
 - **"ShopBot Arc (inch) w/speed"**: For single-tool jobs with arc support and speed commands
 - **"ShopBot (inch)"**: Basic, no arc support (use Arc version instead for smaller files)
 
-If these aren't listed, find them in:
-```
-C:\ProgramData\Vectric\Aspire\V12.0\PostP\02-ShopBot\
-```
+`ShopBot TC (inch)` lives in the machine-configuration database `PostP\postp.ppdb`, not in
+`PostP\02-ShopBot\`, which holds only the 26 legacy `.pp` posts. See
+`aspire-installation-layout.md`.
 
 ### Post-Processor Installation
 - Post-processor files have `.pp` extension
-- Place them in the PostP directory above (or a subdirectory)
+- Place custom posts in `My_PostP\`, the user folder outside Vectric's post update cycle; `02-ShopBot\` and `postp.ppdb` are replaced by installs and cloud refreshes
 - Restart Aspire to pick up new/modified post-processors
 - The Online Machine Configuration wizard can download the correct post-processor automatically
 

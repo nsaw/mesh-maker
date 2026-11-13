@@ -26,7 +26,7 @@ He runs 113 words per minute of runtime. Comparable channels run 149, 184, and 2
 
 ## Length
 
-Longer is better for him. Duration correlates with views positively in every cohort year tested: +0.64 (2021), +0.27 (2022), +0.60 (2023), +0.13 (2024), +0.24 pooled with the year effect removed. Earlier advice to cap runtime was an age artifact and is withdrawn.
+Longer is better for him. Duration correlates with views positively in every cohort year tested: +0.64 (2021), +0.27 (2022), +0.60 (2023), +0.13 (2024), +0.24 pooled with the year effect removed. Do not cap runtime.
 
 ## The technical passage
 

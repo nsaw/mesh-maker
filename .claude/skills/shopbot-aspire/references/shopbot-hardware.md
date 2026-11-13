@@ -15,27 +15,26 @@
 
 The Desktop MAX ATC V2 is a compact CNC router with automatic tool changing capability. This reference is optimized for the 36" x 24" configuration.
 
-> **Corrected 2026-11-10.** Seven numbers in this block disagreed with ShopBot's own product page
-> for the Desktop MAX ATC (`shopbottools.com/products/maxatc`, read 2026-11-10) and its
-> "Spindle Clearance" sheet. The manufacturer's figures are below, each next to what this file
-> used to say. The page describes the current product; Nick's unit is a V2 and its deck option
-> has not been confirmed, so treat the Z figures as the envelope to check, not as measured.
+> **Source:** ShopBot's product page for the Desktop MAX ATC (`shopbottools.com/products/maxatc`,
+> read 2026-11-10) and its "Spindle Clearance" sheet. The page describes the current product;
+> Nick's unit is a V2 and its deck option has not been confirmed, so treat the Z figures as the
+> envelope to check, not as measured.
 
-| Spec | Manufacturer (2026-11-10) | This file said |
-|---|---|---|
-| XYZ movement | 41 x 25 x 5 in | not stated |
-| Cutting volume, vacuum or T-slot deck | 36 x 24 x **3.5 in** | 36 x 24 x "~6 in" |
-| Cutting volume, lower deck option | 35 x 23 x 8 in | not stated |
-| Z axis travel | **5.0 in** | "~6 in" |
-| Thickest through cut, standard deck | 2.5 in (the bit must clear the top of the stock) | not stated |
-| Thickest stock for surface work, standard deck | 4.5 in with a 0.5 in bit; more stick-out means less stock | not stated |
-| Max cut speed | 240 in/min (4.0 in/sec) | "varies by material" |
-| Max rapid speed | 360 in/min (6.0 in/sec) | "~3-4 IPS" |
-| Positional resolution | 0.00025 in | 0.0005 in |
-| Electrical | 120 VAC, 15 A | "110V/220V" |
-| Weight, machine only | 200 to 250 lb (300 to 350 lb crated) | "~250-350 lbs" |
-| Tool bar | 7 positions, ISO20 holders with ER20 collets, shanks to 1/2 in | "typically 4-6 positions" |
-| Compressed air | 4 scfm at 90 psi, clean, dry, un-oiled | "minimum 2 CFM at 90 PSI" |
+| Spec | Manufacturer (2026-11-10) |
+|---|---|
+| XYZ movement | 41 x 25 x 5 in |
+| Cutting volume, vacuum or T-slot deck | 36 x 24 x **3.5 in** |
+| Cutting volume, lower deck option | 35 x 23 x 8 in |
+| Z axis travel | **5.0 in** |
+| Thickest through cut, standard deck | 2.5 in (the bit must clear the top of the stock) |
+| Thickest stock for surface work, standard deck | 4.5 in with a 0.5 in bit; more stick-out means less stock |
+| Max cut speed | 240 in/min (4.0 in/sec) |
+| Max rapid speed | 360 in/min (6.0 in/sec) |
+| Positional resolution | 0.00025 in |
+| Electrical | 120 VAC, 15 A |
+| Weight, machine only | 200 to 250 lb (300 to 350 lb crated) |
+| Tool bar | 7 positions, ISO20 holders with ER20 collets, shanks to 1/2 in |
+| Compressed air | 4 scfm at 90 psi, clean, dry, un-oiled |
 
 Live soft limits on Nick's machine, from the laptop's `shopbot.ini` as dumped 2026-08-09
 (`~/Library/CloudStorage/Dropbox/shopbot-dump/shopbot-state/shopbot.ini.found`):
@@ -57,9 +56,6 @@ is rewritten by the ATC on every toolchange and home; see `SKILL.md` and
 - SB3 Control Software (Windows)
 - Supports OpenSBP and standard G-code
 
-**Power**: 110V/220V depending on configuration
-**Weight**: ~250-350 lbs depending on configuration
-
 ---
 
 ## ATC System
@@ -75,7 +71,7 @@ The ATC (Automatic Tool Changer) uses ISO20 taper tool holders with a pneumatic 
 
 ### Air Requirements
 - **Minimum pressure**: 90 PSI at the machine
-- **Compressor**: 4 scfm at 90 psi per ShopBot (corrected 2026-11-10; this line said 2 CFM)
+- **Compressor**: 4 scfm at 90 psi per ShopBot
 - **Air must be dry and clean** -- use a filter/regulator/lubricator (FRL) unit
 - Moisture in the air line will damage the drawbar mechanism
 
