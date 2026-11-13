@@ -231,10 +231,11 @@ These are the owner's real values. They represent tested, conservative settings 
 In Aspire, post-processors are in: Machine > Post-Processor
 Or when saving toolpaths, select from the dropdown.
 
-**For ShopBot Desktop MAX ATC V2, use**:
-- **"ShopBot TC (inch)"**: For ATC (Tool Change) operations -- handles automatic tool changes
-- **"ShopBot Arc (inch) w/speed"**: For single-tool jobs with arc support and speed commands
-- **"ShopBot (inch)"**: Basic, no arc support (use Arc version instead for smaller files)
+**For ShopBot Desktop MAX ATC V2, use a toolchange-capable post for every job, single-tool jobs
+included:** "ShopBot TC (inch)", the one this machine uses (see SKILL.md, Post-Processing), or the
+legacy "ShopBot (inch)(Toolchange)w/speed" and its mm twin, the only legacy `.pp` posts that emit
+`C9`. Posts without toolchange, such as "ShopBot Arc (inch) w/speed" and "ShopBot (inch)", emit no
+`C9`, so the file carries no toolchange at all.
 
 `ShopBot TC (inch)` lives in the machine-configuration database `PostP\postp.ppdb`, not in
 `PostP\02-ShopBot\`, which holds only the 26 legacy `.pp` posts. See
@@ -353,9 +354,11 @@ end FOOTER
 - Tool numbers must match the rack positions on your ATC
 
 ### Single-Tool Jobs
-- Each tool gets its own .sbp file
-- Run files in order on the machine
-- You manually change the tool and re-zero Z between files
+- Save with the same toolchange-capable post. A file with one tool still carries a `C9`, which runs
+  the toolchange routine (`Custom9.sbc`, see `atc-desktop-max-v2.md`). A tool on the active bar
+  (bar 1 = tools 1-7) is loaded by the ATC; an off-bar tool (8-28 without its bar fitted) pauses the
+  file and prompts for a hand insert (`atc-desktop-max-v2.md`, extra toolbars).
+- Saving one toolpath per file is fine; each file then carries its own `C9`. Run files in order.
 
 ### File Naming Convention (recommended)
 ```
