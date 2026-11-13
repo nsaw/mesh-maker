@@ -1,7 +1,8 @@
 # Superseded learnings — mesh-maker
 
-Entries in `learnings.md` or `learnings-mined.md` that the code has since moved past. That file is generated from the
-CodeRabbit export and is overwritten on every import, so corrections live here instead.
+Entries in `learnings.md` or `learnings-mined.md` that the code has since moved past. Both files are
+generated (`learnings.md` from the CodeRabbit export, `learnings-mined.md` by the bot-review
+miner) and overwritten on regeneration, so corrections live here instead.
 
 **Read this before citing anything from `learnings.md`.** A settled rule the implementation has
 outgrown is worse than no rule: it makes a reviewer argue for a regression, with the authority of
