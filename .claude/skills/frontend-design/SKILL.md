@@ -6,8 +6,8 @@ description: Guide for designing and implementing UI changes in MeshCraft 3000 t
 **Layer 2 (tokens).** For general design judgment -- composition, motion strategy,
 anti-template calibration -- the user-level `frontend-design` skill
 (`~/.claude/skills/frontend-design/`) is the judgment layer. This file is the MeshCraft
-token + convention reference and its project rules (single main.css, Canvas 2D, no
-frameworks) OVERRIDE generic guidance where they conflict.
+token + convention reference and its project rules (single main.css, Three.js WebGL
+viewport, no CSS frameworks) override generic guidance where they conflict.
 
 ## MeshCraft 3000 Design System
 
@@ -283,12 +283,11 @@ transition: opacity 0.25s; /* Modals */
 2. **No external CSS frameworks** — this project uses hand-written CSS in a single
    `styles/main.css` file. No Tailwind, Bootstrap, or CSS-in-JS.
 
-3. **innerHTML is acceptable but XSS-aware** — the sidebar and many UI elements
-   are built via string concatenation in TypeScript. When interpolating user-controlled
-   values (like `STATE.depthMapName` from file uploads), always escape `<` and `>`:
-   ```typescript
-   .replace(/</g, '&lt;').replace(/>/g, '&gt;')
-   ```
+3. **No `innerHTML` for user-influenced content.** Build DOM nodes with
+   `document.createElement`, `appendChild` and `textContent`. Values like
+   `STATE.depthMapName` from file uploads never reach markup as strings
+   (`.claude/CLAUDE.md`, Correctness rules; `AGENTS.md`, Code Quality Rules).
+   `src/` has zero `innerHTML` uses; keep it that way.
 
 4. **All styles go in `styles/main.css`** — no inline style blocks in HTML, no
    CSS modules, no separate component stylesheets. One file.
@@ -308,9 +307,11 @@ transition: opacity 0.25s; /* Modals */
 9. **Object URL cleanup** — if creating blob URLs for previews or downloads,
    always pair `createObjectURL()` with `revokeObjectURL()`.
 
-10. **Canvas 2D, not WebGL** — the viewport renderer uses Canvas 2D API
-    intentionally. Do not introduce WebGL, Three.js, or any GPU-accelerated
-    rendering library. Performance is adequate for CNC mesh resolution.
+10. **The viewport is Three.js on WebGL** (`src/render.ts`, `THREE.WebGLRenderer`).
+    Canvas 2D appears only in offscreen canvases: image sampling and export in
+    `src/mesh.ts`, `src/export.ts` and `src/depth-estimate.ts`, and the axis-label
+    textures in `src/render.ts`. Extend the existing renderer; do not add a second
+    3D library.
 
 ---
 
@@ -341,5 +342,6 @@ When adding a new component, follow this checklist:
 6. **Test all view modes** — solid, wireframe, both, and points rendering
    must all still work after UI changes.
 
-7. **Verify Playwright screenshots** — capture verification screenshots to
-   `verification/` (repo root) to confirm visual correctness.
+7. **Verify in a browser** and say that you did. Visual and interaction items are
+   not covered by any suite. `verification/` (gitignored, local only) holds intentional screenshots only;
+   new captures do not go there by default (`.claude/CLAUDE.md`, Git).

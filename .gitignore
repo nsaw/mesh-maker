@@ -76,8 +76,8 @@ verification/
 .claude-cache/captures/
 .claude-cache/investigations/
 
-# The same skills mirrored to the Codex and .agents surfaces (`sync-skills` keeps the three
-# in step). Same walk-down, for the same reason: a bare `!.codex/skills/` cannot re-include
+# Skills are mirrored to the .agents surface (`.codex/` holds only config.toml and carries no
+# skills today; the descent rules below stay so a future .codex/skills/ tracks correctly). Same walk-down, for the same reason: a bare `!.codex/skills/` cannot re-include
 # anything, because `.codex/` above already excluded the parent and git will not descend into
 # an excluded directory. Unlike `.claude/` these track every skill, not just the two review
 # ones — the mirrors exist to give a fresh clone the full bundle on those surfaces.

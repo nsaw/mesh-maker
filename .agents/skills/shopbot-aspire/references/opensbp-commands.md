@@ -54,7 +54,7 @@ Move commands execute at the current **Move/Cut speed** (set with [MS] or [VS]).
 | **MI** | Move Indexer/Oscillate | axis, direction, speed, freq, distance |
 
 **Key behavior**:
-- All moves are interpolated (diagonal moves are smooth arcs, not stairstepped)
+- All moves are interpolated and fully speed-vectored: a diagonal is a straight line, not a stairstep, and the cutter tip holds constant velocity whether moving in X, Y, on a diagonal, or through a curve. Motors audibly change speed on diagonals and circles to keep that vector constant — that is correct behavior, not a fault.
 - Absolute vs Relative mode set by [SA] / [SR]
 - Z values: positive = up (away from material), negative = down (into material)
 - [MH] always moves to absolute 0,0 regardless of relative mode
@@ -167,28 +167,96 @@ Cut commands create geometric shapes directly from the control software or in pa
 
 Values commands configure machine parameters persistently.
 
-| Command | Description |
-|---------|-------------|
-| **VA** | Values for Axis Locations (redefine current position) |
-| **VB** | Values for Tabbing Feature (tab height, width, spacing) |
-| **VC** | Values for Cutter-related Parameters (safe-Z, bit diameter) |
-| **VD** | Values for Display Settings |
-| **VH** | Values for Z-axis Height Controller |
-| **VI** | Values for Communications Port |
-| **VL** | Values for Table Limits |
-| **VN** | Value Input Switch Assignment |
-| **VO** | Value Temporary Tool Offset |
-| **VP** | Values for Preview Screen |
-| **VR** | Values for Ramps (acceleration/deceleration) |
-| **VS** | Values for all Speeds |
-| **VU** | Values for Calibration Units |
+**You cannot debug a settings problem from command names alone.** Each V command writes one
+comma-separated line into `shopbot.ini`, and an out-of-range value raises a modal that names
+only the command, never the parameter. The full ordered parameter lists below are transcribed
+from ComRef.pdf; positional defaults are in parentheses.
 
-**Key values**:
-- **VB** (Tabbing): Sets tab height, width, and minimum distance between tabs
-- **VC** (Cutter): Sets Safe-Z height, bit diameter for cut commands
-- **VL** (Limits): Sets X, Y, Z travel limits for limit checking [SF]
-- **VR** (Ramps): Controls accel/decel rates per axis. Lower = faster but more jerky
-- **VU** (Units): Sets steps-per-unit for each axis, circle resolution. Calibration-critical.
+### VA — Axis Locations
+`{x, y, z, a, b, tableBase-x, tableBase-y, tableBase-z, tableBase-a, tableBase-b}`
+Redefines the current position without moving. Changing working coordinates does **not**
+change Table Base Coordinates. The last five parameters set TBC directly and exist mainly so
+TBC can be persisted in `shopbot.ini`.
+
+### VB — Tabbing
+`{distance-to-pull-UP (.1), distance-to-next-TAB (4), size-of-TAB (1), distance-of-leads (.5), 1-ON/0-OFF, number, start-distance}`
+Total tab footprint is the TAB size **plus** both leads. Distances are measured from the
+cutter centerline, so cutter diameter has to be accounted for.
+
+### VC — Cutter Parameters
+`{diameter (.25), -obsolete-, -obsolete-, safe-Z-pull-up (1), plunge-direction (-), %-pocket-overlap (10), safe-A-pull-up (1), triggered-output-switch, trigger-ON-threshold, trigger-OFF-threshold, vertical-axis-monitored, triggered-output-switch-#}`
+Safe-Z here is what `[MH]`/`[JH]` and movement-block reloads retract to. Cutter diameter is
+readable in a part file as system variable `%(23)`.
+
+### VD — Display Settings
+`{-obsolete-, number-of-axes (3), linear-units (0=in, 1=mm), units-type-A, units-type-B, -obsolete-, display-file-comments (0), keypad-fixed-distance (.1), keypad-remote (0), write-part-file-log (1), write-system-log (1), msg-screen-loc-X, msg-screen-loc-Y, msg-screen-size-X, msg-screen-size-Y, show-file-progress (0), keypad-switches-auto-off (0), show-file-progress, main-display-type (1)}`
+**Parameter 3 is the inch/mm switch, and changing it recalculates and saves every other system
+value** — locations, calibrations, tool sizes, speeds, ramps. Check this parameter first
+whenever stored numbers look scaled by 25.4. Parameters 10 and 11 control whether the
+per-job `.LOG` and `sbsys.log` get written; both default on, and both are needed for
+`[FG]` restart and for run history.
+
+### VH — Z Height Controller / Laser / Heater
+`{height-control-mode (0), plasma-height-rate (.25), laserPWM%-low (0), laserPWM%-high (0), laser-pulse-freq-KHz (5.4), low-cycle-time (3), set-temperature (0)}`
+Must be enabled first in `[VN]` parameter 3.
+
+### VI — Comm Port and Driver Channels
+`{comm-port, -obsolete-, -obsolete-, -obsolete-, driver-ch-1, driver-ch-2, driver-ch-3, driver-ch-4, speed (5), driver-ch-5, driver-ch-6, enable (1)}`
+Standard mapping: channel 1=X, 2=Y, 3=Z, 4=A, 5=B, 6=C. Reverts at end of part file unless `[SV]`.
+
+### VL — Table Limits
+`{low-X, high-X, low-Y, high-Y, low-Z, high-Z, low-A, high-A, limit-checking (1=ON/0=OFF), low-B, high-B}`
+Evaluated against **Table Base Coordinates**, not working coordinates. Parameter 9 is the same
+switch as `[SF]`.
+
+### VN — Input/Output Switch Assignment
+`{limit-switches-active (1), stop-switch-#4-mode (0=normally-closed), torch/laser/analog (0), input-switch-mode for inputs 1-3 and 5-12 (0=standard), ..., output-switch-mode for outputs 1-12 (0), ...}`
+Input 4 is hard-wired as Emergency Stop on alpha tools and Remote Stop on standard tools.
+Output switch modes: 0 = on from console/`SO`, auto-off at end of file; 1 = no auto-off;
+2 = off on Stop, back on if restarted; 3 = auto-on at file start, auto-off at end;
+4 and 5 = auto-on, then never off (4) or off on Stop (5).
+
+### VO — Temporary Tool Offset
+`{activate (1=ON, 2=OFF), offset-X, offset-Y, offset-Z, offset-A, offset-B, offset-C}`
+Offsets are added to the displayed position, and stack with any file offset or proportion.
+
+### VP — Preview Screen
+`{grid (6), table-size-X (96), table-size-Y (48), table-size-Z (6), simulate-cutting (0=off), draw-tool (1=on), start-at-real-position (1=on), draw-jogs (1=on), left-panel-behavior, right-panel-behavior}`
+Display only. It cannot affect motion, feeds, or geometry.
+
+ComRef documents only the first eight parameters. **The fill-in sheet exposes two more**,
+Left Panel Behavior and Right Panel Behavior, each taking `-1 Leave as is`, `1 Force open`, or
+`0 Force closed`. `-1` is the factory value on the Desktop MAX profile and is legitimate.
+
+Grid Size has a floor of 1. A stored VP line whose grid has drifted below 1 will raise
+`Parameter Value Below Range for VP -- Setting to Lower Limit ( 1 )`. That modal, raised
+mid-file, can abort a running cut — see `sb3-config-logs-and-recovery.md`. Keep grid at the
+documented default of 6 rather than parked on its floor.
+
+### VR — Ramps
+`{XY-move-ramp-speed (.4), Z-move (.4), A-move (.4), B-move (.4), XY-jog (.4), Z-jog (.4), A-jog (.4), B-jog (.4), move-ramp-rate (.2), jog-ramp-rate (.2), 3D-threshold (100%), minimum-distance-to-check (.15), slow-corner-speed (65%), -obsolete-, -obsolete-, keypad-ramp-rate (.2), small-circle (.25)}`
+Ramp Speed is the start/end speed of a move **and the floor speed for intricate work** — a run
+of short segments executes at Ramp Speed rather than oscillating. Below about .2 in/sec is
+counterproductive; above about 1.2 in/sec causes jarring starts. Ramp Rate is a *distance*:
+how far the tool takes to change speed by 2 units. Higher = longer, smoother ramps.
+Corners sharper than 43 degrees always force a full ramp down.
+
+Doc discrepancy, unresolved: ComRef lists Small Circle under `[VR]` with default .25, while
+the UsersGuide describes the same behavior as the 8th parameter of `[VU]` with default .20.
+Verify against the live fill-in sheet before relying on either.
+
+### VS — All Speeds
+`{XY-move, Z-move, A-move, B-move, XY-jog, Z-jog, A-jog, B-jog}` in units/sec.
+Reverts at end of part file unless `[SV]`. Unlike `[MS]`/`[JS]`, `VS` does **not** break the
+move stack, so use it for mid-toolpath speed changes you do not want to punctuate with a
+ramp-down/ramp-up.
+
+### VU — Calibration Units
+`{x-unit, y-unit, z-unit, a-unit, circle-segment-resolution (.05), -obs-, -obs-, -obs-, b-unit, resM-x, resM-y, resM-z, resM-A, resM-B, step-interval-divider (1), disable-res-shifting (0)}`
+Units are exact steps per inch/mm/degree per axis and are calibration-critical — do not guess
+them; load the machine's settings file via `[UR]`. Circle resolution can go as low as .005 but
+low values consume movement-block memory and can force mid-circle reloads. Resolution
+multipliers are 1 on PRS/PRT standard tools. Reverts at end of part file unless `[SV]`.
 
 ---
 
@@ -287,7 +355,14 @@ Part files (.sbp) are plain text files containing OpenSBP commands, one per line
 - **Math expressions**: SQR(), SIN(), COS(), TAN(), ABS(), INT(), etc.
 - **Input/output**: `INPUT` for user prompts, `PRINT` for messages
 
-Example part file:
+> **DO NOT RUN THIS EXAMPLE ON NICK'S MACHINE AS WRITTEN (flagged 2026-11-10).** It assumes Z zero
+> at the top of the material. Nick's Z zero is always the machine bed, so `MZ, -0.25` commands the
+> bit 0.25 in below the spoilboard surface, and `MZ, 1.0` is not a retract above stock thicker
+> than 1 in. With bed zero and stock of thickness T, a cut d deep is `MZ, T - d` and a retract is
+> above T. The example is kept for syntax only and has not been rewritten, because a corrected
+> file needs real stock and safe-Z values from the laptop.
+
+Example part file (top-of-material Z zero, syntax illustration only):
 ```sbp
 'Simple rectangle cut
 SA          'Set absolute mode

@@ -5,6 +5,12 @@ description: Turns confirmed investigation findings into a concrete implementati
 
 # plan
 
+
+> **Reach a repo layer with `Read`, never with `Skill`.** A same-named skill inside a project is
+> shadowed by this one and cannot be invoked by name; the path above is the only route.
+
+**Repo layer.** `~/.claude/skills/plan/references/thoughtmarks.md` carries the Thoughtmarks-specific planning rules. Read it when planning in that repo.
+
 Turn confirmed findings into an implementation plan. This is the planning stage:
 no code is written here.
 
@@ -33,34 +39,36 @@ input. Plan from those.
 </rules>
 
 <pre-existing-issue-sweep>
-PRE-EXISTING ISSUES: EVERY ONE GETS A DISPOSITION, BY SEVERITY
+PRE-EXISTING ISSUES: EVERY ONE GETS A DISPOSITION, BY SCOPE THEN SEVERITY
 
 Every [PRE-EXISTING] item from the investigation or critique gets exactly one
-disposition in the plan, decided by this severity floor (a repo's CLAUDE.md may tighten it):
+disposition in the plan, decided by this scope rule (a repo's CLAUDE.md may define it):
 
 - **Inside the contract** (the issue this plan is for, or its acceptance criteria): a Fix
-  section in THIS plan, at every severity. Only items outside it go by severity below.
-- **Outside it, Critical or Major** (data loss or corruption, a leak, a crash, or wrong
-  behavior on a reachable path stated as a concrete sequence): a Fix section
-  in THIS plan.
-- **Outside it, Minor or Trivial**: a GitHub issue, created when the plan is written, with
-  file:line evidence. List each one under a "Filed, not in this change"
-  heading with its issue link.
+  section in THIS plan, at every severity.
+- **Related to the contract** (same file or function, same feature or user flow, same
+  defect class, or newly reachable through this change): a Fix section in THIS plan, at
+  every severity, unless its fix is a separate mechanism (a dependency or SDK migration, an infra or data operation, a new feature; a different root cause in a touched file is not one by itself) or would cross the size limit.
+- **Unrelated, Critical or Major** (data loss or corruption, a leak, a crash, or wrong
+  behavior on a reachable path stated as a concrete sequence): a Fix section, shipped as
+  its own PR slice.
+- **Unrelated, Minor or Trivial**: listed under "Found, not fixed here" with file:line.
+  At most one GitHub issue per PR (per slice) collects them, and only when one is a
+  defect someone would act on.
 
-An item with no disposition is the failure. So is a "deferred" line with no
-issue behind it.
+An item with no disposition is the failure. So is a related item pushed to an issue.
 
 FORBIDDEN language in plans:
-- "Pre-existing, not addressing in this plan" (with no issue link)
-- "Tracked separately" (with no issue link)
+- "Pre-existing, not addressing in this plan" (with no disposition under the scope rule)
+- "Tracked separately" (with no disposition under the scope rule)
 - "TBD" or "later" for any item
 
-Why the floor: when every nearby Minor joins the plan, the plan grows to dozens
-of fixes, the PR grows with it, and the review loop runs for days because each
-fix exposes more edge cases. Measured on thoughtmarks #364 (39 review rounds)
-and #394 (9 rounds and open), 2026-11-06.
+Why the scope rule: a related find joins the plan because filing each one as its own issue meant
+closing one issue opened several (owner feedback, 2026-11-07). The plan stays bounded because an
+unrelated find is listed, not fixed. The rule before that one, fix everything anywhere, drove
+thoughtmarks #364 to 39 review rounds and #394 to 9.
 
-Pre-existing fixes that made the floor should be:
+Pre-existing fixes that get a Fix section should be:
 1. Listed as their own Fix sections (not buried in footnotes)
 2. Tagged with [PRE-EXISTING] and the severity in the short description
 3. Ordered by dependency alongside the primary fixes
@@ -92,7 +100,8 @@ are each their own PR and never ride along with bug fixes.
 
 Write the done contract now, while scope is still a decision rather than a
 running total: what the PR must do, what it must not break, and what is
-explicitly out of scope, with the issue links from "Filed, not in this change".
+explicitly out of scope: the items under "Found, not fixed here" (by file:line) and any
+separate-PR slices.
 triage-pr-comments freezes this paragraph verbatim at round 1.
 
 Why: on thoughtmarks, single-mechanism PRs took 2 to 3 review rounds. #394,
@@ -134,9 +143,9 @@ still open, and #364 took 39 (RCA 2026-11-06).
 ### Dependency Order
 [which fixes depend on others, or "no dependencies — can be parallelized"]
 
-### Filed, not in this change
-[Outside-contract Minor/Trivial items under the severity floor, each with its GitHub issue link.
- "None" is a valid answer.]
+### Found, not fixed here
+[Unrelated Minor/Trivial items under the scope rule, each with file:line, plus the one
+ collecting issue link if one was opened. "None" is a valid answer.]
 
 ### PR Slices
 | Slice | Branch | Issues closed | Fix sections | Depends on | Est. files |
@@ -144,7 +153,7 @@ still open, and #364 took 39 (RCA 2026-11-06).
  "Why this is one PR" line here.]
 
 ### Done Contract
-[Per slice, one short paragraph: Must do / Must not break / Out of scope (with issue links).
+[Per slice, one short paragraph: Must do / Must not break / Out of scope (the "Found, not fixed here" items and any separate-PR slices).
  triage-pr-comments freezes it verbatim at round 1; changing it later is said out loud to the
  user, never edited in place.]
 
@@ -173,10 +182,13 @@ surfaced mid-build.
   user can make does NOT belong here: it goes in the Decisions round below, where
   it carries a default and is therefore not unknown.
 - Every surviving item gets a concrete resolution step and the phase that gates on it.
-- Any defect discovered while closing a risk gets a disposition by the severity
-  floor above: inside the contract, or Critical/Major
-  outside it, it becomes a work item in THIS plan; an outside-contract Minor or
-  Trivial becomes a linked GitHub issue. Never a bare "known issue".
+  An item that needs a device resolves BEFORE merge, as a named check in the repo's
+  pre-merge device gate when its layer defines one (thoughtmarks: Device Hub, see
+  `references/thoughtmarks.md`). "Verify on device after merge" is not a resolution step.
+- Any defect discovered while closing a risk gets a disposition by the scope
+  rule above: inside or related to the contract, or an unrelated Critical/Major,
+  it becomes a work item in THIS plan; an unrelated Minor or Trivial is listed
+  under "Found, not fixed here". Never a bare "known issue".
 - "Sized via telemetry," "verify later on device," and "TBD" are rejected
   phrasings. Resolve or justify.
 
