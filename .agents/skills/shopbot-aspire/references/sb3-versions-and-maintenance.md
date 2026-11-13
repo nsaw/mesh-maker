@@ -67,7 +67,8 @@ Firmware, if it needs updating, goes in via `[UI]` from **Preview mode**.
 
 ## Chip load, the sourced version
 
-The UsersGuide reproduces Onsrud's ranges. Chipload = feedrate / (RPM x flutes).
+The UsersGuide reproduces Onsrud's ranges. Chipload = feedrate / (RPM x flutes), with feedrate
+in inches per minute (SB3 IPS x 60).
 
 | Material | 1/4" dia | 1/2" dia |
 |---|---|---|

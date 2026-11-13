@@ -17,7 +17,7 @@
 - **X axis**: Long axis of the table (left to right, facing the front)
 - **Y axis**: Short axis (front to back, gantry travel direction)
 - **Z axis**: Vertical (up = positive, down = negative into material)
-- Origin (0,0,0) is typically bottom-left corner at the material surface
+- Origin (0,0,0) is the bottom-left corner; on this machine Z 0 is the spoilboard surface (Machine Bed), never the material top
 
 ### Two Coordinate Systems
 ShopBot maintains two separate coordinate systems:
@@ -266,5 +266,5 @@ Run through this before every cutting session:
 ### As Needed
 - Replace worn collets (when bit slips or cuts are inconsistent)
 - Replace spoilboard when surfacing can no longer flatten it
-- Update SB3 software when new versions are released
+- Before any SB3 update, read `sb3-versions-and-maintenance.md`: an upgrade overwrites Custom #2, 3, 5, 6, 7, 9 and #70 and above, which is the ATC chain
 - Recalibrate axes if dimensional accuracy degrades

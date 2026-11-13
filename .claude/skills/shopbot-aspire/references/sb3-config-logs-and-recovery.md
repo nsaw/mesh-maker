@@ -234,8 +234,8 @@ SB3 keeps two coordinate systems: the **working** coordinates you re-zero consta
 - TBC lives in the computer. It is lost if the carriages are moved by hand, on power failure,
   or on a crash.
 - Each job's `.LOG` records the TBC in force. Matching TBC across runs is the cheapest
-  evidence that zeros did not move. On this machine TBC has read `.000, .000, -2.995`
-  consistently across jobs from May through August 2026.
+  evidence that zeros did not move. TBC Z on this machine has drifted (-2.995 to May 2026,
+  -3.3239 on 2026-08-09; see `SKILL.md`), so read it from the current log, never a past one.
 
 ---
 

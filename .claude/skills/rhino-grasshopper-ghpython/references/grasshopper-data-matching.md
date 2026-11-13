@@ -70,8 +70,7 @@ the Cross Reference component.
 **Fix:** graft **one** input, and only one. Grafting puts each of its N items in its own branch.
 The other input's single branch then repeats against all N branches, and each pairing yields M
 results: N x M. Graft **both** and you are back to `max(N, M)`, because the N branches now pair
-in order with the M branches. (Corrected 2026-11-10: the earlier wording said grafting works
-because "the paths differ", which predicts N x M for the both-grafted case and is wrong.)
+in order with the M branches.
 
 This is the single most common data-tree bug in Grasshopper and it is silent — you get a valid
 result of the wrong size, not an error.

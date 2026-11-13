@@ -180,9 +180,10 @@ insert a holder and release, input 7 lights and 8 goes out.
 
 Tool numbers in the design software **must match the physical clip position** — that number
 drives selection. ShopBot recommends a tool-database group named "Tool Changer" or "ATC".
-Correct Aspire post is `ShopBot(inch)(Toolchange)w/speed(*.sbp)`, which is exactly the
-`ShopBot_Arc_Inch_Toolchange_Control.pp` this machine uses. Shank insertion into the collet
-should be at least 0.75".
+This machine posts with `ShopBot TC (inch)(*.sbp)` from `PostP\postp.ppdb`; the legacy
+`ShopBot(inch)(Toolchange)w/speed(*.sbp)` also emits `C9`. The Aspire log names the post that
+produced a file (`aspire-installation-layout.md`). Shank insertion into the collet should be at
+least 0.75".
 
 ### Beyond tool 7
 

@@ -1,8 +1,6 @@
 # YouTube voiceover: assembly procedure
 
-> The production workflow for building a Sawyer Design VO script end to end. It was a
-> standalone skill (`sawyer-yt-voiceover`) until 2026-08-27, where it had never once been
-> invoked and its description was being dropped from the skill listing.
+> The production workflow for building a Sawyer Design VO script end to end.
 >
 > This is the **procedure**. `03-youtube-vo.md` in this directory is the **measured voice**:
 > mechanics, narration density, the approved exemplar, the locked sign-off. Read
@@ -28,7 +26,7 @@ Some combination of these. The procedure works even if a piece is missing; name 
 
 ## The voice lock (the non-negotiables)
 
-Nick's voice. Do not drift from these. Ever. The first one is the deepest. Everything else is downstream of it.
+These hold for every block. The first is the deepest; everything else follows from it.
 
 LIVE DISCOVERY POV (the deepest lock). Nick is IN the moment, finding out as the camera finds out. He is not summarizing what already happened. The build did already happen, but the narration lives inside the moment of doing. Test every sentence: is the narrator finding out RIGHT NOW, or did they already know? If they already knew, rewrite from inside the moment; in Nick's inputs, surface it as a response notice instead if it might be his. This is the single largest source of AI sterilization in voice work. Stage direction ("Pulling the door out of clamps. The reveal looks good.") is technically present tense but it is summary POV. Live POV is "Alright, it looks like that laminated door is ready and... that reveal is looking pretty good!" Same event. Different temporal POV. Totally different voice.
 

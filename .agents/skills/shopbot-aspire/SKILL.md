@@ -64,8 +64,7 @@ Verified from the live config on 2026-08-05 (`shopbot.ini`, `ShopBot_PRSDesktopM
   work area.
 
   **`VL` X max is 38, not 40. Re-verified against live `shopbot.ini` 2026-08-09:**
-  `VL, -1.003, 38, -1.003, 26, -3.3439, 8`. An earlier version of this file said 40 and
-  Z -3.0154; both were stale.
+  `VL, -1.003, 38, -1.003, 26, -3.3439, 8`.
 
   **38 is Nick's deliberate workaround, not a factory value. Do not "restore" it to 40.**
   Factory for this machine is 40/26 (X extended to cover the toolbar at 39.569-39.75;
@@ -119,8 +118,8 @@ live config, which is a good cross-check that the machine is configured as shipp
 
 ## Before you assert anything about this machine
 
-Today's failure mode, twice over, was answering from a stale file and from an unverified
-reading of a dialog. Three rules:
+Answering from a stale file or from an unverified reading of a dialog is what these rules
+prevent:
 
 1. **Live SB3 config is `C:\ProgramData\ShopBot\ShopBot 3\shopbot.ini`.** Every
    `CustomSettings*.sbd` on the box is a stale export. Diff against the factory profile
@@ -161,7 +160,7 @@ Understanding the end-to-end workflow is critical for giving good advice. Each s
 
 ### 1. Design (Aspire)
 - Create or import 2D vector artwork (DXF, SVG, AI, EPS, PDF)
-- Create or import 3D models (STL, 3DM, OBJ) or model from scratch
+- Create or import 3D models (STL, OBJ; Rhino 3DM import is unverified, send STL) or model from scratch
 - Organize with layers (2D) and levels/components (3D)
 - 3D components combine via modes: Add, Subtract, Merge, Low, Multiply
 
@@ -229,11 +228,11 @@ These are non-negotiable. Include them in any operational advice:
 
 **Z-zero drift**: If cuts are consistently too deep or too shallow, re-zero Z. The Z-zero plate must be clean and making good contact. On ATC machines, run ATC_FixZ_Plate.sbp if tool length offsets seem wrong.
 
-**Wrong post-processor**: Using a generic G-code post instead of ShopBot-specific will produce files the controller can't read. Always use a ShopBot post-processor (look in the "02-ShopBot" folder in Aspire's PostP directory).
+**Wrong post-processor**: Using a generic G-code post instead of ShopBot-specific will produce files the controller can't read. Always use a toolchange-capable ShopBot post: `ShopBot TC (inch)(*.sbp)` from `PostP\postp.ppdb` on this machine (see Post-Processing above).
 
 **Climb vs conventional**: Climb cutting (bit rotation matches feed direction) gives better finish but can grab the workpiece. Conventional is safer for unsecured or thin stock. Aspire lets you choose per toolpath.
 
-**Feeds too fast / too slow**: Too fast = chatter, broken bits, rough finish. Too slow = burning, excessive heat, premature bit wear. The chip load calculation (feed rate / (RPM x flutes)) should match the manufacturer's recommendation for your material.
+**Feeds too fast / too slow**: Too fast = chatter, broken bits, rough finish. Too slow = burning, excessive heat, premature bit wear. The chip load calculation (feed in IPM / (RPM x flutes), where IPM = SB3 IPS x 60) should match the manufacturer's recommendation for your material.
 
 **Forgetting tabs**: Profile cuts that go all the way through need tabs/bridges to prevent the cutout piece from moving. Without tabs, the freed piece can shift into the bit path and cause a crash.
 

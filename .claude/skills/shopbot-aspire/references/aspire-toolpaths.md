@@ -147,8 +147,7 @@ Removes bulk material to rough out 3D shapes. Leaves a specified allowance for t
 
 ### Strategy
 
-Corrected 2026-11-10 against Vectric's V12 Aspire help ("3D Rough Toolpath"). This section used to
-name the roughing strategies "Offset (recommended)" and "Raster". Those are not the V12 names.
+Checked 2026-11-10 against Vectric's V12 Aspire help ("3D Rough Toolpath").
 
 - **Z Level Strategy**: a stack of 2D pocket passes that respect the 3D model and clear around it.
   Options: **Profile** (First, Last or None, relative to the raster on each level) and **Order**
@@ -191,9 +190,8 @@ Creates the final smooth surface on 3D models. Run after roughing.
 - **Offset**: Concentric passes following the 3D contour. Good for round/organic shapes. Has a
   **Stepover Retract** value that lifts the tool between contours to avoid perpendicular marks.
 
-Corrected 2026-11-10 against Vectric's V12 Aspire help ("3D Finish Toolpath"): the form offers two
-fill patterns, Offset and Raster. A third entry, "3D Offset", was listed here and is not on that
-page; it has been removed.
+Checked 2026-11-10 against Vectric's V12 Aspire help ("3D Finish Toolpath"): the form offers two
+fill patterns, Offset and Raster.
 
 **The finishing toolpath is always a single pass and ignores the tool's pass depth** (same page).
 So the roughing **Machining Allowance** is the full depth the finishing bit will take anywhere on
@@ -364,6 +362,6 @@ The order in which you run toolpaths matters for quality and safety.
 
 ### Saving Toolpaths
 - Each toolpath is saved separately as an .sbp file (or grouped if using the same tool)
-- Use the ShopBot post-processor (e.g., "ShopBot Arc (inch) w/speed")
+- Use the toolchange-capable post, `ShopBot TC (inch)(*.sbp)` on this machine; a post without `C9` produces no toolchange (see `SKILL.md`, Post-Processing)
 - The ATC post-processor handles multi-tool jobs in a single file
 - Name files descriptively: "01_3D_Rough.sbp", "02_3D_Finish.sbp", "03_Profile_Cut.sbp"
