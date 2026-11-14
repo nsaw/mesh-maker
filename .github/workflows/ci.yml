@@ -12,12 +12,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Exact Float64 fixture hashes are accepted on Node 24.22.1. Node 22.23.4 Math.pow
-# differs by one ULP for identical inputs and changes final-grid hashes. Keep the
-# test runtime fixed; this does not constrain the browser application's runtime.
+# Exact Float64 goldens were captured on Darwin arm64 with Node 24.22.1.
+# Checks use that acceptance host; exactness on other hosts is not claimed.
+# Full preset SBP exports remain independently gated on Linux.
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -26,7 +26,18 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.22.1'
+          architecture: arm64
           cache: npm
+
+      - name: Verify fixture capture host
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          process.stdout.write(JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version, v8: process.versions.v8 }) + '\n');
+          assert.equal(process.platform, 'darwin', 'Fixture capture operating system');
+          assert.equal(process.arch, 'arm64', 'Fixture capture architecture');
+          assert.equal(process.version, 'v24.22.1', 'Fixture capture Node version');
+          NODE
 
       - run: npm ci
       - run: python3 -m unittest discover -s scripts/drape -p 'test_*.py'
