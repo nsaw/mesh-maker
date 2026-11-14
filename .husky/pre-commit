@@ -62,6 +62,14 @@ for FILE in $STAGED_FILES; do
   # Strip known-safe CDN URLs to avoid false positives on embedded UUIDs/hashes
   CONTENT=$(echo "$CONTENT" | grep -v 'imagedelivery\.net' || true)
 
+  # Archived review heads are public Git provenance, not provider credentials.
+  # Filter only exact metadata lines whose hash resolves to a local commit.
+  case "$FILE" in
+    .cursor-cache/summaries/*.md)
+      CONTENT=$(printf '%s\n' "$CONTENT" | python3 .husky/filter-review-provenance.py "$FILE") || exit 1
+      ;;
+  esac
+
   # Strip GitHub Actions refs pinned to a 40-char commit SHA. The SHA trips the
   # CLOUDFLARE_API_KEY hex rule below, and pinning is required (issue #17). Only
   # workflow files, and only lines that are exactly `uses: owner/repo@<sha>` with

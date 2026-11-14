@@ -61,7 +61,9 @@ does not clear the other. Check both before claiming the repo is green.
 
 A husky `pre-commit` hook runs `npm run lint` then `npm run typecheck`, then scans staged
 content for secrets (cloud keys, platform tokens, database URLs, private keys, JWTs, bearer
-and basic auth headers). It blocks the commit on any hit.
+and basic auth headers). It blocks the commit on any hit. Exact review-head markers in
+`.cursor-cache/summaries/prN-roundN-hash.md` are excluded only when their hash resolves
+to a local Git commit; every other line remains scanned. The original files are unchanged.
 
 Two consequences worth knowing before you commit:
 
@@ -147,7 +149,8 @@ npm run stl-to-sbp -- <input.stl> --dry-run
 ```
 
 `.github/workflows/ci.yml` runs the drape Python tests
-(`python3 -m unittest discover -s scripts/drape -p 'test_*.py'`), lint, both typechecks,
+(`python3 -m unittest discover -s scripts/drape -p 'test_*.py'`), the review-provenance
+filter tests (`python3 scripts/test-review-provenance.py`), lint, both typechecks,
 `test:relief`, `test:presets:geometry`,
 `test:gh-parity`, `test:depthmap`, `test:drape`, `test:drape-parity`, `test:sbp-writer`,
 `test:cut`, `test:relief-master` and the build on every pull request. Full default preset exports

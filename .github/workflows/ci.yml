@@ -27,6 +27,7 @@ jobs:
 
       - run: npm ci
       - run: python3 -m unittest discover -s scripts/drape -p 'test_*.py'
+      - run: python3 scripts/test-review-provenance.py
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run typecheck:cli

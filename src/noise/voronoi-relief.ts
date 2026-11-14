@@ -58,6 +58,7 @@ import type {
   ReliefSampleParams,
 } from '../types';
 import { SimplexNoiseGen } from './generators';
+import { SiteGrid } from './site-grid';
 
 // Tuning constants — kept central so future work has one place to edit.
 const LLOYD_SAMPLE_BUDGET_MAX = 8192;
@@ -90,7 +91,7 @@ const OUTPUT_HEIGHT_CLAMP = 1.05;
 // transitionSoftness=1 → exponent 2.0 (gradual lerp from base to cells).
 const TRANSITION_EXPONENT_MIN = 0.2;
 const TRANSITION_EXPONENT_MAX = 2.0;
-// Hard caps to prevent DoS via crafted params. Both passes are O(rows·cols·sites).
+// Hard caps to bound site allocation and protect against crafted params. Queries use buckets.
 const SITE_COUNT_MAX = 4096;
 const LOCAL_DENSITY_MAX = 4;
 // v17 excavation-grammar constants (see docs/voronoi-relief-target-spec.md, critique v2):
@@ -341,6 +342,7 @@ function generateSites(
   exclusionFoci: ReadonlyArray<{ x: number; y: number }>,
   exclusionR: number,
   suppressGen: SimplexNoiseGen | null,
+  bruteForce: boolean,
 ): Site[] {
   const { meshX, meshY, cellSize, jitter } = p;
   const baseSpacing = Math.max(0.2, cellSize);
@@ -363,6 +365,7 @@ function generateSites(
   const killedReserve: Array<{ x: number; y: number }> = [];
 
   const sites: Site[] = [];
+  const separation = new SiteGrid(sites, baseSpacing, { minX: 0, minY: 0, maxX: meshX, maxY: meshY });
   outer: for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const cx = (i + 0.5) * sx;
@@ -411,8 +414,8 @@ function generateSites(
         // cannot be cut anyway.)
         {
           const minSep2 = (0.35 * baseSpacing) * (0.35 * baseSpacing);
-          let tooClose = false;
-          for (let q = 0; q < sites.length; q++) {
+          let tooClose = !bruteForce && separation.hasWithin(px, py, 0.35 * baseSpacing);
+          for (let q = 0; bruteForce && q < sites.length; q++) {
             const ddx = sites[q].x - px;
             const ddy = sites[q].y - py;
             if (ddx * ddx + ddy * ddy < minSep2) { tooClose = true; break; }
@@ -431,6 +434,7 @@ function generateSites(
           if (excluded) continue;
         }
         sites.push({ x: px, y: py, radius: 0 });
+        if (!bruteForce) separation.add(sites.length - 1);
       }
     }
   }
@@ -468,20 +472,22 @@ function lloydRelax(
   samples: number,
   warpFn: ((x: number, y: number) => [number, number]) | null,
   pinnedFrom: number,
+  bruteForce: boolean,
 ): void {
   const { meshX, meshY } = p;
   const sumX = new Float64Array(sites.length);
   const sumY = new Float64Array(sites.length);
   const counts = new Int32Array(sites.length);
+  const grid = SiteGrid.fromSites(sites);
   for (let s = 0; s < samples; s++) {
     let x = halton(s + 1, 2) * meshX;
     let y = halton(s + 1, 3) * meshY;
     if (warpFn) {
       [x, y] = warpFn(x, y);
     }
-    let bestIdx = 0;
+    let bestIdx = bruteForce ? 0 : grid.nearestOwner(x, y);
     let bestD = Infinity;
-    for (let i = 0; i < sites.length; i++) {
+    for (let i = 0; bruteForce && i < sites.length; i++) {
       const dx = sites[i].x - x;
       const dy = sites[i].y - y;
       const d = dx * dx + dy * dy;
@@ -503,16 +509,18 @@ function lloydRelax(
       // Relaxation (and proximity to pinned polar sites) must not defeat the minimum
       // separation guarantee — reject moves that would land within the feature floor
       // of any other site (the site keeps its previous valid position).
-      let ok = true;
-      for (let q = 0; q < sites.length; q++) {
+      let ok = bruteForce || !grid.hasWithin(nx, ny, 0.3, i);
+      for (let q = 0; bruteForce && q < sites.length; q++) {
         if (q === i) continue;
         const ddx = sites[q].x - nx;
         const ddy = sites[q].y - ny;
         if (ddx * ddx + ddy * ddy < minSep2) { ok = false; break; }
       }
       if (ok) {
-        sites[i].x = nx;
-        sites[i].y = ny;
+        if (bruteForce) {
+          sites[i].x = nx;
+          sites[i].y = ny;
+        } else grid.move(i, nx, ny);
       }
     }
   }
@@ -589,6 +597,23 @@ export class VoronoiReliefGen implements ReliefGenerator {
   noise(): number { return 0; }
 
   sampleGrid(p: ReliefSampleParams): number[][] {
+    return this.sample(p, false);
+  }
+
+  /** Kept for the independent full-scan regression oracle, never used by production. */
+  static bruteForceForTest(p: ReliefSampleParams): number[][] {
+    return new VoronoiReliefGen(p.seed).sample(p, true);
+  }
+
+  static sitesForTest(p: ReliefSampleParams, bruteForce: boolean): Array<{ x: number; y: number }> {
+    const result: Array<{ x: number; y: number }> = [];
+    new VoronoiReliefGen(p.seed).sample(p, bruteForce, sites => {
+      for (const site of sites) result.push({ x: site.x, y: site.y });
+    });
+    return result;
+  }
+
+  private sample(p: ReliefSampleParams, bruteForce: boolean, captureSites?: (sites: readonly Site[]) => void): number[][] {
     const seed = (p.seed ?? this.fallbackSeed) >>> 0;
     const rand = mulberry32(seed);
     // Base wave field (v16 superposition term). Re-seeded per call so same p.seed → same
@@ -660,7 +685,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
       p, rand, densityNoiseGen,
       starburstActive ? fociPhys : [],
       starburstActive ? zoneR * POLAR_EXCLUSION_FRACTION : 0,
-      suppressGen,
+      suppressGen, bruteForce,
     );
     let cartesianCount = sites.length;
     if (starburstActive) {
@@ -690,8 +715,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const relaxIters = Math.max(0, Math.min(2, Math.floor(p.relaxIterations) || 0));
     const lloydSamples = Math.min(LLOYD_SAMPLE_BUDGET_MAX, sites.length * LLOYD_SAMPLES_PER_SITE);
     for (let r = 0; r < relaxIters; r++) {
-      lloydRelax(sites, p, lloydSamples, warpFn, cartesianCount);
+      lloydRelax(sites, p, lloydSamples, warpFn, cartesianCount, bruteForce);
     }
+
+    captureSites?.(sites);
 
     // NaN guards on the constant metric frame (crafted params / direct construction).
     const baseAnisotropy = Number.isFinite(p.anisotropy)
@@ -704,6 +731,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // The metric scale inflates the component ALONG (cosA, sinA), which narrows the cell
     // along that axis and widens it perpendicular → cells elongate ⟂ anisotropyAngle.
     const metricScale = 1 + baseAnisotropy * ANISOTROPY_SCALE_MULTIPLIER;
+    const grid = SiteGrid.fromSites(sites);
+    const nearest = bruteForce
+      ? (x: number, y: number) => nearestThree(sites, x, y, cosA, sinA, metricScale)
+      : (x: number, y: number) => grid.nearestFour(x, y, cosA, sinA, metricScale);
 
     // Hoisted + clamped shaping params.
     const transitionSoftness = Math.max(0, Math.min(1, p.transitionSoftness));
@@ -794,7 +825,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // cell and locally capped").
     const inradius = new Float64Array(sites.length);
     for (let idx = 0; idx < rows * cols; idx++) {
-      const { f1, f2, f3, f4, idx: siteIdx, idx2, idx3, idx4 } = nearestThree(sites, wxArr[idx], wyArr[idx], cosA, sinA, metricScale);
+      const { f1, f2, f3, f4, idx: siteIdx, idx2, idx3, idx4 } = nearest(wxArr[idx], wyArr[idx]);
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
       const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4);
@@ -931,7 +962,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const pixIdx = j * cols + i;
         const qx = wxArr[pixIdx];
         const qy = wyArr[pixIdx];
-        const { f1, f2, f3, f4, idx: ownerIdx, idx2, idx3, idx4 } = nearestThree(sites, qx, qy, cosA, sinA, metricScale);
+        const { f1, f2, f3, f4, idx: ownerIdx, idx2, idx3, idx4 } = nearest(qx, qy);
         // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -1303,6 +1334,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     return out;
   }
 }
+
+/** Test oracle retains the original nearest, placement and Lloyd scan loops. */
+export const __bruteForceForTest = VoronoiReliefGen.bruteForceForTest;
+export const __sitesForTest = VoronoiReliefGen.sitesForTest;
 
 export function sampleReliefParamsFromState(
   cols: number,
