@@ -1,3 +1,4 @@
+import { captureSidebarView, restoreSections, restoreSidebarView, wireSectionAccordion } from './sidebar-state';
 import { STATE, activeMaster, stockTopIn } from './state';
 import { getReliefRidgeInfo } from './noise/relief-features';
 import { attachControlReset, attachValueEdit, configureRange, readRangeValue, syncRange } from './slider-utils';
@@ -425,7 +426,6 @@ export function buildSBPSection(): HTMLElement {
 
   const header = createElement('button', 'section-header') as HTMLButtonElement;
   header.type = 'button';
-  header.id = 'sbp-section-body-toggle';
   header.setAttribute('aria-expanded', 'true');
   header.setAttribute('aria-controls', 'sbp-section-body');
   header.append(
@@ -549,30 +549,14 @@ export function wireSBPControls(): void {
       invalidateSbpStats();
       const sbpSection = document.getElementById('sbpSection');
       if (sbpSection) {
+        captureSidebarView();
         const newSection = buildSBPSection();
         sbpSection.replaceWith(newSection);
         wireSBPControls();
         updateExportControls();
-        // Re-wire accordion on the replaced section (including mobile behavior)
-        const newHeader = newSection.querySelector<HTMLElement>('.section-header');
-        if (newHeader) {
-          newHeader.addEventListener('click', () => {
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar && window.matchMedia('(max-width: 900px)').matches) {
-              const allSections = sidebar.querySelectorAll('.section');
-              const wasCollapsed = newSection.classList.contains('collapsed');
-              allSections.forEach(s => s.classList.add('collapsed'));
-              if (wasCollapsed) newSection.classList.remove('collapsed');
-              allSections.forEach(s => {
-                const h = s.querySelector<HTMLElement>('.section-header');
-                if (h) h.setAttribute('aria-expanded', String(!s.classList.contains('collapsed')));
-              });
-            } else {
-              newSection.classList.toggle('collapsed');
-              newHeader.setAttribute('aria-expanded', String(!newSection.classList.contains('collapsed')));
-            }
-          });
-        }
+        wireSectionAccordion(newSection);
+        restoreSections(newSection);
+        restoreSidebarView();
       }
     });
   }

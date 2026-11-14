@@ -185,7 +185,7 @@ function updateResetVisibility(button: HTMLButtonElement, control: HTMLInputElem
 }
 
 export function refreshControlResets(): void {
-  if (!document.getElementById('sidebar')) return;
+  if (!document.getElementById('controlsPane')) return;
   document.querySelectorAll<HTMLButtonElement>('.control-reset').forEach(button => {
     const control = document.getElementById(button.dataset.resetFor ?? '');
     if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) updateResetVisibility(button, control);
