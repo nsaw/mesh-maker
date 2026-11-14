@@ -1,4 +1,5 @@
 import { isFiniteNumeric, normalizeNumericValue, numericDomain } from './numeric-domain';
+import { decodeReliefLink, encodeReliefLink, MAX_RELIEF_LINK_BYTES } from './relief-link';
 import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN, type SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
@@ -409,6 +410,13 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 // Generation and preset semantics changed. Incompatible links reset explicitly.
 export const CURRENT_PAYLOAD_VERSION = 24;
 let outdatedLinkReset = false;
+let invalidCellLink = false;
+
+export function consumeInvalidCellLink(): boolean {
+  const invalid = invalidCellLink;
+  invalidCellLink = false;
+  return invalid;
+}
 
 /** Read and clear the reset notice from the latest deserialize operation. */
 export function consumeOutdatedLinkReset(): boolean {
@@ -423,6 +431,9 @@ export function serializeConfig(): string {
     if (STATE[key] !== DEFAULTS[key]) {
       diff[key] = STATE[key];
     }
+  }
+  if (STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null) {
+    diff._sites = encodeReliefLink(STATE.reliefSites, STATE.meshX, STATE.meshY);
   }
   // Only _v present means no diffs -- return empty (default config)
   if (Object.keys(diff).length === 1) return '';
@@ -506,8 +517,10 @@ function extractBase64UrlBlob(input: string): string | null {
 
 export function deserializeConfig(input: URLSearchParams | Location | string): Partial<MeshState> {
   outdatedLinkReset = false;
+  invalidCellLink = false;
   const encoded = findEncodedPayload(input);
   if (!encoded) return {};
+  if (encoded.length > MAX_RELIEF_LINK_BYTES) { invalidCellLink = true; return {}; }
   try {
     const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
     const json = atob(padded);
@@ -516,12 +529,18 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
 
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const payloadVersion = parsed._v ?? 0;
-    if (!Number.isInteger(payloadVersion) || payloadVersion < 0) return {};
+    if (!Number.isInteger(payloadVersion) || payloadVersion < 0) {
+      invalidCellLink = Object.prototype.hasOwnProperty.call(parsed, '_sites');
+      return {};
+    }
     if (payloadVersion < CURRENT_PAYLOAD_VERSION) {
       outdatedLinkReset = true;
       return {};
     }
-    if (payloadVersion !== CURRENT_PAYLOAD_VERSION) return {};
+    if (payloadVersion !== CURRENT_PAYLOAD_VERSION) {
+      invalidCellLink = Object.prototype.hasOwnProperty.call(parsed, '_sites');
+      return {};
+    }
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -672,6 +691,16 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefRadialFocus2Y' in result) clampField('reliefRadialFocus2Y', 0, 1);
     if ('reliefRadialFocus3X' in result) clampField('reliefRadialFocus3X', 0, 1);
     if ('reliefRadialFocus3Y' in result) clampField('reliefRadialFocus3Y', 0, 1);
+    if (Object.prototype.hasOwnProperty.call(parsed, '_sites')) {
+      try {
+        if ((result.mode ?? DEFAULTS.mode) !== 'noise' || result.noiseType !== 'voronoi-relief') throw new Error('Cell links require Voronoi relief');
+        result.reliefSites = decodeReliefLink(parsed._sites, result.meshX ?? DEFAULTS.meshX, result.meshY ?? DEFAULTS.meshY);
+        result.reliefRevision = 1;
+      } catch {
+        invalidCellLink = true;
+        return {};
+      }
+    }
     return result;
   } catch {
     return {};

@@ -135,7 +135,14 @@ export function setupToolbar(): void {
   const copyLinkBtn = document.getElementById('btnCopyLink');
   if (copyLinkBtn) {
     copyLinkBtn.addEventListener('click', () => {
-      const config = serializeConfig();
+      let config: string;
+      try { config = serializeConfig(); }
+      catch (error: unknown) {
+        showToast(error instanceof Error ? error.message : 'Could not create this link. Use Save project.', 8000);
+        return;
+      }
+      const copiedMessage = STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null
+        ? 'Link copied. Cell positions use 0.01 in precision.' : 'Link copied!';
       const u = new URL(window.location.href);
       u.search = '';
       u.hash = '';
@@ -144,16 +151,20 @@ export function setupToolbar(): void {
       // here. Without this reset, copying a link from a defaults-only config would
       // preserve the inherited payload in the pathname rather than producing a clean URL.
       u.pathname = '/';
-      if (config) u.searchParams.set('c', config);
+      if (config) {
+        // Cell coordinates stay in the fragment so they do not enlarge the HTTP request target.
+        if (STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null) u.hash = `c=${config}`;
+        else u.searchParams.set('c', config);
+      }
       const url = u.toString();
       if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         navigator.clipboard.writeText(url).then(() => {
-          showToast('Link copied!');
+          showToast(copiedMessage);
         }).catch(() => {
-          copyFallback(url);
+          copyFallback(url, copiedMessage);
         });
       } else {
-        copyFallback(url);
+        copyFallback(url, copiedMessage);
       }
     });
   }
@@ -161,7 +172,7 @@ export function setupToolbar(): void {
 
 // Fallback for insecure contexts (HTTP) where navigator.clipboard is unavailable.
 // execCommand('copy') is deprecated but still the only option without HTTPS.
-function copyFallback(text: string): void {
+function copyFallback(text: string, copiedMessage: string): void {
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.style.position = 'fixed';
@@ -176,7 +187,7 @@ function copyFallback(text: string): void {
   } finally {
     document.body.removeChild(ta);
   }
-  showToast(ok ? 'Link copied!' : 'Copy failed: this browser blocked the clipboard');
+  showToast(ok ? copiedMessage : 'Copy failed: this browser blocked the clipboard');
 }
 
 

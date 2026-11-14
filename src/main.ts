@@ -1,5 +1,5 @@
 import { setupMobileLayout } from './mobile-layout';
-import { STATE, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
+import { STATE, consumeInvalidCellLink, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
 import { buildSidebar, showDemoDepthMap } from './ui';
 import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
 import { setupInteraction } from './interaction';
@@ -38,6 +38,7 @@ function init(): void {
   }
 
   if (consumeOutdatedLinkReset()) showToast('This link was made with an older MeshCraft. Settings were reset.', 8000);
+  if (consumeInvalidCellLink()) showToast('This cell link is invalid. Open a saved project or request a new link.', 8000);
   rememberLinkBoard(urlConfig);
   // Sync body class with potentially URL-overridden mode
   document.body.className = 'mode-' + STATE.mode;
@@ -65,3 +66,8 @@ function init(): void {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// Following another cell link in this tab must initialize its complete document too.
+window.addEventListener('hashchange', event => {
+  if (new URL(event.oldURL).hash.startsWith('#c=') || window.location.hash.startsWith('#c=')) window.location.reload();
+});
