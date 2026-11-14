@@ -148,6 +148,16 @@ cases.forEach((fixture, i) => {
     expected[i].isotropic[0],
     `exact isotropic owner fixture ${i}`,
   );
+  for (const radius of [0, actual.f1, actual.f1 * (1 + 8 * Number.EPSILON), actual.f4]) {
+    if (!Number.isFinite(radius)) continue;
+    const support = sites.map((site, index) => {
+      const dx = q[0] - site.x, dy = q[1] - site.y;
+      return {index, distance: scale <= 1.0001 ? Math.hypot(dx, dy)
+        : Math.hypot((dx * c + dy * s) * scale, -dx * s + dy * c)};
+    }).filter(candidate => candidate.distance < radius);
+    assert.deepEqual(grid.withinRadius(...q, radius, c, s, scale), support,
+      `strict compact support and original distance bytes fixture ${i}, radius ${radius}`);
+  }
   const full = nearestThree(
     sites.map((p) => ({ ...p, radius: 0 })),
     q[0],
@@ -212,6 +222,36 @@ const indexed = new SiteGrid(counted, 1);
 visits = 0;
 for (let i = 0; i < 100; i++) indexed.nearestFour(1 + ((i * 0.371) % 60), 1 + ((i * 0.217) % 60));
 assert.ok(visits < 25000, 'near-tie correctness must preserve bucket candidate work');
+const rankReads = visits;
+visits = 0;
+for (let i = 0; i < 100; i++) indexed.nearestOwner(1 + ((i * 0.371) % 60), 1 + ((i * 0.217) % 60));
+const ownerReads = visits;
+assert.ok(ownerReads < rankReads, 'owner-only lookup must stop at its nearest bound');
+// Reuse must retain the original binary64 plane arithmetic across metric and site edits.
+const planeSites = [{x: 0, y: 0}, {x: 3, y: 4}];
+const planeGrid = new SiteGrid(planeSites, 1);
+const directPlane = (x: number, y: number, index: number, c: number, s: number, scale: number): number => {
+  let dx = planeSites[index].x - planeSites[0].x, dy = planeSites[index].y - planeSites[0].y;
+  let qx = x - planeSites[0].x, qy = y - planeSites[0].y;
+  if (scale > 1.0001) {
+    const sx = (dx * c + dy * s) * scale; dy = -dx * s + dy * c; dx = sx;
+    const tx = (qx * c + qy * s) * scale; qy = -qx * s + qy * c; qx = tx;
+  }
+  const length = Math.hypot(dx, dy);
+  return length === 0 ? Infinity : Math.max(0, length / 2 - qx * (dx / length) - qy * (dy / length));
+};
+const checkPlanes = (): void => {
+  for (const scale of [1, 1.0001, 1.0001000000000002, 4, 1]) {
+    const c = Math.cos(0.713), s = Math.sin(0.713);
+    for (const [x, y] of [[0, 0], [0.5, 1], [-1e9, 1e9], [2, 2]])
+      for (let index = 0; index < planeSites.length; index++)
+        assert.equal(planeGrid.bisectorDistance(x, y, 0, index, c, s, scale),
+          directPlane(x, y, index, c, s, scale), 'cached planes retain the original arithmetic');
+  }
+};
+checkPlanes();
+planeGrid.move(1, -3, 2); checkPlanes();
+planeSites.push({x: 0, y: 0}); planeGrid.add(2); checkPlanes();
 const translated = dense.map((p) => ({ x: p.x + 1e12, y: p.y - 1e12 }));
 let translatedReads = 0;
 const translatedGrid = new SiteGrid(
@@ -232,5 +272,5 @@ for (let i = 0; i < 100; i++)
   translatedGrid.nearestOwner(1e12 + 1 + ((i * 0.371) % 60), -1e12 + 1 + ((i * 0.217) % 60));
 assert.ok(translatedReads < 25000, 'large origins must retain bounded bucket work');
 process.stdout.write(
-  `Decimal nearest-rank fixtures ${cases.length}; sparse coordinate reads ${visits}; ordinary exact-site reads ${reads}\n`,
+  `Decimal nearest-rank fixtures ${cases.length}; sparse coordinate reads ${rankReads}; owner coordinate reads ${ownerReads}; ordinary exact-site reads ${reads}\n`,
 );
