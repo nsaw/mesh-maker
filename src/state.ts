@@ -1,4 +1,4 @@
-import type { SbpStats } from './sbp/types';
+import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN, type SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, snapCarveWidth, type DrapeSettings, type DrapeWindMode } from './drape-controls';
@@ -396,116 +396,17 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'viewMode', 'viewMaterial', 'activePreset', 'activeProfile',
 ];
 
-// Payload version: bump when DEFAULTS change to preserve old share links.
-// Legacy (v0) defaults for keys that changed since the original release:
-const CURRENT_PAYLOAD_VERSION = 16;
-/** The payload version from which starburst links already hold the current preset values (the version
- *  current when the starburst migration was last due); later bumps that touch other keys leave it. */
-const STARBURST_CURRENT_SINCE = 14;
-const LEGACY_V0_DEFAULTS: Partial<MeshState> = {
-  resolution: 256,
-};
-const LEGACY_V1_DEFAULTS: Partial<MeshState> = {
-  viewMode: 'wireframe',
-};
-// v2→v3 added Voronoi Relief fields. Old links never set them; they fall back to current defaults.
-const LEGACY_V2_DEFAULTS: Partial<MeshState> = {
-  reliefCellSize: 1.5,
-  reliefJitter: 0.7,
-  reliefRelaxIterations: 1,
-  reliefPolarity: 'domes',
-  reliefProfile: 'hemisphere',
-  reliefSeamDepth: 0.6,
-  reliefSeamWidth: 0.15,
-  reliefAnisotropy: 0,
-  reliefAnisotropyAngle: 0,
-  reliefAttractorMode: 'none',
-  reliefAttractorX: 0.5,
-  reliefAttractorY: 0.5,
-  reliefAttractorRadius: 0.5,
-  reliefAttractorFalloff: 1,
-  reliefDensityStrength: 0,
-  reliefIntensityStrength: 1,
-  reliefTransitionSoftness: 0.3,
-  reliefBaseMode: 'flat',
-};
-// v3→v4 added cell-size gradient + void-strength fields. Old links never set them; they
-// fall back to the documented defaults so prior reliefs render unchanged.
-const LEGACY_V3_DEFAULTS: Partial<MeshState> = {
-  reliefCellSizeGradient: 0,
-  reliefVoidStrength: 0,
-};
-// v4→v5 added noise-modulated attractor + flow-anisotropy. Old links never set them.
-// (reliefFlowAnisotropy was removed in v12 — the key vanished from MeshState, so it is no
-// longer written here; old payloads carrying it are silently ignored by the apply loop.)
-const LEGACY_V4_DEFAULTS: Partial<MeshState> = {
-  reliefAttractorNoise: 0,
-  reliefAttractorNoiseFreq: 0.15,
-};
-// v5→v6 added the radial-foci ("starburst") system. Old links never set any of these;
-// `reliefRadialFociCount: 0` keeps the relief sampler byte-identical to pre-feature output.
-const LEGACY_V5_DEFAULTS: Partial<MeshState> = {
-  reliefRadialFociCount: 0,
-  reliefRadialFocus1X: 0.5,
-  reliefRadialFocus1Y: 0.25,
-  reliefRadialFocus2X: 0.25,
-  reliefRadialFocus2Y: 0.6,
-  reliefRadialFocus3X: 0.75,
-  reliefRadialFocus3Y: 0.8,
-  reliefRadialStrength: 1.5,
-  reliefRadialFalloff: 0.3,
-  reliefRadialGrow: 0.45,
-  reliefRadialWarp: 0.4,
-  reliefRadialMode: 'rays',
-};
-// v6→v7 reworked the radial-foci ("starburst") system from metric-anisotropy + site-warp
-// (v1, PR #16, produced "pucker hole" artifacts) to polar-grid site placement (v2). The
-// state-key surface is unchanged but the semantics of strength/falloff/grow/warp are
-// reinterpreted under v2. Empty defaults: v6 starburst links pass through and reinterpret
-// their saved values under v2 semantics, which produces a *correct* polar-wedge render
-// rather than v1's broken puckers — strictly an improvement, so no forced reset is needed.
-// The version marker is kept for future migrations that may need to target pre-v2 links.
-const LEGACY_V6_DEFAULTS: Partial<MeshState> = {};
-// v7→v8 reverted from polar-grid placement (v2, produced mechanical mandala/spirograph
-// patterns) to Cartesian Voronoi with per-pixel metric anisotropy + density-boost near foci.
-// That v3 density boost later proved too dense and is migrated by the v9 conditional upgrade
-// below when saved links exactly match the known bad starburst parameter sets.
-const LEGACY_V7_DEFAULTS: Partial<MeshState> = {};
-// v8→v9 replaces radial density boost with organic focal expansion: foci no longer change
-// site count, reliefRadialGrow expands the continuous radius/bowl field, and reliefRadialWarp
-// drives low-frequency focal irregularity instead of remaining inert.
-const LEGACY_V8_DEFAULTS: Partial<MeshState> = {};
-// v9→v10 reinterprets the 3 "Focus" control points as control points of a Catmull-Rom FLOW
-// SPLINE. Sites cluster along the curve; cells elongate along the tangent; cell radius
-// expands at curvature peaks. Existing share-links pass through unchanged — the same state
-// keys produce a flow-curve render instead of v9's invisible-foci render. Strict improvement.
-const LEGACY_V9_DEFAULTS: Partial<MeshState> = {};
-// v10→v11 added reliefInvertProfile (domed-floor toggle) and reliefSeamSharpness (V-groove
-// sharpness). Existing v10 share-links don't carry these keys; legacy non-starburst presets
-// should keep their original smooth-pocket look (invert=0, sharpness=0), so empty defaults
-// here are correct. The known-starburst migration below specifically rewrites v10 starburst
-// links to include the new field values so saved starburst links match the current preset.
-const LEGACY_V10_DEFAULTS: Partial<MeshState> = {};
-// v11→v12 is the v16 sampler restructure: base-surface superposition replaces the wave
-// crossfade, wall band + density noise added, per-pixel flow anisotropy removed, starburst
-// internals replaced by a unified space-warp. Old links never carry the new keys; the
-// conditional below (not this table) maps old wave-mode links onto the superposition model.
-const LEGACY_V11_DEFAULTS: Partial<MeshState> = {};
-// v12→v13 replaced the Blend drape model (height-phased contour folds over a dilated envelope) with a
-// membrane + gravity-directed folds. The retired keys drapeFoldScale / drapeFoldDepth / drapeFoldWarp
-// have no equivalent and are dropped (they are no longer in URL_SERIALIZABLE_KEYS, so the copy loop
-// ignores them). blend (tension), drapeThickness and drapeConform carry over by value. The blend
-// DEFAULT moved 0.2 → 0.8, and serializeConfig omits keys equal to the default, so a v12 link saved
-// at the old default carries no blend key: record 0.2 here so it keeps its tension.
-// v13→v14 replaced that procedural drape with a cloth simulation over a 3D figure (src/drape-sim).
-// None of its keys (blend, drapeFoldSpacing, drapeFoldAmp, drapeFoldLength, drapeHang,
-// drapeGravityAngle, drapeThickness, drapeConform) has an equivalent: they left
-// URL_SERIALIZABLE_KEYS, so the copy loop drops them and older drape links open with the defaults.
-const LEGACY_V12_DEFAULTS: Partial<MeshState> = {};
-// v14→v15 added the DRAPE controls (src/drape-controls.ts) and made the gathered silk the default. A
-// v14 drape link (or an older blend link, which v14 opened with its defaults) was the plain silk proof
-// at its tilt: it opens with the silk preset's controls.
-const { drapeTilt: _silkTilt, ...LEGACY_V14_DRAPE_DEFAULTS } = DRAPE_PRESETS.silk.settings;
+// Generation and preset semantics changed. Incompatible links reset explicitly.
+export const CURRENT_PAYLOAD_VERSION = 17;
+let outdatedLinkReset = false;
+
+/** Read and clear the reset notice from the latest deserialize operation. */
+export function consumeOutdatedLinkReset(): boolean {
+  const reset = outdatedLinkReset;
+  outdatedLinkReset = false;
+  return reset;
+}
+
 export function serializeConfig(): string {
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
@@ -594,6 +495,7 @@ function extractBase64UrlBlob(input: string): string | null {
 }
 
 export function deserializeConfig(input: URLSearchParams | Location | string): Partial<MeshState> {
+  outdatedLinkReset = false;
   const encoded = findEncodedPayload(input);
   if (!encoded) return {};
   try {
@@ -602,113 +504,14 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     const parsed = JSON.parse(json);
     const result: Partial<MeshState> = {};
 
-    // Apply legacy defaults for unversioned (v0) payloads so old share links
-    // keep their original behavior even when DEFAULTS change.
-    const payloadVersion: number = parsed._v ?? 0;
-    if (payloadVersion < 1) {
-      for (const [k, v] of Object.entries(LEGACY_V0_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const payloadVersion = parsed._v ?? 0;
+    if (!Number.isInteger(payloadVersion) || payloadVersion < 0) return {};
+    if (payloadVersion < CURRENT_PAYLOAD_VERSION) {
+      outdatedLinkReset = true;
+      return {};
     }
-    if (payloadVersion < 2) {
-      for (const [k, v] of Object.entries(LEGACY_V1_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 3) {
-      for (const [k, v] of Object.entries(LEGACY_V2_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 4) {
-      for (const [k, v] of Object.entries(LEGACY_V3_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 5) {
-      for (const [k, v] of Object.entries(LEGACY_V4_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 6) {
-      for (const [k, v] of Object.entries(LEGACY_V5_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 7) {
-      for (const [k, v] of Object.entries(LEGACY_V6_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 8) {
-      for (const [k, v] of Object.entries(LEGACY_V7_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 9) {
-      for (const [k, v] of Object.entries(LEGACY_V8_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 10) {
-      for (const [k, v] of Object.entries(LEGACY_V9_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 11) {
-      for (const [k, v] of Object.entries(LEGACY_V10_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 12) {
-      for (const [k, v] of Object.entries(LEGACY_V11_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-      // Pre-v12 'wave' relief links relied on the crossfade base (fixed amplitude 0.5).
-      // Under the v16 superposition model the closest render uses reliefBaseAmplitude 0.5;
-      // links that never set baseMode (or set 'flat') keep the 0 default.
-      if (parsed.reliefBaseMode === 'wave' && !('reliefBaseAmplitude' in parsed)) {
-        (result as Record<string, unknown>).reliefBaseAmplitude = 0.5;
-      }
-    }
-    if (payloadVersion < 13) {
-      for (const [k, v] of Object.entries(LEGACY_V12_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
-    if (payloadVersion < 15 && (parsed.mode === 'drape' || parsed.mode === 'blend')) {
-      for (const [k, v] of Object.entries(LEGACY_V14_DRAPE_DEFAULTS)) {
-        if (!(k in parsed)) {
-          (result as Record<string, unknown>)[k] = v;
-        }
-      }
-    }
+    if (payloadVersion !== CURRENT_PAYLOAD_VERSION) return {};
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
@@ -738,93 +541,6 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       const v = integer ? Math.floor(n) : n;
       (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
     };
-    const approximately = (a: unknown, b: number): boolean => {
-      const n = toFiniteNumber(a);
-      return n !== null && Math.abs(n - b) < 1e-9;
-    };
-    const upgradeKnownStarburstDefaults = (): void => {
-      // Migrate any older starburst-preset share-link to the CURRENT preset values (copied
-      // verbatim from CNC_PRESETS['relief-starburst'] below, so this never drifts from the
-      // shipped preset), so users opening older saved links see the latest starburst
-      // rendering rather than a mix of stale param values reinterpreted under the current
-      // sampler. The migration runs on payloadVersion < STARBURST_CURRENT_SINCE and detects
-      // the known starburst signatures produced by each prior shipped version. Non-starburst
-      // links (fociCount = 0) pass through untouched. Links with custom/manually-tuned values
-      // that don't match any known signature ALSO pass through untouched — their author
-      // tuned them deliberately.
-      const fociCount = toFiniteNumber(result.reliefRadialFociCount);
-      // v15 changed only DRAPE keys: links saved at v14 already carry the current starburst values.
-      if (payloadVersion >= STARBURST_CURRENT_SINCE || fociCount === null || fociCount <= 0) return;
-      const matchesV7PolarDefaults =
-        approximately(result.reliefCellSize, 3.5)
-        && approximately(result.reliefRadialStrength, 1.8)
-        && approximately(result.reliefRadialFalloff, 0.5)
-        && approximately(result.reliefRadialGrow, 0.7)
-        && approximately(result.reliefRadialWarp, 0.35);
-      const matchesV8DenseDefaults =
-        approximately(result.reliefCellSize, 2.2)
-        && approximately(result.reliefRadialStrength, 1.6)
-        && approximately(result.reliefRadialFalloff, 0.4)
-        && approximately(result.reliefRadialGrow, 0.8)
-        && approximately(result.reliefRadialWarp, 0);
-      const matchesV9OrganicFlowDefaults =
-        approximately(result.reliefCellSize, 4.8)
-        && approximately(result.reliefRadialStrength, 0.22)
-        && approximately(result.reliefRadialFalloff, 0.11)
-        && approximately(result.reliefRadialGrow, 0.55)
-        && approximately(result.reliefRadialWarp, 0.9);
-      const matchesV10SplineDefaults =
-        approximately(result.reliefCellSize, 5.5)
-        && approximately(result.reliefRadialStrength, 2.4)
-        && approximately(result.reliefRadialFalloff, 0.18)
-        && approximately(result.reliefRadialGrow, 1.2)
-        && approximately(result.reliefRadialWarp, 0.4);
-      const matchesV10TunedDefaults =
-        approximately(result.reliefCellSize, 4)
-        && approximately(result.reliefRadialStrength, 3.0)
-        && approximately(result.reliefRadialFalloff, 0.4)
-        && approximately(result.reliefRadialGrow, 2.0)
-        && approximately(result.reliefRadialWarp, 0.55);
-      const matchesV15MidDefaults =
-        approximately(result.reliefCellSize, 4)
-        && approximately(result.reliefRadialStrength, 3.0)
-        && approximately(result.reliefRadialFalloff, 0.4)
-        && approximately(result.reliefRadialGrow, 1.3)
-        && approximately(result.reliefRadialWarp, 0.55);
-      const matchesAnyStarburst = matchesV7PolarDefaults
-        || matchesV8DenseDefaults
-        || matchesV9OrganicFlowDefaults
-        || matchesV10SplineDefaults
-        || matchesV10TunedDefaults
-        || matchesV15MidDefaults;
-      if (!matchesAnyStarburst) return;
-      // Respect explicit preset identity when the payload carries it: a link saved from a
-      // different preset (or hand-tuned after clearing the preset) must not be rewritten
-      // even if its numbers happen to match a known starburst fingerprint.
-      if ('activePreset' in parsed && parsed.activePreset !== 'relief-starburst') return;
-      // Copy the CURRENT relief-starburst preset verbatim — every URL-serializable field
-      // the preset defines — so detected legacy links become exactly the current preset
-      // rather than a hybrid old/new configuration. Deriving from CNC_PRESETS removes the
-      // hand-maintained sync list this block used to carry.
-      // EXCEPTION — the author's COMPOSITION: the legacy fingerprints match only the
-      // scalar controls, so a link whose author moved the foci (but left the scalars at
-      // defaults) still matches. Focus coordinates and count present in the payload are
-      // the saved composition and must survive the migration.
-      const compositionKeys = new Set([
-        'reliefRadialFociCount',
-        'reliefRadialFocus1X', 'reliefRadialFocus1Y',
-        'reliefRadialFocus2X', 'reliefRadialFocus2Y',
-        'reliefRadialFocus3X', 'reliefRadialFocus3Y',
-      ]);
-      const starburstPreset = CNC_PRESETS['relief-starburst'];
-      for (const key of URL_SERIALIZABLE_KEYS) {
-        if (!(key in starburstPreset)) continue;
-        if (compositionKeys.has(key) && key in result) continue;
-        (result as Record<string, unknown>)[key] = starburstPreset[key];
-      }
-      (result as Record<string, unknown>).activePreset = 'relief-starburst';
-    };
-    upgradeKnownStarburstDefaults();
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
     // back to DEFAULTS instead of feeding a junk string into the sampler/UI.
     // String enums. The value must BE a string in the allowed set: a String() coercion let
@@ -840,8 +556,6 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
         delete (result as Record<string, unknown>)[key];
       }
     };
-    // The DRAPE tab was named BLEND before 2026-10-20; old links carry mode 'blend'.
-    if ((result.mode as unknown) === 'blend') result.mode = 'drape';
     clampEnum('mode', ENUM_VALUES.mode);
     clampEnum('noiseType', ENUM_VALUES.noiseType);
     clampEnum('viewMode', ENUM_VALUES.viewMode);
@@ -903,19 +617,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // Ranges match the sliders.
     if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
     // The board, to its sliders' ranges (a link with meshX 200 used to keep a 200 in board).
-    if ('meshX' in result) clampField('meshX', 1, 96);
-    if ('meshY' in result) clampField('meshY', 1, 48);
+    if ('meshX' in result) clampField('meshX', 1, MACHINE_TRAVEL_IN.x);
+    if ('meshY' in result) clampField('meshY', 1, MACHINE_TRAVEL_IN.y);
     if ('resolution' in result) clampField('resolution', 16, 1024, true);
-    if ('baseThickness' in result) clampField('baseThickness', 0.25, 6);
-    // v15->v16: the face and wind positions became percentages of the carve, which now takes any width.
-    // A v15 link held inches on the 12 x 16 in panel (radii in inches of its 12 in width).
-    if (payloadVersion < 16) {
-      for (const [k, spanIn] of [['drapeFaceX', 12], ['drapeFaceY', 16], ['drapeFaceRadius', 12],
-        ['drapeWindX', 12], ['drapeWindY', 16], ['drapeWindRadius', 12]] as const) {
-        const n = k in parsed ? toFiniteNumber(parsed[k]) : null;
-        if (n !== null) (result as Record<string, unknown>)[k] = (n / spanIn) * 100;
-      }
-    }
+    if ('baseThickness' in result) clampField('baseThickness', 0.25, MAX_STOCK_THICKNESS_IN);
+    const stock = typeof result.baseThickness === 'number' ? result.baseThickness : DEFAULTS.baseThickness;
+    if ('amplitude' in result) clampField('amplitude', 0, Math.min(MAX_CUT_DEPTH_IN, stock));
+    if ('dmHeightScale' in result) clampField('dmHeightScale', 0, Math.min(MAX_CUT_DEPTH_IN, stock));
     // DRAPE controls: the slider ranges. Cloth resolution and frames set the solver's work, so a
     // crafted link must not raise them past the sliders.
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
@@ -931,7 +639,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('drapeReliefDepth' in result || 'drapeStock' in result) {
       const stock = typeof result.drapeStock === 'number' ? result.drapeStock : DEFAULTS.drapeStock;
       if (!('drapeReliefDepth' in result)) (result as Record<string, unknown>).drapeReliefDepth = DEFAULTS.drapeReliefDepth;
-      clampField('drapeReliefDepth', 0.05, Math.max(0.05, stock - MIN_DRAPE_BACKING_IN));
+      clampField('drapeReliefDepth', 0.05, Math.min(MAX_CUT_DEPTH_IN, Math.max(0.05, stock - MIN_DRAPE_BACKING_IN)));
     }
     // Radial-foci ("starburst") params. reliefRadialFociCount bounds the per-focus blend loop;
     // reliefRadialGrow/reliefRadialWarp are continuous-field controls and must stay bounded so

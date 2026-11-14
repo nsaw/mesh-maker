@@ -31,10 +31,70 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:cli
       - run: npm run test:relief
+      - run: npm run test:presets:geometry
       - run: npm run test:gh-parity
       - run: npm run test:depthmap
       - run: npm run test:drape
       - run: npm run test:drape-parity
+      - run: npm run test:sbp-writer
       - run: npm run test:cut
       - run: npm run test:relief-master
       - run: npm run build
+
+  preset_export_list:
+    name: Preset export matrix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      presets: ${{ steps.presets.outputs.presets }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: presets
+        run: |
+          presets=$(./node_modules/.bin/tsx cli/presets.spec.ts --list-exports)
+          echo "presets=$presets" >> "$GITHUB_OUTPUT"
+
+  preset_exports:
+    name: Preset export (${{ matrix.preset }})
+    needs: preset_export_list
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: ${{ fromJSON(needs.preset_export_list.outputs.presets) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:presets:export -- "$PRESET_NAME"
+        env:
+          PRESET_NAME: ${{ matrix.preset }}
+
+  preset_export_gate:
+    name: Preset full export gate
+    if: ${{ always() }}
+    needs: [preset_export_list, preset_exports]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require every full export to succeed
+        env:
+          LIST_RESULT: ${{ needs.preset_export_list.result }}
+          EXPORT_RESULT: ${{ needs.preset_exports.result }}
+        run: |
+          if [ "$LIST_RESULT" != "success" ] || [ "$EXPORT_RESULT" != "success" ]; then
+            echo "Preset matrix: $LIST_RESULT; full exports: $EXPORT_RESULT"
+            exit 1
+          fi

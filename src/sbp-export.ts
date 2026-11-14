@@ -2,11 +2,13 @@ import { STATE, activeMaster, stockTopIn } from './state';
 import { attachValueEdit } from './slider-utils';
 import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
+import { parseSTLBinary } from './sbp/stl-parser';
 import { updateStats } from './stats';
 import { updateExportControls } from './toolbar';
 import { showToast } from './toast';
 import { UPDATED_MESSAGE, updatedSinceLoad } from './stale-build';
 import type { MaterialProfile, SbpConfig, SbpStats } from './sbp/types';
+import { effectiveWorkOffsets, MACHINE_TRAVEL_IN, MACHINE_TRAVEL_TOLERANCE_IN } from './sbp/types';
 import type { SbpWorkerInput, SbpWorkerOutput } from './sbp/worker';
 
 /** Persistent SBP config -- survives sidebar rebuilds */
@@ -52,6 +54,7 @@ export const SBP_STATE: SbpState = {
 };
 
 let sbpWorkerRunning = false;
+let stlSize: { meshX: number; meshY: number } | null = null;
 
 /** The stock top Safe Z was last synced to (null before the first sync). */
 let safeZSyncedStock: number | null = null;
@@ -100,8 +103,8 @@ export function buildConfig(): SbpConfig {
   base.roughingEnabled = SBP_STATE.roughingEnabled;
   base.finishingEnabled = SBP_STATE.finishingEnabled;
   base.materialZ = stockTopIn();
-  base.offsetX = SBP_STATE.offsetX;
-  base.offsetY = SBP_STATE.offsetY;
+  const { meshX, meshY } = currentPartDimensions();
+  Object.assign(base, effectiveWorkOffsets(meshX, meshY, SBP_STATE.offsetX, SBP_STATE.offsetY));
   base.safeZ = SBP_STATE.safeZ;
   base.homeZ = SBP_STATE.homeZ;
   base.leaveStock = SBP_STATE.leaveStock;
@@ -126,28 +129,57 @@ export function buildConfig(): SbpConfig {
     base.finishingTool = { ...base.finishingTool, cutting: { ...base.finishingTool.cutting, stepover: SBP_STATE.stepoverOverride } };
   }
 
-  // Set materialX/Y from STATE mesh dims
-  base.materialX = STATE.meshX;
-  base.materialY = STATE.meshY;
+  base.materialX = meshX;
+  base.materialY = meshY;
 
   return base;
+}
+
+/** Read dimensions without copying the full-resolution export surface's height array. */
+function currentPartDimensions(): { meshX: number; meshY: number } {
+  if (SBP_STATE.stlBuffer && stlSize) {
+    const r = SBP_STATE.resolution;
+    return { meshX: Math.ceil(stlSize.meshX * r) / r, meshY: Math.ceil(stlSize.meshY * r) / r };
+  }
+  const master = activeMaster();
+  return master ? { meshX: master.widthIn, meshY: master.heightIn } : STATE;
+}
+
+/** Report the effective placement while retaining the user's preferred offsets. */
+export function updateEffectiveOffsetDisplay(): void {
+  const note = document.getElementById('sbpEffectiveOffsets');
+  if (!note) return;
+  const { meshX, meshY } = currentPartDimensions();
+  const { offsetX, offsetY } = effectiveWorkOffsets(meshX, meshY, SBP_STATE.offsetX, SBP_STATE.offsetY);
+  const T = MACHINE_TRAVEL_TOLERANCE_IN;
+  const oversized = meshX > MACHINE_TRAVEL_IN.x + T || meshY > MACHINE_TRAVEL_IN.y + T;
+  const fills = Math.abs(meshX - MACHINE_TRAVEL_IN.x) <= T && Math.abs(meshY - MACHINE_TRAVEL_IN.y) <= T;
+  note.classList.toggle('cnc-warn', oversized);
+  const formatOffset = (value: number): string => Number.isInteger(value) ? value.toFixed(1) : String(Number(value.toFixed(6)));
+  note.textContent = oversized
+    ? `Part ${meshX.toFixed(2)} x ${meshY.toFixed(2)} in exceeds the ${MACHINE_TRAVEL_IN.x} x ${MACHINE_TRAVEL_IN.y} in bed`
+    : `Using offset X ${formatOffset(offsetX)}, Y ${formatOffset(offsetY)} in${fills ? ` (part ${meshX} x ${meshY} in fills the bed)` : ''}`;
 }
 
 function invalidateSbpStats(): void {
   STATE.sbpStats = null;
   updateStats();
+  updateEffectiveOffsetDisplay();
 }
 
 function triggerDownload(content: BlobPart, filename: string): void {
   const blob = new Blob([content], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  try {
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+  } finally {
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
 }
 
 function buildSbpToastMessage(stats: SbpStats): string {
@@ -338,6 +370,7 @@ function clearLoadedStl(): void {
   stlRevision++;
   SBP_STATE.stlBuffer = null;
   SBP_STATE.stlName = '';
+  stlSize = null;
   invalidateSbpStats();
   updateStlUploadUi();
   document.getElementById('sbpClearStl')?.remove();
@@ -441,6 +474,7 @@ export function buildSBPSection(): HTMLElement {
     buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', SBP_STATE.leaveStock.toFixed(3), 0, 0.1, 0.005, SBP_STATE.leaveStock),
     buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', SBP_STATE.offsetX.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetX),
     buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', SBP_STATE.offsetY.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetY),
+    Object.assign(createElement('div', 'cnc-note'), { id: 'sbpEffectiveOffsets' }),
     buildRangeControl('sl_sbpSafeZ', 'val_sbpSafeZ', 'Safe Z (in)', SBP_STATE.safeZ.toFixed(1), 0.5, 6, 0.1, SBP_STATE.safeZ),
     buildRangeControl('sl_sbpHomeZ', 'val_sbpHomeZ', 'Home Z (in)', SBP_STATE.homeZ.toFixed(1), 1.0, 6, 0.1, SBP_STATE.homeZ),
     buildRangeControl('sl_sbpRasterAngle', 'val_sbpRasterAngle', 'Raster Angle (deg)', String(SBP_STATE.finishRasterAngle), 0, 90, 5, SBP_STATE.finishRasterAngle),
@@ -478,6 +512,7 @@ export function buildSBPSection(): HTMLElement {
 
 /** Wire event listeners for SBP controls. Called after sidebar rebuild. */
 export function wireSBPControls(): void {
+  updateEffectiveOffsetDisplay();
   const roughingEl = document.getElementById('sbpRoughing') as HTMLInputElement | null;
   if (roughingEl) roughingEl.addEventListener('change', () => {
     SBP_STATE.roughingEnabled = roughingEl.checked;
@@ -700,7 +735,18 @@ function loadSTL(file: File): void {
   const reader = new FileReader();
   reader.onload = () => {
     if (revision !== stlRevision) return;
-    SBP_STATE.stlBuffer = reader.result as ArrayBuffer;
+    const buffer = reader.result as ArrayBuffer;
+    try {
+      const { bounds } = parseSTLBinary(buffer);
+      const meshX = bounds.maxX - bounds.minX, meshY = bounds.maxY - bounds.minY;
+      if (!(Number.isFinite(meshX) && Number.isFinite(meshY) && meshX > 0 && meshY > 0))
+        throw new Error('STL must have finite, positive X and Y extents');
+      stlSize = { meshX, meshY };
+    } catch (error) {
+      showToast(`Failed to read STL: ${error instanceof Error ? error.message : String(error)}`, 6000);
+      return;
+    }
+    SBP_STATE.stlBuffer = buffer;
     SBP_STATE.stlName = file.name;
     invalidateSbpStats();
     updateStlUploadUi();

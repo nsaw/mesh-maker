@@ -14,6 +14,8 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { CNC_PRESETS } from '../src/noise/presets';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -70,6 +72,11 @@ function ctx(lines: string[], i: number, n = 2): string {
 const builderSrc = readFileSync(resolve(ROOT, 'grasshopper/builder/meshcraft_builder.py'), 'utf8');
 const noiseGenSrc = readFileSync(resolve(ROOT, 'grasshopper/components/noise_gen.py'), 'utf8');
 const presetsSrc = readFileSync(resolve(ROOT, 'grasshopper/components/presets.py'), 'utf8');
+
+// Rhino 7 executes this file with Python 2, which requires an encoding cookie
+// before parsing the Unicode comments and embedded component sources.
+assert(/^#.*coding[:=]\s*utf-8/m.test(builderSrc.split('\n').slice(0, 2).join('\n')),
+  'builder declares UTF-8 within its first two lines');
 
 const embeddedNoise = extractEmbedded(builderSrc, 'NOISE_SCRIPT');
 const embeddedPresets = extractEmbedded(builderSrc, 'PRESETS_SCRIPT');
@@ -131,6 +138,36 @@ process.stdout.write('4. ctx() marker placement\n');
   // Divergence in middle: slice = [1..3], marker at row 1 (`>` on 'c').
   const mid = ctx(lines, 2, 1);
   assert(mid.split('\n')[1].trimStart().startsWith('> c'), 'marker on center line when divergence in middle');
+}
+
+// Compare both runtime languages, rather than only the two Python copies.
+process.stdout.write('5. TypeScript and Grasshopper preset values match\n');
+{
+  const json = execFileSync('python3', ['-I', '-c',
+    'import ast,json,sys\nmodule=ast.parse(sys.stdin.read())\nassignment=next(n for n in module.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="PRESETS" for t in n.targets))\nprint(json.dumps(ast.literal_eval(assignment.value)))',
+  ], { input: presetsSrc, encoding: 'utf8' });
+  const pythonPresets: Record<string, Record<string, string | number>> = JSON.parse(json);
+  const aliases: Record<string, string> = {
+    reliefRelaxIterations: 'relief_relax_iter', reliefBaseAmplitude: 'relief_base_amp',
+    reliefBaseFrequency: 'relief_base_freq', warpFreq: 'relief_warp_freq',
+    gaborBandwidth: 'gabor_bw',
+  };
+  const webOnly = new Set(['baseThickness']);
+  const toPythonKey = (key: string): string => aliases[key]
+    ?? key.replace(/[A-Z]/g, letter => '_' + letter.toLowerCase());
+  assert(Object.keys(pythonPresets).sort().join() === Object.keys(CNC_PRESETS).sort().join(),
+    'same preset names in web and Grasshopper');
+  for (const [name, preset] of Object.entries(CNC_PRESETS)) {
+    const pythonPreset = pythonPresets[name];
+    if (!pythonPreset) continue;
+    for (const [key, value] of Object.entries(preset)) {
+      if (webOnly.has(key)) continue;
+      const actual = pythonPreset[toPythonKey(key)];
+      const matches = typeof value === 'number' && typeof actual === 'number'
+        ? Math.abs(actual - value) <= 1e-9 : actual === value;
+      assert(matches, `${name}.${key}`, `web ${value}, Grasshopper ${actual}`);
+    }
+  }
 }
 
 if (failures === 0) {

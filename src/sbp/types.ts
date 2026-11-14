@@ -100,3 +100,16 @@ export interface ToolpathSection {
 export const MACHINE_TRAVEL_IN = { x: 36, y: 24, z: 6 } as const;
 /** Slack for extents converted from metres or millimetres (12 in arrives as 12.000000000000002). */
 export const MACHINE_TRAVEL_TOLERANCE_IN = 1e-6;
+
+/** Nick's maximum depth below the stock top, across every carving mode. */
+export const MAX_CUT_DEPTH_IN = 2.6;
+/** Nick's maximum stock thickness; distinct from the machine's Z travel. */
+export const MAX_STOCK_THICKNESS_IN = 2.6;
+
+/** Keep preferred browser work offsets inside the room left by the part. */
+export function effectiveWorkOffsets(partX: number, partY: number, preferredX: number, preferredY: number): { offsetX: number; offsetY: number } {
+  return {
+    offsetX: Math.max(0, Math.min(preferredX, MACHINE_TRAVEL_IN.x - partX)),
+    offsetY: Math.max(0, Math.min(preferredY, MACHINE_TRAVEL_IN.y - partY)),
+  };
+}

@@ -1,3 +1,4 @@
+import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN } from './sbp/types';
 import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, boardIsLinkBoard, reliefMasterActive, saveNoiseDims } from './state';
 import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, DRAPE_WIDTH_RANGE, DRAPE_WIDTH_STEP, drapeControlEffect, snapCarveWidth, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
@@ -5,9 +6,9 @@ import { PANEL_ASPECT } from './drape-sim/pipeline';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachValueEdit, formatSliderValue } from './slider-utils';
-import { CNC_PRESETS, PROFILES } from './noise/presets';
+import { CNC_PRESETS, PROFILES, presetState } from './noise/presets';
 import { generateMesh, debouncedGenerate } from './mesh';
-import { buildSBPSection, wireSBPControls, syncSbpSafeZ, syncSbpSafeZIfStockMoved } from './sbp-export';
+import { buildSBPSection, wireSBPControls, syncSbpSafeZ, syncSbpSafeZIfStockMoved, updateEffectiveOffsetDisplay } from './sbp-export';
 import { updateExportControls } from './toolbar';
 import { estimateDepth } from './depth-estimate';
 import { isChunkLoadError, UPDATED_MESSAGE, updatedSinceLoad } from './stale-build';
@@ -29,6 +30,7 @@ function formatPresetName(key: string): string {
 }
 
 export function buildSidebar(): void {
+  syncDepthCaps();
   const sb = document.getElementById('sidebar')!;
   const fragment = document.createDocumentFragment();
   const isRelief = STATE.noiseType === 'voronoi-relief';
@@ -54,10 +56,7 @@ export function buildSidebar(): void {
 
   wireControls();
   // Sync cut-depth slider maxes and SBP safe Z to initial material thickness
-  const ampInit = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
-  if (ampInit) ampInit.max = String(STATE.baseThickness);
-  const dmInit = document.querySelector<HTMLInputElement>('input[data-key="dmHeightScale"]');
-  if (dmInit) dmInit.max = String(STATE.baseThickness);
+  syncDepthCaps();
   syncSbpSafeZIfStockMoved();
   wireSBPControls();
   updateExportControls();
@@ -113,13 +112,16 @@ function buildSliderLabel(label: string, valueId: string, valueText: string, bad
 function slider(key: string, label: string, min: number, max: number, step: number, badgeText = ''): HTMLDivElement {
   const val = STATE[key as keyof typeof STATE] as number;
   const row = createElement('div', 'control-row');
-  const valueText = typeof val === 'number' ? formatSliderValue(val, step) : String(val);
+  const exactDepth = ['amplitude', 'dmHeightScale', 'baseThickness', 'drapeReliefDepth'].includes(key);
+  const displayStep = exactDepth ? 0.0001 : step;
+  const valueText = typeof val === 'number' ? formatSliderValue(val, displayStep) : String(val);
   const input = createElement('input') as HTMLInputElement;
   input.type = 'range';
   input.id = `sl_${key}`;
   input.min = String(min);
   input.max = String(max);
-  input.step = String(step);
+  input.step = exactDepth ? 'any' : String(step);
+  input.dataset.step = String(displayStep);
   input.value = String(val);
   input.dataset.key = key;
   input.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? val);
@@ -185,7 +187,7 @@ function buildPresetSection(): HTMLElement {
       buttonRow.append(button);
     });
 
-  return buildSection('Presets', [controlRow, buttonRow], false, 'noise-only');
+  return buildSection('Presets', [controlRow, buttonRow, createElement('div', 'profile-note', "Profiles adjust the current preset's texture.")], false, 'noise-only');
 }
 
 /** DRAPE's carve size sliders. Their steps line up at 3:4 (0.75 in across is 1 in up), so a value set on
@@ -210,7 +212,7 @@ function buildMeshDimensionsSection(): HTMLElement {
   const drape = STATE.mode === 'drape';
   inlineRow.append(
     drape ? carveSlider('meshX', STATE.drapeCarveWidth, DEFAULTS.drapeCarveWidth)
-      : slider('meshX', 'X (inches)', 1, 96, 1, 'ShopBot: 36" max'),
+      : slider('meshX', 'X (in)', 1, MACHINE_TRAVEL_IN.x, 1, 'max 36"'),
   );
 
   const lockButton = createElement('button', `aspect-lock-btn${STATE.aspectLocked ? ' locked' : ''}`);
@@ -221,7 +223,7 @@ function buildMeshDimensionsSection(): HTMLElement {
 
   inlineRow.append(
     drape ? carveSlider('meshY', STATE.drapeCarveWidth / PANEL_ASPECT, DEFAULTS.drapeCarveWidth / PANEL_ASPECT)
-      : slider('meshY', 'Y (inches)', 1, 48, 1, 'ShopBot: 24" max'),
+      : slider('meshY', 'Y (in)', 1, MACHINE_TRAVEL_IN.y, 1, 'max 24"'),
   );
 
   const note = createElement('div');
@@ -233,8 +235,8 @@ function buildMeshDimensionsSection(): HTMLElement {
   return buildSection('Mesh Dimensions', [
     inlineRow,
     slider('resolution', 'Grid Resolution', 16, 1024, 4),
-    // DRAPE cuts its relief into at most 4 in of material (src/drape-controls.ts).
-    slider('baseThickness', 'Material Thickness (in)', 0.25, STATE.mode === 'drape' ? DRAPE_STOCK_RANGE[1] : 6, 0.05),
+    // Stock is limited independently of the machine Z travel.
+    slider('baseThickness', 'Material Thickness (in)', 0.25, MAX_STOCK_THICKNESS_IN, 0.05),
     note,
   ]);
 }
@@ -309,7 +311,7 @@ function buildNoiseParametersSection(): HTMLElement {
 
   if (STATE.noiseType === 'voronoi-relief') {
     children.push(
-      slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05),
+      slider('amplitude', 'Cut Depth (inches)', 0, Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness), 0.05),
       slider('offset', 'Vertical Offset', -2, 2, 0.05),
       // distortion + warpFreq drive the relief sampler's site-position warp; keeping these
       // visible in relief mode is what the user means by "we lost the warp functions".
@@ -322,7 +324,7 @@ function buildNoiseParametersSection(): HTMLElement {
 
   children.push(
     slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005),
-    slider('amplitude', 'Cut Depth (inches)', 0, 6, 0.05),
+    slider('amplitude', 'Cut Depth (inches)', 0, Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness), 0.05),
     slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05),
     slider('offset', 'Vertical Offset', -2, 2, 0.05),
     seedRow,
@@ -497,7 +499,7 @@ function buildDepthMapSection(): HTMLElement {
     uploadZone,
     reliefMasterInfo(),
     imageOnly(aiBtn),
-    imageOnly(slider('dmHeightScale', 'Depth Map Height Scale', 0, 6, 0.05)),
+    imageOnly(slider('dmHeightScale', 'Depth Map Height Scale', 0, Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness), 0.05)),
     imageOnly(slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)),
     imageOnly(slider('dmBackgroundCutoff', 'Background Cutoff (0=off)', 0, 0.9, 0.01)),
     imageOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)),
@@ -613,7 +615,7 @@ function buildDrapeSections(): HTMLElement[] {
 
   const group = (g: DrapeGroup): HTMLDivElement[] => DRAPE_CONTROLS.filter(c => c.group === g).map(c => {
     // Relief Depth can use all but the minimum backing of the material.
-    const max = c.key === 'drapeReliefDepth' ? Math.max(c.min, drapeCarve().stockIn - MIN_DRAPE_BACKING_IN) : c.max;
+    const max = c.key === 'drapeReliefDepth' ? Math.min(MAX_CUT_DEPTH_IN, Math.max(c.min, drapeCarve().stockIn - MIN_DRAPE_BACKING_IN)) : c.max;
     return slider(c.key, c.label, c.min, max, c.step);
   });
   const note = (text: string): HTMLDivElement => {
@@ -642,7 +644,7 @@ function buildDrapeSections(): HTMLElement[] {
       note('More steps and iterations solve contact and stretch more exactly and take proportionally longer. Display Subdivision smooths the solved cloth before carving; it adds no simulated detail.')],
     true, 'drape-section'),
     buildSection('Drape: Carve', [...group('carve'),
-      note('Material Thickness is under Mesh Dimensions (up to 4 in). The relief is remapped at once; no new simulation.')],
+      note('Material Thickness is under Mesh Dimensions (up to 2.6 in). The relief is remapped at once; no new simulation.')],
     false, 'drape-section'),
   ];
 }
@@ -681,17 +683,30 @@ function buildViewControlsSection(): HTMLElement {
   ], false);
 }
 
+/** Clamp the requested cut and keep the value, range and label in agreement. */
+export function syncDepthCaps(): void {
+  const activeKey = STATE.mode === 'noise' ? 'amplitude' : STATE.mode === 'depthmap' && !STATE.reliefMaster ? 'dmHeightScale' : null;
+  for (const key of ['amplitude', 'dmHeightScale'] as const) {
+    const max = key === activeKey ? Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness) : MAX_CUT_DEPTH_IN;
+    if (key === activeKey) STATE[key] = Math.max(0, Math.min(max, STATE[key]));
+    const input = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
+    if (input) { input.max = String(max); input.value = String(STATE[key]); }
+    const label = document.getElementById(`val_${key}`);
+    if (label) label.textContent = formatSliderValue(STATE[key], input ? Number(input.dataset.step ?? input.step) : 0.0001);
+  }
+}
+
 /** Relief Depth can use all but MIN_DRAPE_BACKING_IN of the drape's material: cap its slider (and the
  *  value, if the material got thinner). */
 function syncDrapeDepthMax(): void {
-  const max = Math.max(0.05, STATE.drapeStock - MIN_DRAPE_BACKING_IN);
+  const max = Math.min(MAX_CUT_DEPTH_IN, Math.max(0.05, STATE.drapeStock - MIN_DRAPE_BACKING_IN));
   const sl = document.querySelector<HTMLInputElement>('input[data-key="drapeReliefDepth"]');
   if (sl) sl.max = String(max);
   if (STATE.drapeReliefDepth > max) {
-    STATE.drapeReliefDepth = Math.round(max * 1000) / 1000;
+    STATE.drapeReliefDepth = max;
     if (sl) sl.value = String(STATE.drapeReliefDepth);
     const val = document.getElementById('val_drapeReliefDepth');
-    if (val) val.textContent = formatSliderValue(STATE.drapeReliefDepth, 0.005);
+    if (val) val.textContent = formatSliderValue(STATE.drapeReliefDepth, 0.0001);
   }
 }
 
@@ -705,7 +720,7 @@ function wireControls(): void {
         const v = Math.min(DRAPE_STOCK_RANGE[1], Math.max(DRAPE_STOCK_RANGE[0], parseFloat(sl.value)));
         STATE.drapeStock = v; STATE.baseThickness = v;
         const valEl = document.getElementById('val_baseThickness');
-        if (valEl) valEl.textContent = formatSliderValue(v, parseFloat(sl.step));
+        if (valEl) valEl.textContent = formatSliderValue(v, Number(sl.dataset.step ?? sl.step));
         syncDrapeDepthMax();
         // Safe Z follows once the remapped master lands (drape-ui syncSizeControls); exports wait for it.
         onDrapeCarveChanged();
@@ -734,18 +749,18 @@ function wireControls(): void {
       const v = parseFloat(sl.value);
       (STATE as unknown as Record<string, unknown>)[key] = v;
       const valEl = document.getElementById('val_' + key);
-      if (valEl) valEl.textContent = formatSliderValue(v, parseFloat(sl.step));
+      if (valEl) valEl.textContent = formatSliderValue(v, Number(sl.dataset.step ?? sl.step));
 
       // Aspect ratio lock
       if (STATE.aspectLocked && STATE.depthMapAR) {
         if (key === 'meshX') {
-          STATE.meshY = Math.max(1, Math.min(48, Math.round(v / STATE.depthMapAR)));
+          STATE.meshY = Math.max(1, Math.min(MACHINE_TRAVEL_IN.y, Math.round(v / STATE.depthMapAR)));
           const ySlider = document.querySelector<HTMLInputElement>('input[data-key="meshY"]');
           const yVal = document.getElementById('val_meshY');
           if (ySlider) ySlider.value = String(STATE.meshY);
           if (yVal) yVal.textContent = String(STATE.meshY);
         } else if (key === 'meshY') {
-          STATE.meshX = Math.max(1, Math.min(96, Math.round(v * STATE.depthMapAR)));
+          STATE.meshX = Math.max(1, Math.min(MACHINE_TRAVEL_IN.x, Math.round(v * STATE.depthMapAR)));
           const xSlider = document.querySelector<HTMLInputElement>('input[data-key="meshX"]');
           const xVal = document.getElementById('val_meshX');
           if (xSlider) xSlider.value = String(STATE.meshX);
@@ -753,30 +768,7 @@ function wireControls(): void {
         }
       }
 
-      // Cut depths cannot exceed material thickness
-      if (key === 'baseThickness' || key === 'amplitude' || key === 'dmHeightScale') {
-        const bt = STATE.baseThickness;
-        const ampSlider = document.querySelector<HTMLInputElement>('input[data-key="amplitude"]');
-        if (ampSlider) {
-          ampSlider.max = String(bt);
-          if (STATE.amplitude > bt) {
-            STATE.amplitude = bt;
-            ampSlider.value = String(bt);
-            const ampVal = document.getElementById('val_amplitude');
-            if (ampVal) ampVal.textContent = bt.toFixed(2);
-          }
-        }
-        const dmSlider = document.querySelector<HTMLInputElement>('input[data-key="dmHeightScale"]');
-        if (dmSlider) {
-          dmSlider.max = String(bt);
-          if (STATE.dmHeightScale > bt) {
-            STATE.dmHeightScale = bt;
-            dmSlider.value = String(bt);
-            const dmVal = document.getElementById('val_dmHeightScale');
-            if (dmVal) dmVal.textContent = bt.toFixed(2);
-          }
-        }
-      }
+      if (key === 'baseThickness' || key === 'amplitude' || key === 'dmHeightScale') syncDepthCaps();
 
       // Safe Z tracks material thickness
       if (key === 'baseThickness') {
@@ -802,6 +794,7 @@ function wireControls(): void {
         if (pill) pill.classList.remove('active');
       }
 
+      if (key === 'meshX' || key === 'meshY') updateEffectiveOffsetDisplay();
       debouncedGenerate(key);
     });
 
@@ -966,9 +959,8 @@ function wireSectionCollapse(): void {
     presetSel.addEventListener('change', () => {
       const key = presetSel.value;
       if (!key) return;
-      const p = CNC_PRESETS[key];
-      if (!p) return;
-      Object.keys(p).forEach(k => { (STATE as unknown as Record<string, unknown>)[k] = p[k]; });
+      if (!CNC_PRESETS[key]) return;
+      Object.assign(STATE, presetState(key));
       STATE.activePreset = key;
       STATE.activeProfile = null;
       buildSidebar();

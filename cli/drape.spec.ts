@@ -694,10 +694,10 @@ async function main(): Promise<void> {
     assert(fine.cellsX === 200 && fine.cellsY === 320 && Math.abs(mass(fine) - mass(SILK)) < 1e-9, 'a finer cloth keeps its mass per area', `${fine.cellsX} x ${fine.cellsY}`);
     const IN = 0.0254, std = new Float32Array([RELIEF_BACKING_IN * IN, (RELIEF_BACKING_IN + RELIEF_SPAN_IN) * IN]);
     const c4 = drapeCarveFor(4, 3, 12), out = remapToCarve(std, c4);
-    assert(Math.abs(out[0] / IN - 1) < 1e-6 && Math.abs(out[1] / IN - 4) < 1e-6, 'a 4 in board with 3 in of relief spans 1 to 4 in', `${(out[0] / IN).toFixed(4)} to ${(out[1] / IN).toFixed(4)} in`);
+    assert(Math.abs(out[0] / IN - MIN_DRAPE_BACKING_IN) < 1e-6 && Math.abs(out[1] / IN - 2.6) < 1e-6, 'oversized drape stock caps at 2.6 in and keeps 1/16 in backing', `${(out[0] / IN).toFixed(4)} to ${(out[1] / IN).toFixed(4)} in`);
     const thin = drapeCarveFor(1, 3, 12);
     assert(Math.abs(thin.backingIn - MIN_DRAPE_BACKING_IN) < 1e-12 && thin.stockIn === 1, 'relief depth is capped to keep the minimum backing', JSON.stringify(thin));
-    assert(drapeCarveFor(9, 0.5, 12).stockIn === 4 && drapeCarveFor(0.1, 0.05, 12).stockIn === 0.25, 'material thickness stays within 0.25 to 4 in');
+    assert(drapeCarveFor(9, 0.5, 12).stockIn === 2.6 && drapeCarveFor(0.1, 0.05, 12).stockIn === 0.25, 'material thickness stays within 0.25 to 2.6 in');
     const w9 = drapeCarveFor(0.75, 0.625, 9), wBig = drapeCarveFor(0.75, 0.625, 40), wSmall = drapeCarveFor(0.75, 0.625, 1);
     assert(w9.widthIn === 9 && w9.heightIn === 12 && wBig.widthIn === DRAPE_WIDTH_RANGE[1] && wBig.heightIn === 24 && wSmall.widthIn === DRAPE_WIDTH_RANGE[0]
       && Math.abs(PANEL_ASPECT - 0.75) < 1e-15, 'the carve keeps 3:4 and its width stays within 3 to 18 in (24 in tall at most, the bed)', JSON.stringify([w9, wBig.heightIn, wSmall.widthIn]));

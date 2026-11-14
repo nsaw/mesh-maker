@@ -39,14 +39,18 @@ export function attachValueEdit(valSpan: HTMLElement, sl: HTMLInputElement): voi
     let cancelled = false;
     const commit = (): void => {
       if (cancelled) return;
+      if (inp.value === current) { cancelled = true; valSpan.textContent = current; return; }
       const n = parseFloat(inp.value);
       if (!isNaN(n)) {
-        const step = parseFloat(sl.step) || 1;
-        const snapped = Math.round(n / step) * step;
+        const step = Number(sl.step);
+        const origin = Number(sl.min);
+        const snapped = Number.isFinite(step) && step > 0 ? origin + Math.round((n - origin) / step) * step : n;
         const clamped = Math.max(parseFloat(sl.min), Math.min(parseFloat(sl.max), snapped));
+        cancelled = true;
         sl.value = String(clamped);
         sl.dispatchEvent(new Event('input', { bubbles: true }));
       } else {
+        cancelled = true;
         valSpan.textContent = current;
       }
     };

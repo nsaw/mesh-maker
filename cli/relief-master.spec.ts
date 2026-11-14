@@ -86,6 +86,17 @@ async function main(): Promise<void> {
     assert(exact32, 'float32 heights decode bit-exactly (then / 25.4 in float64)');
   }
 
+  process.stdout.write('M10 stock thickness and depth caps\n');
+  {
+    const base = header({ units: 'in', cols: 2, rows: 2, width: 1, height: 1, backing: 1 / 16, stock: 2.6 });
+    await rejects('stock above 2.6 in', () => encodeReliefMaster({ ...base, stock: 2.7 }, Float64Array.from([0.3, 2.6, 2.6, 2.6])),
+      /Stock thickness 2\.700 in exceeds the 2\.6 in maximum/);
+    await rejects('thick stock with a shallow relief', () => encodeReliefMaster({ ...base, stock: 3 }, new Float64Array(4).fill(2.5)),
+      /Stock thickness 3\.000/);
+    const exact = await parseReliefMaster(await encodeReliefMaster(base, Float64Array.from([1 / 16, 2.6, 2.6, 2.6])));
+    assert(exact.stockIn === 2.6 && exact.heightsIn[0] === 2.6, '2.6 in stock with 1/16 in backing is accepted without remapping heights');
+  }
+
   process.stdout.write('M2 asymmetric calibration through the STL writer\n');
   {
     const surface = reliefMasterSurface(topDown, true) as ExportSurface;

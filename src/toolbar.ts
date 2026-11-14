@@ -1,8 +1,9 @@
+import { updateEffectiveOffsetDisplay } from './sbp-export';
 import { STATE, demoDepthMap, restoreNoiseDims, saveNoiseDims, serializeConfig } from './state';
 import { generateMesh } from './mesh';
 import { renderViewport, setCameraFromState, resizeCanvas } from './render';
 import { doExport } from './export';
-import { applyPendingFit, applyReliefMasterControls, buildSidebar, updateSectionVisibility, fitMeshToAspect, randomSeed, showDemoDepthMap } from './ui';
+import { applyPendingFit, applyReliefMasterControls, buildSidebar, syncDepthCaps, updateSectionVisibility, fitMeshToAspect, randomSeed, showDemoDepthMap } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
 import { ensureDrapeFigure, restoreSizeAfterDrape, setDrapeFrontView } from './drape-ui';
@@ -20,7 +21,8 @@ export function setupTabs(): void {
 
       // Leaving DRAPE: give the other tabs back the size controls its relief took over, then switch
       // as if from the tab the user was on before DRAPE (a page opened on DRAPE counts as NOISE).
-      if (prevMode === 'drape' && STATE.mode !== 'drape') { prevMode = restoreSizeAfterDrape() ?? 'noise'; buildSidebar(); }
+      const leavingDrape = prevMode === 'drape' && STATE.mode !== 'drape';
+      if (leavingDrape) prevMode = restoreSizeAfterDrape() ?? 'noise';
 
       // NOISE's board (size and material thickness) is kept while another tab owns the controls.
       if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'drape')) saveNoiseDims();
@@ -52,6 +54,9 @@ export function setupTabs(): void {
         buildSidebar();
       }
 
+      // Restore the destination's stock before building its controls, which clamps its cut depth.
+      if (leavingDrape) buildSidebar();
+      syncDepthCaps();
       generateMesh();
     });
   });
@@ -81,6 +86,7 @@ export function setupTabs(): void {
 /** Show/hide export-bar controls and sidebar SBP section based on current format */
 export function updateExportControls(): void {
   const isSBP = STATE.exportFormat === 'sbp';
+  updateEffectiveOffsetDisplay();
 
   // Toggle mesh-export controls (irrelevant for SBP)
   const meshControls = ['chkWatertight', 'chkBinary', 'chk3dmPointCloud'];

@@ -32,10 +32,12 @@
  */
 import { compensateForTool, createDropCutter, createTipLipschitzField, profileOf, toolZOffset } from '../src/sbp/compensate';
 import { generateSBP } from '../src/sbp/generate';
+import { STATE } from '../src/state';
+import { buildConfig, SBP_STATE } from '../src/sbp-export';
 import { generateFinishing } from '../src/sbp/finishing';
 import { stateToHeightmap } from '../src/sbp/heightmap';
 import { getDefaultConfig, getEmbeddedTools } from '../src/sbp/tools';
-import { ToolType, type Heightmap, type SbpConfig, type ToolDef } from '../src/sbp/types';
+import { effectiveWorkOffsets, MAX_CUT_DEPTH_IN, ToolType, type Heightmap, type SbpConfig, type ToolDef } from '../src/sbp/types';
 import { compareCut, cutterProfile, parseSbp, simulateCut, triangulatedTarget } from './cut-sim';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -63,6 +65,42 @@ const ball: ToolDef = { ...toolOf('Chipbreaker'), name: 'probe ball R0.1', type:
 const radiused: ToolDef = { ...toolOf('Chipbreaker'), name: 'probe radiused', type: 2, diameter: 0.25, tipRadius: 0.05, halfAngle: 0 };
 const cutters: ToolDef[] = [toolOf('R1/16-S1/4'), toolOf('R1/32-S1/4'), toolOf('Chipbreaker'), toolOf('60-deg'),
   toolOf('90-deg'), ball, radiused];
+
+// Limits are checked before compensation, including exact caps and translated STL heights.
+process.stdout.write('C12 stock-top carving depth and effective browser offsets\n');
+{
+  const run = (min: number, max: number, stock: number): string => {
+    const surface = stateToHeightmap([[min, max], [min, max]], 2, 2, 0.1, 0.1);
+    const config: SbpConfig = { ...getDefaultConfig(), materialX: 0.1, materialY: 0.1, materialZ: stock,
+      offsetX: 0, offsetY: 0, safeZ: 5, homeZ: 5.5, roughingEnabled: false };
+    try { return generateSBP(surface, config).sbp; }
+    catch (error) { return error instanceof Error ? error.message : String(error); }
+  };
+  assert(/Deepest cut 2\.610 in exceeds the 2\.6 in carving depth/.test(run(-0.01, 2.6, 2.6)),
+    'a 2.61 in cut is refused');
+  assert(run(0.01, 2.6, 2.6).includes('J3'), 'a 2.59 in cut generates');
+  assert(run(2.6 - MAX_CUT_DEPTH_IN, 2.6, 2.6).includes('J3'), 'an exact 2.6 in cut on its declared stock generates');
+  assert(/Deepest cut 2\.700/.test(run(0.3, 0.4, 3)), 'depth is measured below stock top, not by surface range');
+  assert(/Deepest cut 2\.700/.test(run(-0.2, 0.5, 2.5)), 'negative-Z normalization preserves depth below stock top');
+  assert(/Stock thickness 2\.610 in exceeds/.test(run(0.5, 2.61, 2.61)), 'stock above 2.6 in is refused even for a shallow cut');
+  assert(/Deepest cut 2\.650 in exceeds/.test(run(-0.1, 0.5, 2.55)), 'normalization cannot hide a cut that raises stock past 2.6 in');
+  const savedState = { ...STATE }, savedSbp = { ...SBP_STATE };
+  STATE.mode = 'noise';
+  SBP_STATE.stlBuffer = null;
+  SBP_STATE.offsetX = 2;
+  SBP_STATE.offsetY = 2;
+  for (const [x, y, expectedX, expectedY] of [[36, 24, 0, 0], [30, 20, 2, 2], [35, 23, 1, 1], [40, 25, 0, 0]]) {
+    const { offsetX, offsetY } = effectiveWorkOffsets(x, y, 2, 2);
+    assert(offsetX === expectedX && offsetY === expectedY, `${x} x ${y} in part uses effective offsets ${expectedX}, ${expectedY}`);
+    STATE.meshX = x;
+    STATE.meshY = y;
+    const config = buildConfig();
+    assert(config.offsetX === expectedX && config.offsetY === expectedY && config.materialX === x && config.materialY === y,
+      `browser config uses the effective offsets and size for ${x} x ${y} in`);
+  }
+  Object.assign(STATE, savedState);
+  Object.assign(SBP_STATE, savedSbp);
+}
 
 // ---------- C1 brute-force oracle ----------
 process.stdout.write('C1 compensation equals a brute-force max over every grid point\n');

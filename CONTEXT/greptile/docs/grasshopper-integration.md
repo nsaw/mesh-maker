@@ -30,7 +30,9 @@ The `grasshopper/` directory ports the web app's mesh-generation math into nativ
 
 **Smooth** (`SMOOTH_SCRIPT`, at meshcraft_builder.py:897, standalone `grasshopper/components/smoother.py`) is a direct port of `weightedSmooth()` from `mesh.ts:153-174`: a 3x3 weighted-average kernel (center=4, cardinal=2, diagonal=1) applied `smooth_iter` times at `smooth_str` blend strength, operating on decomposed X/Y/Z arrays for speed.
 
-**Presets** (`PRESETS_SCRIPT`, at meshcraft_builder.py:950, standalone `grasshopper/components/presets.py`) is a static dictionary of named parameter bundles (`gentle-waves`, `organic-terrain`, ... `relief-vertical`, `relief-radial`, `relief-pockets`) whose outputs are meant to be manually rewired over the sliders on Noise/Shape/Smooth. The three `relief-*` presets carry the full `relief_*` key set and were tuned iteratively (see Risks) to match a physical reference panel ("lafabrica").
+**Presets** (`PRESETS_SCRIPT`, at meshcraft_builder.py:950, standalone `grasshopper/components/presets.py`) is a static dictionary of named parameter bundles (`gentle-waves`, `organic-terrain`, ... `relief-vertical`, `relief-radial`, `relief-pockets`) whose outputs are meant to be manually rewired over the sliders on Noise/Shape/Smooth. The relief preset dictionaries mirror the web values, with web-only stock thickness excluded. The parity suite compares TypeScript values against the Python dictionary as well as the two Python source copies.
+
+Slice 1 also adds `gabor_angle` and `gabor_bw` to the Presets component outputs. Its named pre-merge gate is to run the builder in Rhino 7 and confirm one preset generates. Text/value parity cannot establish that a saved definition has the new output pins.
 
 ## Coupling
 

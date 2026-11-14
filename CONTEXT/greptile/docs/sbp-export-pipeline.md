@@ -32,7 +32,9 @@ Both paths converge on the same `generateSBP` function (`src/sbp/generate.ts`), 
 
 ## Config resolution
 
-`buildConfig()` in `sbp-export.ts` starts from `getDefaultConfig(profile)` (`src/sbp/tools.ts`), then layers in UI state: enable flags, `stockTopIn()` (`src/state.ts`: the active relief master's stock, else `STATE.baseThickness`) as `materialZ`, offsets, safe/home Z, leave-stock, raster angle, and per-parameter overrides (feed rate, plunge rate, RPM, stepdown, stepover) the user dragged from the profile default. `src/sbp/tools.ts` embeds a fixed ATC tool table (`EMBEDDED_TOOLS`) with geometry (type, diameter, tip radius, half-angle) and per-`MaterialProfile` (`general`/`mdf`/`hardwood`) cutting params sourced from Vectric `.vtdb` exports; `resolveCutting` falls back to `general` then the first available profile. Default roughing tool is the "Chipbreaker" end mill; default finishing tool is "TBN R1/16-S1/4" (tapered ball nose).
+`buildConfig()` in `sbp-export.ts` starts from `getDefaultConfig(profile)` (`src/sbp/tools.ts`), then layers in UI state: enable flags, `stockTopIn()` (`src/state.ts`: the active relief master's stock, else `STATE.baseThickness`) as `materialZ`, effective offsets, safe/home Z, leave-stock, raster angle, and per-parameter overrides (feed rate, plunge rate, RPM, stepdown, stepover) the user dragged from the profile default. `src/sbp/tools.ts` embeds a fixed ATC tool table (`EMBEDDED_TOOLS`) with geometry (type, diameter, tip radius, half-angle) and per-`MaterialProfile` (`general`/`mdf`/`hardwood`) cutting params sourced from Vectric `.vtdb` exports; `resolveCutting` falls back to `general` then the first available profile. Default roughing tool is the "Chipbreaker" end mill; default finishing tool is "TBN R1/16-S1/4" (tapered ball nose).
+
+Browser offsets retain the preferred value where it fits, clamping each axis to the bed space left by the source. The sidebar reports the effective placement. For uploaded STLs, upload parsing records dimensions, the readout accounts for raster rounding, and the worker clamps again against the actual raster extent. Oversized parts still fail the shared travel check. CLI offsets are not silently clamped.
 
 ## Stage 1: getting a heightmap
 
@@ -43,7 +45,7 @@ A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows
 
 ## Stage 2: Z normalization
 
-`generateSBP` (`src/sbp/generate.ts`) first calls internal `normalizeZ`, which shifts the entire grid up if any Z value is negative (so all cutting is above the table), and bumps `config.materialZ` up if it doesn't already clear the surface's max Z plus a small margin. This guarantees stock thickness is never thinner than the tallest point on the part, which the finishing stage's boundary traverse (see below) depends on.
+`generateSBP` (`src/sbp/generate.ts`) first calls internal `normalizeZ`. A negative surface is translated upward together with its stock top, preserving depth below stock. The resulting materialZ is at least the maximum surface height, with no extra 0.01 in allowance when stock already covers the surface. The shared generator refuses stock above `MAX_STOCK_THICKNESS_IN` and depth below stock top above `MAX_CUT_DEPTH_IN`, both 2.6 in. Safe/home Z still obey the separate 6 in machine travel bound.
 
 ## Stage 3: tool compensation
 
@@ -58,6 +60,8 @@ A `Heightmap` (`src/sbp/types.ts`) is a regular `Float64Array` Z-grid plus `rows
 
 ## Stage 5: writing OpenSBP
 
+Formatted lines are compacted into bounded text batches before the complete SBP string is joined. This avoids retaining a separate string and array slot for every move during final allocation. The complete-string API, move order, precision and line terminators are unchanged. `npm run test:sbp-writer` compares output bytes against pre-batching snapshots, including section boundaries and retract branches.
+
 `writeSBP` (`src/sbp/writer.ts`) serializes header comments (material extents, home/safe Z), then per-section tool-change (`C9`), spindle-on (`C6`/`TR`), and feed-rate (`MS`) commands, followed by move lines: `J3` for rapids, `M3` for cuts, 6 decimal places. It inserts an intermediate retract-to-`safeZ` `J3` when transitioning from a cut back to a rapid, and a final home move (`J3` then `JZ` to `homeZ`) at the very end. The format is stated as verified line-by-line against Aspire reference output — any layout change here should be diffed against a known-good reference file, not just visually inspected.
 
 ## Change checklist
@@ -66,7 +70,7 @@ When these files or sections are changed, remember to consider these:
 
 - If `SbpConfig` or `ToolDef`/`CuttingParams` in `src/sbp/types.ts` change shape, update all three producers of `SbpConfig` (`getDefaultConfig` in `src/sbp/tools.ts`, `buildConfig` in `src/sbp-export.ts`) and the worker's `WorkerInput`/message contract in `src/sbp/worker.ts`, which structurally clones the config across the postMessage boundary with no schema validation.
 - If `ToolType` gains a new variant or geometry parameter, `toolZOffset` in `src/sbp/compensate.ts` and `cutterProfile` in `cli/cut-sim.ts` must both add a branch. An unhandled type throws in both (it used to fall silently into a flat end mill).
-- If the roughing floor (0.050", `src/sbp/roughing.ts`) or the finishing traverse height contract (`materialZ` must clear all surface points, enforced by `normalizeZ` in `src/sbp/generate.ts`) changes, re-verify `generateFinishing`'s boundary-traverse assumption in `src/sbp/finishing.ts` — it throws instead of silently gouging, so a `normalizeZ` change that stops guaranteeing headroom will surface as a hard export failure, not corrupted G-code.
+- If the roughing floor (0.050", `src/sbp/roughing.ts`) or the finishing traverse height contract (`materialZ` must clear all surface points, enforced by `normalizeZ` in `src/sbp/generate.ts`) changes, re-verify `generateFinishing`'s boundary-traverse assumption in `src/sbp/finishing.ts` — it throws instead of silently gouging, so a `normalizeZ` change that leaves stock below the surface will surface as a hard export failure, not corrupted G-code.
 - If `src/sbp/writer.ts`'s move/command format changes, re-diff full sample output against the Aspire reference; the format comment states it was verified line-by-line and downstream ShopBot controllers parse it literally.
 - The Voronoi-relief stepover warning in `src/sbp-export.ts` (`buildReliefStepoverWarning`) hardcodes a physical seam-width derivation tied to `voronoi-relief.ts`'s seam smoothstep gate; if that noise algorithm's seam geometry changes, this warning's math goes stale silently (it will just produce a wrong recommended stepover, not an error).
 

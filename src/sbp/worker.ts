@@ -4,6 +4,7 @@ import { parseSTLBinary } from './stl-parser';
 import { meshToHeightmap } from './heightmap';
 import { generateSBP } from './generate';
 import type { Heightmap, SbpConfig, SbpStats } from './types';
+import { effectiveWorkOffsets } from './types';
 
 /** An uploaded STL (rasterized here) or a ready heightmap (the current surface or relief master). */
 export type SbpWorkerInput =
@@ -25,7 +26,9 @@ self.onmessage = (e: MessageEvent<SbpWorkerInput>) => {
     if (input.kind === 'stl') {
       const { data, count, bounds } = parseSTLBinary(input.stlBuffer);
       heightmap = meshToHeightmap(data, count, bounds, input.resolution);
-      config = { ...input.config, materialX: heightmap.meshX, materialY: heightmap.meshY };
+      config = { ...input.config, materialX: heightmap.meshX, materialY: heightmap.meshY,
+        ...effectiveWorkOffsets((heightmap.cols - 1) * heightmap.cellSize, (heightmap.rows - 1) * heightmap.cellSizeY,
+          input.config.offsetX, input.config.offsetY) };
     } else {
       heightmap = input.heightmap;
       config = input.config;

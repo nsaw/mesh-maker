@@ -780,3 +780,15 @@ body.mode-depthmap .noise-only { display: none; }
   .export-bar { flex-wrap: wrap; gap: 6px; padding: 8px 10px; padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)); }
   .export-bar .filename-input { max-width: none; flex-basis: 100%; }
 }
+
+/* Preset modifiers and the offsets actually used for export. */
+.profile-note, .cnc-note {
+  margin-top: 6px;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.cnc-note.cnc-warn { color: var(--warn); }
+
+.inline-row .control-label > span:first-child { white-space: nowrap; }

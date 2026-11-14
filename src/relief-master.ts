@@ -17,7 +17,7 @@
  * heights bytes exactly as stored; a mismatch rejects the file.
  */
 
-import { MACHINE_TRAVEL_IN, MACHINE_TRAVEL_TOLERANCE_IN } from './sbp/types';
+import { MACHINE_TRAVEL_IN, MACHINE_TRAVEL_TOLERANCE_IN, MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN } from './sbp/types';
 
 export const RELIEF_MAGIC = 'MCRELIEF';
 export const RELIEF_EXTENSION = '.mcrelief';
@@ -147,6 +147,9 @@ export async function parseReliefMaster(buf: ArrayBuffer): Promise<ReliefMaster>
   if (widthIn > MACHINE_TRAVEL_IN.x + T || heightIn > MACHINE_TRAVEL_IN.y + T || stockIn > MACHINE_TRAVEL_IN.z + T)
     fail(`${widthIn.toFixed(2)} (X) x ${heightIn.toFixed(2)} (Y) x ${stockIn.toFixed(2)} (Z) in exceeds the ${MACHINE_TRAVEL_IN.x} x ${MACHINE_TRAVEL_IN.y} x ${MACHINE_TRAVEL_IN.z} in machine`);
 
+  if (stockIn > MAX_STOCK_THICKNESS_IN + T)
+    fail(`Stock thickness ${stockIn.toFixed(3)} in exceeds the ${MAX_STOCK_THICKNESS_IN} in maximum`);
+
   const bpv = header.dtype === 'float32' ? 4 : 8;
   const dataStart = Math.ceil((12 + hLen) / 8) * 8;
   const n = cols * rows;
@@ -164,6 +167,7 @@ export async function parseReliefMaster(buf: ArrayBuffer): Promise<ReliefMaster>
   const heightsIn = new Float64Array(n);
   const mask = maskBytes ? new Uint8Array(n) : null;
   const topDown = header.rowOrder === 'top-down';
+  let minHeight = Infinity;
   for (let r = 0; r < rows; r++) {
     const j = topDown ? rows - 1 - r : r;
     for (let c = 0; c < cols; c++) {
@@ -172,10 +176,14 @@ export async function parseReliefMaster(buf: ArrayBuffer): Promise<ReliefMaster>
       const h = v / k;
       if (!Number.isFinite(h)) fail(`non-finite height at row ${r}, column ${c}`);
       if (h < 0 || h > stockIn + STOCK_TOLERANCE_IN) fail(`height ${h.toFixed(5)} in at row ${r}, column ${c} is outside [0, stock]`);
+      minHeight = Math.min(minHeight, h);
       heightsIn[j * cols + c] = h;
       if (mask && maskBytes) mask[j * cols + c] = maskBytes[src] ? 1 : 0;
     }
   }
+  const deepestCut = stockIn - minHeight;
+  if (deepestCut > MAX_CUT_DEPTH_IN + STOCK_TOLERANCE_IN)
+    fail(`Deepest cut ${deepestCut.toFixed(3)} in exceeds the ${MAX_CUT_DEPTH_IN} in carving depth`);
   return {
     header, cols, rows, widthIn, heightIn, backingIn, stockIn, heightsIn, mask,
     diagonalZ00Z11: diagonalIsZ00Z11(header.triangulation),
