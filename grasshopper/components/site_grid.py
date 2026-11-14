@@ -271,3 +271,74 @@ class _SiteGrid(object):
                 return best
             ring += 1
         return best
+
+    def nearest_four(self, x, y, cos_a=1.0, sin_a=0.0, scale=1.0):
+        if x != x or y != y or abs(x) > self.MAX_COORDINATE or abs(y) > self.MAX_COORDINATE:
+            raise ValueError('Site query coordinates exceed supported numeric range')
+        cx = self._column(x)
+        cy = self._row(y)
+        f1 = float('inf'); f2 = float('inf'); f3 = float('inf'); f4 = float('inf')
+        idx = 0; idx2 = -1; idx3 = -1; idx4 = -1
+        isotropic = scale <= 1.0001
+        precedes = self.ordering(self.sites, x, y, cos_a, sin_a, scale, coordinate_scale=self.coordinate_scale)
+        factor = 1.0 if isotropic else max(1.0, abs(cos_a) + abs(sin_a)) * max(1.0, abs(scale))
+        error = 256 * self.EPSILON * max(1.0, self.coordinate_scale, abs(x), abs(y)) * factor
+        # Rotation is supplied as cos/sin. Account for its rounded norm in pruning.
+        minimum_scale = 1.0 if isotropic else min(1.0, abs(scale)) * math.hypot(cos_a, sin_a)
+        # Distance to the occupied bounds on the perpendicular axis strengthens the bound
+        # for collinear populations and warped queries outside the board.
+        dx_bounds = max(0.0, self.min_x - x, x - self.max_x)
+        dy_bounds = max(0.0, self.min_y - y, y - self.max_y)
+        ring = 0
+        while ring < max(self.columns, self.rows):
+            left = max(0, cx - ring)
+            right = min(self.columns - 1, cx + ring)
+            bottom = max(0, cy - ring)
+            top = min(self.rows - 1, cy + ring)
+            keys = []
+            if ring == 0:
+                keys.append((cx, cy))
+            else:
+                if cy - ring >= 0:
+                    keys.extend((i, cy - ring) for i in range(left, right + 1))
+                if cy + ring < self.rows:
+                    keys.extend((i, cy + ring) for i in range(left, right + 1))
+                y0 = max(0, cy - ring + 1)
+                y1 = min(self.rows - 1, cy + ring - 1)
+                if cx - ring >= 0:
+                    keys.extend((cx - ring, j) for j in range(y0, y1 + 1))
+                if cx + ring < self.columns:
+                    keys.extend((cx + ring, j) for j in range(y0, y1 + 1))
+            for key in keys:
+                for index in self.buckets.get(key, ()):
+                    dx = self.sites[index][0] - x
+                    dy = self.sites[index][1] - y
+                    if isotropic:
+                        d = math.sqrt(dx * dx + dy * dy)
+                    else:
+                        xr = dx * cos_a + dy * sin_a
+                        yr = -dx * sin_a + dy * cos_a
+                        d = math.sqrt((xr * scale) ** 2 + yr * yr)
+                    if precedes(index, idx, d, f1): f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = index
+                    elif precedes(index, idx2, d, f2): f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = index
+                    elif precedes(index, idx3, d, f3): f4 = f3; idx4 = idx3; f3 = d; idx3 = index
+                    elif precedes(index, idx4, d, f4): f4 = d; idx4 = index
+            if left == 0 and right == self.columns - 1 and bottom == 0 and top == self.rows - 1:
+                break
+            bounds = []
+            if left > 0:
+                bounds.append(max(0.0, x - (self.min_x + left * self.spacing)) ** 2 + dy_bounds * dy_bounds)
+            if right < self.columns - 1:
+                bounds.append(max(0.0, self.min_x + (right + 1) * self.spacing - x) ** 2 + dy_bounds * dy_bounds)
+            if bottom > 0:
+                bounds.append(max(0.0, y - (self.min_y + bottom * self.spacing)) ** 2 + dx_bounds * dx_bounds)
+            if top < self.rows - 1:
+                bounds.append(max(0.0, self.min_y + (top + 1) * self.spacing - y) ** 2 + dx_bounds * dx_bounds)
+            # Strict inequality retains tied lower-index sites in unvisited buckets.
+            if math.sqrt(min(bounds)) * minimum_scale > f4 + error + 16 * self.EPSILON * max(1.0, f4):
+                break
+            ring += 1
+        if f2 == float('inf'): idx2 = -1
+        if f3 == float('inf'): idx3 = -1
+        if f4 == float('inf'): idx4 = -1
+        return f1, f2, f3, f4, idx, idx2, idx3, idx4

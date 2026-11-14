@@ -20,7 +20,7 @@
     "test:presets:geometry": "tsx cli/presets.spec.ts --geometry",
     "test:presets:export": "tsx cli/presets.spec.ts --export",
     "test:gh-parity": "tsx cli/grasshopper-parity.spec.ts",
-    "test:gh-site-grid": "python3 scripts/test-gh-site-grid.py",
+    "test:gh-site-grid": "python3 scripts/test-gh-site-grid.py && python3 scripts/test-gh-rank-measurement.py",
     "test:drape": "tsx cli/drape.spec.ts",
     "test:drape-parity": "tsx cli/drape-parity.spec.ts",
     "test:depthmap": "tsx cli/depthmap.spec.ts",
