@@ -1,3 +1,5 @@
+import { gaussianFftPass } from './gaussian-fft';
+
 /** Shortest-diagonal quad split: returns true when z00-z11 diagonal has smaller
  *  Z-difference than z10-z01, meaning callers should split along z00-z11.
  *  z00=(j,i)  z10=(j,i+1)  z01=(j+1,i)  z11=(j+1,i+1) */
@@ -104,27 +106,38 @@ export function gridMinMax(grid: number[][], rows: number, cols: number): [numbe
   return [min, max];
 }
 
-/** Weighted 3x3 kernel smoothing (center 4, edge 2, corner 1), `iterations` passes at
- *  `strength` lerp. Used by the noise and depth-map smoothing in mesh.ts. */
-export function weightedSmooth(verts: number[][], rows: number, cols: number, iterations: number, strength: number): number[][] {
-  let sm = verts;
-  for (let iter = 0; iter < iterations; iter++) {
-    const nv: number[][] = [];
-    for (let j = 0; j < rows; j++) {
-      nv[j] = [];
-      for (let i = 0; i < cols; i++) {
-        let ws = 0, tw = 0;
-        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-          const nj = j + dj, ni = i + di;
-          if (nj >= 0 && nj < rows && ni >= 0 && ni < cols) {
-            const w = (dj === 0 && di === 0) ? 4 : (dj === 0 || di === 0) ? 2 : 1;
-            ws += sm[nj][ni] * w; tw += w;
-          }
-        }
-        nv[j][i] = sm[j][i] * (1 - strength) + (ws / tw) * strength;
+/** Separable Gaussian with sigma in inches and a three-sigma support. Trapezoidal
+ *  endpoint weights integrate the bounded panel without resolution-dependent edge bias.
+ *  Each clipped kernel is renormalized so a constant surface stays constant. */
+export function gaussianSmooth(
+  verts: number[][], rows: number, cols: number, meshX: number, meshY: number, sigmaIn: number,
+): number[][] {
+  if (!(sigmaIn > 0) || !Number.isFinite(sigmaIn)) return verts;
+  // Preserve exact flatness before scalar min/max mapping can amplify roundoff.
+  if (verts.every(row => row.every(z => z === verts[0][0]))) return verts;
+  const kernel = (pitch: number, size: number): number[] => {
+    const radius = Math.min(size - 1, Math.ceil(3 * sigmaIn / pitch));
+    return Array.from({ length: radius + 1 }, (_, i) => Math.exp(-0.5 * (i * pitch / sigmaIn) ** 2));
+  };
+  const kx = kernel(meshX / (cols - 1), cols);
+  const ky = kernel(meshY / (rows - 1), rows);
+  const pass = (source: number[][], weights: number[], horizontal: boolean): number[][] => {
+    if (weights.length > 32) return gaussianFftPass(source, weights, horizontal);
+    const out = Array.from({ length: rows }, () => new Array<number>(cols));
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      let sum = 0, total = 0;
+      for (let d = 1 - weights.length; d < weights.length; d++) {
+        const x = horizontal ? i + d : i, y = horizontal ? j : j + d;
+        if (x < 0 || x >= cols || y < 0 || y >= rows) continue;
+        const axisIndex = horizontal ? x : y;
+        const axisSize = horizontal ? cols : rows;
+        const weight = weights[Math.abs(d)] * (axisIndex === 0 || axisIndex === axisSize - 1 ? 0.5 : 1);
+        sum += source[y][x] * weight;
+        total += weight;
       }
+      out[j][i] = sum / total;
     }
-    sm = nv;
-  }
-  return sm;
+    return out;
+  };
+  return pass(pass(verts, kx, true), ky, false);
 }

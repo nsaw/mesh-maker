@@ -101,7 +101,7 @@ On `MeshCraft | Shape`:
 | `seam_depth`      | 0.5              | v18 wall extent — fraction of the per-cell inradius (past the crest plateau) the wall spans before the flat floor begins. 0.5 leaves ~25-35% of each cell as floor; higher values push the floor edge toward the cell center. |
 | `base_amp`        | 0.0              | v16 base wave amplitude — cells are carved INTO this undulating surface. 0 reproduces V1's flat-base look. |
 | `base_freq`       | 0.05             | Base wave spatial frequency (per panel unit). |
-| `wall_width`      | 0.0              | v18 crest plateau: a small physical band on the shared boundary held at ridge level (`crest_w = wall_width × cell_size / 2`). Small values (0.08-0.15) are already strong. |
+| `wall_width`      | 0.0              | v18 nominal crest plateau on the shared boundary (`crest_w = wall_width × cell_size / 2` before modulation and local clamps). Local inradius and wall-width caps can narrow or collapse it; this input does not guarantee a minimum physical ridge width. |
 | `density_noise`   | 0.0              | 0..1.5 patchy cell-size noise (giant cells next to small ones). |
 | `density_noise_freq` | 0.08          | Patch spatial frequency (lower = larger patches). |
 | `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). |
@@ -167,7 +167,7 @@ deltas; only port if the inner loop is actually the bottleneck.
 
 - [ ] Unconnect `attractor_pt` → uniform cells of size ≈ `cell_size`.
 - [ ] `base_amp = 0.7` → ridge tops visibly undulate; `base_amp = 0` → V1 flat-base look.
-- [ ] `wall_width = 0.08` → a narrow crest plateau rides every shared boundary, not knife edges.
+- [ ] `wall_width = 0.08` → inspect crest plateaus and local narrowing/collapse at shared boundaries; the nominal input alone does not certify their physical width.
 - [ ] `seam_depth = 0.5` → connected tessellation: walls span boundary→floor with flat inset-polygon floors (~25-35% of each cell); `seam_depth = 1.0` → floors shrink to points (pure bowls).
 - [ ] `density_noise = 0.9` → giant cells next to small-cell patches.
 - [ ] `pillow = 0.55` → some pocket floors rise into central mounds (double curvature); `pillow_coverage` varies how many (web presets ship `pillow = 0` — the reference reads flat-floored).

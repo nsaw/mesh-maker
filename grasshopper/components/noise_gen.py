@@ -34,13 +34,13 @@ def _relief_default(name, default):
         return default
     return default if v is None else v
 
+relief_cut_depth_in        = _relief_default('relief_cut_depth_in',        0.65)
 relief_cell_size           = _relief_default('relief_cell_size',           1.5)
 relief_jitter              = _relief_default('relief_jitter',              0.7)
 relief_relax_iter          = _relief_default('relief_relax_iter',          1)
 relief_polarity            = _relief_default('relief_polarity',            'domes')        # 'domes' | 'pockets'
 relief_profile             = _relief_default('relief_profile',             'hemisphere')   # 'hemisphere' | 'cosine' | 'parabolic'
 relief_seam_depth          = _relief_default('relief_seam_depth',          0.6)
-relief_seam_width          = _relief_default('relief_seam_width',          0.15)
 relief_anisotropy          = _relief_default('relief_anisotropy',          0.0)
 relief_anisotropy_angle    = _relief_default('relief_anisotropy_angle',    0.0)
 relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')         # 'none'|'vertical'|'horizontal'|'radial'|'point'
@@ -476,7 +476,7 @@ class VoronoiReliefNoise(object):
     STOCK_CAP_SPAN = 0.13
     # v21.1 slope budget (normalized depth per inch of wall extent), sized against the
     # tempered profile family's PEAK slope: ~68 deg at the default 2.4in cut depth.
-    SLOPE_DEPTH_BUDGET = 0.55
+    SLOPE_DEPTH_BUDGET = 0.4
     # v21.1 minimum feature floors — PHYSICAL constants (tool-radius scale), never
     # derived from sample pitch (geometry must not change shape with grid resolution).
     WALL_MIN_PHYS = 0.3
@@ -489,6 +489,18 @@ class VoronoiReliefNoise(object):
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
+    def _representative_indices(self, length, limit, retained=()):
+        # One population, required focal nuclei, original order for Cartesian-prefix pinning.
+        indices = list(range(length))
+        if length <= limit:
+            return indices
+        required = set(retained)
+        available = [i for i in indices if i not in required]
+        count = limit - len(required)
+        for i in range(count):
+            chosen = i + int(self._rand() * (len(available) - i))
+            available[i], available[chosen] = available[chosen], available[i]
+        return sorted(list(retained) + available[:count])
     def _gen_sites(self, p, density_gen, exclusion_foci, exclusion_r, suppress_gen):
         # v16: sites live on the unwarped jittered grid and are NEVER displaced — cell flow
         # comes entirely from warping the query points (see _make_warp). Density is modulated
@@ -509,9 +521,7 @@ class VoronoiReliefNoise(object):
         sites = []
         # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
-            if len(sites) >= self.SITE_COUNT_MAX: break
             for i in range(nx):
-                if len(sites) >= self.SITE_COUNT_MAX: break
                 cx = (i + 0.5) * sx; cy = (j + 0.5) * sy
                 u = cx / p['mesh_x']; v = cy / p['mesh_y']
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
@@ -537,7 +547,6 @@ class VoronoiReliefNoise(object):
                 if self._rand() < (local - math.floor(local)):
                     reps += 1
                 for _ in range(reps):
-                    if len(sites) >= self.SITE_COUNT_MAX: break
                     jx = (self._rand() - 0.5) * p['jitter'] * sx
                     jy = (self._rand() - 0.5) * p['jitter'] * sy
                     px = max(0.0, min(p['mesh_x'], cx + jx))
@@ -607,6 +616,36 @@ class VoronoiReliefNoise(object):
             qy = y + flow_gen.noise(x * flow_freq + 31.7, y * flow_freq + 17.3) * flow_amp
             return qx, qy
         return warp
+    def _check_site_work(self, foci_count, zone_r, cell_size, radial_strength, radial_grow, mesh_x, mesh_y):
+        # Shared candidate-loop budget, before ceil/int sizing or either allocation path.
+        def refuse():
+            raise ValueError('Relief site enumeration exceeds supported work budget')
+        values = [zone_r, cell_size, mesh_x, mesh_y]
+        if any(v != v or abs(v) == float('inf') for v in values) or mesh_x <= 0.0 or mesh_y <= 0.0 or cell_size <= 0.0:
+            refuse()
+        budget = 5000000.0
+        spacing = max(0.2, cell_size)
+        x_cells = mesh_x / spacing
+        y_cells = mesh_y / spacing
+        if any(v != v or abs(v) == float('inf') or v > budget for v in [x_cells, y_cells]):
+            refuse()
+        work = max(2, math.ceil(x_cells) + 1.0) * max(2, math.ceil(y_cells) + 1.0) * self.LOCAL_DENSITY_MAX
+        if work != work or work == float('inf') or work > budget:
+            refuse()
+        if foci_count > 0:
+            pitch = max(0.3, cell_size * self.POLAR_TANGENTIAL_PITCH_CELLS
+                        * (1.0 + 0.5 * max(0.0, min(2.0, 1.0 if radial_grow > 1.0 else radial_grow))))
+            ring_bound = zone_r / (pitch * 0.8)
+            if ring_bound != ring_bound or ring_bound == float('inf') or ring_bound > budget:
+                refuse()
+            rings = math.ceil(ring_bound) + 1.0
+            max_gap = pitch * (1.0 + radial_strength) * (1.0 + 0.1 * rings)
+            sector_bound = 2.0 * math.pi * (zone_r + max_gap * 0.5) / pitch
+            if sector_bound != sector_bound or sector_bound == float('inf') or sector_bound > budget:
+                refuse()
+            work += foci_count * (1.0 + rings * max(4, math.ceil(sector_bound)))
+        if work != work or work == float('inf') or work > budget:
+            refuse()
     def _gen_polar_sites(self, foci_phys, zone_r, cell_size, radial_strength, radial_grow, jitter_amt, mode, mesh_x, mesh_y, sites):
         # Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus
         # jittered concentric rings whose RADIAL gap is (1 + radialStrength) x the
@@ -622,8 +661,9 @@ class VoronoiReliefNoise(object):
                       * (1.0 + 0.5 * max(0.0, min(2.0, pitch_grow))))
         elong = 1.0 + max(0.0, min(4.0, radial_strength))
         margin = max(0.2, cell_size)
+        nuclei = []
         for k in range(len(foci_phys)):
-            if len(sites) >= self.SITE_COUNT_MAX: break
+            nuclei.append(len(sites))
             cpx = foci_phys[k][0]; cpy = foci_phys[k][1]
             sites.append([
                 max(0.0, min(mesh_x, cpx + (self._rand() - 0.5) * 0.2 * pitch_t)),
@@ -633,7 +673,7 @@ class VoronoiReliefNoise(object):
             r = pitch_t * 0.75
             ring = 0
             sectors_locked = 0
-            while r < zone_r and len(sites) < self.SITE_COUNT_MAX:
+            while r < zone_r:
                 if mode == 'rings':
                     gap = pitch_t * 0.8
                     pitch = pitch_t * elong
@@ -651,7 +691,6 @@ class VoronoiReliefNoise(object):
                 drop_p = 0.1 if fan else 0.25
                 jit_scale = 0.35 if fan else 1.0
                 for si in range(sectors):
-                    if len(sites) >= self.SITE_COUNT_MAX: break
                     # v17 sector dropout — random spoke deletion breaks radial regularity.
                     if self._rand() < drop_p * jitter_amt: continue
                     th = (base_theta + spiral_off + ((si + 0.5) / float(sectors)) * 2.0 * math.pi
@@ -667,6 +706,7 @@ class VoronoiReliefNoise(object):
                         0.0])
                 r += gap
                 ring += 1
+        return nuclei
     def _nearest_three(self, sites, x, y, cosA, sinA, aniso_scale):
         # CONSTANT anisotropic metric (v16 removed per-pixel rotation — a constant frame
         # cannot tear ownership). F3 drives junction detection: at a three-way Voronoi
@@ -792,31 +832,28 @@ class VoronoiReliefNoise(object):
         # field at the site position — neighboring cells lean and inflate together.
         panel_field_gen = SimplexNoise(seed + 17 + 61)
         PANEL_FIELD_FREQ = 0.045
+        self._check_site_work(len(foci_phys), zone_r, p['cell_size'], radial_strength,
+                              radial_grow, p['mesh_x'], p['mesh_y'])
         sites = self._gen_sites(p, density_noise_gen,
                                 foci_phys if starburst_active else [],
                                 zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
                                 suppress_gen)
-        cartesian_count = len(sites)
+        original_cartesian_count = len(sites)
+        nuclei = []
         if starburst_active:
-            # Polar sites must survive the global cap — generate into a scratch list,
-            # then trim the Cartesian TAIL to reserve capacity (Cartesian-first ordering
-            # is what pinned_from relies on).
-            polar = []
-            self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
-                                  radial_grow, radial_warp_amt, radial_mode,
-                                  p['mesh_x'], p['mesh_y'], polar)
-            budget = max(0, self.SITE_COUNT_MAX - len(polar))
-            if len(sites) > budget:
-                del sites[budget:]
-            cartesian_count = len(sites)
-            sites.extend(polar)
+            nuclei = self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
+                                           radial_grow, radial_warp_amt, radial_mode,
+                                           p['mesh_x'], p['mesh_y'], sites)
+        selected = self._representative_indices(len(sites), self.SITE_COUNT_MAX, nuclei)
+        sites = [sites[i] for i in selected]
+        cartesian_count = sum(1 for i in selected if i < original_cartesian_count)
         if not sites:
             return [0.0] * (p['cols'] * p['rows'])
         # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
         # erase their deliberate radial elongation).
         relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
         if relax_iter > 0:
-            lloyd_samples = min(8192, len(sites) * 64)
+            lloyd_samples = len(sites) * 64
             for _ in range(relax_iter):
                 self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
         # NaN guards on the constant metric frame — mirrors the TS sampler's defensive
@@ -929,7 +966,9 @@ class VoronoiReliefNoise(object):
         # can descend at the aesthetic ceiling) and BLENDED across the nearest edges per
         # pixel — dissolution lifts boundaries off zero, so unblended per-cell factors
         # would step there.
+        cut_depth_in = max(0.05, min(2.6, _finite(p.get('cut_depth_in', 2.4), 2.4)))
         static_mul = [0.0] * n_sites
+        slope_mul = [0.0] * n_sites
         for k in range(n_sites):
             s_mul = max(self.SIZE_DEPTH_MIN, min(self.SIZE_DEPTH_MAX,
                 math.sqrt(sites[k][2] / median_radius)))
@@ -940,7 +979,8 @@ class VoronoiReliefNoise(object):
             # Conservative: final per-edge/crest modifiers can narrow the wall to ~0.65x
             # this estimate — budget against the worst case (C0 requires per-cell static).
             w_typ = max(0.05, seam_depth_base * inradius[k] * 0.52)
-            static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
+            slope_mul[k] = min(1.0, self.SLOPE_DEPTH_BUDGET * (2.4 / cut_depth_in) * w_typ)
+            static_mul[k] = s_mul * tier_mul * slope_mul[k]
         # Wider deceleration band (v22): the wall flattens BEFORE the cushion rises.
         FILLET_BAND = 0.2
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
@@ -1022,6 +1062,8 @@ class VoronoiReliefNoise(object):
                 owner_mix = 0.5 + 0.5 * min(1.0, db / max(1e-6, 0.35 * inr))
                 nb_mul = edge_mix * static_mul[nb2] + (1.0 - edge_mix) * static_mul[nb3]
                 static_mul_blended = owner_mix * static_mul[idx] + (1.0 - owner_mix) * nb_mul
+                nb_slope = edge_mix * slope_mul[nb2] + (1.0 - edge_mix) * slope_mul[nb3]
+                slope_blended = owner_mix * slope_mul[idx] + (1.0 - owner_mix) * nb_slope
                 owner_fade = max(0.0, 2.0 * owner_mix - 1.0)
                 # Ridge crest band: a physical plateau on the shared boundary. The plateau
                 # width SWINGS along each edge with the wall-noise field (chunky-to-thin
@@ -1148,16 +1190,16 @@ class VoronoiReliefNoise(object):
                 # where the attractor has faded the cell system out.
                 if crest_variation > 0.0 and crest_gen is not None:
                     ridge_mask = pow(1.0 - bowl_h, 1.5)
-                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw
+                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw * slope_blended
                 # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
                 if junction_lift > 0.0:
-                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw
+                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw * slope_blended
                 # v20 ridge crown: rounded bead over the crest band — dome peaking on the
                 # shared boundary. Melted zones keep ghost creases (0.35 floor).
                 if wall_frac > 0.0 and crest_w > 1e-6 and db < max(crest_w, self.CROWN_MIN_PHYS):
                     crown = 1.0 - self._smoothstep(0.0, max(crest_w, self.CROWN_MIN_PHYS), db)
                     crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
-                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul
+                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul * slope_blended
                 # v21 stock-plane soft cap (pockets only): broad crests flatten into
                 # plateaus just above the base wave; junction fins become saddles.
                 if polarity < 0.0:
@@ -1261,13 +1303,13 @@ if is_relief:
         'cols': cols, 'rows': rows,
         'mesh_x': mesh_x, 'mesh_y': mesh_y,
         'seed': int(seed),
+        'cut_depth_in': min(2.6, float(relief_cut_depth_in)),
         'cell_size': float(relief_cell_size),
         'jitter': float(relief_jitter),
         'relax_iter': int(relief_relax_iter),
         'polarity': str(relief_polarity),
         'profile': str(relief_profile),
         'seam_depth': float(relief_seam_depth),
-        'seam_width': float(relief_seam_width),
         'anisotropy': float(relief_anisotropy),
         'anisotropy_angle': float(relief_anisotropy_angle),
         'attractor_mode': str(relief_attractor_mode),

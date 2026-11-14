@@ -302,7 +302,7 @@ def lloyd_fallback(pts):
     n = len(pts)
     if n == 0:
         return pts
-    samples = min(8192, n * 64)
+    samples = n * 64
     sum_x = [0.0] * n
     sum_y = [0.0] * n
     counts = [0] * n

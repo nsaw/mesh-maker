@@ -103,13 +103,13 @@ def _relief_default(name, default):
         return default
     return default if v is None else v
 
+relief_cut_depth_in        = _relief_default('relief_cut_depth_in',        0.65)
 relief_cell_size           = _relief_default('relief_cell_size',           1.5)
 relief_jitter              = _relief_default('relief_jitter',              0.7)
 relief_relax_iter          = _relief_default('relief_relax_iter',          1)
 relief_polarity            = _relief_default('relief_polarity',            'domes')        # 'domes' | 'pockets'
 relief_profile             = _relief_default('relief_profile',             'hemisphere')   # 'hemisphere' | 'cosine' | 'parabolic'
 relief_seam_depth          = _relief_default('relief_seam_depth',          0.6)
-relief_seam_width          = _relief_default('relief_seam_width',          0.15)
 relief_anisotropy          = _relief_default('relief_anisotropy',          0.0)
 relief_anisotropy_angle    = _relief_default('relief_anisotropy_angle',    0.0)
 relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')         # 'none'|'vertical'|'horizontal'|'radial'|'point'
@@ -545,7 +545,7 @@ class VoronoiReliefNoise(object):
     STOCK_CAP_SPAN = 0.13
     # v21.1 slope budget (normalized depth per inch of wall extent), sized against the
     # tempered profile family's PEAK slope: ~68 deg at the default 2.4in cut depth.
-    SLOPE_DEPTH_BUDGET = 0.55
+    SLOPE_DEPTH_BUDGET = 0.4
     # v21.1 minimum feature floors — PHYSICAL constants (tool-radius scale), never
     # derived from sample pitch (geometry must not change shape with grid resolution).
     WALL_MIN_PHYS = 0.3
@@ -558,6 +558,18 @@ class VoronoiReliefNoise(object):
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
+    def _representative_indices(self, length, limit, retained=()):
+        # One population, required focal nuclei, original order for Cartesian-prefix pinning.
+        indices = list(range(length))
+        if length <= limit:
+            return indices
+        required = set(retained)
+        available = [i for i in indices if i not in required]
+        count = limit - len(required)
+        for i in range(count):
+            chosen = i + int(self._rand() * (len(available) - i))
+            available[i], available[chosen] = available[chosen], available[i]
+        return sorted(list(retained) + available[:count])
     def _gen_sites(self, p, density_gen, exclusion_foci, exclusion_r, suppress_gen):
         # v16: sites live on the unwarped jittered grid and are NEVER displaced — cell flow
         # comes entirely from warping the query points (see _make_warp). Density is modulated
@@ -578,9 +590,7 @@ class VoronoiReliefNoise(object):
         sites = []
         # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
-            if len(sites) >= self.SITE_COUNT_MAX: break
             for i in range(nx):
-                if len(sites) >= self.SITE_COUNT_MAX: break
                 cx = (i + 0.5) * sx; cy = (j + 0.5) * sy
                 u = cx / p['mesh_x']; v = cy / p['mesh_y']
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
@@ -606,7 +616,6 @@ class VoronoiReliefNoise(object):
                 if self._rand() < (local - math.floor(local)):
                     reps += 1
                 for _ in range(reps):
-                    if len(sites) >= self.SITE_COUNT_MAX: break
                     jx = (self._rand() - 0.5) * p['jitter'] * sx
                     jy = (self._rand() - 0.5) * p['jitter'] * sy
                     px = max(0.0, min(p['mesh_x'], cx + jx))
@@ -676,6 +685,36 @@ class VoronoiReliefNoise(object):
             qy = y + flow_gen.noise(x * flow_freq + 31.7, y * flow_freq + 17.3) * flow_amp
             return qx, qy
         return warp
+    def _check_site_work(self, foci_count, zone_r, cell_size, radial_strength, radial_grow, mesh_x, mesh_y):
+        # Shared candidate-loop budget, before ceil/int sizing or either allocation path.
+        def refuse():
+            raise ValueError('Relief site enumeration exceeds supported work budget')
+        values = [zone_r, cell_size, mesh_x, mesh_y]
+        if any(v != v or abs(v) == float('inf') for v in values) or mesh_x <= 0.0 or mesh_y <= 0.0 or cell_size <= 0.0:
+            refuse()
+        budget = 5000000.0
+        spacing = max(0.2, cell_size)
+        x_cells = mesh_x / spacing
+        y_cells = mesh_y / spacing
+        if any(v != v or abs(v) == float('inf') or v > budget for v in [x_cells, y_cells]):
+            refuse()
+        work = max(2, math.ceil(x_cells) + 1.0) * max(2, math.ceil(y_cells) + 1.0) * self.LOCAL_DENSITY_MAX
+        if work != work or work == float('inf') or work > budget:
+            refuse()
+        if foci_count > 0:
+            pitch = max(0.3, cell_size * self.POLAR_TANGENTIAL_PITCH_CELLS
+                        * (1.0 + 0.5 * max(0.0, min(2.0, 1.0 if radial_grow > 1.0 else radial_grow))))
+            ring_bound = zone_r / (pitch * 0.8)
+            if ring_bound != ring_bound or ring_bound == float('inf') or ring_bound > budget:
+                refuse()
+            rings = math.ceil(ring_bound) + 1.0
+            max_gap = pitch * (1.0 + radial_strength) * (1.0 + 0.1 * rings)
+            sector_bound = 2.0 * math.pi * (zone_r + max_gap * 0.5) / pitch
+            if sector_bound != sector_bound or sector_bound == float('inf') or sector_bound > budget:
+                refuse()
+            work += foci_count * (1.0 + rings * max(4, math.ceil(sector_bound)))
+        if work != work or work == float('inf') or work > budget:
+            refuse()
     def _gen_polar_sites(self, foci_phys, zone_r, cell_size, radial_strength, radial_grow, jitter_amt, mode, mesh_x, mesh_y, sites):
         # Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus
         # jittered concentric rings whose RADIAL gap is (1 + radialStrength) x the
@@ -691,8 +730,9 @@ class VoronoiReliefNoise(object):
                       * (1.0 + 0.5 * max(0.0, min(2.0, pitch_grow))))
         elong = 1.0 + max(0.0, min(4.0, radial_strength))
         margin = max(0.2, cell_size)
+        nuclei = []
         for k in range(len(foci_phys)):
-            if len(sites) >= self.SITE_COUNT_MAX: break
+            nuclei.append(len(sites))
             cpx = foci_phys[k][0]; cpy = foci_phys[k][1]
             sites.append([
                 max(0.0, min(mesh_x, cpx + (self._rand() - 0.5) * 0.2 * pitch_t)),
@@ -702,7 +742,7 @@ class VoronoiReliefNoise(object):
             r = pitch_t * 0.75
             ring = 0
             sectors_locked = 0
-            while r < zone_r and len(sites) < self.SITE_COUNT_MAX:
+            while r < zone_r:
                 if mode == 'rings':
                     gap = pitch_t * 0.8
                     pitch = pitch_t * elong
@@ -720,7 +760,6 @@ class VoronoiReliefNoise(object):
                 drop_p = 0.1 if fan else 0.25
                 jit_scale = 0.35 if fan else 1.0
                 for si in range(sectors):
-                    if len(sites) >= self.SITE_COUNT_MAX: break
                     # v17 sector dropout — random spoke deletion breaks radial regularity.
                     if self._rand() < drop_p * jitter_amt: continue
                     th = (base_theta + spiral_off + ((si + 0.5) / float(sectors)) * 2.0 * math.pi
@@ -736,6 +775,7 @@ class VoronoiReliefNoise(object):
                         0.0])
                 r += gap
                 ring += 1
+        return nuclei
     def _nearest_three(self, sites, x, y, cosA, sinA, aniso_scale):
         # CONSTANT anisotropic metric (v16 removed per-pixel rotation — a constant frame
         # cannot tear ownership). F3 drives junction detection: at a three-way Voronoi
@@ -861,31 +901,28 @@ class VoronoiReliefNoise(object):
         # field at the site position — neighboring cells lean and inflate together.
         panel_field_gen = SimplexNoise(seed + 17 + 61)
         PANEL_FIELD_FREQ = 0.045
+        self._check_site_work(len(foci_phys), zone_r, p['cell_size'], radial_strength,
+                              radial_grow, p['mesh_x'], p['mesh_y'])
         sites = self._gen_sites(p, density_noise_gen,
                                 foci_phys if starburst_active else [],
                                 zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
                                 suppress_gen)
-        cartesian_count = len(sites)
+        original_cartesian_count = len(sites)
+        nuclei = []
         if starburst_active:
-            # Polar sites must survive the global cap — generate into a scratch list,
-            # then trim the Cartesian TAIL to reserve capacity (Cartesian-first ordering
-            # is what pinned_from relies on).
-            polar = []
-            self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
-                                  radial_grow, radial_warp_amt, radial_mode,
-                                  p['mesh_x'], p['mesh_y'], polar)
-            budget = max(0, self.SITE_COUNT_MAX - len(polar))
-            if len(sites) > budget:
-                del sites[budget:]
-            cartesian_count = len(sites)
-            sites.extend(polar)
+            nuclei = self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
+                                           radial_grow, radial_warp_amt, radial_mode,
+                                           p['mesh_x'], p['mesh_y'], sites)
+        selected = self._representative_indices(len(sites), self.SITE_COUNT_MAX, nuclei)
+        sites = [sites[i] for i in selected]
+        cartesian_count = sum(1 for i in selected if i < original_cartesian_count)
         if not sites:
             return [0.0] * (p['cols'] * p['rows'])
         # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
         # erase their deliberate radial elongation).
         relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
         if relax_iter > 0:
-            lloyd_samples = min(8192, len(sites) * 64)
+            lloyd_samples = len(sites) * 64
             for _ in range(relax_iter):
                 self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
         # NaN guards on the constant metric frame — mirrors the TS sampler's defensive
@@ -998,7 +1035,9 @@ class VoronoiReliefNoise(object):
         # can descend at the aesthetic ceiling) and BLENDED across the nearest edges per
         # pixel — dissolution lifts boundaries off zero, so unblended per-cell factors
         # would step there.
+        cut_depth_in = max(0.05, min(2.6, _finite(p.get('cut_depth_in', 2.4), 2.4)))
         static_mul = [0.0] * n_sites
+        slope_mul = [0.0] * n_sites
         for k in range(n_sites):
             s_mul = max(self.SIZE_DEPTH_MIN, min(self.SIZE_DEPTH_MAX,
                 math.sqrt(sites[k][2] / median_radius)))
@@ -1009,7 +1048,8 @@ class VoronoiReliefNoise(object):
             # Conservative: final per-edge/crest modifiers can narrow the wall to ~0.65x
             # this estimate — budget against the worst case (C0 requires per-cell static).
             w_typ = max(0.05, seam_depth_base * inradius[k] * 0.52)
-            static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
+            slope_mul[k] = min(1.0, self.SLOPE_DEPTH_BUDGET * (2.4 / cut_depth_in) * w_typ)
+            static_mul[k] = s_mul * tier_mul * slope_mul[k]
         # Wider deceleration band (v22): the wall flattens BEFORE the cushion rises.
         FILLET_BAND = 0.2
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
@@ -1091,6 +1131,8 @@ class VoronoiReliefNoise(object):
                 owner_mix = 0.5 + 0.5 * min(1.0, db / max(1e-6, 0.35 * inr))
                 nb_mul = edge_mix * static_mul[nb2] + (1.0 - edge_mix) * static_mul[nb3]
                 static_mul_blended = owner_mix * static_mul[idx] + (1.0 - owner_mix) * nb_mul
+                nb_slope = edge_mix * slope_mul[nb2] + (1.0 - edge_mix) * slope_mul[nb3]
+                slope_blended = owner_mix * slope_mul[idx] + (1.0 - owner_mix) * nb_slope
                 owner_fade = max(0.0, 2.0 * owner_mix - 1.0)
                 # Ridge crest band: a physical plateau on the shared boundary. The plateau
                 # width SWINGS along each edge with the wall-noise field (chunky-to-thin
@@ -1217,16 +1259,16 @@ class VoronoiReliefNoise(object):
                 # where the attractor has faded the cell system out.
                 if crest_variation > 0.0 and crest_gen is not None:
                     ridge_mask = pow(1.0 - bowl_h, 1.5)
-                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw
+                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw * slope_blended
                 # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
                 if junction_lift > 0.0:
-                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw
+                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw * slope_blended
                 # v20 ridge crown: rounded bead over the crest band — dome peaking on the
                 # shared boundary. Melted zones keep ghost creases (0.35 floor).
                 if wall_frac > 0.0 and crest_w > 1e-6 and db < max(crest_w, self.CROWN_MIN_PHYS):
                     crown = 1.0 - self._smoothstep(0.0, max(crest_w, self.CROWN_MIN_PHYS), db)
                     crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
-                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul
+                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul * slope_blended
                 # v21 stock-plane soft cap (pockets only): broad crests flatten into
                 # plateaus just above the base wave; junction fins become saddles.
                 if polarity < 0.0:
@@ -1330,13 +1372,13 @@ if is_relief:
         'cols': cols, 'rows': rows,
         'mesh_x': mesh_x, 'mesh_y': mesh_y,
         'seed': int(seed),
+        'cut_depth_in': min(2.6, float(relief_cut_depth_in)),
         'cell_size': float(relief_cell_size),
         'jitter': float(relief_jitter),
         'relax_iter': int(relief_relax_iter),
         'polarity': str(relief_polarity),
         'profile': str(relief_profile),
         'seam_depth': float(relief_seam_depth),
-        'seam_width': float(relief_seam_width),
         'anisotropy': float(relief_anisotropy),
         'anisotropy_angle': float(relief_anisotropy_angle),
         'attractor_mode': str(relief_attractor_mode),
@@ -1404,8 +1446,7 @@ else:
             raw.append(n)
 
     z_values = raw
-# mesh_x and mesh_y pass through so Shape component can build the point grid
-"""
+# mesh_x and mesh_y pass through so Shape component can build the point grid"""
 
     SHAPE_SCRIPT = """# GHPython component script — MeshCraft | Shape
 # Runtime: IronPython 2.7 (Rhino 7)
@@ -1478,93 +1519,162 @@ cols = cols_i
 rows = rows_i
 """
 
-    SMOOTH_SCRIPT = """# GHPython component script — MeshCraft | Smooth
+    SMOOTH_SCRIPT = """# GHPython component script: MeshCraft | Smooth
 # Runtime: IronPython 2.7 (Rhino 7)
-#
-# Port of weightedSmooth() from mesh.ts:153-174
-# Kernel: 3x3, weights — center=4, cardinal=2, diagonal=1
-#
-# Inputs:  pts (list of Point3d), cols (int), rows (int),
-#          smooth_iter (int), smooth_str (float)
+# Inputs: pts (list of Point3d), cols, rows, smooth_radius_in (Gaussian sigma, inches)
 # Outputs: pts (list of Point3d)
+import math
 import Rhino.Geometry as rg
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
-if smooth_iter is None: smooth_iter = 0
-if smooth_str  is None: smooth_str  = 0.5
+def _transform(real, imag, inverse, cosine, sine):
+    n = len(real)
+    j = 0
+    for i in range(1, n):
+        bit = n // 2
+        while j & bit:
+            j ^= bit
+            bit //= 2
+        j ^= bit
+        if i < j:
+            real[i], real[j] = real[j], real[i]
+            imag[i], imag[j] = imag[j], imag[i]
+    length = 2
+    while length <= n:
+        half = length // 2
+        stride = n // length
+        for start in range(0, n, length):
+            for j in range(half):
+                k = j * stride
+                c = cosine[k]
+                s = sine[k] if inverse else -sine[k]
+                a = start + j
+                b = a + half
+                re = real[b] * c - imag[b] * s
+                im = real[b] * s + imag[b] * c
+                real[b], imag[b] = real[a] - re, imag[a] - im
+                real[a] += re
+                imag[a] += im
+        length *= 2
+    if inverse:
+        for i in range(n):
+            real[i] /= n
+            imag[i] /= n
 
-iters    = int(smooth_iter)
-strength = float(smooth_str)
-cols_i   = int(cols)
-rows_i   = int(rows)
 
-if iters <= 0:
-    # No smoothing — pass through as plain list
-    pts = list(pts)
-else:
-    # Decompose Point3d list into separate arrays for fast Z manipulation
+def _gaussian_fft_pass(values, rows, cols, weights, horizontal):
+    # Zero padding preserves linear convolution. A symmetric kernel has a real
+    # spectrum, so two independent lanes fit in one complex transform.
+    axis, lanes = (cols, rows) if horizontal else (rows, cols)
+    radius = len(weights) - 1
+    n = 1
+    while n < axis + radius:
+        n *= 2
+    cosine = [math.cos(2.0 * math.pi * k / n) for k in range(n // 2)]
+    sine = [math.sin(2.0 * math.pi * k / n) for k in range(n // 2)]
+    real, imag = [0.0] * n, [0.0] * n
+    real[0] = weights[0]
+    for k in range(1, radius + 1):
+        real[k] = real[n - k] = weights[k]
+    _transform(real, imag, False, cosine, sine)
+    spectrum = real[:]
+    prefix = [0.0] * len(weights)
+    for k in range(1, radius + 1):
+        prefix[k] = prefix[k - 1] + weights[k]
+    norm = []
+    for i in range(axis):
+        total = weights[0] + prefix[min(i, radius)] + prefix[min(axis - 1 - i, radius)]
+        if i <= radius: total -= weights[i] * 0.5
+        if axis - 1 - i <= radius: total -= weights[axis - 1 - i] * 0.5
+        norm.append(total)
+    out = [0.0] * len(values)
+    for lane in range(0, lanes, 2):
+        real, imag = [0.0] * n, [0.0] * n
+        for i in range(axis):
+            edge = 0.5 if i == 0 or i == axis - 1 else 1.0
+            real[i] = values[lane * cols + i if horizontal else i * cols + lane] * edge
+            if lane + 1 < lanes:
+                imag[i] = values[(lane + 1) * cols + i if horizontal else i * cols + lane + 1] * edge
+        _transform(real, imag, False, cosine, sine)
+        for i in range(n):
+            real[i] *= spectrum[i]
+            imag[i] *= spectrum[i]
+        _transform(real, imag, True, cosine, sine)
+        for i in range(axis):
+            out[lane * cols + i if horizontal else i * cols + lane] = real[i] / norm[i]
+            if lane + 1 < lanes:
+                out[(lane + 1) * cols + i if horizontal else i * cols + lane + 1] = imag[i] / norm[i]
+    return out
+
+if smooth_radius_in is None: smooth_radius_in = 0.0
+sigma = float(smooth_radius_in)
+cols_i = int(cols)
+rows_i = int(rows)
+pts = list(pts)
+if sigma > 0.0 and any(p.Z != pts[0].Z for p in pts):
     xs = [p.X for p in pts]
     ys = [p.Y for p in pts]
     zv = [p.Z for p in pts]
-
-    for it in range(iters):
-        nzv = list(zv)
+    pitches = [abs(xs[1] - xs[0]), abs(ys[cols_i] - ys[0])]
+    for axis in range(2):
+        size = cols_i if axis == 0 else rows_i
+        pitch = pitches[axis]
+        radius = min(size - 1, int(math.ceil(3.0 * sigma / pitch)))
+        weights = [math.exp(-0.5 * (i * pitch / sigma) ** 2) for i in range(radius + 1)]
+        if len(weights) > 32:
+            zv = _gaussian_fft_pass(zv, rows_i, cols_i, weights, axis == 0)
+            continue
+        out = [0.0] * len(zv)
         for j in range(rows_i):
             for i in range(cols_i):
-                ws = 0.0; tw = 0.0
-                for dj in range(-1, 2):
-                    for di in range(-1, 2):
-                        nj = j+dj; ni = i+di
-                        if 0 <= nj < rows_i and 0 <= ni < cols_i:
-                            # Center weight=4, cardinal=2, diagonal=1
-                            if dj == 0 and di == 0:
-                                w = 4
-                            elif dj == 0 or di == 0:
-                                w = 2
-                            else:
-                                w = 1
-                            ws += zv[nj*cols_i+ni] * w; tw += w
-                idx = j*cols_i+i
-                nzv[idx] = zv[idx]*(1.0-strength) + (ws/tw)*strength
-        zv = nzv
+                total = 0.0
+                weighted = 0.0
+                for d in range(-radius, radius + 1):
+                    x = i + d if axis == 0 else i
+                    y = j if axis == 0 else j + d
+                    if x < 0 or x >= cols_i or y < 0 or y >= rows_i:
+                        continue
+                    # Half-weight physical panel endpoints before kernel renormalization.
+                    index = x if axis == 0 else y
+                    w = weights[abs(d)] * (0.5 if index == 0 or index == size - 1 else 1.0)
+                    weighted += zv[y * cols_i + x] * w
+                    total += w
+                out[j * cols_i + i] = weighted / total
+        zv = out
+    pts = [rg.Point3d(xs[k], ys[k], zv[k]) for k in range(len(zv))]"""
 
-    pts = [rg.Point3d(xs[k], ys[k], zv[k]) for k in range(len(xs))]
-"""
-
-    PRESETS_SCRIPT = """
-#! python 2
+    PRESETS_SCRIPT = """#! python 2
 # GHPython component script — MeshCraft | Presets
 # Runtime: IronPython 2.7 (Rhino 7)
 #
 # Inputs:  preset (str) — name of preset to load
 # Outputs: noise_type, frequency, amplitude, noise_exp, peak_exp, valley_exp,
 #          valley_floor, offset, octaves, persistence, lacunarity, distortion,
-#          contrast, sharpness, mesh_x, mesh_y, smooth_iter, smooth_str,
+#          contrast, sharpness, mesh_x, mesh_y, smooth_radius_in,
 #          gabor_angle, gabor_bw
 #
 # Usage: wire any output to the matching input on Noise/Shape/Smooth components
 #        to override the slider value for that parameter.
 
 PRESETS = {
-    'gentle-waves': {'noise_type':'simplex', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':2, 'persistence':0.3, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':3, 'smooth_str':0.5},
-    'organic-terrain': {'noise_type':'fbm', 'frequency':0.1, 'amplitude':0.8, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':4, 'persistence':0.55, 'lacunarity':2, 'distortion':0.3, 'contrast':1.2, 'sharpness':0.2, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4},
-    'sharp-ridges': {'noise_type':'ridged', 'frequency':0.08, 'amplitude':0.5, 'noise_exp':1.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0, 'contrast':1.5, 'sharpness':0.8, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':0, 'smooth_str':0},
-    'voronoi-cells': {'noise_type':'voronoi', 'frequency':0.15, 'amplitude':0.3, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.6},
-    'subtle-texture': {'noise_type':'perlin', 'frequency':0.12, 'amplitude':0.25, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.4, 'lacunarity':2.5, 'distortion':0.1, 'contrast':0.8, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.7},
-    'deep-carve': {'noise_type':'fbm', 'frequency':0.05, 'amplitude':2, 'noise_exp':1.2, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.6, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.8, 'sharpness':0.5, 'mesh_x':24, 'mesh_y':18, 'smooth_iter':0, 'smooth_str':0},
-    'sculptural': {'noise_type':'fbm', 'frequency':0.04, 'amplitude':1.5, 'noise_exp':0.7, 'peak_exp':1.8, 'valley_exp':0.35, 'valley_floor':0.6, 'offset':0, 'octaves':3, 'persistence':0.55, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.3, 'sharpness':0.15, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.45},
-    'hard-wave': {'noise_type':'simplex', 'frequency':0.05, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':2, 'valley_exp':0.3, 'valley_floor':0.75, 'offset':0, 'octaves':2, 'persistence':0.4, 'lacunarity':2, 'distortion':0.25, 'contrast':1.4, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':3, 'smooth_str':0.5},
-    'eroded-stone': {'noise_type':'ridged', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1.5, 'valley_exp':0.4, 'valley_floor':0.5, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0.35, 'contrast':1.6, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
-    'billowy-clouds': {'noise_type':'billow', 'frequency':0.07, 'amplitude':0.8, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.45, 'lacunarity':2, 'distortion':0.15, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.5},
-    'turbulent-marble': {'noise_type':'turbulence', 'frequency':0.08, 'amplitude':1, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.55, 'lacunarity':2.2, 'distortion':0.3, 'contrast':1.4, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
-    'natural-ridge': {'noise_type':'hybrid', 'frequency':0.06, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':1.2, 'valley_exp':0.5, 'valley_floor':0.3, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2, 'distortion':0.2, 'contrast':1.2, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4},
-    'organic-swirl': {'noise_type':'domainwarp', 'frequency':0.05, 'amplitude':1, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':1.8, 'distortion':0, 'contrast':1.1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.5},
-    'worley-cracks': {'noise_type':'worley', 'frequency':0.12, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.1, 'contrast':1.2, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4},
-    'brushed-metal': {'noise_type':'gabor', 'frequency':0.1, 'amplitude':0.3, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'gabor_angle':15, 'gabor_bw':1.2, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
-    'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':0.75, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.55, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.16, 'warp_curl':0, 'relief_cell_size':0.8, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'parabolic', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_base_amp':0.5, 'relief_base_freq':0.2, 'relief_cell_size_gradient':1, 'relief_void_strength':0.7, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.6, 'relief_attractor_noise':0, 'relief_attractor_noise_freq':0.3, 'relief_density_noise':0.3, 'relief_density_noise_freq':0.16, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_iter':3, 'smooth_str':0.55},
-    'relief-radial': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1.333333333333333, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.4, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.733333333333333, 'relief_jitter':0.8, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.7, 'relief_seam_width':0.14, 'relief_wall_width':0.12, 'relief_anisotropy':0.25, 'relief_anisotropy_angle':35, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.62, 'relief_attractor_y':0.42, 'relief_attractor_radius':0.55, 'relief_attractor_falloff':0.9, 'relief_density_strength':2, 'relief_intensity_strength':0.55, 'relief_transition_softness':0.15, 'relief_base_mode':'wave', 'relief_base_amp':0.25, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.38, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.45, 'relief_pillow_coverage':0.75, 'relief_depth_variation':0.2, 'relief_junction_lift':0.25, 'relief_crest_variation':0.15, 'relief_attractor_noise':0.25, 'relief_attractor_noise_freq':0.15, 'relief_density_noise':0.55, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':16, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.5},
-    'relief-pockets': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':1.2, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.12, 'warp_curl':0, 'relief_cell_size':2, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.62, 'relief_seam_width':0.15, 'relief_wall_width':0.11, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.14, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.5, 'relief_pillow_coverage':0.85, 'relief_depth_variation':0.35, 'relief_junction_lift':0.3, 'relief_crest_variation':0.5, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.2, 'relief_density_noise':1, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':1, 'relief_radial_focus1_x':0.3, 'relief_radial_focus1_y':0.42, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':2.2, 'relief_radial_falloff':0.32, 'relief_radial_grow':1.6, 'relief_radial_warp':0.5, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.45},
-    'relief-starburst': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.2, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1, 'relief_density_strength':0, 'relief_intensity_strength':1, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.35, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.25, 'relief_crest_variation':0.4, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.18, 'relief_density_noise':0.2, 'relief_density_noise_freq':0.12, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':1.2, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.3, 'relief_radial_warp':0.65, 'relief_radial_mode':'rays', 'mesh_x':8, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
+    'gentle-waves': {'noise_type':'simplex', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':2, 'persistence':0.3, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.07813763041664107},
+    'organic-terrain': {'noise_type':'fbm', 'frequency':0.1, 'amplitude':0.8, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':4, 'persistence':0.55, 'lacunarity':2, 'distortion':0.3, 'contrast':1.2, 'sharpness':0.2, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.040350098842101466},
+    'sharp-ridges': {'noise_type':'ridged', 'frequency':0.08, 'amplitude':0.5, 'noise_exp':1.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0, 'contrast':1.5, 'sharpness':0.8, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.0},
+    'voronoi-cells': {'noise_type':'voronoi', 'frequency':0.15, 'amplitude':0.3, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.06988842128494586},
+    'subtle-texture': {'noise_type':'perlin', 'frequency':0.12, 'amplitude':0.25, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.4, 'lacunarity':2.5, 'distortion':0.1, 'contrast':0.8, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.0754881226948038},
+    'deep-carve': {'noise_type':'fbm', 'frequency':0.05, 'amplitude':2, 'noise_exp':1.2, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.6, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.8, 'sharpness':0.5, 'mesh_x':24, 'mesh_y':18, 'smooth_radius_in':0.0},
+    'sculptural': {'noise_type':'fbm', 'frequency':0.04, 'amplitude':1.5, 'noise_exp':0.7, 'peak_exp':1.8, 'valley_exp':0.35, 'valley_floor':0.6, 'offset':0, 'octaves':3, 'persistence':0.55, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.3, 'sharpness':0.15, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.0605251482631522},
+    'hard-wave': {'noise_type':'simplex', 'frequency':0.05, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':2, 'valley_exp':0.3, 'valley_floor':0.75, 'offset':0, 'octaves':2, 'persistence':0.4, 'lacunarity':2, 'distortion':0.25, 'contrast':1.4, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.07813763041664107},
+    'eroded-stone': {'noise_type':'ridged', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1.5, 'valley_exp':0.4, 'valley_floor':0.5, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0.35, 'contrast':1.6, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.03494421064247293},
+    'billowy-clouds': {'noise_type':'billow', 'frequency':0.07, 'amplitude':0.8, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.45, 'lacunarity':2, 'distortion':0.15, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.06379910807698173},
+    'turbulent-marble': {'noise_type':'turbulence', 'frequency':0.08, 'amplitude':1, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.55, 'lacunarity':2.2, 'distortion':0.3, 'contrast':1.4, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.03494421064247293},
+    'natural-ridge': {'noise_type':'hybrid', 'frequency':0.06, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':1.2, 'valley_exp':0.5, 'valley_floor':0.3, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2, 'distortion':0.2, 'contrast':1.2, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.040350098842101466},
+    'organic-swirl': {'noise_type':'domainwarp', 'frequency':0.05, 'amplitude':1, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':1.8, 'distortion':0, 'contrast':1.1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.06379910807698173},
+    'worley-cracks': {'noise_type':'worley', 'frequency':0.12, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.1, 'contrast':1.2, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.040350098842101466},
+    'brushed-metal': {'noise_type':'gabor', 'frequency':0.1, 'amplitude':0.3, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'gabor_angle':15, 'gabor_bw':1.2, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.03494421064247293},
+    'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':0.75, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.55, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.16, 'warp_curl':0, 'relief_cell_size':0.8, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'parabolic', 'relief_seam_depth':0.95, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_base_amp':0.5, 'relief_base_freq':0.2, 'relief_cell_size_gradient':1, 'relief_void_strength':0.7, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.6, 'relief_attractor_noise':0, 'relief_attractor_noise_freq':0.3, 'relief_density_noise':0.3, 'relief_density_noise_freq':0.16, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_radius_in':0.027317146052007444},
+    'relief-radial': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1.333333333333333, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.4, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.733333333333333, 'relief_jitter':0.8, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.7, 'relief_wall_width':0.12, 'relief_anisotropy':0.25, 'relief_anisotropy_angle':35, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.62, 'relief_attractor_y':0.42, 'relief_attractor_radius':0.55, 'relief_attractor_falloff':0.9, 'relief_density_strength':2, 'relief_intensity_strength':0.55, 'relief_transition_softness':0.15, 'relief_base_mode':'wave', 'relief_base_amp':0.25, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.38, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.45, 'relief_pillow_coverage':0.75, 'relief_depth_variation':0.2, 'relief_junction_lift':0.25, 'relief_crest_variation':0.15, 'relief_attractor_noise':0.25, 'relief_attractor_noise_freq':0.15, 'relief_density_noise':0.55, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':16, 'mesh_y':24, 'smooth_radius_in':0.028355159145325215},
+    'relief-pockets': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':1.2, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.12, 'warp_curl':0, 'relief_cell_size':2, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.62, 'relief_wall_width':0.11, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.14, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.5, 'relief_pillow_coverage':0.85, 'relief_depth_variation':0.35, 'relief_junction_lift':0.3, 'relief_crest_variation':0.5, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.2, 'relief_density_noise':1, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':1, 'relief_radial_focus1_x':0.3, 'relief_radial_focus1_y':0.42, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':2.2, 'relief_radial_falloff':0.32, 'relief_radial_grow':1.6, 'relief_radial_warp':0.5, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_radius_in':0.020175049421050733},
+    'relief-starburst': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.2, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1, 'relief_density_strength':0, 'relief_intensity_strength':1, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.35, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.25, 'relief_crest_variation':0.4, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.18, 'relief_density_noise':0.2, 'relief_density_noise_freq':0.12, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':1.2, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.3, 'relief_radial_warp':0.65, 'relief_radial_mode':'rays', 'mesh_x':8, 'mesh_y':24, 'smooth_radius_in':0.007765380142771763},
 }
 
 p = PRESETS.get(str(preset), PRESETS['gentle-waves'])
@@ -1585,8 +1695,7 @@ contrast     = p['contrast']
 sharpness    = p['sharpness']
 mesh_x       = p['mesh_x']
 mesh_y       = p['mesh_y']
-smooth_iter  = p['smooth_iter']
-smooth_str   = p['smooth_str']
+smooth_radius_in = p['smooth_radius_in']
 gabor_angle  = p.get('gabor_angle', 45.0)
 gabor_bw     = p.get('gabor_bw', 1.5)
 # Voronoi Relief outputs (only meaningful when noise_type == 'voronoi-relief'; non-relief
@@ -1597,7 +1706,6 @@ relief_relax_iter          = p.get('relief_relax_iter',          1)
 relief_polarity            = p.get('relief_polarity',            'domes')
 relief_profile             = p.get('relief_profile',             'hemisphere')
 relief_seam_depth          = p.get('relief_seam_depth',          0.6)
-relief_seam_width          = p.get('relief_seam_width',          0.15)
 relief_anisotropy          = p.get('relief_anisotropy',          0.0)
 relief_anisotropy_angle    = p.get('relief_anisotropy_angle',    0.0)
 relief_attractor_mode      = p.get('relief_attractor_mode',      'none')
@@ -1638,6 +1746,8 @@ relief_radial_grow         = p.get('relief_radial_grow',         0.45)
 relief_radial_warp         = p.get('relief_radial_warp',         0.4)
 relief_radial_mode         = p.get('relief_radial_mode',         'rays')
 relief_warp_freq           = p.get('relief_warp_freq',           0.08)
+
+relief_cut_depth_in = min(2.6, amplitude)
 """
 
     # ── Builder helpers ────────────────────────────────────────────────────
@@ -1734,7 +1844,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     RELIEF_INPUTS = [
         "relief_cell_size", "relief_jitter", "relief_relax_iter",
         "relief_polarity", "relief_profile",
-        "relief_seam_depth", "relief_seam_width",
+        "relief_seam_depth", "relief_cut_depth_in",
         "relief_anisotropy", "relief_anisotropy_angle",
         "relief_attractor_mode",
         "relief_attractor_x", "relief_attractor_y",
@@ -1839,8 +1949,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     smi["pts"].TypeHint = GH_Point3dHint()
     smi["cols"]        = add_in(smooth_comp, "cols")
     smi["rows"]        = add_in(smooth_comp, "rows")
-    smi["smooth_iter"] = add_in(smooth_comp, "smooth_iter")
-    smi["smooth_str"]  = add_in(smooth_comp, "smooth_str")
+    smi["smooth_radius_in"] = add_in(smooth_comp, "smooth_radius_in")
 
     smo = {}
     smo["pts"] = add_out(smooth_comp, "pts", ghk.GH_ParamAccess.list)
@@ -1855,7 +1964,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     for name in ["noise_type","frequency","amplitude","noise_exp","peak_exp",
                  "valley_exp","valley_floor","offset","octaves","persistence",
                  "lacunarity","distortion","contrast","sharpness",
-                 "mesh_x","mesh_y","smooth_iter","smooth_str","gabor_angle","gabor_bw"]:
+                 "mesh_x","mesh_y","smooth_radius_in","gabor_angle","gabor_bw"]:
         pro[name] = add_out(preset_comp, name)
     # Voronoi-relief preset outputs — wire to the Noise component's matching pins
     # to use the relief presets (relief-vertical / relief-radial / relief-pockets).
@@ -1881,7 +1990,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
 
     # ── Sliders: Shape ────────────────────────────────────────────────────
     Y = 100
-    sl["amplitude"]    = fslider("amplitude",    SL2, Y, .01, 6.0, .65)   ; Y += DY
+    sl["amplitude"]    = fslider("amplitude",    SL2, Y, .01, 2.6, .65)   ; Y += DY
     sl["noise_exp"]    = fslider("noise_exp",    SL2, Y, 0.1, 3.0, 0.5)   ; Y += DY
     sl["peak_exp"]     = fslider("peak_exp",     SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
     sl["valley_exp"]   = fslider("valley_exp",   SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
@@ -1892,8 +2001,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
 
     # ── Sliders: Smooth ───────────────────────────────────────────────────
     Y = 100
-    sl["smooth_iter"] = islider("smooth_iter", SL3, Y, 0, 8,   0)         ; Y += DY
-    sl["smooth_str"]  = fslider("smooth_str",  SL3, Y, 0., 1., 0.5)       ; Y += DY
+    sl["smooth_radius_in"] = fslider("smooth_radius_in", SL3, Y, 0., 1., 0.) ; Y += DY
 
     # ── Preset value list (placed left of noise block, y=720) ─────────────
     vl_preset = vlist(PVL, 720, PRESET_NAMES, 0)
@@ -1921,8 +2029,8 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     smi["pts"].AddSource(so["pts"])
     smi["cols"].AddSource(so["cols"])
     smi["rows"].AddSource(so["rows"])
-    smi["smooth_iter"].AddSource(sl["smooth_iter"])
-    smi["smooth_str"].AddSource(sl["smooth_str"])
+    smi["smooth_radius_in"].AddSource(sl["smooth_radius_in"])
+    ni["relief_cut_depth_in"].AddSource(sl["amplitude"])
 
     # ── Wire: preset VL → Presets comp (outputs remain unwired) ──────────
     pri["preset"].AddSource(vl_preset)

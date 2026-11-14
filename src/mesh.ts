@@ -7,7 +7,7 @@ import type { VoronoiReliefGen } from './noise/voronoi-relief';
 import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
 import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
-import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, weightedSmooth } from './geometry';
+import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, gaussianSmooth } from './geometry';
 
 function surfaceFloor(): number {
   return Math.max(STATE.watertight ? MIN_WATERTIGHT_THICKNESS : 0, STATE.baseThickness - MAX_CUT_DEPTH_IN);
@@ -24,7 +24,10 @@ function sampleNoiseGrid(p: NoiseGridParams): number[][] {
   // visible tearing, so we skip the warp here and let the relief sampler handle anisotropy.
   if (gen.kind === 'voronoi-relief') {
     const reliefParams = sampleReliefParamsFromState(cols, rows, meshX, meshY, STATE.seed, STATE);
-    return (gen as VoronoiReliefGen).sampleGrid(reliefParams);
+    const result = (gen as VoronoiReliefGen).sampleGridResult(reliefParams);
+    STATE.reliefTruncatedFrom = result.truncatedFrom;
+    STATE.reliefCrestClipStatus = result.crestClipStatus;
+    return result.grid;
   }
 
   const grid: number[][] = [];
@@ -101,11 +104,13 @@ function sampleNoiseGrid(p: NoiseGridParams): number[][] {
 export function generateNoiseMesh(): void {
   const t0 = performance.now();
   const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
+          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothRadiusIn, noiseType, baseThickness } = STATE;
 
   const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
   STATE.cols = cols; STATE.rows = rows;
 
+  STATE.reliefTruncatedFrom = 0;
+  STATE.reliefCrestClipStatus = 'none';
   const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
   const gen = createNoiseGen(noiseType, seed, noiseConfig);
   const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
@@ -116,7 +121,7 @@ export function generateNoiseMesh(): void {
     gen, warpGen,
   });
 
-  const finalVerts = smoothIter > 0 ? weightedSmooth(verts, rows, cols, smoothIter, smoothStr) : verts;
+  const finalVerts = gaussianSmooth(verts, rows, cols, meshX, meshY, smoothRadiusIn);
 
   // CNC z-model: z=0 is machine bed, stock from 0 to baseThickness.
   // amplitude = total cut depth (peak to valley), clamped to stock thickness.
@@ -132,7 +137,9 @@ export function generateNoiseMesh(): void {
     for (let i = 0; i < cols; i++) {
       const t = (finalVerts[j][i] - nMin) / range;
       // Clamp to material boundaries: hard crop at stock top and machine bed
-      const raw = (bt - cutDepth) + t * cutDepth + offset;
+      const raw = noiseType === 'voronoi-relief'
+        ? bt + (finalVerts[j][i] - nMax) * cutDepth * Math.min(1, 1 / range) + offset
+        : (bt - cutDepth) + t * cutDepth + offset;
       finalVerts[j][i] = Math.max(floorZ, Math.min(bt, raw));
     }
 
@@ -141,8 +148,10 @@ export function generateNoiseMesh(): void {
 }
 
 export function generateDepthMapMesh(): void {
+  STATE.reliefTruncatedFrom = 0;
+  STATE.reliefCrestClipStatus = 'none';
   const t0 = performance.now();
-  const { depthMap, dmHeightScale, dmOffset, dmSmoothing, meshX, meshY, resolution, baseThickness } = STATE;
+  const { depthMap, dmHeightScale, dmOffset, dmSmoothRadiusIn, meshX, meshY, resolution, baseThickness } = STATE;
 
   if (activeMaster()) { generateReliefMasterPreview(); return; }
   if (!depthMap) { STATE.vertices = null; return; }
@@ -166,7 +175,7 @@ export function generateDepthMapMesh(): void {
   normalizeGrid(sampled, rows, cols);
   applyBackgroundCutoff(sampled, rows, cols, STATE.dmBackgroundCutoff);
 
-  const finalVerts = dmSmoothing > 0 ? weightedSmooth(sampled, rows, cols, dmSmoothing, 0.6) : sampled;
+  const finalVerts = gaussianSmooth(sampled, rows, cols, meshX, meshY, dmSmoothRadiusIn);
   // Same flat-range rule as the first normalization (geometry.ts), not a second copy of it.
   normalizeGrid(finalVerts, rows, cols);
   for (let j = 0; j < rows; j++)
@@ -185,6 +194,8 @@ export function generateDepthMapMesh(): void {
  *  own); exports read the master itself (export-surface.ts getExportSurface), so preview density
  *  never changes exported geometry. */
 function generateReliefMasterPreview(): void {
+  STATE.reliefTruncatedFrom = 0;
+  STATE.reliefCrestClipStatus = 'none';
   const t0 = performance.now();
   const m = activeMaster()!;
   STATE.meshX = m.widthIn;

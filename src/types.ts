@@ -9,6 +9,9 @@ export interface FBMGenerator extends NoiseGenerator {
   fbm(x: number, y: number, octaves: number, persistence: number, lacunarity: number): number;
 }
 
+/** Observed clipping of sampled crest bands, not a physical minimum-width certificate. */
+export type ReliefCrestClipStatus = 'none' | 'narrowed' | 'collapsed';
+
 export type ReliefPolarity = 'pockets' | 'domes';
 export type ReliefProfile = 'hemisphere' | 'cosine' | 'parabolic';
 export type ReliefAttractorMode = 'none' | 'vertical' | 'horizontal' | 'radial' | 'point';
@@ -24,7 +27,6 @@ export interface ReliefParams {
   polarity: ReliefPolarity;
   profile: ReliefProfile;
   seamDepth: number;
-  seamWidth: number;
   anisotropy: number;
   anisotropyAngle: number;
   attractorMode: ReliefAttractorMode;
@@ -135,6 +137,7 @@ export interface ReliefParams {
 }
 
 export interface ReliefSampleParams extends ReliefParams {
+  cutDepthIn: number;
   cols: number;
   rows: number;
   meshX: number;
