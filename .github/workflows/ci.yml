@@ -16,7 +16,7 @@ concurrency:
 # Checks use that acceptance host; exactness on other hosts is not claimed.
 # Full preset SBP exports remain independently gated on Linux.
 jobs:
-  checks:
+  numerical_checks:
     runs-on: macos-15
     permissions:
       contents: read
@@ -74,6 +74,20 @@ jobs:
       - run: npm run test:sbp-writer
       - run: npm run test:cut
       - run: npm run test:relief-master
+
+  # Linux retains the browser functional checks. Strict Metal/4x timing remains
+  # a separate gate on identified reference hardware, not every hosted runner.
+  browser_checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - run: npm ci
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:noise-browser
@@ -86,6 +100,24 @@ jobs:
       - run: npm run test:relief-editor-navigation
       - run: npm run test:relief-editor-transport
       - run: npm run test:generator-controls
+
+  checks:
+    if: ${{ always() }}
+    needs: [numerical_checks, browser_checks, preset_export_gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require numerical, browser and full export checks
+        env:
+          NUMERICAL_RESULT: ${{ needs.numerical_checks.result }}
+          BROWSER_RESULT: ${{ needs.browser_checks.result }}
+          EXPORT_RESULT: ${{ needs.preset_export_gate.result }}
+        run: |
+          if [ "$NUMERICAL_RESULT" != "success" ] || [ "$BROWSER_RESULT" != "success" ] || [ "$EXPORT_RESULT" != "success" ]; then
+            echo "Numerical: $NUMERICAL_RESULT; browser: $BROWSER_RESULT; full exports: $EXPORT_RESULT"
+            exit 1
+          fi
 
   preset_export_list:
     name: Preset export matrix
