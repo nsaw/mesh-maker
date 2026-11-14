@@ -1,4 +1,5 @@
 import { metricOrdering } from './metric-order';
+import { assertFrozenReliefWork, reliefMeasurementShape, RELIEF_WALL_MIN_PHYS as WALL_MIN_PHYS } from './relief-work-budget';
 /**
  * VoronoiReliefGen — grid-aware 3D Voronoi cell relief sampler (v16).
  *
@@ -81,9 +82,6 @@ export const RELIEF_PLACEMENT_KEYS = Object.freeze([
 
 // Tuning constants — kept central so future work has one place to edit.
 const LLOYD_SAMPLES_PER_SITE = 64;
-const WALL_MIN_PHYS = 0.3;
-const CELL_MEASUREMENT_PITCH_IN = WALL_MIN_PHYS / 4;
-const CELL_MEASUREMENT_MAX = 320000;
 const WAVE_GEN_SEED_OFFSET = 17;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
 // Flow-warp displacement amplitude in units of cellSize at distortion = 1. Chosen so a
@@ -866,6 +864,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     let sites: Site[], ids: Uint32Array, pinned: Uint8Array, truncatedFrom: number;
     if (p.frozenSites) {
       validateReliefSites(p.frozenSites, p.meshX, p.meshY);
+      assertFrozenReliefWork(p, p.frozenSites);
       const frozen = copyReliefSites(p.frozenSites);
       sites = Array.from(frozen.ids, (_, i) => ({x: frozen.xy[i * 2], y: frozen.xy[i * 2 + 1], radius: 0}));
       ({ ids, pinned, truncatedFrom } = frozen);
@@ -1009,13 +1008,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const inradius = new Float64Array(sites.length);
     // Physical quadrature, independent of display/export resolution. Large panels
     // coarsen under an explicit work cap; every retained cell also gets a center query.
-    let measureCols = Math.max(2, Math.ceil(p.meshX / CELL_MEASUREMENT_PITCH_IN) + 1);
-    let measureRows = Math.max(4, Math.ceil(p.meshY / CELL_MEASUREMENT_PITCH_IN) + 1);
-    if (measureCols * measureRows > CELL_MEASUREMENT_MAX) {
-      const scale = Math.sqrt(CELL_MEASUREMENT_MAX / (measureCols * measureRows));
-      measureCols = Math.min(CELL_MEASUREMENT_MAX / 4, Math.max(2, Math.floor(measureCols * scale)));
-      measureRows = Math.min(Math.floor(CELL_MEASUREMENT_MAX / measureCols), Math.max(4, Math.floor(measureRows * scale)));
-    }
+    const {cols: measureCols, rows: measureRows} = reliefMeasurementShape(p.meshX, p.meshY);
     for (let j = 0; j < measureRows; j++) for (let i = 0; i < measureCols; i++) {
       const x = i / (measureCols - 1) * p.meshX, y = j / (measureRows - 1) * p.meshY;
       const [qx, qy] = warpFn ? warpFn(x, y) : [x, y];
@@ -1523,6 +1516,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
 /** One explicit authoring relaxation. Stored geometry is never relaxed implicitly. */
 export function relaxReliefSites(p: ReliefSampleParams, frozen: ReliefSiteSet): ReliefSiteSet {
   validateReliefSites(frozen, p.meshX, p.meshY);
+  assertFrozenReliefWork(p, frozen, frozen.ids.length * LLOYD_SAMPLES_PER_SITE);
   const copy = copyReliefSites(frozen);
   const sites = Array.from(copy.ids, (_, i) => ({x: copy.xy[i * 2], y: copy.xy[i * 2 + 1], radius: 0}));
   if (sites.length) {

@@ -8,11 +8,12 @@ import { DEFAULTS, CURRENT_PAYLOAD_VERSION } from '../src/state';
 import { presetState } from '../src/noise/presets';
 import { SimplexNoiseGen } from '../src/noise/generators';
 import { SiteGrid } from '../src/noise/site-grid';
+import { assertFrozenReliefWork, frozenReliefQueryWork, MAX_FROZEN_RELIEF_QUERY_WORK, reliefMeasurementShape } from '../src/noise/relief-work-budget';
 import { buildNoiseSurface, noiseSurfaceParams } from '../src/noise/surface';
 import { packNoiseSurface, unpackNoiseSurface } from '../src/noise/messages';
 import { copyReliefSites, editReliefSite, validateReliefSites } from '../src/noise/relief-sites';
 import { sampleReliefParamsFromState, VoronoiReliefGen, reliefOwnerOracle, relaxReliefSites } from '../src/noise/voronoi-relief';
-import { captureReliefProject, encodeReliefProject, parseReliefProject, projectSurfaceParams, preflightReliefProject, ReliefProjectHistory } from '../src/relief-project';
+import { captureReliefProject, copyReliefProject, encodeReliefProject, parseReliefProject, projectSurfaceParams, preflightReliefProject, assertReliefProjectGenerationWork, ReliefProjectHistory } from '../src/relief-project';
 import type { ReliefSiteSet } from '../src/types';
 
 const make = (key = 'relief-pockets', resolution = 64) => buildNoiseSurface(noiseSurfaceParams({...DEFAULTS, ...presetState(key), resolution}));
@@ -87,6 +88,62 @@ process.stdout.write('accepted clustered project preflight passed');`;
 assert.equal(execFileSync(process.execPath,['--import','tsx','--input-type=module','--eval',preflightScript],{
   input:encodeReliefProject(clusteredProject), encoding:'utf8', timeout:8000,
 }), 'accepted clustered project preflight passed');
+
+// Resource admission precedes the index's own coincidence-expanded spacing queries.
+// The file contract remains lossless, including layouts too expensive to regenerate.
+const coincidentPopulation: ReliefSiteSet = {
+  xy:Float64Array.from({length:8192},()=>6), ids:Uint32Array.from({length:4096},(_,i)=>i),
+  pinned:new Uint8Array(4096), truncatedFrom:0,
+};
+const expensiveProject={...clusterBase,sites:coincidentPopulation};
+const expensiveText=encodeReliefProject(expensiveProject);
+assert.deepEqual(parseReliefProject(expensiveText),expensiveProject);
+assert.deepEqual(copyReliefProject(expensiveProject),expensiveProject);
+assert.equal(validateReliefSites(coincidentPopulation,12,12),4095);
+const admittedHistory=new ReliefProjectHistory(document,true), retainedText=encodeReliefProject(admittedHistory.current);
+const originalFromSites=SiteGrid.fromSites;
+let heavyEntries=0;
+SiteGrid.fromSites=()=>{ heavyEntries++; throw new Error('Heavy index entered before resource admission'); };
+try {
+  assert.throws(()=>preflightReliefProject(expensiveProject),/coincident-site query work/);
+  assert.throws(()=>projectSurfaceParams(expensiveProject,0),/coincident-site query work/);
+  const settings=noiseSurfaceParams({...expensiveProject.params,reliefSites:coincidentPopulation,reliefRevision:0});
+  assert.throws(()=>buildNoiseSurface(settings),/coincident-site query work/,'direct frozen generation cannot bypass admission');
+  const sample=sampleReliefParamsFromState(16,16,12,12,settings.seed,settings);
+  assert.throws(()=>relaxReliefSites(sample,coincidentPopulation),/coincident-site query work/);
+  await assert.rejects(admittedHistory.open(expensiveText,async project=>preflightReliefProject(project)),/coincident-site query work/);
+  assert.equal(heavyEntries,0,'negative control refuses without executing quadratic spacing or billions of geometry queries');
+} finally { SiteGrid.fromSites=originalFromSites; }
+assert.equal(encodeReliefProject(admittedHistory.current),retainedText);
+assert.equal(admittedHistory.dirty,false);
+assert.equal(admittedHistory.canUndo,false);
+
+// Admission units are integer candidate visits, with an inclusive boundary and no timing claim.
+const budgetShape={cols:2,rows:2,meshX:1,meshY:1};
+const pair: ReliefSiteSet={xy:new Float64Array([0,0,-0,0]),ids:new Uint32Array([7,99]),pinned:new Uint8Array([0,1]),truncatedFrom:0};
+const pairWork=frozenReliefQueryWork(budgetShape,pair);
+const remainingQueries=(MAX_FROZEN_RELIEF_QUERY_WORK-pairWork)/2;
+assert(Number.isSafeInteger(remainingQueries));
+assert.equal(frozenReliefQueryWork(budgetShape,pair,remainingQueries),MAX_FROZEN_RELIEF_QUERY_WORK);
+assert.doesNotThrow(()=>assertFrozenReliefWork(budgetShape,pair,remainingQueries));
+assert.throws(()=>assertFrozenReliefWork(budgetShape,pair,remainingQueries+1),/coincident-site query work/);
+for(const invalid of [-1,0.5,NaN,Infinity,Number.MAX_SAFE_INTEGER]) {
+  assert.throws(()=>frozenReliefQueryWork(budgetShape,pair,invalid),/Invalid frozen relief/);
+}
+assert.throws(()=>frozenReliefQueryWork(budgetShape,{xy:new Float64Array(),ids:new Uint32Array(),pinned:new Uint8Array(),truncatedFrom:0},Number.MAX_SAFE_INTEGER),
+  /Invalid frozen relief query work/,'empty layouts cannot hide query-count overflow');
+assert(Object.is(pair.xy[2],-0),'admission groups signed zero without rewriting its bytes');
+assert.deepEqual(reliefMeasurementShape(36,24),{cols:481,rows:321});
+const largeQuadrature=reliefMeasurementShape(360,240);
+assert(largeQuadrature.cols*largeQuadrature.rows<=320000);
+assert.doesNotThrow(()=>assertReliefProjectGenerationWork({...cappedProject,params:{...cappedProject.params,resolution:1024}}),
+  '4096 ordinary distributed sites stay admitted at the maximum output width');
+const fullGridSites: ReliefSiteSet={
+  xy:Float64Array.from({length:8192},(_,i)=>i%2===0?(Math.floor(i/2)%64)/63:Math.floor(i/128)/63*24),
+  ids:Uint32Array.from({length:4096},(_,i)=>i),pinned:new Uint8Array(4096),truncatedFrom:0,
+};
+assert.doesNotThrow(()=>assertReliefProjectGenerationWork({...document,params:{...document.params,meshX:1,meshY:24,resolution:400},sites:fullGridSites}),
+  'distributed frozen sites remain supported near the project grid-node limit');
 
 // Independent distance ordering covers clustered, sparse, collinear and coincident
 // authored populations. Bucket sizing must change only work, not arithmetic or ties.

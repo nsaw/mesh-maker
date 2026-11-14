@@ -1,4 +1,5 @@
 import { clampCutDepth } from './carve-limits';
+import { assertFrozenReliefWork } from './noise/relief-work-budget';
 import { CURRENT_PAYLOAD_VERSION, DEFAULTS } from './state';
 import type { ReliefQueryDescription, ReliefSiteSet } from './types';
 import { buildNoiseSurface, NOISE_SURFACE_KEYS, noiseSurfaceParams, type NoiseSurface, type NoiseSurfaceParams } from './noise/surface';
@@ -146,8 +147,15 @@ export function parseReliefProject(text: string): ReliefProject {
   return {params: settings, sites, query: description};
 }
 export function copyReliefProject(project: ReliefProject): ReliefProject { return parseReliefProject(encodeReliefProject(project)); }
+/** Resource admission remains separate from the lossless project data contract. */
+export function assertReliefProjectGenerationWork(project: ReliefProject): void {
+  const p = project.params;
+  const rows = Math.max(4, Math.round(p.resolution * p.meshY / p.meshX));
+  assertFrozenReliefWork({cols: p.resolution, rows, meshX: p.meshX, meshY: p.meshY}, project.sites);
+}
 export function projectSurfaceParams(project: ReliefProject, revision: number): NoiseSurfaceParams {
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid project source revision');
+  assertReliefProjectGenerationWork(project);
   return noiseSurfaceParams({...project.params, reliefSites: project.sites, reliefRevision: revision});
 }
 export function captureReliefProject(surface: NoiseSurface): ReliefProject {
