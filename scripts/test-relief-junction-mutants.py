@@ -19,6 +19,8 @@ with tempfile.TemporaryDirectory(prefix='meshcraft-junction-mutants-') as temp:
         shutil.copy2(ROOT / name, destination / name)
     (destination / 'node_modules').symlink_to(ROOT / 'node_modules', target_is_directory=True)
     shutil.copy2(ROOT / 'cli/relief-support.spec.ts', destination / 'cli/relief-support.spec.ts')
+    shutil.copy2(ROOT / 'cli/relief-fixtures.ts', destination / 'cli/relief-fixtures.ts')
+    shutil.copytree(ROOT / 'cli/fixtures/relief-geometry-bb9', destination / 'cli/fixtures/relief-geometry-bb9')
     sampler = destination / 'src/noise/voronoi-relief.ts'
     grid = destination / 'src/noise/site-grid.ts'
     originals = {path: path.read_text() for path in [sampler, grid]}

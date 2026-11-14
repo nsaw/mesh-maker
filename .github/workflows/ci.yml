@@ -32,6 +32,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:cli
       - run: npm run test:relief
+      - run: npm run test:relief-measurement-mutants
+      - run: npm run test:generators
       - run: npm run test:noise-worker
       - run: npm run test:fit-frame
       - run: npm run test:render-geometry

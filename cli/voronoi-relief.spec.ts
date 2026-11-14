@@ -2,6 +2,7 @@ import { rankSitesExactly } from './exact-metric-rank-oracle';
 import './relief-junction.spec';
 import './gaussian-smoothing.spec';
 import './relief-correctness.spec';
+import './relief-measurement.spec';
 /**
  * Deterministic verification of the Voronoi Relief sampler.
  * Run: npm run test:relief  (or: npx tsx cli/voronoi-relief.spec.ts)

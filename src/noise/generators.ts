@@ -1,7 +1,15 @@
 import type { NoiseGenerator, FBMGenerator, NoiseConfig } from '../types';
+import { mulberry32 } from './prng';
 import { VoronoiReliefGen } from './voronoi-relief';
 
 // ── Base noise generators ────────────────────────────────────────────
+
+export const SIMPLEX_KERNEL_IMPLEMENTATION = 'meshcraft-simplex2-fisher-yates-mulberry32-v1';
+export interface SimplexKernelDescription {
+  readonly implementation: typeof SIMPLEX_KERNEL_IMPLEMENTATION;
+  readonly perm: readonly number[];
+  readonly grad2: readonly (readonly [number, number])[];
+}
 
 export class SimplexNoiseGen implements NoiseGenerator {
   private grad3: number[][];
@@ -9,13 +17,25 @@ export class SimplexNoiseGen implements NoiseGenerator {
 
   constructor(seed = 0) {
     this.grad3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
-    const p: number[] = [];
-    for (let i = 0; i < 256; i++) p[i] = Math.floor(this._sr(seed + i) * 256);
+    const p = Array.from({ length: 256 }, (_, i) => i);
+    const rand = mulberry32(seed);
+    for (let i = 255; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [p[i], p[j]] = [p[j], p[i]];
+    }
     this.perm = [];
     for (let i = 0; i < 512; i++) this.perm[i] = p[i & 255];
   }
 
-  private _sr(s: number): number { const x = Math.sin(s) * 10000; return x - Math.floor(x); }
+  /** Copied immutable runtime coefficients for independent warp certification. */
+  describeKernel(): SimplexKernelDescription {
+    return Object.freeze({
+      implementation: SIMPLEX_KERNEL_IMPLEMENTATION,
+      perm: Object.freeze([...this.perm]),
+      grad2: Object.freeze(this.grad3.map(g => Object.freeze([g[0], g[1]] as const))),
+    });
+  }
+
   private _dot(g: number[], x: number, y: number): number { return g[0] * x + g[1] * y; }
 
   noise(xin: number, yin: number): number {
@@ -140,13 +160,13 @@ export class OpenSimplex2NoiseGen implements NoiseGenerator {
     const gi1 = this.perm[ii + i1 + this.perm[jj + j1]] % 24;
     const gi2 = this.perm[ii + 1 + this.perm[jj + 1]] % 24;
     let value = 0;
-    let a0 = 2.0 / 3.0 - x0 * x0 - y0 * y0;
+    let a0 = 0.5 - x0 * x0 - y0 * y0;
     if (a0 > 0) { a0 *= a0; value += a0 * a0 * (this.grad2[gi0][0] * x0 + this.grad2[gi0][1] * y0); }
-    let a1 = 2.0 / 3.0 - x1 * x1 - y1 * y1;
+    let a1 = 0.5 - x1 * x1 - y1 * y1;
     if (a1 > 0) { a1 *= a1; value += a1 * a1 * (this.grad2[gi1][0] * x1 + this.grad2[gi1][1] * y1); }
-    let a2 = 2.0 / 3.0 - x2 * x2 - y2 * y2;
+    let a2 = 0.5 - x2 * x2 - y2 * y2;
     if (a2 > 0) { a2 *= a2; value += a2 * a2 * (this.grad2[gi2][0] * x2 + this.grad2[gi2][1] * y2); }
-    return value * 18;
+    return value * 99.20453188556945;
   }
 }
 
@@ -374,8 +394,8 @@ export class WaveletNoiseGen implements NoiseGenerator {
 
   noise(x: number, y: number): number {
     const n = this.SIZE;
-    const tx = ((x % n) + n) % n;
-    const ty = ((y % n) + n) % n;
+    const tx = (((x * 8) % n) + n) % n;
+    const ty = (((y * 8) % n) + n) % n;
     const ix = Math.floor(tx) & (n - 1);
     const iy = Math.floor(ty) & (n - 1);
     const fx = tx - Math.floor(tx);

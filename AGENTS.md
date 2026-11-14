@@ -108,6 +108,7 @@ meshcraft/
 │   ├── render-geometry.spec.ts # npm run test:render-geometry (original-buffer oracle, bounds, transfer)
 │   ├── stl-to-sbp.ts          # CLI entry point (tsx/Node)
 │   ├── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
+│   ├── relief-measurement.spec.ts # physical cell quadrature, narrow-cell anchors and coincidence oracles
 │   ├── voronoi-relief.spec.ts # npm run test:relief
 │   ├── grasshopper-parity.spec.ts # npm run test:gh-parity
 │   ├── presets.spec.ts        # npm run test:presets (owned state, production geometry, SBP)

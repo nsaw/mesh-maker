@@ -401,7 +401,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 ];
 
 // Generation and preset semantics changed. Incompatible links reset explicitly.
-export const CURRENT_PAYLOAD_VERSION = 20;
+export const CURRENT_PAYLOAD_VERSION = 23;
 let outdatedLinkReset = false;
 
 /** Read and clear the reset notice from the latest deserialize operation. */

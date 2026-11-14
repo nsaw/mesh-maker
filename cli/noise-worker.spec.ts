@@ -15,14 +15,14 @@ const fixture = JSON.parse(readFileSync(new URL('./fixtures/noise-surface-baseli
   source: string;
   fixtures: { name: string; settings: object; hash: string; cols: number; rows: number; truncatedFrom: number; crestClipStatus: string }[];
 };
-assert.equal(fixture.source, '859c97ea-inline-complete-support-exact-order');
+assert.equal(fixture.source, 'slice7a-kernel-physical-cell-measurement-v1');
 for (const item of fixture.fixtures) {
   Object.assign(STATE, DEFAULTS, item.settings);
   const params = noiseSurfaceParams(STATE);
   assert(Object.isFrozen(params));
   const surface = buildNoiseSurface(params);
   const bytes = Buffer.from(new Float64Array(surface.vertices.flat()).buffer);
-  assert.equal(createHash('sha256').update(bytes).digest('hex').replace(/(.{8})(?=.)/g, '$1-'), item.hash, `${item.name} pre-move output`);
+  assert.equal(createHash('sha256').update(bytes).digest('hex').replace(/(.{8})(?=.)/g, '$1-'), item.hash, `${item.name} seed-repair checkpoint output`);
   assert.deepEqual([surface.cols, surface.rows, surface.truncatedFrom, surface.crestClipStatus],
     [item.cols, item.rows, item.truncatedFrom, item.crestClipStatus], `${item.name} metadata`);
   generateNoiseMesh();
@@ -248,4 +248,4 @@ Object.assign(STATE, DEFAULTS, { resolution: 8 }); generateNoiseMesh();
 STATE.seed++;
 assert.equal(getExportSurface(), NOISE_CHANGED);
 Object.assign(STATE, DEFAULTS);
-process.stdout.write(`Noise worker contracts passed; ${fixture.fixtures.length} pre-move surfaces byte-identical.\n`);
+process.stdout.write(`Noise worker contracts passed; ${fixture.fixtures.length} seed-repair surfaces byte-identical.\n`);

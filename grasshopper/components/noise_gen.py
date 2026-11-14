@@ -102,6 +102,15 @@ mesh_y      = float(mesh_y)
 
 # ── Noise classes ─────────────────────────────────────────────────────────────
 
+class _Mulberry32(object):
+    def __init__(self, seed): self.state = int(seed) & 0xffffffff
+    def next(self):
+        self.state = (self.state + 0x6D2B79F5) & 0xffffffff
+        r = self.state
+        r = ((r ^ (r >> 15)) * (r | 1)) & 0xffffffff
+        r ^= (r + (((r ^ (r >> 7)) * (r | 61)) & 0xffffffff)) & 0xffffffff
+        return float((r ^ (r >> 14)) & 0xffffffff) / 4294967296.0
+
 # BEGIN SHARED SITE GRID
 class _SiteGrid(object):
     # Squared differences stay finite within this supported coordinate range.
@@ -376,7 +385,12 @@ class SimplexNoise(object):
     GRAD3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],
              [1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]]
     def __init__(self, seed=0):
-        p = [int(self._sr(seed + i) * 256) for i in range(256)]
+        p = list(range(256))
+        rng = _Mulberry32(seed)
+        rand = rng.next
+        for i in range(255, 0, -1):
+            j = int(rand() * (i + 1))
+            p[i], p[j] = p[j], p[i]
         self.perm = [p[i & 255] for i in range(512)]
     def _sr(self, s):
         x = math.sin(s) * 10000.0; return x - math.floor(x)
@@ -475,13 +489,13 @@ class OpenSimplex2Noise(object):
         gi1 = self.perm[ii+i1+self.perm[jj+j1]] % 24
         gi2 = self.perm[ii+1+self.perm[jj+1]] % 24
         val = 0.0
-        a0 = 2.0/3.0-x0*x0-y0*y0
+        a0 = 0.5-x0*x0-y0*y0
         if a0 > 0: a0 *= a0; val += a0*a0*(self.grad2[gi0][0]*x0+self.grad2[gi0][1]*y0)
-        a1 = 2.0/3.0-x1*x1-y1*y1
+        a1 = 0.5-x1*x1-y1*y1
         if a1 > 0: a1 *= a1; val += a1*a1*(self.grad2[gi1][0]*x1+self.grad2[gi1][1]*y1)
-        a2 = 2.0/3.0-x2*x2-y2*y2
+        a2 = 0.5-x2*x2-y2*y2
         if a2 > 0: a2 *= a2; val += a2*a2*(self.grad2[gi2][0]*x2+self.grad2[gi2][1]*y2)
-        return val*18.0
+        return val*99.20453188556945
 
 
 class RidgedNoise(object):
@@ -635,7 +649,7 @@ class WaveletNoise(object):
                 self.tile[j*n+i] = val/total
     def noise(self, x, y):
         n = self.SIZE
-        tx = ((x % n)+n) % n; ty = ((y % n)+n) % n
+        tx = (((x * 8) % n)+n) % n; ty = (((y * 8) % n)+n) % n
         ix = int(math.floor(tx)) & (n-1); iy = int(math.floor(ty)) & (n-1)
         fx = tx-math.floor(tx); fy = ty-math.floor(ty)
         u = fx*fx*(3.0-2.0*fx); v = fy*fy*(3.0-2.0*fy)
@@ -773,6 +787,8 @@ class VoronoiReliefNoise(object):
     # v21.1 minimum feature floors — PHYSICAL constants (tool-radius scale), never
     # derived from sample pitch (geometry must not change shape with grid resolution).
     WALL_MIN_PHYS = 0.3
+    CELL_MEASUREMENT_PITCH_IN = WALL_MIN_PHYS / 4.0
+    CELL_MEASUREMENT_MAX = 320000
     CROWN_MIN_PHYS = 0.25
     # v23 membrane cushions: fixed SOR sweep count for determinism.
     MEMBRANE_SWEEPS = 80
@@ -1191,13 +1207,36 @@ class VoronoiReliefNoise(object):
         radius_sum = [0.0] * n_sites
         radius_n = [0] * n_sites
         inradius = [0.0] * n_sites
-        for idx0 in range(rows * cols):
-            f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
-            radius_sum[idx] += f1; radius_n[idx] += 1
-            db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4, wx_arr[idx0], wy_arr[idx0])
-            if db > inradius[idx]: inradius[idx] = db
+        # Physical quadrature, independent of output resolution; cap panel work and
+        # query every retained site center so a narrow cell cannot disappear.
+        measure_cols = max(2, int(math.ceil(p['mesh_x'] / self.CELL_MEASUREMENT_PITCH_IN)) + 1)
+        measure_rows = max(4, int(math.ceil(p['mesh_y'] / self.CELL_MEASUREMENT_PITCH_IN)) + 1)
+        if measure_cols * measure_rows > self.CELL_MEASUREMENT_MAX:
+            scale = math.sqrt(float(self.CELL_MEASUREMENT_MAX) / (measure_cols * measure_rows))
+            measure_cols = min(self.CELL_MEASUREMENT_MAX // 4, max(2, int(math.floor(measure_cols * scale))))
+            measure_rows = min(self.CELL_MEASUREMENT_MAX // measure_cols, max(4, int(math.floor(measure_rows * scale))))
+        for j in range(measure_rows):
+            for i in range(measure_cols):
+                x = i / float(measure_cols - 1) * p['mesh_x']
+                y = j / float(measure_rows - 1) * p['mesh_y']
+                qx, qy = warp_fn(x, y) if warp_fn is not None else (x, y)
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale)
+                radius_sum[idx] += f1; radius_n[idx] += 1
+                db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4, qx, qy)
+                if db > inradius[idx]: inradius[idx] = db
+        geometric_owner = [0] * n_sites
         for k in range(n_sites):
-            sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
+            x, y = sites[k][:2]
+            f1, f2, f3, f4, owner, i2, i3, i4 = self._nearest_three(sites, x, y, cosA, sinA, aniso_scale)
+            geometric_owner[k] = owner
+            anchor = boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4, x, y)
+            inradius[k] = max(inradius[k], anchor)
+            sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else 4.0 * anchor / 3.0
+        for k in range(n_sites):
+            owner = geometric_owner[k]
+            if owner != k:
+                sites[k][2] = sites[owner][2]
+                inradius[k] = inradius[owner]
         # v17 size-depth coupling normalizes against the MEDIAN actual cell radius.
         sorted_radii = sorted(s2[2] for s2 in sites)
         median_radius = max(0.05, sorted_radii[len(sorted_radii) // 2])

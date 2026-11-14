@@ -1,23 +1,23 @@
 {
-  "source": "15237baf-daeaf3c8-8a930736-73acd622-ce984577 render geometry before material reuse",
+  "source": "ae8ba66b-dfb86212-13aa8a4d-569cdfbc-17b30796 default heights verified against seed-repaired 3659938; renderer identical to mobile 73a1fade-a18420ee-3e8f6957-bb9c33fd-ef008a1c",
   "buffers": [
     {
       "target": 34962,
       "bytes": 1281600,
       "type": "Float32Array",
-      "hash": "a05289b2-6a3e3d32-9753c979-273cf9ab-341c8fbd-1e05190c-6ea1e42b-bd0e7a54"
+      "hash": "de8af15d-503cbdb0-109a8637-a8d0d35a-2a6ddb69-2e1649ac-94e4e9aa-cd235125"
     },
     {
       "target": 34962,
       "bytes": 1281600,
       "type": "Float32Array",
-      "hash": "10be779c-e970ff89-f4db81ce-2b424d1d-250b8a77-db5e5d80-f736dc96-8b0e8e87"
+      "hash": "92833fa9-250fb531-bb7d5608-46ebcb7c-00eddf42-54a368db-badcf09e-2ff65437"
     },
     {
       "target": 34962,
       "bytes": 854400,
       "type": "Float32Array",
-      "hash": "0c77842f-dc598b3b-b480b0b7-7e551cc6-6fe64aa7-bc6e68dd-62754bd4-05f160bf"
+      "hash": "90f65393-aba7d55d-1b347a3a-dd0b7fe8-e3a55948-13d25581-09b80792-47f5aced"
     },
     {
       "target": 34962,
@@ -41,7 +41,7 @@
       "target": 34962,
       "bytes": 9600,
       "type": "Float32Array",
-      "hash": "3eabfea1-b960a3a2-d40263e9-4067c1a3-4ddab0f3-38ce8453-7f908663-4d592963"
+      "hash": "998355dd-78820171-1f59abb9-57a163ea-44054a5f-6b314483-463e4bb8-3462717d"
     },
     {
       "target": 34962,
@@ -53,7 +53,7 @@
       "target": 34962,
       "bytes": 9600,
       "type": "Float32Array",
-      "hash": "d1525e05-04016440-9d3952fe-ed779299-cd04e3c1-def77e3f-26555b99-b6ec1a94"
+      "hash": "4c7fe8d7-91e9889e-2013e35e-885702ce-d2ea0a04-380cbc72-d7e307d0-38090446"
     },
     {
       "target": 34962,
@@ -65,7 +65,7 @@
       "target": 34962,
       "bytes": 6408,
       "type": "Float32Array",
-      "hash": "ab618783-2097956d-c4d709cf-8e5dd8bd-e528dc97-b3802887-260ca4f4-c802ae32"
+      "hash": "bc3cd2a4-16d3f8ce-9ba2b653-196c1929-d1be466d-fdc593ec-626bcacf-9543ee3f"
     },
     {
       "target": 34962,
@@ -77,7 +77,7 @@
       "target": 34962,
       "bytes": 6408,
       "type": "Float32Array",
-      "hash": "ebd4fc8b-ebdec612-a19aa6f4-cee5e0b2-94a7cd39-f88f5253-342690d0-b2e296c5"
+      "hash": "65af3ac4-0bee4f59-c4843b6b-c6d90844-a5eb6f89-3446989e-3de4e23f-3682a644"
     },
     {
       "target": 34962,
@@ -89,7 +89,7 @@
       "target": 34963,
       "bytes": 2547216,
       "type": "Uint32Array",
-      "hash": "079e1dca-ed80237d-b5c17b4c-abff7416-8f22da19-39ff8e1a-28681202-d9c3712f"
+      "hash": "e76a519d-b1fe5dbd-760b1047-cee29497-1f2aede1-04b409d0-b40aff26-c9c4d528"
     },
     {
       "target": 34963,

@@ -11,6 +11,7 @@ import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
 import { generateNoiseMesh } from '../src/mesh';
 import { noiseGeneration, NoiseGeneration } from '../src/noise/controller';
 import { noiseSurfaceParams } from '../src/noise/surface';
+import { frozenReliefSites } from './relief-fixtures';
 
 // The limit cannot depend on which unequal multiplier becomes the owner or runner-up.
 const values = [0.1, 0.35, 0.8, 0.95];
@@ -54,9 +55,10 @@ function membershipParams(cols: number) {
     wallWidth:0,junctionLift:0,invertProfile:1,crestVariation:0,warpDistortion:0,attractorMode:'none' as const,
     anisotropy:(Math.sqrt(3)-1)/1.5,anisotropyAngle:45,cutDepthIn:2.4};
 }
+const outerSites=frozenReliefSites('outer-membership'),mixedSites=frozenReliefSites('mixed-crest');
 const variations: number[]=[];
 for (const cols of [121,241,481,961]) {
-  const grid=new VoronoiReliefGen(5).sampleGrid(membershipParams(cols)), i=(cols-1)*11/24;
+  const grid=VoronoiReliefGen.sampleSitesForTest(membershipParams(cols),outerSites), i=(cols-1)*11/24;
   let variation=0;
   for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++) variation=Math.max(variation,Math.abs(grid[i+y][i+x]-grid[i][i]));
   variations.push(variation);
@@ -64,8 +66,8 @@ for (const cols of [121,241,481,961]) {
 for(let i=1;i<variations.length;i++) assert(variations[i]<=variations[i-1]*.6, `outer-membership triple convergence ${variations}`);
 let previousJump=Infinity;
 for (const epsilon of [1e-3,1e-5,1e-7,1e-9]) {
-  const a=VoronoiReliefGen.queryForTest(membershipParams(121),2.75-epsilon,2.75);
-  const b=VoronoiReliefGen.queryForTest(membershipParams(121),2.75+epsilon,2.75);
+  const a=VoronoiReliefGen.queryForTest(membershipParams(121),2.75-epsilon,2.75,outerSites);
+  const b=VoronoiReliefGen.queryForTest(membershipParams(121),2.75+epsilon,2.75,outerSites);
   const jump=Math.abs(a-b);
   assert(jump < previousJump*.1, `fixed-Pass-1 membership limit ${epsilon}: ${jump}`);
   previousJump=jump;
@@ -98,8 +100,8 @@ for(const [name,change] of Object.entries({crown:{},sharp:{seamSharpness:1},dome
   let previous=Infinity;
   for(const epsilon of [1e-5,1e-7,1e-9]) {
     const p={...mixedCrest,...change};
-    const jump=Math.abs(VoronoiReliefGen.queryForTest(p,.39537742389626745-epsilon,.4955797323410449)
-      -VoronoiReliefGen.queryForTest(p,.39537742389626745+epsilon,.4955797323410449));
+    const jump=Math.abs(VoronoiReliefGen.queryForTest(p,.39537742389626745-epsilon,.4955797323410449,mixedSites)
+      -VoronoiReliefGen.queryForTest(p,.39537742389626745+epsilon,.4955797323410449,mixedSites));
     assert(jump<=previous*.1+1e-14, `mixed-crest junction ${name} must converge: ${epsilon}, ${jump}`);
     previous=jump;
   }
@@ -209,7 +211,8 @@ try {
   Object.assign(STATE,DEFAULTS,{mode:'noise',noiseType:'voronoi-relief',meshX:6,meshY:4,
     resolution:16,reliefWallWidth:.9,reliefCellSize:1});
   generateNoiseMesh();
-  assert.equal(STATE.reliefCrestClipStatus,'collapsed');
+  // Physical cell measurements retain a real band here; the coarse output grid previously missed it.
+  assert.equal(STATE.reliefCrestClipStatus,'narrowed');
   const diagnosed={vertices:STATE.vertices,cols:STATE.cols,rows:STATE.rows,genTime:STATE.genTime,
     reliefTruncatedFrom:STATE.reliefTruncatedFrom,reliefCrestClipStatus:STATE.reliefCrestClipStatus};
   Object.assign(STATE,{resolution:32,reliefCellSize:0});

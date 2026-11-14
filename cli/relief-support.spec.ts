@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { SiteGrid } from '../src/noise/site-grid';
 import { VoronoiReliefGen, sampleReliefParamsFromState } from '../src/noise/voronoi-relief';
 import { DEFAULTS } from '../src/state';
+import { frozenReliefSites } from './relief-fixtures';
 
 const params={...sampleReliefParamsFromState(41,41,4,4,5,DEFAULTS),cellSize:.8,jitter:.95,
   relaxIterations:0,densityStrength:0,densityNoise:0,radialFoci:[],depthVariation:.7,pillow:0,
@@ -36,10 +37,11 @@ for(const scale of [1,1.7,4])for(let i=1;i<=1500;i++) {
   maxError=Math.max(maxError,Math.abs(bound-minimum));
   assert(Math.abs(bound-minimum)<1e-12,'complete bisector oracle must match every potentially constraining plane');
 }
-const counterexample=planes(sites,2.5604007186484523,2.9606903099047486);
+const regressionSites=frozenReliefSites('rank-switch'),regressionGrid=SiteGrid.fromSites(regressionSites);
+const counterexample=planes(regressionSites,2.5604007186484523,2.9606903099047486);
 assert(Math.abs(counterexample.minimum-.2795740313417761)<1e-12);
 assert.equal(counterexample.ranked.findIndex(p=>p.index===26),6);
-assert(Math.abs(grid.boundaryDistance(2.5604007186484523,2.9606903099047486,
+assert(Math.abs(regressionGrid.boundaryDistance(2.5604007186484523,2.9606903099047486,
   counterexample.ranked[0].index,counterexample.ranked[0].distance,.45122570797791717)-counterexample.minimum)<1e-12);
 // Distinct stable IDs at one position have equal field support, but no separating plane.
 for(const points of [[{x:0,y:0},{x:0,y:0},{x:2,y:0}],Array.from({length:9},()=>({x:0,y:0})),
@@ -83,13 +85,22 @@ for(let i=0;i<100;i++) {
 assert(reads<100*250,'bisector queries must retain sparse bounded work');
 process.stdout.write(`all-site bisector max error ${maxError}; sparse site reads ${reads}\n`);
 
+assert.throws(()=>VoronoiReliefGen.queryForTest(params,0,0,[]),RangeError);
+assert.throws(()=>VoronoiReliefGen.sampleSitesForTest(params,[{x:NaN,y:0}]),RangeError);
+// Assert the frozen point still denotes the reported rank transition, not a smooth substitute.
+const thirdIds=[-1,1].map(sign=>{
+  const n=regressionGrid.nearestFour(.33961171357127573+sign*.8633458216323898*1e-9,
+    3.8847483055010583+sign*.504612715129032*1e-9);
+  assert.equal(n.idx,22);assert.equal(n.idx2,23);return n.idx3;
+});
+assert.deepEqual(thirdIds.sort((a,b)=>a-b),[17,26]);
 // Actual third/fourth rank switch with unchanged owner and runner-up.
 for(const change of [{},{seamDepth:2},{wallWidth:.3},{profile:'hemisphere' as const},{seamSharpness:1}]) {
   let previous=Infinity;
   for(const epsilon of [1e-3,1e-5,1e-7,1e-9]) {
     const values=[-1,1].map(sign=>VoronoiReliefGen.queryForTest({...params,...change},
       .33961171357127573+sign*.8633458216323898*epsilon,
-      3.8847483055010583+sign*.504612715129032*epsilon));
+      3.8847483055010583+sign*.504612715129032*epsilon,regressionSites));
     const jump=Math.abs(values[0]-values[1]);
     assert(jump<previous*.1+1e-14,`rank-switch junction support must converge: ${epsilon}, ${jump}`);
     previous=jump;

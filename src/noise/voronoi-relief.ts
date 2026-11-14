@@ -59,11 +59,15 @@ import type {
   ReliefSampleParams,
 } from '../types';
 import { SimplexNoiseGen } from './generators';
-import { SiteGrid } from './site-grid';
+import { mulberry32, cellHash01 } from './prng';
+import { SiteGrid, type GridSite } from './site-grid';
 import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 
 // Tuning constants — kept central so future work has one place to edit.
 const LLOYD_SAMPLES_PER_SITE = 64;
+const WALL_MIN_PHYS = 0.3;
+const CELL_MEASUREMENT_PITCH_IN = WALL_MIN_PHYS / 4;
+const CELL_MEASUREMENT_MAX = 320000;
 const WAVE_GEN_SEED_OFFSET = 17;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
 // Flow-warp displacement amplitude in units of cellSize at distortion = 1. Chosen so a
@@ -151,17 +155,6 @@ const STOCK_CAP_SPAN = 0.13;
 const SIZE_DEPTH_MIN = 0.8;
 const SIZE_DEPTH_MAX = 1.2;
 
-/** Deterministic per-seed PRNG (mulberry32) — better distribution than sin-hash for site jitter. */
-function mulberry32(seed: number): () => number {
-  let t = (seed | 0) >>> 0;
-  return (): number => {
-    t = (t + 0x6D2B79F5) >>> 0;
-    let r = t;
-    r = Math.imul(r ^ (r >>> 15), r | 1);
-    r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 interface Site {
   x: number;
@@ -244,14 +237,6 @@ function smootherstep(edge0: number, edge1: number, x: number): number {
   if (edge1 <= edge0) return x < edge0 ? 0 : 1;
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
   return t * t * t * (t * (t * 6 - 15) + 10);
-}
-
-/** Deterministic per-cell hash in [0, 1) from the owning site index — drives which cells
- *  get pillowed floors and how strongly, stable across renders for the same seed. */
-function cellHash01(idx: number, seed: number): number {
-  let h = (Math.imul(idx + 1, 374761393) + Math.imul(seed | 0, 668265263)) >>> 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 /** v21 per-EDGE hash. An edge is identified by its two site indices. ORDERED (a→b) gives
@@ -677,6 +662,12 @@ export function nearestThree(
   return { f1, f2, f3, f4, idx, idx2, idx3, idx4 };
 }
 
+export interface CellMeasurements {
+  cols: number; rows: number;
+  sites: Array<{x: number; y: number; radius: number}>;
+  counts: number[]; inradii: number[];
+}
+
 export class VoronoiReliefGen implements ReliefGenerator {
   readonly kind = 'voronoi-relief' as const;
   /** Fallback seed for callers that ignore the params struct (none in current pipeline). */
@@ -724,13 +715,31 @@ export class VoronoiReliefGen implements ReliefGenerator {
   }
 
   /** Fixed Pass 1, unwarped junction-limit probe; production never supplies a query override. */
-  static queryForTest(p: ReliefSampleParams, x: number, y: number): number {
-    return new VoronoiReliefGen(p.seed).sample(p, false, undefined, undefined, {x, y}).grid[0][0];
+  static queryForTest(p: ReliefSampleParams, x: number, y: number, sites?: readonly GridSite[]): number {
+    return new VoronoiReliefGen(p.seed).sample(p, false, undefined, undefined, {x, y}, sites).grid[0][0];
+  }
+
+  /** Fixed-layout measurement oracle; stops before height and membrane work. */
+  static measurementsForTest(p: ReliefSampleParams, sites: readonly GridSite[]): CellMeasurements {
+    let result: CellMeasurements | undefined;
+    new VoronoiReliefGen(p.seed).sample(p, false, undefined, undefined, undefined, sites,
+      value => { result = value; });
+    if (!result) throw new Error('Cell measurements were not captured');
+    return result;
+  }
+
+  /** Frozen post-Lloyd layouts isolate geometric regressions from seed-kernel changes. */
+  static sampleSitesForTest(p: ReliefSampleParams, sites: readonly GridSite[]): number[][] {
+    return new VoronoiReliefGen(p.seed).sample(p, false, undefined, undefined, undefined, sites).grid;
   }
 
   private sample(p: ReliefSampleParams, bruteForce: boolean, captureSites?: (sites: readonly Site[]) => void,
     captureCandidates?: (sites: readonly Site[], cartesianCount: number, nuclei: readonly number[]) => void,
-    query?: {x: number; y: number}): ReliefSampleResult {
+    query?: {x: number; y: number}, frozenSites?: readonly GridSite[],
+    captureMeasurements?: (value: CellMeasurements) => void): ReliefSampleResult {
+    if (frozenSites && (frozenSites.length === 0 || frozenSites.some(site => !Number.isFinite(site.x) || !Number.isFinite(site.y)))) {
+      throw new RangeError('Frozen relief layout must contain finite sites');
+    }
     const seed = (p.seed ?? this.fallbackSeed) >>> 0;
     const rand = mulberry32(seed);
     // Base wave field (v16 superposition term). Re-seeded per call so same p.seed → same
@@ -811,7 +820,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
       fociPhys, zoneR, Math.max(0.2, p.cellSize), radialStrength, radialGrow,
       radialWarpAmt, p.radialMode, rand, p.meshX, p.meshY, sites,
     ) : [];
-    captureCandidates?.(sites, originalCartesianCount, nuclei);
+    if (captureCandidates) {
+      captureCandidates(sites, originalCartesianCount, nuclei);
+      return {grid: [], truncatedFrom: 0, crestClipStatus: 'none'};
+    }
     const candidateCount = sites.length;
     const selected = representativeIndices(candidateCount, SITE_COUNT_MAX, rand, nuclei);
     sites = selected.map(i => sites[i]);
@@ -832,7 +844,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
       lloydRelax(sites, p, lloydSamples, warpFn, cartesianCount, bruteForce);
     }
 
-    captureSites?.(sites);
+    if (frozenSites) sites = frozenSites.map(site => ({x: site.x, y: site.y, radius: 0}));
+    if (captureSites) {
+      captureSites(sites);
+      return {grid: [], truncatedFrom, crestClipStatus: 'none'};
+    }
 
     // NaN guards on the constant metric frame (crafted params / direct construction).
     const baseAnisotropy = Number.isFinite(p.anisotropy)
@@ -933,15 +949,43 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // the normalizer for the wall extent (the critique's "inset must be normalized per
     // cell and locally capped").
     const inradius = new Float64Array(sites.length);
-    for (let idx = 0; idx < rows * cols; idx++) {
-      const { f1, f2, f3, f4, idx: siteIdx, idx2, idx3, idx4 } = nearest(wxArr[idx], wyArr[idx]);
+    // Physical quadrature, independent of display/export resolution. Large panels
+    // coarsen under an explicit work cap; every retained cell also gets a center query.
+    let measureCols = Math.max(2, Math.ceil(p.meshX / CELL_MEASUREMENT_PITCH_IN) + 1);
+    let measureRows = Math.max(4, Math.ceil(p.meshY / CELL_MEASUREMENT_PITCH_IN) + 1);
+    if (measureCols * measureRows > CELL_MEASUREMENT_MAX) {
+      const scale = Math.sqrt(CELL_MEASUREMENT_MAX / (measureCols * measureRows));
+      measureCols = Math.min(CELL_MEASUREMENT_MAX / 4, Math.max(2, Math.floor(measureCols * scale)));
+      measureRows = Math.min(Math.floor(CELL_MEASUREMENT_MAX / measureCols), Math.max(4, Math.floor(measureRows * scale)));
+    }
+    for (let j = 0; j < measureRows; j++) for (let i = 0; i < measureCols; i++) {
+      const x = i / (measureCols - 1) * p.meshX, y = j / (measureRows - 1) * p.meshY;
+      const [qx, qy] = warpFn ? warpFn(x, y) : [x, y];
+      const { f1, f2, f3, f4, idx: siteIdx, idx2, idx3, idx4 } = nearest(qx, qy);
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
-      const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4, wxArr[idx], wyArr[idx]);
+      const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4, qx, qy);
       if (db > inradius[siteIdx]) inradius[siteIdx] = db;
     }
+    const anchorRadius = new Float64Array(sites.length);
+    const geometricOwner = new Int32Array(sites.length);
     for (let k = 0; k < sites.length; k++) {
-      sites[k].radius = radiusN[k] > 0 ? (radiusSum[k] / radiusN[k]) * 2 : p.cellSize;
+      const {x, y} = sites[k];
+      const n = nearest(x, y);
+      geometricOwner[k] = n.idx;
+      anchorRadius[k] = boundaryDist(n.f1, n.f2, n.f3, n.f4, n.idx, n.idx2, n.idx3, n.idx4, x, y);
+      inradius[k] = Math.max(inradius[k], anchorRadius[k]);
+      // Mean distance in an inscribed disk of radius r is 2r/3; radius stores twice it.
+      sites[k].radius = radiusN[k] > 0 ? (radiusSum[k] / radiusN[k]) * 2 : 4 * anchorRadius[k] / 3;
+    }
+    for (let k = 0; k < sites.length; k++) {
+      const owner = geometricOwner[k];
+      if (owner !== k) { sites[k].radius = sites[owner].radius; inradius[k] = inradius[owner]; }
+    }
+    if (captureMeasurements) {
+      captureMeasurements({cols: measureCols, rows: measureRows, sites: sites.map(site => ({...site})),
+        counts: Array.from(radiusN), inradii: Array.from(inradius)});
+      return {grid: [], truncatedFrom, crestClipStatus: 'none'};
     }
     // v17 size-depth coupling normalizes against the MEDIAN actual cell radius (the slider
     // cellSize is a spacing target, not the realized radius — normalizing against it would
@@ -987,7 +1031,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // from the sample pitch: pitch-derived floors would make the exported geometry change
     // shape with grid resolution. 0.3" also covers the flow warp's local sampling stretch
     // at the default 400-res grid.
-    const wallMinPhys = 0.3;
+    const wallMinPhys = WALL_MIN_PHYS;
     const crownMinPhys = 0.25;
     // v21.1 C0 CONTINUITY REPAIR. Dissolution lifts boundaries off zero (bowlH ≈ dissolve
     // at a weakened edge), so any PER-CELL factor multiplying bowlH now creates a step of
