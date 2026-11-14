@@ -20,6 +20,7 @@ export class SiteGrid {
     private readonly sites: readonly GridSite[],
     spacing: number,
     bounds?: { minX: number; minY: number; maxX: number; maxY: number },
+    maxAxisIntervals = 4096,
   ) {
     let minX = bounds?.minX ?? Infinity, minY = bounds?.minY ?? Infinity;
     let maxX = bounds?.maxX ?? -Infinity, maxY = bounds?.maxY ?? -Infinity;
@@ -31,14 +32,14 @@ export class SiteGrid {
     this.minY = Number.isFinite(minY) ? minY : 0;
     const width = Math.max(0, maxX - this.minX), height = Math.max(0, maxY - this.minY);
     this.spacing = Math.max(Number.isFinite(spacing) && spacing > 0 ? spacing : 1,
-      width / 4096, height / 4096);
+      width / maxAxisIntervals, height / maxAxisIntervals);
     this.columns = Math.max(1, Math.floor(width / this.spacing) + 1);
     this.rows = Math.max(1, Math.floor(height / this.spacing) + 1);
     this.buckets = new Array(this.columns * this.rows);
     for (let i = 0; i < sites.length; i++) this.add(i);
   }
 
-  /** Median nearest-neighbour spacing, measured through a provisional bucket grid. */
+  /** Median nearest-neighbour spacing with fixed-population bucket work bounded by count. */
   static fromSites(sites: readonly GridSite[]): SiteGrid {
     if (sites.length < 2) return new SiteGrid(sites, 1);
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -47,11 +48,15 @@ export class SiteGrid {
       maxX = Math.max(maxX, site.x); maxY = Math.max(maxY, site.y);
     }
     const width = maxX - minX, height = maxY - minY;
+    // Authored sites may cluster arbitrarily closely. Bound both grids by the retained
+    // count so sparse queries cannot scan millions of empty buckets. Dynamic placement
+    // uses the constructor's original extent bound while its population grows.
+    const maxAxisIntervals = Math.ceil(Math.sqrt(sites.length));
     const guess = Math.sqrt(width * height / sites.length) || Math.max(width, height) / sites.length || 1;
-    const provisional = new SiteGrid(sites, guess);
+    const provisional = new SiteGrid(sites, guess, undefined, maxAxisIntervals);
     const distances = sites.map(site => provisional.nearestFour(site.x, site.y).f2)
       .filter(distance => Number.isFinite(distance) && distance > 0).sort((a, b) => a - b);
-    return new SiteGrid(sites, distances[Math.floor(distances.length / 2)] ?? guess);
+    return new SiteGrid(sites, distances[Math.floor(distances.length / 2)] ?? guess, undefined, maxAxisIntervals);
   }
 
   private column(x: number): number {

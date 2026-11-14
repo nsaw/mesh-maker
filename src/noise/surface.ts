@@ -4,11 +4,14 @@ import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 import { createNoiseGen, SimplexNoiseGen } from './generators';
 import { sampleReliefParamsFromState } from './voronoi-relief';
 import type { VoronoiReliefGen } from './voronoi-relief';
-import type { FBMGenerator, NoiseConfig, NoiseGridParams, ReliefCrestClipStatus } from '../types';
+import type { FBMGenerator, NoiseConfig, NoiseGridParams, ReliefCrestClipStatus, ReliefSourceSnapshot } from '../types';
+import { copyReliefSites, copyReliefSource } from './relief-sites';
 import { MIN_WATERTIGHT_THICKNESS, gaussianSmooth, gridMinMax } from '../geometry';
 
 /** Complete immutable generation request. View, export and runtime fields never enter a worker. */
 export const NOISE_SURFACE_KEYS = [
+  'reliefSites',
+  'reliefRevision',
   'noiseType',
   'frequency',
   'amplitude',
@@ -85,6 +88,8 @@ export type NoiseSurfaceParams = Readonly<Pick<MeshState, typeof NOISE_SURFACE_K
 
 export function noiseSurfaceParams(s: NoiseSurfaceParams): NoiseSurfaceParams {
   return Object.freeze({
+    reliefSites: s.reliefSites ? copyReliefSites(s.reliefSites) : null,
+    reliefRevision: s.reliefRevision,
     noiseType: s.noiseType,
     frequency: s.frequency,
     amplitude: s.amplitude,
@@ -166,11 +171,19 @@ export interface NoiseSurface {
   genTime: number;
   truncatedFrom: number;
   crestClipStatus: ReliefCrestClipStatus;
+  reliefSource?: ReliefSourceSnapshot & { params: NoiseSurfaceParams };
+}
+
+/** Published metadata owns retained buffers. Each reader gets copies that it may transfer or edit. */
+export function publishReliefSource(source: ReliefSourceSnapshot, params: NoiseSurfaceParams): NonNullable<NoiseSurface['reliefSource']> {
+  const retained = copyReliefSource(source), request = noiseSurfaceParams(params);
+  return Object.freeze({ get sites() { return retained.sites; }, query: retained.query,
+    get params() { return noiseSurfaceParams(request); } });
 }
 
 /** Sample a raw noise grid with domain warping + FBM + post-processing.
  *  Returns values in noise-native range (no CNC normalization, no smoothing). */
-function sampleNoiseGrid(p: NoiseGridParams, params: NoiseSurfaceParams, metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus'>): number[][] {
+function sampleNoiseGrid(p: NoiseGridParams, params: NoiseSurfaceParams, metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus' | 'reliefSource'>): number[][] {
   const { cols, rows, meshX, meshY, frequency, peakExp, valleyExp,
           valleyFloor, octaves, persistence, lacunarity,
           distortion, warpFreq, warpCurl, gen, warpGen } = p;
@@ -182,6 +195,7 @@ function sampleNoiseGrid(p: NoiseGridParams, params: NoiseSurfaceParams, metadat
     const result = (gen as VoronoiReliefGen).sampleGridResult(reliefParams);
     metadata.truncatedFrom = result.truncatedFrom;
     metadata.crestClipStatus = result.crestClipStatus;
+    metadata.reliefSource = publishReliefSource(result.source, params);
     return result.grid;
   }
 
@@ -257,7 +271,7 @@ export function buildNoiseSurface(params: NoiseSurfaceParams): NoiseSurface {
 
   const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
 
-  const metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus'> = { truncatedFrom: 0, crestClipStatus: 'none' };
+  const metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus' | 'reliefSource'> = { truncatedFrom: 0, crestClipStatus: 'none' };
   const noiseConfig: NoiseConfig = { cellJitter: params.cellJitter, cellMetric: params.cellMetric, gaborAngle: params.gaborAngle, gaborBandwidth: params.gaborBandwidth };
   const gen = createNoiseGen(noiseType, seed, noiseConfig);
   const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;

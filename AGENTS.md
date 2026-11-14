@@ -51,6 +51,7 @@ meshcraft/
 │   │   ├── messages.ts        # Float64 worker transport and generation quality
 │   │   ├── worker.ts          # Noise worker entry
 │   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
+│   │   ├── relief-sites.ts    # Lossless stable IDs, pin flags and detached site edits
 │   │   ├── site-grid.ts       # Exact bucket lookup and incremental minimum separation
 │   │   ├── metric-order.ts    # Guarded nearest-rank comparison and exact dyadic tie resolution
 │   │   ├── voronoi-relief.ts  # Voronoi Relief sampler (cellular relief, attractors, starburst)
@@ -81,6 +82,7 @@ meshcraft/
 │   ├── export.ts              # Export dispatcher: STL (binary/ASCII), OBJ, 3DM, heightmap PNG
 │   ├── export-surface.ts      # The one surface every export and toolpath reads (master or grid)
 │   ├── mesh-writer.ts         # Pure grid -> indexed mesh -> STL/OBJ writers (browser + CLI)
+│   ├── relief-project.ts      # Procedural relief project codec and revision-bound history
 │   ├── relief-master.ts       # .mcrelief data contract: parse/encode/verify, preview resample
 │   ├── sbp-export.ts          # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 │   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets, SBP section

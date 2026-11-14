@@ -3,7 +3,7 @@ import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN, type SbpSt
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, snapCarveWidth, type DrapeSettings, type DrapeWindMode } from './drape-controls';
-import type { ReliefAttractorMode, ReliefBaseMode, ReliefCrestClipStatus, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
+import type { ReliefAttractorMode, ReliefBaseMode, ReliefCrestClipStatus, ReliefPolarity, ReliefProfile, ReliefRadialMode, ReliefSiteSet } from './types';
 
 /** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
 export interface MeshState extends DrapeSettings {
@@ -33,6 +33,8 @@ export interface MeshState extends DrapeSettings {
   warpCurl: number;
   gaborAngle: number;
   gaborBandwidth: number;
+  reliefSites: ReliefSiteSet | null;
+  reliefRevision: number;
   // Voronoi-relief params (only used when noiseType === 'voronoi-relief')
   reliefCellSize: number;
   reliefJitter: number;
@@ -187,6 +189,8 @@ export const DEFAULTS: MeshState = {
   warpCurl: 0,
   gaborAngle: 45,
   gaborBandwidth: 1.5,
+  reliefSites: null,
+  reliefRevision: 0,
   reliefCellSize: 1.5,
   reliefJitter: 0.7,
   reliefRelaxIterations: 1,

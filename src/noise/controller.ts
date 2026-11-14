@@ -1,6 +1,10 @@
-import { buildNoiseSurface, noiseSurfaceParams, type NoiseSurface, type NoiseSurfaceParams } from './surface';
+import { buildNoiseSurface, noiseSurfaceParams, publishReliefSource, type NoiseSurface, type NoiseSurfaceParams } from './surface';
 import { unpackNoiseSurface, type GenerationQuality, type NoiseWorkerInput, type NoiseWorkerOutput } from './messages';
 import { isChunkLoadError, UPDATED_MESSAGE, updatedSinceLoad } from '../stale-build';
+
+function requestKey(params: NoiseSurfaceParams): string {
+  return JSON.stringify(noiseSurfaceParams(params), (_key, value: unknown) => Object.is(value, -0) ? '-0' : value);
+}
 
 export const NOISE_PENDING = 'The full-resolution surface is still generating. Export again when it finishes.';
 export const NOISE_CHANGED = 'Settings changed while preparing the export. Export again for the current model.';
@@ -38,6 +42,7 @@ export class NoiseGeneration {
   private params: NoiseSurfaceParams | null = null;
   private request: Request | null = null;
   private full: NoiseSurface | null = null;
+  private source: NonNullable<NoiseSurface['reliefSource']> | null = null;
   private error: string | null = null;
   private tracked = false;
   private gesture = 0;
@@ -57,7 +62,7 @@ export class NoiseGeneration {
 
   /** Called in the input event, before the debounce timer can expose an old grid to an export. */
   invalidate(params: NoiseSurfaceParams): number {
-    const key = JSON.stringify(noiseSurfaceParams(params));
+    const key = requestKey(params);
     this.tracked = true;
     if (key === this.key && this.params) return this.revision;
     // During a gesture one display-only preview may finish while newer input is queued.
@@ -67,6 +72,7 @@ export class NoiseGeneration {
     this.key = key;
     this.params = noiseSurfaceParams(params);
     this.full = null;
+    this.source = null;
     this.error = null;
     return this.revision;
   }
@@ -95,6 +101,7 @@ export class NoiseGeneration {
     this.key = '';
     this.params = null;
     this.full = null;
+    this.source = null;
     this.error = null;
     this.tracked = false;
     this.onBusy(false);
@@ -104,6 +111,7 @@ export class NoiseGeneration {
     this.invalidate(params);
     this.stop(NOISE_CHANGED);
     this.full = surface;
+    this.source = surface.reliefSource ? publishReliefSource(surface.reliefSource, surface.reliefSource.params) : null;
     this.error = null;
     this.onBusy(false);
   }
@@ -114,14 +122,22 @@ export class NoiseGeneration {
     this.endGesture();
     this.stop(NOISE_CHANGED);
     this.full = null;
+    this.source = null;
     this.error = `Noise generation failed: ${message}`;
     this.onBusy(false);
   }
 
   exportBlock(params: NoiseSurfaceParams): string | null {
     if (!this.tracked) return null; // Node clients may supply their own grids without a browser request.
-    if (JSON.stringify(noiseSurfaceParams(params)) !== this.key) return NOISE_CHANGED;
+    if (requestKey(params) !== this.key) return NOISE_CHANGED;
     return this.error ?? (this.full ? null : NOISE_PENDING);
+  }
+
+  /** Only a completed current full surface can supply an editable/exportable producer snapshot. */
+  completedSource(params: NoiseSurfaceParams): {source: NonNullable<NoiseSurface['reliefSource']>; revision: number} | null {
+    if (this.exportBlock(params) !== null || !this.source) return null;
+    const retained = this.source;
+    return {source: publishReliefSource(retained, retained.params), revision: this.revision};
   }
 
   start(params: NoiseSurfaceParams, quality: GenerationQuality): Promise<NoiseOutcome> {
@@ -179,7 +195,10 @@ export class NoiseGeneration {
   private complete(request: Request, surface: NoiseSurface): void {
     if (!this.current(request)) return;
     this.retire(request);
-    if (request.quality === 'full') this.full = surface;
+    if (request.quality === 'full') {
+      this.full = surface;
+      this.source = surface.reliefSource ? publishReliefSource(surface.reliefSource, surface.reliefSource.params) : null;
+    }
     try { this.onCommit(surface, request.quality); }
     finally {
       this.onBusy(false);

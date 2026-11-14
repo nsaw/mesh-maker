@@ -1,3 +1,5 @@
+import { copyReliefSource } from './relief-sites';
+import { noiseSurfaceParams, publishReliefSource } from './surface';
 import type { NoiseSurface, NoiseSurfaceParams } from './surface';
 
 export type GenerationQuality = 'preview' | 'full';
@@ -10,7 +12,9 @@ export function packNoiseSurface(surface: NoiseSurface): PackedNoiseSurface {
   const { vertices, ...metadata } = surface;
   const heights = new Float64Array(surface.cols * surface.rows);
   for (let j = 0; j < surface.rows; j++) heights.set(vertices[j], j * surface.cols);
-  return { ...metadata, heights };
+  return { ...metadata, heights, ...(surface.reliefSource ? {reliefSource: {
+    ...copyReliefSource(surface.reliefSource), params: noiseSurfaceParams(surface.reliefSource.params),
+  }} : {}) };
 }
 
 export function unpackNoiseSurface(surface: PackedNoiseSurface): NoiseSurface {
@@ -28,5 +32,5 @@ export function unpackNoiseSurface(surface: PackedNoiseSurface): NoiseSurface {
   }
   const vertices: number[][] = [];
   for (let j = 0; j < surface.rows; j++) vertices.push(Array.from(heights.subarray(j * surface.cols, (j + 1) * surface.cols)));
-  return { ...metadata, vertices };
+  return { ...metadata, vertices, ...(surface.reliefSource ? {reliefSource: publishReliefSource(surface.reliefSource, surface.reliefSource.params)} : {}) };
 }

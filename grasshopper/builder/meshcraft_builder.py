@@ -783,7 +783,7 @@ class VoronoiReliefNoise(object):
     def _edge_hash01(self, a, b, seed):
         # v21 per-EDGE hash. ORDERED (a, b) gives each SIDE of a shared ridge its own
         # value (wall asymmetry); pass (min, max) for a value both sides agree on.
-        return self._cell_hash01(((a + 1) * 7919 + b + 1) & 0x7fffffff, seed)
+        return self._cell_hash01(((a + 1) * 7919 + b + 1) & 0xffffffff, seed)
     def _smootherstep(self, e0, e1, x):
         # Quintic smootherstep — zero first AND second derivatives at both edges (G2).
         if e1 <= e0:
@@ -1117,7 +1117,7 @@ class VoronoiReliefNoise(object):
             i = i // base
             f /= base
         return result
-    def _lloyd_relax(self, sites, p, samples, warp_fn, pinned_from):
+    def _lloyd_relax(self, sites, p, samples, warp_fn, pinned_from, pinned=None):
         # One Lloyd pass — move each site toward the centroid of its assigned low-discrepancy
         # samples. Samples are warped through W so relaxation happens in the same space the
         # distance queries use.
@@ -1138,6 +1138,7 @@ class VoronoiReliefNoise(object):
         separation = _SiteGrid(sites, 0.3, (0.0, 0.0, p['mesh_x'], p['mesh_y']))
         move_limit = min(n, max(0, pinned_from))
         for i in range(move_limit):
+            if pinned is not None and pinned[i]: continue
             if counts[i] > 0:
                 # Warped centroids can land slightly outside the physical panel at high
                 # distortion — clamp so edge sites cannot drift off-panel and starve
@@ -1148,6 +1149,35 @@ class VoronoiReliefNoise(object):
                 # would land within the feature floor of any other site.
                 if not separation.has_within(nx, ny, 0.3, i):
                     separation.move(i, nx, ny)
+    def _copy_frozen_sites(self, frozen, p):
+        if any(v != v or abs(v) == float('inf') or v <= 0 for v in [p['mesh_x'], p['mesh_y']]):
+            raise ValueError('Invalid relief board')
+        xy = list(frozen['xy']); ids = list(frozen['ids']); pinned = list(frozen['pinned'])
+        n = len(ids)
+        if n > self.SITE_COUNT_MAX or len(xy) != n * 2 or len(pinned) != n:
+            raise ValueError('Invalid relief site lengths')
+        truncated = frozen.get('truncated_from', 0)
+        if isinstance(truncated, bool) or int(truncated) != truncated or truncated < 0 or truncated > 5000000 or (truncated != 0 and (n != self.SITE_COUNT_MAX or truncated <= n)):
+            raise ValueError('Invalid relief candidate count')
+        for i in range(n):
+            x = xy[i * 2]; y = xy[i * 2 + 1]; identity = ids[i]
+            if isinstance(identity, bool) or int(identity) != identity or identity < 0 or identity > 0xffffffff or (i > 0 and identity <= ids[i - 1]):
+                raise ValueError('Invalid relief identity')
+            if pinned[i] not in (0, 1) or isinstance(pinned[i], bool):
+                raise ValueError('Invalid relief pin')
+            if x != x or y != y or x < 0 or x > p['mesh_x'] or y < 0 or y > p['mesh_y']:
+                raise ValueError('Invalid relief coordinate')
+        # Coincident producer sites retain their ordered identities and exact coordinates.
+        return {'xy': xy, 'ids': ids, 'pinned': pinned, 'truncated_from': int(truncated)}
+    def relax_sites(self, p, frozen):
+        copy = self._copy_frozen_sites(frozen, p)
+        sites = [[copy['xy'][i * 2], copy['xy'][i * 2 + 1], 0.0] for i in range(len(copy['ids']))]
+        distortion = p.get('warp_distortion', 0.0)
+        if distortion != distortion or abs(distortion) == float('inf'): distortion = 0.0
+        warp = self._make_warp(p, int(p.get('seed', 0)) & 0xffffffff, max(0.0, min(2.0, distortion)))
+        if sites: self._lloyd_relax(sites, p, len(sites) * 64, warp, len(sites), copy['pinned'])
+        copy['xy'] = [v for site in sites for v in site[:2]]
+        return copy
     def sample_grid(self, p):
         # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
         # sampler — same seed produces same site layout and wave field even when the
@@ -1200,30 +1230,39 @@ class VoronoiReliefNoise(object):
         # field at the site position — neighboring cells lean and inflate together.
         panel_field_gen = SimplexNoise(seed + 17 + 61)
         PANEL_FIELD_FREQ = 0.045
-        self._check_site_work(len(foci_phys), zone_r, p['cell_size'], radial_strength,
-                              radial_grow, p['mesh_x'], p['mesh_y'])
-        sites = self._gen_sites(p, density_noise_gen,
-                                foci_phys if starburst_active else [],
-                                zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
-                                suppress_gen)
-        original_cartesian_count = len(sites)
-        nuclei = []
-        if starburst_active:
-            nuclei = self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
-                                           radial_grow, radial_warp_amt, radial_mode,
-                                           p['mesh_x'], p['mesh_y'], sites)
-        selected = self._representative_indices(len(sites), self.SITE_COUNT_MAX, nuclei)
-        sites = [sites[i] for i in selected]
-        cartesian_count = sum(1 for i in selected if i < original_cartesian_count)
-        if not sites:
-            return [0.0] * (p['cols'] * p['rows'])
-        # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
-        # erase their deliberate radial elongation).
-        relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
-        if relax_iter > 0:
-            lloyd_samples = len(sites) * 64
-            for _ in range(relax_iter):
-                self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
+        frozen = p.get('frozen_sites')
+        if frozen is not None:
+            copy = self._copy_frozen_sites(frozen, p)
+            sites = [[copy['xy'][i * 2], copy['xy'][i * 2 + 1], 0.0] for i in range(len(copy['ids']))]
+            ids = copy['ids']; pinned = copy['pinned']
+        else:
+            self._check_site_work(len(foci_phys), zone_r, p['cell_size'], radial_strength,
+                                  radial_grow, p['mesh_x'], p['mesh_y'])
+            sites = self._gen_sites(p, density_noise_gen,
+                                    foci_phys if starburst_active else [],
+                                    zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
+                                    suppress_gen)
+            original_cartesian_count = len(sites)
+            nuclei = []
+            if starburst_active:
+                nuclei = self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
+                                               radial_grow, radial_warp_amt, radial_mode,
+                                               p['mesh_x'], p['mesh_y'], sites)
+            candidate_count = len(sites)
+            selected = self._representative_indices(len(sites), self.SITE_COUNT_MAX, nuclei)
+            sites = [sites[i] for i in selected]
+            cartesian_count = sum(1 for i in selected if i < original_cartesian_count)
+            # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
+            # erase their deliberate radial elongation).
+            relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
+            if relax_iter > 0:
+                lloyd_samples = len(sites) * 64
+                for _ in range(relax_iter):
+                    self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
+            ids = list(range(len(sites)))
+            pinned = [int(i >= cartesian_count) for i in range(len(sites))]
+        self.source_sites = {'xy': [v for site in sites for v in site[:2]], 'ids': list(ids), 'pinned': list(pinned),
+                             'truncated_from': frozen.get('truncated_from', 0) if frozen is not None else (candidate_count if candidate_count > len(sites) else 0)}
         # NaN guards on the constant metric frame — mirrors the TS sampler's defensive
         # clamps (crafted params or unwired pins can pass non-finite values).
         aniso_raw = p['anisotropy']
@@ -1236,6 +1275,11 @@ class VoronoiReliefNoise(object):
         a_rad = angle_raw * math.pi / 180.0
         cosA = math.cos(a_rad); sinA = math.sin(a_rad)
         aniso_scale = 1.0 + aniso_raw * 1.5
+        self.source_query = {'implementation': 'meshcraft-relief-query/1', 'meshX': p['mesh_x'], 'meshY': p['mesh_y'], 'seed': seed,
+            'metric': {'cosA': 1.0 if aniso_scale <= 1.0001 else cosA, 'sinA': 0.0 if aniso_scale <= 1.0001 else sinA, 'scale': 1.0 if aniso_scale <= 1.0001 else aniso_scale},
+            'warp': {'amplitude': warp_distortion * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS,
+                     'frequency': max(0.02, _finite(p.get('warp_frequency', 0.1), 0.1)), 'seed': seed + 30}}
+        if not sites: return [0.0] * (p['cols'] * p['rows'])
         # Clamp + hoist transition_softness so pow(mask, exponent) is finite when
         # mask=0 even if a crafted param sneaks past the URL boundary.
         ts_clamped = max(0.0, min(1.0, p['transition_softness']))
@@ -1349,7 +1393,7 @@ class VoronoiReliefNoise(object):
                 math.sqrt(sites[k][2] / median_radius)))
             tier_mul = 1.0
             if depth_variation > 0.0:
-                h_depth = self._cell_hash01(k, seed + 13)
+                h_depth = self._cell_hash01(ids[k], seed + 13)
                 tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
             # Conservative: final per-edge/crest modifiers can narrow the wall to ~0.65x
             # this estimate — budget against the worst case (C0 requires per-cell static).
@@ -1364,8 +1408,8 @@ class VoronoiReliefNoise(object):
         pillow_coverage = max(0.0, min(1.0, p.get('pillow_coverage', 0.6)))
         inv2s2_radial = 1.0 / (2.0 * sigma_radial * sigma_radial)
         geometry_radius = [max(0.01, radius) for radius in inradius]
-        seam_scale = [1.0 + (self._cell_hash01(k, seed + 29) - 0.5) * 0.8 * depth_variation for k in range(n_sites)]
-        shared_strength = [self._cell_hash01(k, seed + 53) for k in range(n_sites)]
+        seam_scale = [1.0 + (self._cell_hash01(ids[k], seed + 29) - 0.5) * 0.8 * depth_variation for k in range(n_sites)]
+        shared_strength = [self._cell_hash01(ids[k], seed + 53) for k in range(n_sites)]
         out = [0.0] * (cols * rows)
         # v23 membrane-cushion buffers: the crown SHAPE comes from a per-cell membrane
         # solve after this pass (Poisson, u=0 clamped at the gutter ring, composed
@@ -1408,7 +1452,7 @@ class VoronoiReliefNoise(object):
                 jn_s = self._smoothstep(0.65, 0.98, jn)
                 static_mul_blended, slope_blended, inr, seam, edge_shared, local_side = self._junction_fields(
                     candidates, f1, static_mul, slope_mul, geometry_radius, seam_scale, shared_strength,
-                    lambda index: self._edge_hash01(idx, index, seed + 59))
+                    lambda index: self._edge_hash01(ids[idx], ids[index], seed + 59))
                 owner_fade = min(1.0, db / max(1e-6, 0.35 * inr))
                 edge_side = edge_shared + owner_fade * (local_side - edge_shared)
                 wall_field_noise = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq) if wall_noise_gen is not None else 0.0

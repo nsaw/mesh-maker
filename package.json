@@ -33,6 +33,7 @@
     "prepare": "husky",
     "postbuild": "node scripts/check-asset-size.mjs dist",
     "test:noise-worker": "tsx cli/noise-worker.spec.ts",
+    "test:relief-project": "tsx cli/relief-project.spec.ts",
     "test:noise-browser": "node scripts/test-noise-browser.mjs",
     "test:export-authority": "node scripts/test-export-authority.mjs",
     "test:render-geometry": "tsx cli/render-geometry.spec.ts",
