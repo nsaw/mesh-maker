@@ -57,6 +57,60 @@ function fakeController(updated: () => Promise<boolean> = async () => false): { 
 }
 function success(outcome: NoiseOutcome): void { assert('surface' in outcome); }
 function refused(outcome: NoiseOutcome): void { assert('reason' in outcome); }
+// A successful worker remains warm, but no callback from its previous request owns a later job.
+{
+  const { controller, workers } = fakeController();
+  const commits: NoiseOutcome[] = [];
+  controller.onCommit = surface => commits.push({ surface, revision: 0 });
+  const first = controller.start(params, 'preview');
+  const worker = workers[0];
+  const oldMessage = worker.onmessage, oldError = worker.onerror, oldUnreadable = worker.onmessageerror;
+  const oldId = worker.input!.requestId;
+  worker.succeed(); success(await first);
+  assert(!worker.terminated, 'successful completion retains a warm worker');
+  const staleIdleError = worker.onerror;
+  const full = controller.start(changed, 'full');
+  assert.equal(workers.length, 1, 'full generation reuses the successful preview worker');
+  assert.notEqual(worker.input!.requestId, oldId);
+  const late = { data: { type: 'result', requestId: oldId, surface: packNoiseSurface(scalar) } } as MessageEvent<NoiseWorkerOutput>;
+  oldMessage?.(late); worker.onmessage?.(late);
+  oldError?.({ message: 'retired request error', preventDefault: () => undefined } as ErrorEvent);
+  oldUnreadable?.({} as MessageEvent);
+  staleIdleError?.({ message: 'retired idle error', preventDefault: () => undefined } as ErrorEvent);
+  assert(!worker.terminated);
+  assert.equal(commits.length, 1, 'old IDs and saved handlers cannot commit or fail the reused worker');
+  worker.succeed(); const outcome = await full; success(outcome);
+  staleIdleError?.({ message: 'retired idle error after later completion', preventDefault: () => undefined } as ErrorEvent);
+  assert(!worker.terminated, 'a previous idle callback cannot retire a later idle transport');
+  if ('surface' in outcome) assert.deepEqual(outcome.surface.vertices, buildNoiseSurface(changed).vertices, 'warm worker retains exact current source bytes');
+  assert.equal(controller.exportBlock(changed), null);
+  controller.cancel('Mode changed');
+  assert(worker.terminated, 'mode cancellation terminates an idle worker');
+}
+// Failed active and idle workers cannot be reused; a replacement owns a new transport.
+{
+  const { controller, workers } = fakeController();
+  const first = controller.start(params, 'full'); workers[0].succeed(); success(await first);
+  const second = controller.start(changed, 'full'); workers[0].fail('active failure'); refused(await second);
+  assert(workers[0].terminated);
+  const retry = controller.start(changed, 'full');
+  assert.equal(workers.length, 2); workers[1].succeed(); success(await retry);
+  workers[1].onmessageerror?.({} as MessageEvent);
+  assert(workers[1].terminated, 'idle transport failure discards its worker');
+  assert.equal(controller.exportBlock(changed), null, 'idle transport loss does not revoke a completed immutable source');
+  const next = controller.start(params, 'preview');
+  assert.equal(workers.length, 3); workers[2].succeed(); success(await next); controller.cancel();
+}
+for (const replace of ['accept', 'fail'] as const) {
+  const { controller, workers } = fakeController();
+  const first = controller.start(params, 'full'); workers[0].succeed(); success(await first);
+  if (replace === 'accept') controller.acceptSync(params, scalar);
+  else controller.failSync(params, 'inline failure');
+  assert(workers[0].terminated, `${replace} synchronous replacement releases the idle transport`);
+  const next = controller.start(changed, 'full');
+  assert.equal(workers.length, 2); workers[1].succeed(); success(await next); controller.cancel();
+}
+
 {
   const { controller, workers } = fakeController();
   let commits = 0;
@@ -77,7 +131,7 @@ function refused(outcome: NoiseOutcome): void { assert('reason' in outcome); }
   success(await next);
   assert.equal(controller.exportBlock(changed), NOISE_PENDING, 'preview cannot export');
   const full = controller.start(changed, 'full');
-  workers[2].succeed(); success(await full);
+  workers[1].succeed(); success(await full);
   assert.equal(controller.exportBlock(changed), null);
   const requestCount = workers.length;
   success(await controller.start(changed, 'preview'));
@@ -191,14 +245,15 @@ for (const field of ['positions', 'wire'] as const) {
   assert.equal(controller.start(changed, 'preview'), first);
   workers[0].succeed(); success(await first);
   assert.deepEqual(commits, ['preview']);
-  assert.equal(workers.length, 2, 'the newest queued settings start after the coarse frame');
-  assert.equal(workers[1].input?.params.seed, changed.seed);
+  assert.equal(workers.length, 1, 'the newest queued settings reuse the completed preview worker');
+  assert.equal(workers[0].input?.params.seed, changed.seed);
   assert.equal(controller.exportBlock(changed), NOISE_PENDING, 'same-gesture approximation is never exportable');
   controller.endGesture();
-  workers[1].succeed();
+  assert(workers[0].terminated);
+  workers[0].succeed();
   assert.deepEqual(commits, ['preview'], 'release retires late coarse results');
   const full = controller.start(changed, 'full');
-  workers[2].succeed(); success(await full);
+  workers[1].succeed(); success(await full);
   assert.deepEqual(commits, ['preview', 'full']);
   assert.equal(controller.exportBlock(changed), null);
 }

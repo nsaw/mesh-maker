@@ -41,6 +41,7 @@ export class NoiseGeneration {
   private key = '';
   private params: NoiseSurfaceParams | null = null;
   private request: Request | null = null;
+  private idleWorker: NoiseWorker | null = null;
   private full: NoiseSurface | null = null;
   private source: NonNullable<NoiseSurface['reliefSource']> | null = null;
   private error: string | null = null;
@@ -111,6 +112,7 @@ export class NoiseGeneration {
   isRevisionCurrent(revision: number): boolean { return revision === this.revision; }
 
   cancel(reason = NOISE_CHANGED): void {
+    this.discardIdle();
     this.endGesture();
     this.stop(reason);
     this.revision++;
@@ -125,6 +127,7 @@ export class NoiseGeneration {
   }
 
   acceptSync(params: NoiseSurfaceParams, surface: NoiseSurface): void {
+    this.discardIdle();
     this.invalidate(params);
     this.stop(NOISE_CHANGED);
     this.full = surface;
@@ -135,6 +138,7 @@ export class NoiseGeneration {
 
   /** The synchronous adapter shares request and export authority with browser workers. */
   failSync(params: NoiseSurfaceParams, message: string): void {
+    this.discardIdle();
     this.invalidate(params);
     this.endGesture();
     this.stop(NOISE_CHANGED);
@@ -173,7 +177,8 @@ export class NoiseGeneration {
     const input = { requestId: id, includeWire: this.includeWire(), params: noiseSurfaceParams({ ...params,
       resolution: quality === 'preview' ? Math.min(params.resolution, 120) : params.resolution }) };
     try {
-      request.worker = this.options.createWorker();
+      request.worker = this.idleWorker ?? this.options.createWorker();
+      this.idleWorker = null;
     } catch {
       // Construction can be blocked by a browser policy. The same arithmetic remains available inline.
       try { this.complete(request, this.options.build(input.params)); }
@@ -198,9 +203,24 @@ export class NoiseGeneration {
     return this.request === request && (this.revision === request.revision
       || (request.quality === 'preview' && this.dragging && request.gesture === this.gesture));
   }
-  private retire(request: Request): void {
+  private discardIdle(): void {
+    this.idleWorker?.terminate();
+    this.idleWorker = null;
+  }
+  private retire(request: Request, reusable = false): void {
     clearTimeout(request.timer);
-    request.worker?.terminate();
+    const worker = request.worker;
+    if (worker) {
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.onmessageerror = null;
+      if (reusable) {
+        this.idleWorker = worker;
+        const discard = () => { if (this.idleWorker === worker && this.nextId === request.id) this.discardIdle(); };
+        worker.onerror = event => { event.preventDefault(); discard(); };
+        worker.onmessageerror = discard;
+      } else worker.terminate();
+    }
     if (this.request === request) this.request = null;
   }
   private stop(reason: string): void {
@@ -211,7 +231,7 @@ export class NoiseGeneration {
   }
   private complete(request: Request, surface: NoiseSurface): void {
     if (!this.current(request)) return;
-    this.retire(request);
+    this.retire(request, true);
     if (request.quality === 'full') {
       this.full = surface;
       this.source = surface.reliefSource ? publishReliefSource(surface.reliefSource, surface.reliefSource.params) : null;

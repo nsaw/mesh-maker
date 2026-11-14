@@ -301,7 +301,9 @@ try {
   await page.evaluate(() => { window.noiseProbe.hold = false; });
   await page.locator('[data-mode="noise"]').click(); await waitFull(failedId);
   // A constructor exception exercises the real inline adapter, including a full-resolution export.
+  await page.locator('[data-mode="depthmap"]').click();
   await page.evaluate(() => { window.noiseProbe.constructorFails = true; });
+  await page.locator('[data-mode="noise"]').click();
   const fallbackDownload = page.waitForEvent('download');
   await page.evaluate(() => {
     const input = document.getElementById('sl_reliefJitter');
