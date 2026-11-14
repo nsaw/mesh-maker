@@ -2,6 +2,7 @@
 """Exact Python bucket queries and independent original full-scan regressions."""
 import ast
 import copy
+from fractions import Fraction as F
 import math
 from pathlib import Path
 import random
@@ -43,13 +44,26 @@ def params(**changed):
 
 
 def owner(sites, x, y):
+    # Independent squared-distance reference. Ordinary ordering stays cheap;
+    # near equality is resolved with complete Fraction quadratics, not production code.
     best = 0
     best_d = float('inf')
     for i, p in enumerate(sites):
         dx = p[0] - x; dy = p[1] - y
         d = dx * dx + dy * dy
-        if d < best_d:
-            best = i; best_d = d
+        if best_d == float('inf'):
+            best, best_d = i, d
+            continue
+        magnitude = max(1.0, abs(x), abs(y), abs(p[0]), abs(p[1]), abs(sites[best][0]), abs(sites[best][1]))
+        guard = 1024 * 2.220446049250313e-16 * magnitude * max(1.0, d, best_d)
+        if abs(d - best_d) <= guard:
+            current = (F(p[0]) - F(x)) ** 2 + (F(p[1]) - F(y)) ** 2
+            previous = (F(sites[best][0]) - F(x)) ** 2 + (F(sites[best][1]) - F(y)) ** 2
+            precedes = current < previous or (current == previous and i < best)
+        else:
+            precedes = d < best_d
+        if precedes:
+            best, best_d = i, d
     return best
 
 
@@ -163,7 +177,12 @@ class SiteGridTests(unittest.TestCase):
                 def transform(dx, dy):
                     return [(dx*c+dy*s)*scale,-dx*s+dy*c]
                 distances = [math.hypot(*transform(p[0]-x,p[1]-y)) for p in sites]
-                owner_index = min(range(len(sites)), key=lambda i: (distances[i], i))
+                def exact_metric_distance(point):
+                    dx, dy = F(point[0])-F(x), F(point[1])-F(y)
+                    if scale > 1.0001:
+                        dx, dy = (dx*F(c)+dy*F(s))*F(scale), -dx*F(s)+dy*F(c)
+                    return dx*dx+dy*dy
+                owner_index = min(range(len(sites)), key=lambda i: (exact_metric_distance(sites[i]), i))
                 owner_point = sites[owner_index]; q = transform(x-owner_point[0],y-owner_point[1]); minimum = 8.
                 for point in sites:
                     delta = transform(point[0]-owner_point[0],point[1]-owner_point[1])
@@ -325,6 +344,28 @@ class SiteGridTests(unittest.TestCase):
         print('native maximum Lloyd:', len(points), 'samples:', CountGrid.calls,
               'site reads:', sum(g.sites.reads for g in CountGrid.instances), 'seconds:', time.monotonic() - started)
 
+    def test_bounded_float_admission_precedes_exact_ranking(self):
+        x = 100000000.00000003
+        unit = math.ulp(x)
+        original = [[x + unit, x - unit], [x, x]]
+        for sites in [original, list(reversed(original))]:
+            distances = [p[0]*p[0]+p[1]*p[1] for p in sites]
+            exact = [(F(p[0])**2+F(p[1])**2,i) for i,p in enumerate(sites)]
+            unbounded_owner = min(exact)[1]
+            for spacing in [1.0, 1e-9, 0.07, 100.0]:
+                grid = Grid(sites, spacing)
+                for limit in [0.0, min(distances), math.nextafter(min(distances), math.inf),
+                              max(distances), math.nextafter(max(distances), math.inf), math.inf]:
+                    eligible = [i for i,distance in enumerate(distances) if distance < limit]
+                    expected = min(eligible,key=lambda i:exact[i]) if eligible else 0
+                    self.assertEqual(grid.nearest(0.0,0.0,limit),expected,
+                                     'strict Float admission precedes exact rank regardless of buckets')
+                self.assertEqual(grid.nearest(0.0,0.0),unbounded_owner)
+        self.assertEqual(Grid([],1.0).nearest(0.0,0.0,0.0),0)
+        ties = [[-1.0,0.0],[1.0,0.0]]
+        for spacing in [0.1,10.0]:
+            self.assertEqual(Grid(ties,spacing).nearest(0.0,0.0,2.0),0)
+
     def test_native_fallback_has_its_own_oracle(self):
         scope = dict(math=math, xrange=range, rg=Geometry, mesh_x=6., mesh_y=4.)
         exec(definitions(NATIVE, {'_SiteGrid', '_halton', 'lloyd_fallback'}), scope)
@@ -335,12 +376,31 @@ class SiteGridTests(unittest.TestCase):
             points = [Point(rng.random() * 6, rng.random() * 4) for _ in range(n)]
             a = scope['lloyd_fallback'](points); b = oracle_scope['native_full_scan'](points)
             self.assertEqual([(p.X, p.Y, p.Z) for p in a], [(p.X, p.Y, p.Z) for p in b])
-        # Retain the original native fallback's finite squared-distance ceiling.
+        # Preserve the old fixture as evidence of the phantom-owner bug, not as the
+        # corrected contract. The reference below assigns every actual sample exactly.
         scope['mesh_x'] = oracle_scope['mesh_x'] = 2e20
         scope['mesh_y'] = oracle_scope['mesh_y'] = 2e20
         points = [Point(0., 0.), Point(1e20, 1e20), Point(2e20, 0.)]
         a = scope['lloyd_fallback'](points); b = oracle_scope['native_full_scan'](points)
-        self.assertEqual([(p.X, p.Y, p.Z) for p in a], [(p.X, p.Y, p.Z) for p in b])
+        sum_x, sum_y, counts = [0.0] * len(points), [0.0] * len(points), [0] * len(points)
+        legacy_wrong = 0
+        for sample in range(len(points) * 64):
+            x = scope['_halton'](sample + 1, 2) * scope['mesh_x']
+            y = scope['_halton'](sample + 1, 3) * scope['mesh_y']
+            expected_owner = min(range(len(points)), key=lambda i: ((F(points[i].X)-F(x))**2 + (F(points[i].Y)-F(y))**2, i))
+            legacy_owner = 0
+            legacy_bound = 1.0e30
+            for i, point in enumerate(points):
+                distance = (point.X-x)**2 + (point.Y-y)**2
+                if distance < legacy_bound:
+                    legacy_owner, legacy_bound = i, distance
+            legacy_wrong += int(legacy_owner != expected_owner)
+            sum_x[expected_owner] += x; sum_y[expected_owner] += y; counts[expected_owner] += 1
+        expected = [(sum_x[i]/counts[i],sum_y[i]/counts[i],0.0) if counts[i] else (point.X,point.Y,point.Z)
+                    for i,point in enumerate(points)]
+        self.assertGreater(legacy_wrong,0,'the old finite search must demonstrate phantom owners')
+        self.assertNotEqual([(p.X,p.Y,p.Z) for p in b],expected,'immutable old fixture retains its bug')
+        self.assertEqual([(p.X,p.Y,p.Z) for p in a],expected,'native Lloyd matches exact assignment centroids')
         with self.assertRaises(ValueError):
             scope['lloyd_fallback']([None] * 8001)
 

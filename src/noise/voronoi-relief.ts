@@ -1,3 +1,4 @@
+import { metricOrdering } from './metric-order';
 /**
  * VoronoiReliefGen — grid-aware 3D Voronoi cell relief sampler (v16).
  *
@@ -576,11 +577,12 @@ function lloydRelax(
     }
     let bestIdx = bruteForce ? 0 : grid.nearestOwner(x, y);
     let bestD = Infinity;
+    const precedes = bruteForce ? metricOrdering(sites,x,y,Math.max(meshX,meshY),1,0,1,true) : null;
     for (let i = 0; bruteForce && i < sites.length; i++) {
       const dx = sites[i].x - x;
       const dy = sites[i].y - y;
       const d = dx * dx + dy * dy;
-      if (d < bestD) { bestD = d; bestIdx = i; }
+      if (precedes && precedes(i,bestIdx,d,bestD)) { bestD = d; bestIdx = i; }
     }
     sumX[bestIdx] += x;
     sumY[bestIdx] += y;
@@ -633,7 +635,7 @@ function halton(index: number, base: number): number {
  *  anisotropy frame: rotation preserves length, so we scale x' and take hypot directly.
  *  F3 (third-nearest) drives junction detection: at a three-way Voronoi corner
  *  F1 ≈ F2 ≈ F3, so (F3 − F1) → 0 exactly at junctions (v16.3). */
-function nearestThree(
+export function nearestThree(
   sites: Site[],
   x: number,
   y: number,
@@ -650,6 +652,8 @@ function nearestThree(
   let idx3 = -1;
   let idx4 = -1;
   const isotropic = anisotropyScale <= 1.0001;
+  const coordinateScale=sites.reduce((maximum,site)=>Math.max(maximum,Math.abs(site.x),Math.abs(site.y)),1);
+  const precedes=metricOrdering(sites,x,y,coordinateScale,cosA,sinA,anisotropyScale);
   for (let i = 0; i < sites.length; i++) {
     const dx = x - sites[i].x;
     const dy = y - sites[i].y;
@@ -661,10 +665,10 @@ function nearestThree(
       const yr = -dx * sinA + dy * cosA;
       d = Math.hypot(xr * anisotropyScale, yr);
     }
-    if (d < f1) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i; }
-    else if (d < f2) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = i; }
-    else if (d < f3) { f4 = f3; idx4 = idx3; f3 = d; idx3 = i; }
-    else if (d < f4) { f4 = d; idx4 = i; }
+    if (precedes(i,idx,d,f1)) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i; }
+    else if (precedes(i,idx2,d,f2)) { f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = i; }
+    else if (precedes(i,idx3,d,f3)) { f4 = f3; idx4 = idx3; f3 = d; idx3 = i; }
+    else if (precedes(i,idx4,d,f4)) { f4 = d; idx4 = i; }
   }
   // idx2 seeds as the initial idx placeholder when only one site exists — normalize.
   if (!Number.isFinite(f2)) idx2 = -1;

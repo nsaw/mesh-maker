@@ -48,6 +48,7 @@ meshcraft/
 │   ├── noise/
 │   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
 │   │   ├── site-grid.ts       # Exact bucket lookup and incremental minimum separation
+│   │   ├── metric-order.ts    # Guarded nearest-rank comparison and exact dyadic tie resolution
 │   │   ├── voronoi-relief.ts  # Voronoi Relief sampler (cellular relief, attractors, starburst)
 │   │   └── presets.ts         # CNC_PRESETS, PROFILES
 │   ├── mesh.ts                # generateMesh (noise / depthmap / drape dispatch), debouncedGenerate

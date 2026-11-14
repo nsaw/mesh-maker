@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent
 with tempfile.TemporaryDirectory(prefix='meshcraft-junction-mutants-') as temp:
     destination = Path(temp)
     shutil.copytree(ROOT / 'src', destination / 'src')
-    (destination / 'cli').mkdir()
+    (destination / 'cli/fixtures').mkdir(parents=True)
+    shutil.copy2(ROOT / 'cli/exact-metric-rank-oracle.ts', destination / 'cli/exact-metric-rank-oracle.ts')
     shutil.copy2(ROOT / 'cli/relief-junction.spec.ts', destination / 'cli/relief-junction.spec.ts')
     (destination / 'grasshopper/components').mkdir(parents=True)
     shutil.copy2(ROOT / 'grasshopper/components/noise_gen.py', destination / 'grasshopper/components/noise_gen.py')

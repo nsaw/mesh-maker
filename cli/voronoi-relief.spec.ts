@@ -1,3 +1,4 @@
+import { rankSitesExactly } from './exact-metric-rank-oracle';
 import './relief-junction.spec';
 import './gaussian-smoothing.spec';
 import './relief-correctness.spec';
@@ -1272,20 +1273,20 @@ function measureFocusEnclosure(
     for (const [x, y] of [[0, 0], [0.5, 0.5], [-100, 500], [1000, -100], [2, 3], [3, 3]]) {
       for (const [angle, scale] of [[0, 1], [35, 2.5], [90, 4], [75, 1.00005]]) {
         const cosA = Math.cos(angle * Math.PI / 180), sinA = Math.sin(angle * Math.PI / 180);
-        const expected = sites.map((site, index) => {
+        const radial = sites.map((site, index) => {
           const dx = x - site.x, dy = y - site.y;
           const distance = scale <= 1.0001 ? Math.hypot(dx, dy)
             : Math.hypot((dx * cosA + dy * sinA) * scale, -dx * sinA + dy * cosA);
           return { distance, index };
-        }).sort((a, b) => a.distance - b.distance || a.index - b.index).slice(0, 4);
+        });
+        const expected=rankSitesExactly(sites,x,y,cosA,sinA,scale).slice(0,4).map(index=>radial[index]);
         const result = grid.nearestFour(x, y, cosA, sinA, scale);
         const distances = [result.f1, result.f2, result.f3, result.f4];
         const indices = [result.idx, result.idx2, result.idx3, result.idx4];
         exact &&= distances.every((distance, i) => distance === (expected[i]?.distance ?? Infinity))
           && indices.every((index, i) => index === (expected[i]?.index ?? (i === 0 ? 0 : -1)));
       }
-      const owner = sites.map((site, index) => ({ index, distance: (site.x - x) ** 2 + (site.y - y) ** 2 }))
-        .sort((a, b) => a.distance - b.distance || a.index - b.index)[0]?.index ?? 0;
+      const owner = rankSitesExactly(sites,x,y)[0] ?? 0;
       exact &&= grid.nearestOwner(x, y) === owner;
       for (const radius of [0.1, 0.5, 1, 100]) {
         const brute = sites.some(site => (site.x - x) ** 2 + (site.y - y) ** 2 < radius * radius);
@@ -1304,10 +1305,11 @@ function measureFocusEnclosure(
     for (let query = 0; query < 1000; query++) {
       const x = origin + random() * 60 - 10, y = origin + random() * 40 - 10;
       const angle = random() * Math.PI * 2, cosA = Math.cos(angle), sinA = Math.sin(angle), scale = 1 + random() * 3;
-      const expected = points.map((point, index) => ({ index,
+      const radial = points.map((point, index) => ({ index,
         distance: Math.hypot(((x - point.x) * cosA + (y - point.y) * sinA) * scale,
           -(x - point.x) * sinA + (y - point.y) * cosA),
-      })).sort((a, b) => a.distance - b.distance || a.index - b.index).slice(0, 4);
+      }));
+      const expected=rankSitesExactly(points,x,y,cosA,sinA,scale).slice(0,4).map(index=>radial[index]);
       const result = grid.nearestFour(x, y, cosA, sinA, scale);
       exact &&= [result.f1, result.f2, result.f3, result.f4].every((value, i) => value === expected[i].distance)
         && [result.idx, result.idx2, result.idx3, result.idx4].every((value, i) => value === expected[i].index);

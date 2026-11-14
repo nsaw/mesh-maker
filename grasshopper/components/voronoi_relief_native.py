@@ -90,6 +90,70 @@ class _SiteGrid(object):
     MAX_COORDINATE = 1e150
     EPSILON = 2.220446049250313e-16
 
+    @staticmethod
+    def _dyadic(value):
+        if value != value or abs(value) == float('inf'):
+            raise ValueError('Metric comparison requires finite coordinates')
+        if value == 0.0:
+            return (0, 0)
+        mantissa, exponent = math.frexp(value)
+        return (int(math.ldexp(mantissa, 53)), exponent - 53)
+
+    @staticmethod
+    def _dyadic_add(a, b):
+        exponent = min(a[1], b[1])
+        return ((a[0] << (a[1] - exponent)) + (b[0] << (b[1] - exponent)), exponent)
+
+    @staticmethod
+    def _dyadic_sub(a, b):
+        return _SiteGrid._dyadic_add(a, (-b[0], b[1]))
+
+    @staticmethod
+    def _dyadic_mul(a, b):
+        return (a[0] * b[0], a[1] + b[1])
+
+    @staticmethod
+    def exact_metric_order(a, b, x, y, c=1.0, s=0.0, scale=1.0):
+        if a[0] == b[0] and a[1] == b[1]:
+            return 0
+        dyadic = _SiteGrid._dyadic
+        add = _SiteGrid._dyadic_add
+        sub = _SiteGrid._dyadic_sub
+        mul = _SiteGrid._dyadic_mul
+        ax, ay = dyadic(a[0]), dyadic(a[1])
+        ux, uy = sub(dyadic(b[0]), ax), sub(dyadic(b[1]), ay)
+        vx = sub(mul((2, 0), sub(dyadic(x), ax)), ux)
+        vy = sub(mul((2, 0), sub(dyadic(y), ay)), uy)
+        if scale > 1.0001:
+            dc, ds, dk = dyadic(c), dyadic(s), dyadic(scale)
+            def transform(px, py):
+                return mul(add(mul(px, dc), mul(py, ds)), dk), sub(mul(py, dc), mul(px, ds))
+            u, v = transform(ux, uy), transform(vx, vy)
+        else:
+            u, v = (ux, uy), (vx, vy)
+        sign = add(mul(u[0], v[0]), mul(u[1], v[1]))[0]
+        return -1 if sign < 0 else 1 if sign > 0 else 0
+
+    @staticmethod
+    def ordering(sites, x, y, cos_a=1.0, sin_a=0.0, scale=1.0, squared=False, coordinate_scale=None):
+        if coordinate_scale is None:
+            coordinate_scale = max([1.0] + [abs(v) for p in sites for v in p[:2]])
+        factor = 1.0 if scale <= 1.0001 else max(1.0, abs(cos_a) + abs(sin_a)) * max(1.0, abs(scale))
+        magnitude = max(1.0, coordinate_scale, abs(x), abs(y)) * factor
+        error = 256 * _SiteGrid.EPSILON * magnitude
+        def precedes(index, current, distance, current_distance):
+            if current < 0 or current_distance == float('inf'):
+                return True
+            difference = distance - current_distance
+            guard = error * (2 * max(1.0, distance, current_distance) + error) if squared else error
+            if difference < -guard:
+                return True
+            if difference > guard:
+                return False
+            order = _SiteGrid.exact_metric_order(sites[index], sites[current], x, y, cos_a, sin_a, scale)
+            return order < 0 or (order == 0 and index < current)
+        return precedes
+
     def __init__(self, sites, spacing, bounds=None):
         self.sites = sites
         if bounds is None:
@@ -149,6 +213,7 @@ class _SiteGrid(object):
             raise ValueError('Site move lies outside index bounds')
         p = self.sites[index]
         self.buckets[(self._column(p[0]), self._row(p[1]))].remove(index)
+        self.coordinate_scale = max(self.coordinate_scale, abs(x), abs(y))
         p[0] = x
         p[1] = y
         self.add(index)
@@ -227,6 +292,8 @@ class _SiteGrid(object):
         cy = self._row(y)
         best = 0
         best_d = distance_limit
+        have_owner = False
+        precedes = self.ordering(self.sites, x, y, squared=True, coordinate_scale=self.coordinate_scale)
         # Distance to the occupied bounds on the perpendicular axis strengthens the bound
         # for collinear populations and warped queries outside the board.
         dx_bounds = max(0.0, self.min_x - x, x - self.max_x)
@@ -256,7 +323,15 @@ class _SiteGrid(object):
                     dx = self.sites[index][0] - x
                     dy = self.sites[index][1] - y
                     d = dx * dx + dy * dy
-                    if d < best_d or (d == best_d and index < best):
+                    # The optional cap admits candidates by the legacy strict Float
+                    # predicate. Exact ranking applies only after this eligibility test.
+                    if not d < distance_limit:
+                        continue
+                    if not have_owner:
+                        best_d = d
+                        best = index
+                        have_owner = True
+                    elif precedes(index, best, d, best_d):
                         best_d = d
                         best = index
             if left == 0 and right == self.columns - 1 and bottom == 0 and top == self.rows - 1:
@@ -508,7 +583,7 @@ def lloyd_fallback(pts):
     for si in xrange(samples):
         x = _halton(si + 1, 2) * mesh_x
         y = _halton(si + 1, 3) * mesh_y
-        best = lookup.nearest(x, y, 1.0e30)
+        best = lookup.nearest(x, y)
         sum_x[best] += x
         sum_y[best] += y
         counts[best] += 1
@@ -582,6 +657,8 @@ cush_owner = [-1] * total
 # IronPython loop is ~2x slower than indexing flat lists.
 sx = [s.X for s in sites]
 sy = [s.Y for s in sites]
+site_positions = list(zip(sx, sy))
+site_coordinate_scale = max([1.0] + [abs(v) for p in site_positions for v in p])
 
 # v18 per-cell INRADIUS proxy: half the distance from the site to its nearest
 # neighboring site — the exact boundary distance evaluated AT the site. The true
@@ -590,14 +667,14 @@ sy = [s.Y for s in sites]
 # on a few hundred sites is negligible next to the pixel loop.
 inradius = [cell_size * 0.5] * n_sites
 for k in xrange(n_sites):
-    best = 1.0e30
+    best = float('inf')
     for m in xrange(n_sites):
         if m == k: continue
         dx = sx[m] - sx[k]
         dy = sy[m] - sy[k]
         dd = dx * dx + dy * dy
         if dd < best: best = dd
-    if best < 1.0e30:
+    if not math.isinf(best):
         inradius[k] = math.sqrt(best) * 0.5
 
 # v17 size-depth coupling: bigger cells carve somewhat deeper. The per-cell inradius
@@ -631,19 +708,20 @@ for j in xrange(g_rows):
     row_off = j * g_cols
     for i in xrange(g_cols):
         px = i * dx_pix
-        best1 = 1.0e30
-        best2 = 1.0e30
-        best3 = 1.0e30
-        best4 = 1.0e30
+        best1 = float('inf')
+        best2 = float('inf')
+        best3 = float('inf')
+        best4 = float('inf')
         owner = 0
         owner2 = -1
         owner3 = -1
         owner4 = -1
+        precedes = _SiteGrid.ordering(site_positions, px, py, squared=True, coordinate_scale=site_coordinate_scale)
         for k in xrange(n_sites):
             dx = sx[k] - px
             dy = sy[k] - py
             d2v = dx * dx + dy * dy
-            if d2v < best1:
+            if precedes(k, owner, d2v, best1):
                 best4 = best3
                 owner4 = owner3
                 best3 = best2
@@ -652,26 +730,26 @@ for j in xrange(g_rows):
                 owner2 = owner
                 best1 = d2v
                 owner = k
-            elif d2v < best2:
+            elif precedes(k, owner2, d2v, best2):
                 best4 = best3
                 owner4 = owner3
                 best3 = best2
                 owner3 = owner2
                 best2 = d2v
                 owner2 = k
-            elif d2v < best3:
+            elif precedes(k, owner3, d2v, best3):
                 best4 = best3
                 owner4 = owner3
                 best3 = d2v
                 owner3 = k
-            elif d2v < best4:
+            elif precedes(k, owner4, d2v, best4):
                 best4 = d2v
                 owner4 = k
-        if best2 >= 1.0e30: owner2 = -1
-        if best3 >= 1.0e30: owner3 = -1
-        if best4 >= 1.0e30: owner4 = -1
+        if math.isinf(best2): owner2 = -1
+        if math.isinf(best3): owner3 = -1
+        if math.isinf(best4): owner4 = -1
         d1 = math.sqrt(best1)
-        d3 = math.sqrt(best3) if best3 < 1.0e30 else 1.0e15
+        d3 = math.sqrt(best3)
         # v18 BOUNDARY-DISTANCE CONSTRUCTION. d_b is the EXACT distance to the shared
         # Voronoi boundary: the bisector distance (dk^2 - d1^2)/(2*|sk - s1|), minimized
         # over the two nearest competitors (the third catches corner regions). Its level
@@ -720,7 +798,7 @@ for j in xrange(g_rows):
         inr = inradius[owner]
         if inr < 0.01: inr = 0.01
         # Scale-free junction proximity: (d3-d1)/(d3+d1) -> 0 at three-way corners.
-        jn = 1.0 - min(1.0, (d3 - d1) / max(1e-9, d3 + d1))
+        jn = 0.0 if math.isinf(d3) else 1.0 - min(1.0, (d3 - d1) / max(1e-9, d3 + d1))
         jn_s = (jn - 0.65) / 0.33
         if jn_s < 0.0: jn_s = 0.0
         elif jn_s > 1.0: jn_s = 1.0
