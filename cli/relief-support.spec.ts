@@ -1,3 +1,4 @@
+import { rankSitesExactly } from './exact-metric-rank-oracle';
 /** Complete field support and bisector bounds, independently checked against all sites. */
 import assert from 'node:assert/strict';
 import { SiteGrid } from '../src/noise/site-grid';
@@ -13,8 +14,8 @@ const sites=VoronoiReliefGen.sitesForTest(params,false);
 function planes(points: readonly {x:number;y:number}[],x:number,y:number,angle=0,scale=1) {
   const c=Math.cos(angle),s=Math.sin(angle);
   const transform=(x:number,y:number)=>({x:(x*c+y*s)*scale,y:-x*s+y*c});
-  const ranked=points.map((p,index)=>{const q=transform(p.x-x,p.y-y);return {index,distance:Math.hypot(q.x,q.y)};})
-    .sort((a,b)=>a.distance-b.distance||a.index-b.index);
+  const radial=points.map((p,index)=>{const q=transform(p.x-x,p.y-y);return {index,distance:Math.hypot(q.x,q.y)};});
+  const ranked=rankSitesExactly(points,x,y,c,s,scale).map(index=>radial[index]);
   const owner=points[ranked[0].index],q=transform(x-owner.x,y-owner.y);
   let minimum=8;
   for(const p of points) {

@@ -88,3 +88,7 @@ When these files or sections are changed, remember to consider these:
 | `src/types.ts` | `NoiseGenerator`, `FBMGenerator`, `ReliefGenerator`, `ReliefSampleParams`, and related enum types shared across generators and mesh code |
 | `docs/voronoi-relief-target-spec.md` | Author-written acceptance spec describing the reference "lafabricatrun" panel geometry and a mechanism-mapping table tying each spec property to a sampler mechanism |
 | `cli/voronoi-relief.spec.ts` | Deterministic regression suite (18+ assertion blocks) that guards `sampleGrid` behavior against reintroducing prior artifacts (see `docs/cli-tools.md`) |
+
+### Near-coincident ownership
+
+Nearest ordering retains a fast floating comparison and resolves error-overlapping distances with the exact represented-input metric polynomial. True ties retain ordered stable IDs; small nonzero gaps are not ties. Both indexed and full-scan paths, canonical Python, shared native helper and builder mirror this rule. See `docs/relief-near-tie-ordering.md` and `npm run test:relief-near-ties` for the independent Decimal oracle and bounded-work checks.

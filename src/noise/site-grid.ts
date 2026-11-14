@@ -1,3 +1,4 @@
+import { metricOrdering, metricOrderError } from './metric-order';
 /** Exact bucket queries over ordered sites. Distances and index ties match a full scan. */
 export interface GridSite { x: number; y: number }
 
@@ -13,6 +14,7 @@ export class SiteGrid {
   private readonly minX: number;
   private readonly minY: number;
   private readonly spacing: number;
+  private coordinateScale = 1;
 
   constructor(
     private readonly sites: readonly GridSite[],
@@ -62,6 +64,7 @@ export class SiteGrid {
 
   add(index: number): void {
     const site = this.sites[index];
+    this.coordinateScale = Math.max(this.coordinateScale,Math.abs(site.x),Math.abs(site.y));
     const key = this.row(site.y) * this.columns + this.column(site.x);
     (this.buckets[key] ??= []).push(index);
   }
@@ -161,18 +164,20 @@ export class SiteGrid {
     let idx = 0, idx2 = -1, idx3 = -1, idx4 = -1;
     const isotropic = scale <= 1.0001;
     const cx = this.column(x), cy = this.row(y);
+    const precedes=metricOrdering(this.sites,x,y,this.coordinateScale,cosA,sinA,scale,squared);
+    const orderingError=metricOrderError(this.coordinateScale,x,y,cosA,sinA,scale);
     const visit = (column: number, row: number): void => {
       for (const index of this.buckets[row * this.columns + column] ?? []) {
         const dx = x - this.sites[index].x, dy = y - this.sites[index].y;
         const distance = squared ? dx * dx + dy * dy : isotropic ? Math.hypot(dx, dy)
           : Math.hypot((dx * cosA + dy * sinA) * scale, -dx * sinA + dy * cosA);
-        if (distance < f1 || (distance === f1 && index < idx)) {
+        if (precedes(index,idx,distance,f1)) {
           f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = distance; idx = index;
-        } else if (distance < f2 || (distance === f2 && index < idx2)) {
+        } else if (precedes(index,idx2,distance,f2)) {
           f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = distance; idx2 = index;
-        } else if (distance < f3 || (distance === f3 && index < idx3)) {
+        } else if (precedes(index,idx3,distance,f3)) {
           f4 = f3; idx4 = idx3; f3 = distance; idx3 = index;
-        } else if (distance < f4 || (distance === f4 && index < idx4)) {
+        } else if (precedes(index,idx4,distance,f4)) {
           f4 = distance; idx4 = index;
         }
       }
@@ -197,7 +202,8 @@ export class SiteGrid {
       if (bottom > 0) outside = Math.min(outside, y - (this.minY + bottom * this.spacing));
       if (top < this.rows - 1) outside = Math.min(outside, this.minY + (top + 1) * this.spacing - y);
       const bound = squared && outside >= 0 ? outside * outside : outside;
-      if (bound > f4 + 16 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), f4)) break;
+      const orderingMargin=squared?orderingError*(2*Math.max(1,f4)+orderingError):orderingError;
+      if (bound > f4 + orderingMargin + 16 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), f4)) break;
     }
     if (!Number.isFinite(f2)) idx2 = -1;
     if (!Number.isFinite(f3)) idx3 = -1;
