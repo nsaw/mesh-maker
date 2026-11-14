@@ -67,7 +67,8 @@ meshcraft/
 │   │   ├── pipeline.ts        #   figure -> drape -> 3:4 relief heights (12 x 16 in by default)
 │   │   └── worker.ts          #   Worker entry (messages.ts)
 │   ├── depth-estimate.ts      # Optional in-browser monocular depth (Depth-Anything-V2-small)
-│   ├── slider-utils.ts        # Click-to-edit slider values, step-aware value formatting
+│   ├── slider-utils.ts        # Shared exact ranges, nominal keyboard steps, numeric edits and resets
+│   ├── numeric-domain.ts      # Finite numeric input boundary and semantic count domains
 │   ├── render.ts              # Three.js WebGL viewport: surface, wireframe, points, enclosure,
 │   │                          #   elevation or neutral surface material
 │   ├── export.ts              # Export dispatcher: STL (binary/ASCII), OBJ, 3DM, heightmap PNG

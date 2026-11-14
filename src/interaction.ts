@@ -1,3 +1,4 @@
+import { syncRange } from './slider-utils';
 import { STATE } from './state';
 import { setCameraFromState } from './render';
 import { zoomExtents } from './stats';
@@ -16,11 +17,8 @@ export function setupInteraction(): void {
 
   function syncSlider(key: string): void {
     const sl = document.getElementById('sl_' + key) as HTMLInputElement | null;
-    const val = document.getElementById('val_' + key);
-    const v = STATE[key as keyof typeof STATE] as number;
-    if (sl) sl.value = String(v);
-    if (val) val.textContent = typeof v === 'number' ?
-      (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
+    const value = STATE[key as keyof typeof STATE] as number;
+    if (sl) syncRange(sl, value);
   }
 
   // --- Mouse ---

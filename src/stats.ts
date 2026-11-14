@@ -1,3 +1,4 @@
+import { syncRange } from './slider-utils';
 import { STATE, activeMaster } from './state';
 import { setCameraFromState } from './render';
 import { setDrapeFrontView } from './drape-ui';
@@ -22,11 +23,8 @@ export function zoomExtents(): void {
 
   ['orbit','tilt','roll','zoom'].forEach(k => {
     const sl = document.getElementById('sl_' + k) as HTMLInputElement | null;
-    const val = document.getElementById('val_' + k);
-    const v = STATE[k as keyof typeof STATE] as number;
-    if (sl) sl.value = String(v);
-    if (val) val.textContent = typeof v === 'number' ?
-      (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
+    const value = STATE[k as keyof typeof STATE] as number;
+    if (sl) syncRange(sl, value);
   });
 
   setCameraFromState();
