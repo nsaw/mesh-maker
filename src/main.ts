@@ -2,7 +2,7 @@ import { STATE, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, 
 import { buildSidebar, showDemoDepthMap } from './ui';
 import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
 import { setupInteraction } from './interaction';
-import { setupSponsorModal } from './sponsor';
+import { setupSponsors } from './sponsor';
 import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
 import { showToast } from './toast';
@@ -55,7 +55,7 @@ function init(): void {
   updateExportControls();
   setupInteraction();
   setupResize();
-  setupSponsorModal();
+  setupSponsors();
   generateMesh();
   preloadDemoDepthMap();
   // A page opened on DRAPE: load the figure and point the camera straight at the carve.

@@ -1,4 +1,6 @@
 import { numericDomain } from './numeric-domain';
+import { captureSidebarView, restoreSections, restoreSidebarView, wireSectionAccordion } from './sidebar-state';
+export { wireSectionAccordion } from './sidebar-state';
 import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN } from './sbp/types';
 import { STATE, DEFAULTS, controlIsReadOnly, boardIsLinkBoard, reliefMasterActive, saveNoiseDims } from './state';
 import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
@@ -31,8 +33,9 @@ function formatPresetName(key: string): string {
 }
 
 export function buildSidebar(): void {
+  const restoreFocus = captureSidebarView();
   syncDepthCaps();
-  const sb = document.getElementById('sidebar')!;
+  const sb = document.getElementById('controlsPane') ?? document.getElementById('sidebar')!;
   const fragment = document.createDocumentFragment();
   const isRelief = STATE.noiseType === 'voronoi-relief';
   const sections: Node[] = [
@@ -61,7 +64,9 @@ export function buildSidebar(): void {
   syncSbpSafeZIfStockMoved();
   wireSBPControls();
   updateExportControls();
+  restoreSections(sb);
   refreshControlResets();
+  restoreSidebarView(restoreFocus);
 }
 
 function createElement<K extends keyof HTMLElementTagNameMap>(
@@ -84,7 +89,6 @@ function buildSection(title: string, bodyChildren: Node[], collapsed = false, ex
   const bodyId = `${slugifySectionTitle(title)}-section-body`;
   const header = createElement('button', 'section-header') as HTMLButtonElement;
   header.type = 'button';
-  header.id = `${bodyId}-toggle`;
   header.setAttribute('aria-expanded', String(!collapsed));
   header.setAttribute('aria-controls', bodyId);
   header.append(
@@ -178,6 +182,7 @@ function buildPresetSection(): HTMLElement {
     .forEach((key) => {
       const button = createElement('button', `preset-pill${STATE.activeProfile === key ? ' active' : ''}`, key);
       button.dataset.profile = key;
+      button.id = `profile_${key}`;
       button.style.borderColor = 'var(--bg4)';
       button.style.fontSize = '9px';
       buttonRow.append(button);
@@ -285,8 +290,8 @@ function buildNoiseParametersSection(): HTMLElement {
   const seedInput = createElement('input', 'text-input') as HTMLInputElement;
   seedInput.type = 'text';
   seedInput.id = 'seedInput';
-  seedInput.placeholder = 'seed (blank=random)';
-  seedInput.value = STATE.seed ? String(STATE.seed) : '';
+  seedInput.placeholder = 'seed';
+  seedInput.value = String(STATE.seed);
   const seedButton = createElement('button', 'btn btn-sm', 'Dice');
   seedButton.id = 'btnRandSeed2';
   seedRow.append(seedInput, seedButton);
@@ -530,11 +535,13 @@ function buildDrapeSections(): HTMLElement[] {
   placeRow.style.gap = '6px';
   placeRow.style.margin = '6px 0';
   const up = createElement('select') as HTMLSelectElement;
+  up.id = 'figureUploadUp';
   up.setAttribute('aria-label', 'Up axis of an uploaded mesh');
   up.add(new Option('Z up', 'z')); up.add(new Option('Y up', 'y'));
   up.value = figurePlacement.up;
   up.addEventListener('change', () => { figurePlacement.up = up.value === 'y' ? 'y' : 'z'; });
   const turn = createElement('input') as HTMLInputElement;
+  turn.id = 'figureUploadTurn';
   turn.type = 'number'; turn.min = '-180'; turn.max = '180'; turn.step = '5';
   turn.value = String(figurePlacement.turnDeg);
   turn.title = 'Turn the uploaded mesh about its vertical axis so the face looks at you, degrees';
@@ -823,7 +830,7 @@ function wireControls(): void {
 
   // Section collapse
   wireSectionCollapse();
-  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('#sidebar [data-default]').forEach(attachControlReset);
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('#controlsPane [data-default]').forEach(attachControlReset);
 }
 
 /** Show the demo image on DEPTH MAP: the board keeps a DEPTH MAP share link's size while it still is
@@ -858,43 +865,10 @@ export function syncAspectLockButton(): void {
   refreshControlResets();
 }
 
-const isMobile = (): boolean => window.matchMedia('(max-width: 900px)').matches;
-
-/** Wire accordion collapse/expand on a single section. Exported for SBP profile rebuild. */
-export function wireSectionAccordion(section: Element): void {
-  const sidebar = document.getElementById('sidebar');
-  if (!sidebar) return;
-  const header = section.querySelector<HTMLElement>('.section-header');
-  if (!header) return;
-  const syncExpanded = (): void => {
-    header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
-  };
-  header.addEventListener('click', () => {
-    if (isMobile()) {
-      const sections = sidebar.querySelectorAll('.section');
-      const wasCollapsed = section.classList.contains('collapsed');
-      sections.forEach(s => s.classList.add('collapsed'));
-      if (wasCollapsed) section.classList.remove('collapsed');
-      sections.forEach(s => {
-        const h = s.querySelector<HTMLElement>('.section-header');
-        if (h) h.setAttribute('aria-expanded', String(!s.classList.contains('collapsed')));
-      });
-    } else {
-      section.classList.toggle('collapsed');
-      syncExpanded();
-    }
-  });
-  syncExpanded();
-}
-
 function wireSectionCollapse(): void {
   const sidebar = document.getElementById('sidebar')!;
   const sections = sidebar.querySelectorAll('.section');
   sections.forEach(s => wireSectionAccordion(s));
-  if (isMobile()) {
-    const visible = [...sections].filter(s => (s as HTMLElement).offsetParent !== null);
-    visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
-  }
 
   // Noise type select
   const sel = document.getElementById('selNoiseType') as HTMLSelectElement | null;
@@ -914,7 +888,11 @@ function wireSectionCollapse(): void {
   const seedEl = document.getElementById('seedInput') as HTMLInputElement | null;
   if (seedEl) {
     seedEl.addEventListener('change', () => {
-      STATE.seed = seedEl.value ? parseInt(seedEl.value) || hashString(seedEl.value) : 0;
+      if (!seedEl.value.trim()) { randomSeed(); return; }
+      const value = seedEl.value.trim();
+      const parsed = Number(value);
+      STATE.seed = Number.isFinite(parsed) ? Math.trunc(parsed) : hashString(value);
+      seedEl.value = String(STATE.seed);
       generateMesh();
     });
   }

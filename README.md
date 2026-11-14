@@ -106,7 +106,8 @@ src/
 ├── toolbar.ts           # Mode tabs, toolbar, Copy Link, format-aware controls
 ├── stats.ts             # Stats overlay (format-aware: triangles or SBP moves)
 ├── toast.ts             # Toast notifications
-├── sponsor.ts           # Sponsor modal
+├── sidebar-state.ts     # Pane scroll/focus and persistent section state
+├── sponsor.ts           # Explicit Sponsors pane
 └── sbp/                 # STL-to-SBP pipeline (shared between web + CLI, zero Node deps)
     ├── types.ts         # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
     ├── tools.ts         # Embedded ATC tool database (18 tools, 3 material profiles)

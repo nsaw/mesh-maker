@@ -44,6 +44,7 @@ npm run test:presets:geometry  # preset ownership, ordering and production geome
 npm run test:presets:export -- <preset>  # one full default SBP export
 npm run test:sbp-writer  # byte contract for SBP formatting and retract commands
 npm run test:ui-values  # Playwright against dist: exact ranges, resets, counts and source ownership
+npm run test:ui-interruptions  # Playwright against dist: sponsors, pane state and resets
 npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~20 s)
 npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drapes vs the Blender silk and gathered runs, ~2.5 min)
 npm run test:depthmap       # tsx cli/depthmap.spec.ts (luma sampling, orientation, cutoff, share links)
@@ -55,7 +56,8 @@ npm run stl-to-sbp -- <input.stl> [--dry-run]
 npm run deploy           # build, then wrangler pages deploy (needs CF env vars)
 ```
 
-Numeric URL keys accept only actual finite JSON numbers. Programmatic
+`src/sidebar-state.ts` keeps pane scroll/focus and stable section open state outside generation
+settings. Remember focus within pane content before header navigation, restore it on Back, and initialize unseen mobile sections closed without erasing other modes' choices. Numeric URL keys accept only actual finite JSON numbers, never coercible strings or other JSON types. Rebuild only the controls pane so the active Sponsors pane remains intact. Programmatic
 control updates use `configureRange`/`syncRange` and input handlers read `readRangeValue` in
 `src/slider-utils.ts`. That shared path owns
 native precision, labels, bounds, defaults and Reset visibility. Preserve the nominal keyboard step
@@ -170,15 +172,15 @@ npm run stl-to-sbp -- <input.stl> --dry-run
 filter tests (`python3 scripts/test-review-provenance.py`), lint, both typechecks,
 `test:relief`, `test:presets:geometry`,
 `test:gh-parity`, `test:depthmap`, `test:drape`, `test:drape-parity`, `test:sbp-writer`,
-`test:cut`, `test:relief-master`, the build and `test:ui-values` on every pull request. The UI
-gate installs Chromium and exercises the built application, including actual numeric edits, physical bounds and exported geometry.
+`test:cut`, `test:relief-master`, the build, `test:ui-values` and `test:ui-interruptions` on every pull request. The UI
+gate installs Chromium and exercises the built application, including the old sponsor timer windows.
 Full default preset exports
 run in a separate per-preset matrix. Both `checks` and `Preset full export gate` must pass before merge.
 `test:drape-parity` runs two full cloth simulations of the bundled bust against the Blender references
 (`cli/fixtures/drape-silk-tilt25`, `cli/fixtures/drape-silk-gathered`); after any change under `src/drape-sim/`, paste its numbers in the PR.
 The references come from Blender (`scripts/drape/workflow.py`) and are never regenerated from the web solver.
 
-The UI gate covers reset targets across rebuilds, numeric values and source ownership, mouse/touch camera
+The UI gate covers sidebar rebuilds, sponsor navigation, reset buttons, mouse/touch camera
 synchronization and Fit. Other visual and interaction items, including view modes, responsive
 layout, URL round-trip and depth-map upload, still require browser verification. If a change touches them, verify
 in a browser and say that you did. A passing gate suite is not evidence the render is right:

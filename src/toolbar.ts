@@ -1,3 +1,4 @@
+import { showSidebarPane } from './sidebar-state';
 import { updateEffectiveOffsetDisplay } from './sbp-export';
 import { DEFAULTS, STATE, demoDepthMap, restoreNoiseDims, saveNoiseDims, serializeConfig } from './state';
 import { generateMesh } from './mesh';
@@ -12,6 +13,7 @@ export function setupTabs(): void {
   // Mode tabs
   document.querySelectorAll('.mode-tab').forEach(btn => {
     btn.addEventListener('click', () => {
+      showSidebarPane('controls', false);
       let prevMode = STATE.mode;
       document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');

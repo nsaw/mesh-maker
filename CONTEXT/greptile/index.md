@@ -15,7 +15,7 @@ _Knowledge Base updated: 2026-07-19_
 - `grasshopper/` — a Grasshopper/Rhino plugin (Python) that mirrors the noise/relief logic as native CAD components
 - `cli/` — command-line specs/tools that verify parity between the TS and Grasshopper implementations, and a standalone STL→SBP converter
 
-**Where state lives:** all state is client-side/in-process — `src/state.ts` holds the app's live in-memory session state (params, mesh, UI selections); there is no database, queue, or external store. Generated meshes and SBP output are produced on demand and downloaded/exported directly from the browser or CLI.
+**Where state lives:** all state is client-side/in-process — `src/state.ts` holds generation settings, mesh and view selections; `src/sidebar-state.ts` holds sidebar pane, focus, scroll and section state; there is no database, queue, or external store. Generated meshes and SBP output are produced on demand and downloaded/exported directly from the browser or CLI.
 
 ## Architecture diagrams
 
@@ -109,7 +109,7 @@ sequenceDiagram
 ## Codebase-wide invariants
 
 - The TypeScript noise algorithms and the Grasshopper Python components are intentionally kept in lockstep and verified by `cli/grasshopper-parity.spec.ts` and `cli/voronoi-relief.spec.ts` — any change to `src/noise/**` or `grasshopper/components/**` should be checked against the other side.
-- All app state is held in a single in-memory module, `src/state.ts`; there is no persistence layer or database in this repo.
+- Generation settings and mesh state live in `src/state.ts`; sidebar presentation state lives in `src/sidebar-state.ts`. There is no persistence layer or database in this repo.
 - SBP toolpath generation is staged strictly as roughing → finishing → compensation before writing, per the separate files in `src/sbp/`.
 
 ## Routing table
@@ -119,4 +119,4 @@ sequenceDiagram
 - `grasshopper/builder/**`, `grasshopper/components/**`, `grasshopper/VORONOI_RELIEF_NATIVE.md`, external `sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/meshcraft-repo/` artifacts -> [docs/grasshopper-integration.md](docs/grasshopper-integration.md)
 - `cli/**`, `stl-to-sbp.sh`, `tsconfig.cli.json` -> [docs/cli-tools.md](docs/cli-tools.md)
 - `src/sbp/**`, `src/sbp-export.ts`, `src/export.ts` -> [docs/sbp-export-pipeline.md](docs/sbp-export-pipeline.md)
-- `src/state.ts`, `src/ui.ts`, `src/main.ts`, `src/toolbar.ts`, `src/interaction.ts`, `src/render.ts`, `src/slider-utils.ts`, `src/stats.ts`, `src/toast.ts`, `src/sponsor.ts`, `index.html` -> [docs/ui-and-state.md](docs/ui-and-state.md)
+- `src/state.ts`, `src/ui.ts`, `src/main.ts`, `src/toolbar.ts`, `src/interaction.ts`, `src/render.ts`, `src/slider-utils.ts`, `src/sidebar-state.ts`, `src/stats.ts`, `src/toast.ts`, `src/sponsor.ts`, `index.html` -> [docs/ui-and-state.md](docs/ui-and-state.md)
