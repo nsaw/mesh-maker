@@ -234,7 +234,7 @@ These preserved definitions belong to the repository branch. The separate `mesh-
 4. Inspect the log, open the saved definition and wire a preset's outputs to the matching component inputs.
 5. Confirm one preset generates before using the result in a project. Preserve known-good native artifacts before deliberately replacing them.
 
-The saved `.gh` files contain embedded scripts. Updating Python source does not update an existing definition. Run `npm run test:gh-parity` from this repository to compare embedded builder scripts and preset values with their canonical sources. Input changes also require a native Rhino 7 regeneration and reopen check.
+The saved `.gh` files contain embedded scripts. Updating Python source does not update an existing definition. Run `npm run test:gh-parity` from this repository to compare the builder's Noise and Presets scripts with their canonical sources and its preset values with the web table. The suite does not compare Shape or Smooth scripts; verify changes to those scripts separately. Input changes also require a native Rhino 7 regeneration and reopen check.
 
 The historical definitions and previews moved unchanged. They are not evidence that the latest sources are embedded or that a generated relief meets the web app's stock/backing contract. Native hosts and baked project geometry belong to the consuming Sawyer Design project. Nick's integrated Rhino master remains owner-controlled.
 
