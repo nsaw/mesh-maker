@@ -81,7 +81,8 @@ meshcraft/
 │   ├── toolbar.ts             # Mode tabs, toolbar buttons, Copy Link, format-aware controls
 │   ├── stats.ts               # zoomExtents, updateStats, format-aware overlay
 │   ├── toast.ts               # Toast notifications
-│   ├── sponsor.ts             # Sponsor modal + scroll-to-export
+│   ├── sidebar-state.ts       # Pane scroll/focus and persistent section state
+│   ├── sponsor.ts             # Explicit Sponsors pane + scroll-to-export
 │   └── sbp/                   # Shared STL-to-SBP pipeline (web + CLI, zero Node deps)
 │       ├── types.ts           # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
 │       ├── tools.ts           # Embedded ATC tool database + default tool config

@@ -29,11 +29,11 @@
       <button class="mode-tab active" data-mode="noise">Noise</button>
       <button class="mode-tab" data-mode="depthmap">Depth Map</button>
       <button class="mode-tab" data-mode="drape">Drape</button>
+      <button type="button" class="sponsor-tab" id="btnSponsors" aria-controls="sponsorsPane" aria-expanded="false">Sponsors</button>
     </div>
   </div>
   <div class="header-right">
     <a href="https://www.paypal.com/ncp/payment/X76TNFLB3Z6RL" target="_blank" rel="noopener" class="tip-btn" title="Buy me a coffee!">Buy me a coffee</a>
-    <button class="btn btn-sm" id="btnSponsor" style="font-size:10px;color:var(--green);border-color:rgba(78,255,158,0.3);background:rgba(78,255,158,0.08);" title="Our sponsor">ShopBot &#9825;</button>
     <span style="font-family:'Teko',sans-serif;text-transform:uppercase;font-size:12px;color:var(--text3);letter-spacing:1px;">Sawyer Design</span>
     <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/59f91699-ef0d-4c39-1cab-822e0c835300/w=200" alt="SD" class="logo" crossorigin="anonymous" onerror="this.style.display='none'"/>
   </div>
@@ -42,7 +42,33 @@
 <!-- MAIN -->
 <div class="main">
   <!-- SIDEBAR -->
-  <div class="sidebar" id="sidebar"></div>
+  <div class="sidebar" id="sidebar">
+    <div id="controlsPane"></div>
+    <section id="sponsorsPane" class="sponsors-pane" aria-labelledby="sponsorsHeading" hidden>
+      <button type="button" class="btn btn-sm" id="btnSponsorsBack">Back to controls</button>
+      <h2 id="sponsorsHeading" class="section-title">Sponsors</h2>
+      <article class="sponsor-card">
+        <div class="sponsor-img-wrap">
+          <img id="sponsorImg" src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800" alt="ShopBot Desktop Max ATC" />
+          <button type="button" class="sponsor-img-nav prev" id="sponsorPrev" aria-label="Previous ShopBot image">&#8249;</button>
+          <button type="button" class="sponsor-img-nav next" id="sponsorNext" aria-label="Next ShopBot image">&#8250;</button>
+        </div>
+        <div class="sponsor-body">
+          <h3 class="sponsor-name">ShopBot Tools</h3>
+          <div class="sponsor-product">Desktop Max ATC</div>
+          <p class="sponsor-desc">MESHCRAFT was built for the ShopBot Desktop Max ATC. Automatic tool changing, a 36 x 24 inch cutting area, and 6 inches of Z travel.</p>
+          <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Visit ShopBot</a>
+        </div>
+      </article>
+      <article class="sponsor-card">
+        <img class="sponsor-image" src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/7d4ecee6-c56f-4e09-dd49-c24553552900/w=400" alt="Bits&amp;Bits cutting tools" />
+        <div class="sponsor-body">
+          <h3 class="sponsor-name">Bits&amp;Bits</h3>
+          <a href="https://bitsbits.com" target="_blank" rel="noopener" class="sponsor-cta">Visit Bits&amp;Bits</a>
+        </div>
+      </article>
+    </section>
+  </div>
 
   <!-- VIEWPORT -->
   <div class="viewport">
@@ -89,25 +115,6 @@
         <label for="chk3dmPointCloud">Point cloud (3DM)</label>
       </div>
       <button class="btn btn-accent" id="btnExport">Export</button>
-    </div>
-  </div>
-</div>
-
-<!-- SPONSOR MODAL -->
-<div class="sponsor-backdrop" id="sponsorBackdrop">
-  <div class="sponsor-modal">
-    <div class="sponsor-img-wrap">
-      <button class="sponsor-close" id="sponsorClose" aria-label="Close">&times;</button>
-      <img id="sponsorImg" src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/ef64f44c-42cc-451d-f1de-b51229a45600/w=800" alt="ShopBot Desktop Max ATC" />
-      <button class="sponsor-img-nav prev" id="sponsorPrev">&#8249;</button>
-      <button class="sponsor-img-nav next" id="sponsorNext">&#8250;</button>
-    </div>
-    <div class="sponsor-body">
-      <div class="sponsor-label">Sponsored by</div>
-      <div class="sponsor-name">ShopBot Tools</div>
-      <div class="sponsor-product">Desktop Max ATC</div>
-      <div class="sponsor-desc">MESHCRAFT was built for the ShopBot Desktop Max ATC &mdash; a production-grade CNC router with automatic tool changing, 36&Prime;&times;24&Prime; cutting area, and 6&Prime; Z travel.</div>
-      <a href="https://shopbottools.com/products/desktop-max-atc/" target="_blank" rel="noopener" class="sponsor-cta">Learn More</a>
     </div>
   </div>
 </div>

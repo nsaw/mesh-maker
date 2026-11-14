@@ -28,7 +28,8 @@
     "preview": "vite preview",
     "prepare": "husky",
     "postbuild": "node scripts/check-asset-size.mjs dist",
-    "test:ui-values": "node scripts/ui/values.spec.mjs"
+    "test:ui-values": "node scripts/ui/values.spec.mjs",
+    "test:ui-interruptions": "node scripts/ui/interruptions.spec.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

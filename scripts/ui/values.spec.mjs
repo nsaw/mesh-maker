@@ -18,8 +18,6 @@ try {
   cases.push(...[[1440, 900], [834, 1112], [390, 664]].map(([width, height]) => [verifyDimensionResetLayout, width, height]));
   for (const [verify, width, height] of cases) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: true });
-    // This prerequisite retains legacy sponsor timers. Exercise controls after their dismissal.
-    await context.addInitScript(() => { sessionStorage.setItem('sponsorSeen', '1'); sessionStorage.setItem('bbBannerDismissed', '1'); });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));

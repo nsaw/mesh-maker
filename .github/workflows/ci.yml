@@ -43,6 +43,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui-values
+      - run: npm run test:ui-interruptions
 
   preset_export_list:
     name: Preset export matrix
