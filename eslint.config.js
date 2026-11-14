@@ -8,12 +8,7 @@ export default tseslint.config(
     files: ['src/**/*.ts', 'cli/**/*.ts'],
     languageOptions: {
       parserOptions: {
-        projectService: {
-          allowDefaultProject: ['cli/*.ts'],
-          defaultProject: 'tsconfig.cli.json',
-          // cli/ has more than the default cap of 8 files outside tsconfig.json.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32,
-        },
+        project: ['./tsconfig.json', './tsconfig.cli.json'],
         tsconfigRootDir: import.meta.dirname,
       },
     },

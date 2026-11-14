@@ -38,6 +38,7 @@
     "test:relief-link-browser": "node scripts/ui/relief-links.spec.mjs",
     "test:noise-browser": "node scripts/test-noise-browser.mjs",
     "test:export-authority": "node scripts/test-export-authority.mjs",
+    "test:cell-graph": "tsx cli/cell-graph.spec.ts",
     "test:render-geometry": "tsx cli/render-geometry.spec.ts",
     "test:ui-values": "node scripts/ui/values.spec.mjs",
     "test:ui-interruptions": "node scripts/ui/interruptions.spec.mjs",
