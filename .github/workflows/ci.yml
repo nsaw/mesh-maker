@@ -34,6 +34,7 @@ jobs:
       - run: npm run test:relief
       - run: npm run test:presets:geometry
       - run: npm run test:gh-parity
+      - run: npm run test:gh-site-grid
       - run: npm run test:depthmap
       - run: npm run test:drape
       - run: npm run test:drape-parity
