@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>MESHCRAFT // Sawyer Design</title>
 <link rel="icon" type="image/png" href="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/1dd2357c-f009-4b89-7e30-1d1539a9f100/w=150">
 <meta name="description" content="Browser-based 3D mesh generator for CNC machining. Noise algorithms, depth map import, watertight STL/OBJ export.">
@@ -33,6 +33,7 @@
     </div>
   </div>
   <div class="header-right">
+    <button type="button" class="btn mobile-overflow" id="btnOverflow" aria-expanded="false" aria-controls="viewportToolbar" aria-label="Viewport actions">More</button>
     <a href="https://www.paypal.com/ncp/payment/X76TNFLB3Z6RL" target="_blank" rel="noopener" class="tip-btn" title="Buy me a coffee!">Buy me a coffee</a>
     <span style="font-family:'Teko',sans-serif;text-transform:uppercase;font-size:12px;color:var(--text3);letter-spacing:1px;">Sawyer Design</span>
     <img src="https://imagedelivery.net/7Un9nY7FmOV52M6-Dm1bzA/59f91699-ef0d-4c39-1cab-822e0c835300/w=200" alt="SD" class="logo" crossorigin="anonymous" onerror="this.style.display='none'"/>
@@ -42,8 +43,23 @@
 <!-- MAIN -->
 <div class="main">
   <!-- SIDEBAR -->
+  <div class="sheet-chrome" id="sheetChrome">
+    <button type="button" id="sheetHandle" class="sheet-handle" aria-label="Resize controls" aria-expanded="false"><span class="sheet-grip"></span><span id="sheetPosition">Controls</span></button>
+    <div class="pane-tabs" role="tablist" aria-label="Controls">
+      <button type="button" role="tab" id="tab-shape" data-pane="shape" aria-controls="shapePane" aria-selected="true" tabindex="0">Shape</button>
+      <button type="button" role="tab" id="tab-generator" data-pane="generator" aria-controls="generatorPane" aria-selected="false" tabindex="-1">Noise</button>
+      <button type="button" role="tab" id="tab-view" data-pane="view" aria-controls="viewPane" aria-selected="false" tabindex="-1">View</button>
+      <button type="button" role="tab" id="tab-export" data-pane="export" aria-controls="exportPane" aria-selected="false" tabindex="-1">Export</button>
+      <button type="button" role="tab" id="tab-sponsors" data-pane="sponsors" aria-controls="sponsorsPane" aria-selected="false" tabindex="-1">Sponsors</button>
+    </div>
+  </div>
   <div class="sidebar" id="sidebar">
-    <div id="controlsPane"></div>
+    <div id="controlsPane">
+      <div id="shapePane" class="control-pane" data-control-pane="shape"></div>
+      <div id="generatorPane" class="control-pane" data-control-pane="generator"></div>
+      <div id="viewPane" class="control-pane" data-control-pane="view"></div>
+      <div id="exportPane" class="control-pane" data-control-pane="export"><div id="mobileExportHost"></div><div id="sbpHost"></div></div>
+    </div>
     <section id="sponsorsPane" class="sponsors-pane" aria-labelledby="sponsorsHeading" hidden>
       <button type="button" class="btn btn-sm" id="btnSponsorsBack">Back to controls</button>
       <h2 id="sponsorsHeading" class="section-title">Sponsors</h2>
@@ -72,17 +88,17 @@
 
   <!-- VIEWPORT -->
   <div class="viewport">
-    <div class="viewport-toolbar">
+    <div class="viewport-toolbar" id="viewportToolbar">
       <div class="view-modes">
         <button type="button" class="view-btn active" data-view="solid" aria-label="Solid view">Solid</button>
         <button type="button" class="view-btn" data-view="wireframe" aria-label="Wireframe view">Wire</button>
         <button type="button" class="view-btn" data-view="both" aria-label="Solid and wireframe view">Both</button>
         <button type="button" class="view-btn" data-view="points" aria-label="Points view">Points</button>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div class="viewport-actions">
         <button class="btn btn-sm" id="btnRegenerate">Regenerate</button>
         <button class="btn btn-sm" id="btnRandomSeed">Random Seed</button>
-        <button class="btn btn-sm" id="btnZoomExtents">Zoom Extents</button>
+        <button class="btn btn-sm" id="btnZoomExtents">Fit</button>
         <button class="btn btn-sm" id="btnResetCamera">Reset View</button>
         <button class="btn btn-sm" id="btnCopyLink" title="Copy shareable link to clipboard">Copy Link</button>
       </div>
@@ -118,9 +134,6 @@
     </div>
   </div>
 </div>
-
-<!-- SCROLL TO EXPORT (mobile) -->
-<button class="scroll-export-btn" id="scrollExportBtn" aria-label="Scroll to export">&#8595;</button>
 
 <div class="toast" id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--accent2);color:#fff;padding:8px 20px;border-radius:var(--radius);font-size:12px;font-weight:600;z-index:1001;pointer-events:none;"></div>
 

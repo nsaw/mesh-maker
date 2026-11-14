@@ -1,26 +1,11 @@
 import { noiseGeneration } from './noise/controller';
 import { syncRange } from './slider-utils';
 import { STATE, activeMaster } from './state';
-import { setCameraFromState } from './render';
-import { setDrapeFrontView } from './drape-ui';
+import { fitVisibleSource } from './render';
 import { gridMinMax } from './geometry';
 
 export function zoomExtents(): void {
-  if (!STATE.vertices) return;
-  const { meshX, meshY, vertices, rows, cols } = STATE;
-  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
-  const halfW = meshX / 2, halfH = meshY / 2, halfZ = (zMax - zMin) / 2;
-  const radius = Math.sqrt(halfW * halfW + halfH * halfH + halfZ * halfZ);
-
-  const fov = Math.PI / 3;
-  const fitDist = radius / Math.tan(fov / 2);
-  const targetZoom = Math.max(meshX, meshY) * 1.2 / fitDist;
-
-  STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85));
-  STATE.panX = 0; STATE.panY = 0;
-  STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
-  // DRAPE looks straight at the carve; its default zoom frames the panel at any carve size.
-  if (STATE.mode === 'drape') setDrapeFrontView();
+  if (!fitVisibleSource()) return;
 
   ['orbit','tilt','roll','zoom'].forEach(k => {
     const sl = document.getElementById('sl_' + k) as HTMLInputElement | null;
@@ -28,7 +13,6 @@ export function zoomExtents(): void {
     if (sl) syncRange(sl, value);
   });
 
-  setCameraFromState();
 }
 
 export function updateStats(): void {
@@ -83,6 +67,8 @@ export function updateStats(): void {
   for (const [label, value] of statData) {
     const row = document.createElement('div');
     row.className = 'stat-row';
+    if (label === 'Gen time' || label === 'Est. size') row.classList.add('stat-secondary');
+    if (label === 'Cells capped') { row.classList.add('stat-diagnostic'); row.setAttribute('role', 'status'); }
     const labelSpan = document.createElement('span');
     labelSpan.textContent = label;
     const valSpan = document.createElement('span');
@@ -95,7 +81,7 @@ export function updateStats(): void {
 
   if (STATE.resolution > 600) {
     const warnRow = document.createElement('div');
-    warnRow.className = 'stat-row';
+    warnRow.className = 'stat-row stat-diagnostic';
     const warnLabel = document.createElement('span');
     warnLabel.textContent = 'Note';
     const warnVal = document.createElement('span');

@@ -1,3 +1,4 @@
+import { mobilePane, toolbarAction } from './mobile-navigation.mjs';
 import assert from 'node:assert/strict';
 import { verifyNumericLinks } from './reset-regressions.mjs';
 const input = (page, key) => page.locator(`#sl_${key}`);
@@ -28,20 +29,24 @@ export async function verifyPaneFocusAndNumericLinks(page) {
 
 /** Hidden modes do not inherit expanded construction defaults or erase another mode's choices. */
 export async function verifyMobileFirstUse(page) {
+  await mobilePane(page, 'shape');
   const open = () => page.locator('#controlsPane .section').evaluateAll(sections => sections.filter(section => section.offsetParent !== null && !section.classList.contains('collapsed')).map(section => section.querySelector('.section-title').textContent));
   assert.deepEqual(await open(), ['Presets']);
   await page.locator('.mode-tab[data-mode="drape"]').click();
   assert((await open()).length <= 1);
+  await mobilePane(page, 'generator');
   await page.locator('#drape-cloth-section-body-toggle').click();
   assert.deepEqual(await open(), ['Drape: Cloth']);
   await page.locator('.mode-tab[data-mode="noise"]').click();
+  await mobilePane(page, 'generator');
   await page.locator('#advanced-noise-section-body-toggle').click();
   assert.deepEqual(await open(), ['Advanced Noise']);
   await page.locator('.mode-tab[data-mode="drape"]').click();
   assert.deepEqual(await open(), ['Drape: Cloth']);
+  await mobilePane(page, 'generator');
   await page.locator('#drape-cloth-section-body-toggle').click();
   assert.deepEqual(await open(), []);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   assert.deepEqual(await open(), []);
   await page.locator('.mode-tab[data-mode="depthmap"]').click();
   assert((await open()).length <= 1);

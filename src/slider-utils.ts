@@ -154,7 +154,7 @@ export function attachValueEdit(valSpan: HTMLElement, sl: HTMLInputElement): voi
 /** Keep the existing double-click reset path available on touch and keyboard. */
 export function attachControlReset(control: HTMLInputElement | HTMLSelectElement): void {
   if (control.dataset.default === undefined) return;
-  const label = control.closest('.control-row')?.querySelector('.control-label');
+  const label = control.closest('.control-row')?.querySelector('.control-label') ?? control.closest('.check-row')?.querySelector('label');
   if (!label || label.querySelector('.control-reset')) return;
   const button = document.createElement('button');
   button.type = 'button';
@@ -164,7 +164,10 @@ export function attachControlReset(control: HTMLInputElement | HTMLSelectElement
   button.dataset.resetFor = control.id;
   button.setAttribute('aria-label', `Reset ${label.firstElementChild?.textContent ?? label.textContent ?? 'control'}`);
   button.addEventListener('click', () => {
-    control.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    if (control instanceof HTMLInputElement && control.type === 'checkbox') {
+      control.checked = Number(control.dataset.default) > 0.5;
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+    } else control.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     refreshControlResets();
   });
   label.appendChild(button);
@@ -174,7 +177,7 @@ export function attachControlReset(control: HTMLInputElement | HTMLSelectElement
 }
 
 function updateResetVisibility(button: HTMLButtonElement, control: HTMLInputElement | HTMLSelectElement): void {
-  const current = control.value;
+  const current = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(Number(control.checked)) : control.value;
   const defaultValue = control.dataset.default;
   let same = current === defaultValue;
   if (control instanceof HTMLInputElement && control.type === 'range') {

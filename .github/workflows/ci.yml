@@ -33,6 +33,7 @@ jobs:
       - run: npm run typecheck:cli
       - run: npm run test:relief
       - run: npm run test:noise-worker
+      - run: npm run test:fit-frame
       - run: npm run test:render-geometry
       - run: npm run test:relief-near-ties
       - run: npm run test:relief-near-ties-mutants
@@ -53,6 +54,7 @@ jobs:
       - run: npm run test:export-authority
       - run: npm run test:ui-values
       - run: npm run test:ui-interruptions
+      - run: npm run test:mobile-layout
 
   preset_export_list:
     name: Preset export matrix

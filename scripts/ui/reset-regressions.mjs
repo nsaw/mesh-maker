@@ -1,3 +1,4 @@
+import { mobilePane, toolbarAction } from './mobile-navigation.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
@@ -15,7 +16,7 @@ async function copiedConfiguration(page) {
       writeText: async text => { document.documentElement.dataset.testCopiedLink = text; },
     } });
   });
-  await page.locator('#btnCopyLink').click();
+  await toolbarAction(page, 'btnCopyLink');
   const link = await page.evaluate(() => document.documentElement.dataset.testCopiedLink);
   assert(link);
   const encoded = new URL(link).searchParams.get('c');
@@ -62,7 +63,7 @@ export async function verifySbpDefaults(page) {
   for (const key of Object.keys(overrides)) profileDefaults[key] = Number(await input(page, key).getAttribute('data-default'));
   for (const [key, value] of Object.entries(edited)) await setRange(page, key, value);
   for (const [key, value] of Object.entries(overrides)) await setRange(page, key, value);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   for (const [key, value] of Object.entries(edited)) {
     assert.equal(Number(await input(page, key).inputValue()), value, `${key} edit survives a camera reset`);
     await assertDefault(page, key, defaults[key]);
@@ -89,7 +90,7 @@ export async function verifySbpDefaults(page) {
   for (const [key, value] of Object.entries(overrides)) {
     const expected = Number(await input(page, key).getAttribute('data-default'));
     await setRange(page, key, value);
-    await page.locator('#btnResetCamera').click();
+    await toolbarAction(page, 'btnResetCamera');
     await assertDefault(page, key, expected);
     await assertReset(page, key, expected);
   }
@@ -100,7 +101,7 @@ export async function verifySbpDefaults(page) {
   await assertDefault(page, 'sbpHomeZ', 2.1);
   await setRange(page, 'sbpHomeZ', 4);
   await setRange(page, 'sbpSafeZ', 3);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   await assertDefault(page, 'sbpSafeZ', 1.6);
   await assertDefault(page, 'sbpHomeZ', 2.1);
   await assertReset(page, 'sbpSafeZ', 1.6);
@@ -110,7 +111,7 @@ export async function verifySbpDefaults(page) {
   assert.equal(await input(page, 'sbpHomeZ').inputValue(), '4', 'a stock change preserves a raised Home Z');
   await assertDefault(page, 'sbpSafeZ', 0.9);
   await assertDefault(page, 'sbpHomeZ', 1.4);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   await assertReset(page, 'sbpHomeZ', 1.4);
 }
 
@@ -156,7 +157,7 @@ export async function verifyCameraResets(page) {
   await touch.detach();
 
   for (const fit of [() => page.locator('#btnZoomExtents').click(), () => wrap.dblclick()]) {
-    await page.locator('#btnResetCamera').click();
+    await toolbarAction(page, 'btnResetCamera');
     await fit();
     for (const key of ['orbit', 'tilt', 'roll', 'zoom']) {
       const changed = Number(await input(page, key).inputValue()) !== defaults[key];
@@ -178,14 +179,14 @@ export async function verifyCoupledClearances(page) {
   await assertBounds();
   await input(page, 'sbpHomeZ').evaluate(control => { control.min = '1'; });
   await assert.rejects(assertBounds, /Home bound follows the other clearance/);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   await assertBounds();
   await assertReset(page, 'sbpHomeZ', 3.1);
   assert.equal(await input(page, 'sbpSafeZ').inputValue(), '3', 'Home reset preserves raised Safe Z');
   await assertDefault(page, 'sbpHomeZ', 1.4);
   await reset(page, 'sbpHomeZ').dispatchEvent('click');
   assert.equal(await input(page, 'sbpHomeZ').inputValue(), '3.1', 'repeating the constrained reset is stable');
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   assert.equal(await reset(page, 'sbpHomeZ').getAttribute('hidden'), '', 'constrained reset stays hidden after rebuilding');
 
   await setRange(page, 'baseThickness', 1.5);
@@ -207,7 +208,7 @@ export async function verifyCoupledClearances(page) {
   assert.equal(await input(page, 'sbpHomeZ').inputValue(), '1', 'constrained Safe reset preserves Home Z');
   await reset(page, 'sbpSafeZ').dispatchEvent('click');
   assert.equal(await input(page, 'sbpSafeZ').inputValue(), '0.9');
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   assert.equal(await reset(page, 'sbpSafeZ').getAttribute('hidden'), '', 'constrained Safe reset stays hidden after rebuilding');
   await setRange(page, 'sbpHomeZ', 4);
   await assertReset(page, 'sbpSafeZ', 1.6);
@@ -261,6 +262,7 @@ async function pointerClick(page, selector) {
 
 /** Test pointer hit targets before clicking, so Playwright cannot hide horizontal clipping. */
 export async function verifyDimensionResetLayout(page) {
+  await mobilePane(page, 'shape');
   const toggle = page.locator('#mesh-dimensions-section-body-toggle');
   if (!(await input(page, 'meshX').isVisible())) await toggle.click();
   await setRange(page, 'meshX', 20);
@@ -287,7 +289,7 @@ export async function verifyDimensionResetLayout(page) {
   await assertSerializedRange(page, 'meshY', 24);
   await input(page, 'meshY').evaluate(control => { const value = control.value; control.step = control.dataset.step; control.value = value; });
   await assert.rejects(() => assertSerializedRange(page, 'meshY', 24), /native thumb stays within its floating-point serialization bound/);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   await assertSerializedRange(page, 'meshY', 24);
   if (!(await input(page, 'meshX').isVisible())) await toggle.click();
   await page.locator('#btnAspectLock').click();
@@ -336,7 +338,7 @@ export async function verifyOffStepDrapeDefaults(page) {
     assert.equal(await reset(page, key).getAttribute('hidden'), '');
     await input(page, key).evaluate(control => { const value = control.value; control.step = control.dataset.step; control.value = value; });
     await assert.rejects(() => assertSerializedRange(page, key, defaultValue), /native thumb stays within its floating-point serialization bound/);
-    await page.locator('#btnResetCamera').click();
+    await toolbarAction(page, 'btnResetCamera');
     await openControl(key);
     await assertSerializedRange(page, key, defaultValue);
     await unchangedEdit(key);
@@ -391,7 +393,7 @@ export async function verifyProgrammaticRangeSync(page) {
   await assertSerializedRange(page, 'baseThickness', 0.75);
   await input(page, 'baseThickness').evaluate(control => { const value = control.value; control.step = control.dataset.step; control.value = value; });
   await assert.rejects(() => assertSerializedRange(page, 'baseThickness', 0.75), /native thumb stays within its floating-point serialization bound/);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   await assertSerializedRange(page, 'baseThickness', 0.75);
   await setRange(page, 'baseThickness', 0.25);
   await page.waitForFunction(() => document.getElementById('sl_sbpSafeZ').value === '0.5');
@@ -399,7 +401,7 @@ export async function verifyProgrammaticRangeSync(page) {
   assert.equal(await input(page, 'drapeReliefDepth').inputValue(), '0.1875');
   await input(page, 'drapeReliefDepth').evaluate(control => { const value = control.value; control.step = control.dataset.step; control.value = value; });
   await assert.rejects(() => assertSerializedRange(page, 'drapeReliefDepth', 0.625), /native thumb stays within its floating-point serialization bound/);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   await assertSerializedRange(page, 'drapeReliefDepth', 0.625);
   await input(page, 'drapeReliefDepth').press('End');
   assert.equal(await input(page, 'drapeReliefDepth').inputValue(), '0.1875');
@@ -428,7 +430,7 @@ export async function verifySmallMasterRanges(page) {
     assert.equal(await reset(page, key).getAttribute('hidden'), '', `${key} locked source has no reset action`);
   }
   assert.equal(await assertSerializedRange(page, 'resolution', 400), 3);
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   for (const [key, expected] of [['meshX', 0.5], ['meshY', 0.75], ['baseThickness', 0.125]]) await assertSerializedRange(page, key, expected);
 }
 
@@ -477,10 +479,15 @@ export async function verifyCountDomains(page) {
     } else assert.equal(await assertSerializedRange(page, key, Number(await input(page, key).getAttribute('data-default'))), value);
   }
   await page.selectOption('#selNoiseType', 'voronoi-relief');
-  for (const [key, value, expected] of [['reliefRelaxIterations', 1.9, 1], ['reliefRadialFociCount', 2.9, 2], ['reliefInvertProfile', 0.9, 0]]) {
+  for (const [key, value, expected] of [['reliefRelaxIterations', 1.9, 1], ['reliefRadialFociCount', 2.9, 2]]) {
     await edit(key, value);
     assert.equal(await assertSerializedRange(page, key, Number(await input(page, key).getAttribute('data-default'))), expected);
   }
+  await input(page, 'reliefInvertProfile').check();
+  assert.equal((await copiedConfiguration(page)).config.reliefInvertProfile, 1, 'Domed Floors checkbox stores numeric one');
+  await reset(page, 'reliefInvertProfile').tap();
+  assert.equal(await input(page, 'reliefInvertProfile').isChecked(), false);
+  assert.equal((await copiedConfiguration(page)).config.reliefInvertProfile ?? 0, 0, 'Domed Floors reset stores numeric zero');
   await page.locator('.mode-tab[data-mode="depthmap"]').click();
   await edit('dmSmoothRadiusIn', depthRadius);
   assert.equal(await assertSerializedRange(page, 'dmSmoothRadiusIn', 0), depthRadius);
@@ -541,7 +548,7 @@ export async function verifySourceOwnership(page) {
   const bare = () => page.waitForFunction(() => document.getElementById('drapeStatus').textContent.includes('Bare figure'), null, { timeout: 60000 });
   await bare();
   await assertEditable();
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   await assertEditable();
   await edit('meshX', 9.75);
   await page.waitForFunction(() => document.getElementById('dimsOverlay').textContent.startsWith('9.75" x 13"'));
@@ -704,7 +711,7 @@ export async function verifyStockClearanceCoherence(page) {
   await edit('resolution', 16); await edit('meshX', 1); await edit('meshY', 1);
   await edit('sbpHomeZ', 1.45); await edit('baseThickness', 1.25);
   await coherent(1.4, 1.9);
-  await page.locator('#btnResetCamera').click(); await coherent(1.4, 1.9);
+  await toolbarAction(page, 'btnResetCamera'); await coherent(1.4, 1.9);
   await edit('sbpHomeZ', 2.125); await edit('baseThickness', 1.5); await coherent(1.6, 2.125);
   await edit('baseThickness', 1.25); await coherent(1.4, 2.125);
   await reset(page, 'sbpHomeZ').click(); await coherent(1.4, 1.9);
@@ -759,7 +766,7 @@ export async function verifyDrapeRequestDefaults(page) {
     assert.equal(await assertSerializedRange(page, key, value), value);
     assert.equal(await reset(page, key).getAttribute('hidden'), '', `${key} canonical request default has no Reset`);
   }
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   assert.equal(await reset(page, 'baseThickness').getAttribute('hidden'), '');
   const edit = async (key, value) => { await page.locator(`#val_${key}`).click(); await page.locator(`#val_${key} .val-edit`).fill(String(value)); await page.locator(`#val_${key} .val-edit`).press('Enter'); };
   await edit('baseThickness', 0.7500000000000001);

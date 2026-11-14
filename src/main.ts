@@ -1,3 +1,4 @@
+import { setupMobileLayout } from './mobile-layout';
 import { STATE, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
 import { buildSidebar, showDemoDepthMap } from './ui';
 import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
@@ -56,6 +57,7 @@ function init(): void {
   setupInteraction();
   setupResize();
   setupSponsors();
+  setupMobileLayout();
   generateMesh();
   preloadDemoDepthMap();
   // A page opened on DRAPE: load the figure and point the camera straight at the carve.

@@ -1,3 +1,4 @@
+import { fitDistance, type Frame } from './fit-frame';
 import { noiseGeneration } from './noise/controller';
 import type { WireWorkerOutput } from './render-wire-worker';
 import { showToast } from './toast';
@@ -32,6 +33,7 @@ let _needsRender = false;
 let _rafPending = false;
 let _prevW = 0;
 let _prevH = 0;
+let _initialPortraitScale = 0;
 let _lastVerticesRef: number[][] | null = null;
 let _lastMeshX = 0;
 let _lastMeshY = 0;
@@ -91,13 +93,22 @@ function getColorRampTexture(): THREE.DataTexture {
 
 // --- Initialization ---
 
+/** Capture the initial stage before an early Export can cover it while generation is pending. */
+export function captureInitialViewportFrame(): void {
+  if (_initialPortraitScale) return;
+  const wrap = document.getElementById('canvasWrap');
+  if (wrap?.clientWidth && wrap.clientHeight) _initialPortraitScale = Math.max(1, wrap.clientHeight / wrap.clientWidth);
+}
+
 function ensureRenderer(): void {
   if (_renderer) return;
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const wrap = document.getElementById('canvasWrap')!;
-  const w = wrap.clientWidth;
-  const h = wrap.clientHeight;
+  const w = Math.max(1, wrap.clientWidth);
+  const h = Math.max(1, wrap.clientHeight);
+  captureInitialViewportFrame();
+  if (!_initialPortraitScale) _initialPortraitScale = 1;
 
   _renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   _renderer.setPixelRatio(window.devicePixelRatio);
@@ -152,7 +163,7 @@ function ensureRenderer(): void {
 }
 
 function doRender(): void {
-  if (!_renderer) return;
+  if (!_renderer || !document.getElementById('canvasWrap')?.clientHeight) return;
   // Three.js setViewport/setScissor apply DPR internally (set via setPixelRatio).
   // Pass CSS pixel dimensions, NOT buffer pixels, to avoid double-multiplication.
   const w = _prevW;
@@ -207,7 +218,7 @@ export function setCameraFromState(): void {
 
   const target = getMeshCenter();
   const meshMax = Math.max(STATE.meshX || 36, STATE.meshY || 24);
-  const radius = meshMax * 1.2 / Math.max(STATE.zoom, 0.01);
+  const radius = meshMax * 1.2 * _initialPortraitScale / Math.max(STATE.zoom, 0.01);
 
   const phi = Math.PI * (90 + STATE.tilt) / 180;   // polar from Z-axis
   const theta = STATE.orbit * Math.PI / 180;        // azimuthal around Z
@@ -585,8 +596,8 @@ export function renderViewport(prepared?: SurfaceBuffers): void {
 export function resizeCanvas(): void {
   if (!_renderer) return;
   const wrap = document.getElementById('canvasWrap')!;
-  const w = wrap.clientWidth;
-  const h = wrap.clientHeight;
+  const w = Math.max(1, wrap.clientWidth);
+  const h = Math.max(1, wrap.clientHeight);
   if (w !== _prevW || h !== _prevH) {
     _renderer.setSize(w, h);
     _camera.aspect = w / h;
@@ -597,6 +608,47 @@ export function resizeCanvas(): void {
   }
 }
 
+
+/** The scene is fitted only on request. Resizing changes projection without rewriting STATE. */
+export function fitVisibleSource(): boolean {
+  if (!STATE.vertices) return false;
+  ensureRenderer();
+  resizeCanvas();
+  setCameraFromState();
+  const wrap = document.getElementById('canvasWrap')!;
+  const width = wrap.clientWidth, height = wrap.clientHeight;
+  if (!width || !height) return false;
+  const bounds = wrap.getBoundingClientRect();
+  const frame: Frame = { x: 16, y: 16, width: width - 32, height: height - 32 };
+  // Reserve the overlays' measured bands, including the renderer's 80 px axis inset.
+  const dims = document.getElementById('dimsOverlay')!.getBoundingClientRect();
+  const stats = document.getElementById('statsOverlay')!.getBoundingClientRect();
+  const top = Math.max(96, dims.bottom - bounds.top + 8);
+  const bottom = stats.height ? bounds.bottom - stats.top + 8 : 16;
+  frame.y = top;
+  frame.height = height - top - bottom;
+  if (frame.height <= 0 || frame.width <= 0) return false;
+  const center = getMeshCenter();
+  _camera.updateMatrixWorld(true);
+  const right = new THREE.Vector3().setFromMatrixColumn(_camera.matrixWorld, 0);
+  const up = new THREE.Vector3().setFromMatrixColumn(_camera.matrixWorld, 1);
+  const back = new THREE.Vector3().setFromMatrixColumn(_camera.matrixWorld, 2);
+  const points = [];
+  const low = STATE.watertight ? Math.min(0, _cachedZMin) : _cachedZMin;
+  for (const x of [0, STATE.meshX]) for (const y of [0, STATE.meshY]) for (const z of [low, _cachedZMax]) {
+    const point = new THREE.Vector3(x, y, z).sub(center);
+    points.push({ x: point.dot(right), y: point.dot(up), z: point.dot(back) });
+  }
+  const distance = fitDistance(points, frame, width, height, FOV * Math.PI / 180);
+  if (distance === null) return false;
+  const zoom = Math.max(STATE.meshX, STATE.meshY) * 1.2 * _initialPortraitScale / distance;
+  if (zoom < 0.1) return false;
+  STATE.zoom = Math.min(10, zoom);
+  STATE.panX = frame.x + frame.width / 2 - width / 2;
+  STATE.panY = frame.y + frame.height / 2 - height / 2;
+  setCameraFromState();
+  return true;
+}
 
 export function updateDimsOverlay(): void {
   const el = document.getElementById('dimsOverlay')!;

@@ -89,7 +89,9 @@ meshcraft/
 │   ├── stats.ts               # zoomExtents, updateStats, format-aware overlay
 │   ├── toast.ts               # Toast notifications
 │   ├── sidebar-state.ts       # Pane scroll/focus and persistent section state
-│   ├── sponsor.ts             # Explicit Sponsors pane + scroll-to-export
+│   ├── mobile-layout.ts       # Persistent phone task panes, handle snaps, measured stage
+│   ├── fit-frame.ts           # Perspective fit inequalities for the unobscured frame
+│   ├── sponsor.ts             # Explicit Sponsors pane and carousel
 │   └── sbp/                   # Shared STL-to-SBP pipeline (web + CLI, zero Node deps)
 │       ├── types.ts           # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
 │       ├── tools.ts           # Embedded ATC tool database + default tool config

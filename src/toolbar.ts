@@ -1,3 +1,4 @@
+import { revealSceneForFit } from './mobile-layout';
 import { showSidebarPane } from './sidebar-state';
 import { updateEffectiveOffsetDisplay } from './sbp-export';
 import { DEFAULTS, STATE, demoDepthMap, restoreNoiseDims, saveNoiseDims, serializeConfig } from './state';
@@ -106,7 +107,7 @@ export function updateExportControls(): void {
 export function setupToolbar(): void {
   document.getElementById('btnRegenerate')!.addEventListener('click', generateMesh);
   document.getElementById('btnRandomSeed')!.addEventListener('click', randomSeed);
-  document.getElementById('btnZoomExtents')!.addEventListener('click', zoomExtents);
+  document.getElementById('btnZoomExtents')!.addEventListener('click', () => revealSceneForFit(zoomExtents));
   document.getElementById('btnResetCamera')!.addEventListener('click', () => {
     for (const key of ['orbit', 'tilt', 'roll', 'zoom', 'panX', 'panY'] as const) STATE[key] = DEFAULTS[key];
     buildSidebar();

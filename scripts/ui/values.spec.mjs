@@ -23,7 +23,7 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.route(/^https:\/\//, route => route.abort());
     await page.goto(origin);
-    await page.waitForSelector('#selPreset');
+    await page.waitForSelector('#selPreset', { state: 'attached' });
     await verify(page);
     assert.deepEqual(errors, []);
     await context.close();

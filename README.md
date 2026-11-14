@@ -109,6 +109,8 @@ src/
 ├── stats.ts             # Stats overlay (format-aware: triangles or SBP moves)
 ├── toast.ts             # Toast notifications
 ├── sidebar-state.ts     # Pane scroll/focus and persistent section state
+├── mobile-layout.ts     # Phone task panes, handle snaps and measured stage
+├── fit-frame.ts         # Perspective fitting within the visible scene
 ├── sponsor.ts           # Explicit Sponsors pane
 └── sbp/                 # STL-to-SBP pipeline (shared between web + CLI, zero Node deps)
     ├── types.ts         # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
@@ -176,9 +178,9 @@ The CLI reads Vectric `.vtdb` tool databases (SQLite) via `--vtdb` for cutting p
 
 ### Web
 
-Select **SBP** as the export format in the toolbar. The SBP config panel appears in the sidebar with tool selection, material profile, and roughing/finishing toggles. Two modes:
+Select **SBP** as the export format. On a phone, file actions and the SBP settings are in the Export tab. On desktop, the SBP config panel appears in the sidebar with tool selection, material profile, and roughing/finishing toggles. Two modes:
 
-1. **From mesh**: Exports the current MeshCraft mesh directly (instant)
+1. **From mesh**: Exports the current full-resolution source after any pending generation completes
 2. **From STL upload**: Upload any binary STL file -- runs the full pipeline in a Web Worker to keep the UI responsive
 
 ### Tool library
@@ -202,7 +204,7 @@ Each tool has cutting data for all three material profiles (General, MDF, Hardwo
 - **Heightfield meshes only** -- one Z per XY cell. No overhangs or undercuts.
 - **Raster roughing** -- ~20-40% more air-cutting than Aspire's contour spiral. Same material removal.
 - **Uniform point density** -- 0.005" between M3 points (vs Aspire's adaptive 0.012-0.024"). Larger files, same stepover, negligible cycle time difference.
-- **Web SBP is gated** -- button hidden in production until physical carve validation passes.
+- **Web SBP** is available from the export formats. On a phone, open the Export tab for its settings.
 
 ---
 

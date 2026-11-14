@@ -1,3 +1,4 @@
+import { mobilePane, toolbarAction } from './mobile-navigation.mjs';
 import { verifyEditorLifecycle, verifyPaneFocusAndNumericLinks, verifyMobileFirstUse } from './pane-regressions.mjs';
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
@@ -22,8 +23,9 @@ try {
   // Block remote imagery to exercise the offline layout and avoid optional demo timing.
   await page.route(/^https:\/\//, route => route.abort());
   await page.goto(origin);
-  await page.waitForSelector('#selPreset');
+  await page.waitForSelector('#selPreset', { state: 'attached' });
   assert.equal(await page.locator('#seedInput').getAttribute('placeholder'), 'seed');
+  await mobilePane(page, 'generator');
   await page.locator('#noise-parameters-section-body-toggle').click();
   const seed = await page.locator('#seedInput').inputValue();
   await page.locator('#seedInput').fill('');
@@ -31,9 +33,12 @@ try {
   assert.match(await page.locator('#seedInput').inputValue(), /^\d+$/);
   assert.notEqual(await page.locator('#seedInput').inputValue(), '');
   await page.locator('#sl_resolution').evaluate(element => { element.value = '40'; element.dispatchEvent(new Event('input', { bubbles: true })); });
-  await page.locator('#presets-section-body-toggle').click();
+  await mobilePane(page, 'shape');
+  const presetsToggle = page.locator('#presets-section-body-toggle');
+  if (await presetsToggle.getAttribute('aria-expanded') === 'false') await presetsToggle.click();
   await page.selectOption('#selPreset', 'relief-pockets');
-  const reliefToggle = page.locator('#cell-relief-section-body-toggle');
+  await mobilePane(page, 'generator');
+  const reliefToggle = page.locator('#cells-section-body-toggle');
   await reliefToggle.click();
   const sidebar = page.locator('#sidebar');
   await sidebar.evaluate(element => { element.scrollTop = 100; });
@@ -44,13 +49,13 @@ try {
   await reliefToggle.click();
   await page.locator('[data-profile="organic"]').dispatchEvent('click');
   assert.equal(await reliefToggle.getAttribute('aria-expanded'), 'false');
-  assert.equal(await page.locator('#controlsPane .section-header[aria-expanded="true"]').count(), 0);
+  assert.equal(await page.locator('#generatorPane .section-header[aria-expanded="true"]').count(), 0);
 
   // Restoring controls after viewing sponsors preserves mode, open sections and scroll.
   await reliefToggle.click();
   await sidebar.evaluate(element => { element.scrollTop = 140; });
   const savedScroll = await sidebar.evaluate(element => element.scrollTop);
-  await page.locator('#btnSponsors').click();
+  await mobilePane(page, 'sponsors');
   assert.equal(await page.locator('body').getAttribute('class'), 'mode-noise');
   assert.equal(await page.locator('#controlsPane').isVisible(), false);
   assert.equal(await page.locator('#sponsorsPane').isVisible(), true);
@@ -68,6 +73,7 @@ try {
   assert.equal(await reliefToggle.getAttribute('aria-expanded'), 'true');
   assert.equal(await sidebar.evaluate(element => element.scrollTop), savedScroll);
 
+  await mobilePane(page, 'shape');
   await page.locator('#mesh-dimensions-section-body-toggle').click();
   const resolution = page.locator('#sl_resolution');
   await resolution.evaluate(element => { element.value = '80'; element.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -78,9 +84,10 @@ try {
   assert.equal(await reset.isVisible(), false);
   await resolution.evaluate(element => { element.value = '40'; element.dispatchEvent(new Event('input', { bubbles: true })); });
 
+  await mobilePane(page, 'view');
   await page.locator('#view-controls-section-body-toggle').click();
   await page.locator('#sl_orbit').evaluate(element => { element.value = '90'; element.dispatchEvent(new Event('input', { bubbles: true })); });
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   assert.equal(await page.locator('#sl_orbit').inputValue(), await page.locator('#sl_orbit').getAttribute('data-default'));
   assert.equal(await page.locator('#sl_tilt').inputValue(), await page.locator('#sl_tilt').getAttribute('data-default'));
   assert.equal(await page.locator('#sl_zoom').inputValue(), await page.locator('#sl_zoom').getAttribute('data-default'));
@@ -94,6 +101,7 @@ try {
   assert.equal(await page.locator('#val_orbit .val-edit').inputValue(), '123');
   await page.locator('#val_orbit .val-edit').press('Escape');
 
+  await mobilePane(page, 'export');
   await page.locator('.format-btn[data-fmt="sbp"]').click();
   await page.locator('#sbp-section-body-toggle').click();
   await page.selectOption('#sbpProfile', 'hardwood');
@@ -102,13 +110,14 @@ try {
   await page.locator('[data-reset-for="sl_sbpFeedRate"]').tap();
   assert.equal(await page.locator('#sl_sbpFeedRate').inputValue(), await page.locator('#sl_sbpFeedRate').getAttribute('data-default'));
   await page.locator('#sbp-section-body-toggle').click();
-  await page.locator('#btnResetCamera').click();
+  await toolbarAction(page, 'btnResetCamera');
   assert.equal(await page.locator('#sbp-section-body-toggle').getAttribute('aria-expanded'), 'false');
 
   // Drape aliases retain their own reset defaults and minimum backing.
   await page.locator('.mode-tab[data-mode="drape"]').click();
   await page.waitForFunction(() => document.getElementById('drapeStatus').textContent.includes('Bare figure'), null, { timeout: 60000 });
   const openSection = async id => {
+    await mobilePane(page, id.startsWith('mesh-') ? 'shape' : id.startsWith('sbp-') ? 'export' : 'generator');
     const toggle = page.locator(`#${id}-toggle`);
     if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
   };
@@ -168,7 +177,7 @@ try {
     layoutPage.on('pageerror', error => errors.push(error.message));
     await layoutPage.route(/^https:\/\//, route => route.abort());
     await layoutPage.goto(origin);
-    await layoutPage.waitForSelector('#selPreset');
+    await layoutPage.waitForSelector('#selPreset', { state: 'attached' });
     await verifyDimensionResetLayout(layoutPage);
     await layoutContext.close();
   }
@@ -178,13 +187,13 @@ try {
   firstUsePage.on('pageerror', error => errors.push(error.message));
   await firstUsePage.route(/^https:\/\//, route => route.abort());
   await firstUsePage.goto(origin);
-  await firstUsePage.waitForSelector('#selPreset');
+  await firstUsePage.waitForSelector('#selPreset', { state: 'attached' });
   await verifyMobileFirstUse(firstUsePage);
   await firstUseContext.close();
 
   // No sponsor content appears without an explicit request, past both old timer windows.
   await page.goto(origin);
-  await page.waitForSelector('#selPreset');
+  await page.waitForSelector('#selPreset', { state: 'attached' });
   await page.waitForTimeout(90_000);
   assert.equal(await page.locator('#sponsorsPane').isVisible(), false);
   assert.equal(await page.locator('.sponsor-backdrop, .bb-banner').count(), 0);

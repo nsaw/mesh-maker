@@ -1,3 +1,4 @@
+import { syncMobilePanes } from './mobile-layout';
 import { noiseGeneration } from './noise/controller';
 import { numericDomain } from './numeric-domain';
 import { captureSidebarView, restoreSections, restoreSidebarView, wireSectionAccordion } from './sidebar-state';
@@ -37,27 +38,19 @@ export function buildSidebar(): void {
   const restoreFocus = captureSidebarView();
   syncDepthCaps();
   const sb = document.getElementById('controlsPane') ?? document.getElementById('sidebar')!;
-  const fragment = document.createDocumentFragment();
   const isRelief = STATE.noiseType === 'voronoi-relief';
-  const sections: Node[] = [
-    buildPresetSection(),
-    buildMeshDimensionsSection(),
+  const shape = document.getElementById('shapePane')!;
+  const generator = document.getElementById('generatorPane')!;
+  const view = document.getElementById('viewPane')!;
+  shape.replaceChildren(buildPresetSection(), buildMeshDimensionsSection());
+  generator.replaceChildren(
     buildNoiseParametersSection(),
-  ];
-  if (isRelief) {
-    sections.push(buildReliefSection());
-  } else {
-    sections.push(buildPeakValleySection(), buildAdvancedNoiseSection());
-  }
-  sections.push(
-    buildSmoothingSection(),
-    buildDepthMapSection(),
-    ...buildDrapeSections(),
-    buildViewControlsSection(),
-    buildSBPSection(),
+    ...(isRelief ? buildReliefSections() : [buildPeakValleySection(), buildAdvancedNoiseSection()]),
+    buildSmoothingSection(), buildDepthMapSection(), ...buildDrapeSections(),
   );
-  fragment.append(...sections);
-  sb.replaceChildren(fragment);
+  view.replaceChildren(buildViewControlsSection());
+  document.getElementById('sbpHost')!.replaceChildren(buildSBPSection());
+  syncMobilePanes();
 
   wireControls();
   // Sync cut-depth slider maxes and SBP safe Z to initial material thickness
@@ -67,6 +60,7 @@ export function buildSidebar(): void {
   updateExportControls();
   restoreSections(sb);
   refreshControlResets();
+  syncReliefControls();
   restoreSidebarView(restoreFocus);
 }
 
@@ -185,7 +179,7 @@ function buildPresetSection(): HTMLElement {
       button.dataset.profile = key;
       button.id = `profile_${key}`;
       button.style.borderColor = 'var(--bg4)';
-      button.style.fontSize = '9px';
+      button.style.fontSize = '11px';
       buttonRow.append(button);
     });
 
@@ -227,7 +221,7 @@ function buildMeshDimensionsSection(): HTMLElement {
 
   const note = createElement('div');
   note.style.marginTop = '4px';
-  note.style.fontSize = '10px';
+  note.style.fontSize = '11px';
   note.style.color = 'var(--text3)';
   note.textContent = 'ShopBot Desktop Max ATC -- 36"x24"x6"';
 
@@ -332,104 +326,107 @@ function buildNoiseParametersSection(): HTMLElement {
   return buildSection('Noise Parameters', children, false, 'noise-only');
 }
 
-function buildReliefSection(): HTMLElement {
-  const cellLayoutLabel = createElement('div');
-  cellLayoutLabel.style.fontSize = '10px';
-  cellLayoutLabel.style.color = 'var(--text3)';
-  cellLayoutLabel.style.marginBottom = '4px';
-  cellLayoutLabel.textContent = 'Cell layout';
+function buildReliefSections(): HTMLElement[] {
+  const note = (text: string): HTMLElement => createElement('p', 'profile-note', text);
+  const checkbox = createElement('div', 'check-row');
+  const domed = createElement('input');
+  domed.type = 'checkbox'; domed.id = 'sl_reliefInvertProfile';
+  domed.dataset.key = 'reliefInvertProfile'; domed.dataset.default = String(DEFAULTS.reliefInvertProfile);
+  domed.checked = STATE.reliefInvertProfile > 0.5;
+  const label = createElement('label', 'control-label', 'Domed Floors');
+  label.htmlFor = domed.id;
+  checkbox.append(domed, label);
+  return [
+    buildSection('Cells', [
+      note('Spacing is in inches. Density Boost adds cells; patchiness varies their size across the panel.'),
+      slider('reliefCellSize', 'Cell Size (inches)', 0.4, 6, 0.1),
+      slider('reliefJitter', 'Jitter', 0, 1, 0.05),
+      slider('reliefRelaxIterations', 'Lloyd Relaxation', 0, 2, 1),
+      slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
+      slider('reliefDensityNoise', 'Cell Size Patchiness', 0, 1.5, 0.05),
+      slider('reliefDensityNoiseFreq', 'Patch Scale', 0.02, 0.3, 0.01),
+    ], false, 'noise-only relief-controls'),
+    buildSection('Walls & Floors', [
+      note('Lower Floor Size leaves more of each cell flat. Domed Floors carves the boundaries. Pillowed Floors raises the centres of sunken floors.'),
+      enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
+      enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
+      slider('reliefSeamDepth', 'Floor Size', 0.05, 1, 0.05),
+      slider('reliefWallWidth', 'Wall Width', 0, 0.5, 0.01),
+      checkbox,
+      slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
+      slider('reliefPillow', 'Pillowed Floors', 0, 1, 0.05),
+      slider('reliefPillowCoverage', 'Pillow Coverage', 0, 1, 0.05),
+      slider('reliefDepthVariation', 'Depth Variation', 0, 1, 0.05),
+      slider('reliefJunctionLift', 'Junction Peaks', 0, 1, 0.05),
+      slider('reliefCrestVariation', 'Crest Variation', 0, 1, 0.05),
+    ], false, 'noise-only relief-controls'),
+    buildSection('Layout', [
+      note('Attractors fade cells across the panel. Starburst foci place radial cells; Anisotropy stretches the distance used to shape them.'),
+      slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
+      slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
+      enumSelect('reliefAttractorMode', 'Mode', [['none', 'None'], ['vertical', 'Vertical'], ['horizontal', 'Horizontal'], ['radial', 'Radial'], ['point', 'Point (inverse)']]),
+      slider('reliefAttractorX', 'Anchor X (0-1)', 0, 1, 0.01),
+      slider('reliefAttractorY', 'Anchor Y (0-1)', 0, 1, 0.01),
+      slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
+      slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
+      slider('reliefCellSizeGradient', 'Cell Size Gradient', 0, 2, 0.05),
+      slider('reliefIntensityStrength', 'Depth Follows Attractor', 0, 1, 0.05),
+      slider('reliefTransitionSoftness', 'Edge Blend', 0, 1, 0.05),
+      slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
+      slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
+      slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
+      slider('reliefRadialFociCount', 'Starburst Foci (0=off)', 0, 3, 1),
+      ...[1, 2, 3].flatMap(index => [
+        slider(`reliefRadialFocus${index}X`, `Focus ${index} X`, 0, 1, 0.01),
+        slider(`reliefRadialFocus${index}Y`, `Focus ${index} Y`, 0, 1, 0.01),
+      ]),
+      slider('reliefRadialStrength', 'Starburst Strength', 0, 3, 0.05),
+      slider('reliefRadialFalloff', 'Starburst Width', 0.05, 0.6, 0.01),
+      slider('reliefRadialGrow', 'Focal Cell Size', 0, 2, 0.05),
+      slider('reliefRadialWarp', 'Starburst Wobble', 0, 1, 0.02),
+      enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
+    ], false, 'noise-only relief-controls'),
+    buildSection('Base', [
+      note('Flat stays level. Smooth Wave adds a broad wave beneath the cellular carve, raising and lowering the ridges as it crosses the panel.'),
+      enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
+      slider('reliefBaseAmplitude', 'Base Wave Amplitude', 0, 2, 0.05),
+      slider('reliefBaseFrequency', 'Base Wave Frequency', 0.02, 0.3, 0.01),
+    ], false, 'noise-only relief-controls'),
+  ];
+}
 
-  const shapeLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  shapeLabel.textContent = 'Cell shape';
-  const anisoLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  anisoLabel.textContent = 'Anisotropy';
-  const attractorLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  attractorLabel.textContent = 'Attractor';
-  const radialLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  radialLabel.textContent = 'Radial foci (starburst)';
-  const baseLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  baseLabel.textContent = 'Base field';
-
-  return buildSection('Cell Relief', [
-    cellLayoutLabel,
-    slider('reliefCellSize', 'Cell Size (inches)', 0.4, 6, 0.1),
-    slider('reliefJitter', 'Jitter', 0, 1, 0.05),
-    slider('reliefRelaxIterations', 'Lloyd Relaxation', 0, 2, 1),
-    shapeLabel,
-    enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
-    enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
-    slider('reliefSeamDepth', 'Wall Extent (floor inset)', 0.05, 1, 0.05),
-    // v16: fraction of the normalized cell distance held at surface level around every
-    // cell boundary — walls get finite width instead of knife-edge ridge lines. The
-    // measured response is aggressive (0.3 already floors ~88% of pixels), so presets
-    // use small values (0.08–0.12).
-    slider('reliefWallWidth', 'Wall Width', 0, 0.5, 0.01),
-    // v15: 0/1 toggle. When 1, cell INTERIORS sit at the surface with a domed rise and the
-    // cell BOUNDARIES are carved (matches the reference panel's "domed floors" signature).
-    // When 0 (default), standard pocket carving (interior sunk, boundary at surface).
-    slider('reliefInvertProfile', 'Domed Floors (0/1)', 0, 1, 1),
-    // v15.1: 0 = smooth round-bottom gutter at cell boundary; 1 = knife-edge V-groove.
-    // Linear blend of the profile curve toward a `bowlT` ramp. High values produce real
-    // V-grooves but the rendered mesh will show polygon aliasing along seam ridges — fine
-    // for CNC V-bit carving paths.
-    slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
-    // v16.1: double-curvature pocket floors — past the bowl's saturation point the floor
-    // rises into a soft central mound. Coverage gates which cells pillow (per-cell hash).
-    slider('reliefPillow', 'Pillowed Floors', 0, 1, 0.05),
-    slider('reliefPillowCoverage', 'Pillow Coverage', 0, 1, 0.05),
-    // v16.3: per-cell depth tiers (deep/intermediate/suppressed) + asymmetric wall
-    // profiles; junction crest lift with widened star-shaped nodes.
-    slider('reliefDepthVariation', 'Depth Variation', 0, 1, 0.05),
-    slider('reliefJunctionLift', 'Junction Peaks', 0, 1, 0.05),
-    // v17: ridge-local crest height noise — mesas/saddles/fragmented envelope.
-    slider('reliefCrestVariation', 'Crest Variation', 0, 1, 0.05),
-    anisoLabel,
-    slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
-    slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
-    attractorLabel,
-    enumSelect('reliefAttractorMode', 'Mode', [
-      ['none', 'None'], ['vertical', 'Vertical'], ['horizontal', 'Horizontal'],
-      ['radial', 'Radial'], ['point', 'Point (inverse)'],
-    ]),
-    slider('reliefAttractorX', 'Anchor X (0-1)', 0, 1, 0.01),
-    slider('reliefAttractorY', 'Anchor Y (0-1)', 0, 1, 0.01),
-    slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
-    slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
-    slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
-    // v16: low-frequency noise on site density — giant and small cells coexist (the
-    // lafabrica multi-scale patchiness). Independent of the attractor gradient above.
-    slider('reliefDensityNoise', 'Cell Size Patchiness', 0, 1.5, 0.05),
-    slider('reliefDensityNoiseFreq', 'Patch Scale', 0.02, 0.3, 0.01),
-    slider('reliefCellSizeGradient', 'Cell Size Gradient', 0, 2, 0.05),
-    slider('reliefIntensityStrength', 'Intensity Strength', 0, 1, 0.05),
-    slider('reliefTransitionSoftness', 'Transition Softness', 0, 1, 0.05),
-    slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
-    slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
-    slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
-    radialLabel,
-    slider('reliefRadialFociCount', 'Starburst Foci (0=off)', 0, 3, 1),
-    slider('reliefRadialFocus1X', 'Focus 1 X', 0, 1, 0.01),
-    slider('reliefRadialFocus1Y', 'Focus 1 Y', 0, 1, 0.01),
-    slider('reliefRadialFocus2X', 'Focus 2 X', 0, 1, 0.01),
-    slider('reliefRadialFocus2Y', 'Focus 2 Y', 0, 1, 0.01),
-    slider('reliefRadialFocus3X', 'Focus 3 X', 0, 1, 0.01),
-    slider('reliefRadialFocus3Y', 'Focus 3 Y', 0, 1, 0.01),
-    slider('reliefRadialStrength', 'Starburst Strength', 0, 3, 0.05),
-    slider('reliefRadialFalloff', 'Starburst Width', 0.05, 0.6, 0.01),
-    slider('reliefRadialGrow', 'Focal Expansion', 0, 2, 0.05),
-    slider('reliefRadialWarp', 'Starburst Wobble', 0, 1, 0.02),
-    enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
-    baseLabel,
-    enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
-    // v16 superposition: the cellular carve rides ON this wave — ridge tops undulate.
-    slider('reliefBaseAmplitude', 'Base Wave Amplitude', 0, 2, 0.05),
-    slider('reliefBaseFrequency', 'Base Wave Frequency', 0.02, 0.3, 0.01),
-  ], false, 'noise-only');
+/** Hide only controls whose values the sampler cannot currently use. Keep those values intact. */
+function syncReliefControls(): void {
+  const hide = (key: string, inert: boolean): void => {
+    const input = document.getElementById(`sl_${key}`);
+    const row = input?.closest<HTMLElement>('.control-row, .check-row');
+    if (row) row.hidden = inert;
+  };
+  hide('reliefDensityNoiseFreq', STATE.reliefDensityNoise === 0);
+  hide('reliefAnisotropyAngle', STATE.reliefAnisotropy === 0);
+  const mode = STATE.reliefAttractorMode;
+  hide('reliefAttractorX', mode === 'none' || mode === 'vertical');
+  hide('reliefAttractorY', mode === 'none' || mode === 'horizontal');
+  hide('reliefAttractorRadius', mode !== 'radial' && mode !== 'point');
+  hide('reliefAttractorFalloff', mode === 'none');
+  const maskVaries = mode !== 'none' || STATE.reliefAttractorNoise > 0;
+  hide('reliefTransitionSoftness', !maskVaries);
+  hide('reliefIntensityStrength', !maskVaries);
+  hide('reliefAttractorNoiseFreq', STATE.reliefAttractorNoise === 0);
+  hide('reliefPillow', STATE.reliefInvertProfile > 0.5);
+  hide('reliefPillowCoverage', STATE.reliefPillow === 0 || STATE.reliefInvertProfile > 0.5);
+  for (let index = 1; index <= 3; index++) {
+    hide(`reliefRadialFocus${index}X`, STATE.reliefRadialFociCount < index);
+    hide(`reliefRadialFocus${index}Y`, STATE.reliefRadialFociCount < index);
+  }
+  for (const key of ['reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp', 'reliefRadialMode']) hide(key, STATE.reliefRadialFociCount === 0);
+  hide('reliefBaseAmplitude', STATE.reliefBaseMode === 'flat');
+  hide('reliefBaseFrequency', STATE.reliefBaseMode === 'flat' || STATE.reliefBaseAmplitude === 0);
 }
 
 function buildPeakValleySection(): HTMLElement {
   const description = createElement('div');
-  description.style.fontSize = '10px';
+  description.style.fontSize = '11px';
   description.style.color = 'var(--text3)';
   description.style.marginBottom = '8px';
   description.textContent = 'Asymmetric control: shape peaks and valleys independently.';
@@ -535,13 +532,13 @@ function buildDrapeSections(): HTMLElement[] {
   placeRow.style.display = 'flex';
   placeRow.style.gap = '6px';
   placeRow.style.margin = '6px 0';
-  const up = createElement('select') as HTMLSelectElement;
+  const up = createElement('select', 'select-input') as HTMLSelectElement;
   up.id = 'figureUploadUp';
   up.setAttribute('aria-label', 'Up axis of an uploaded mesh');
   up.add(new Option('Z up', 'z')); up.add(new Option('Y up', 'y'));
   up.value = figurePlacement.up;
   up.addEventListener('change', () => { figurePlacement.up = up.value === 'y' ? 'y' : 'z'; });
-  const turn = createElement('input') as HTMLInputElement;
+  const turn = createElement('input', 'num-input') as HTMLInputElement;
   turn.id = 'figureUploadTurn';
   turn.type = 'number'; turn.min = '-180'; turn.max = '180'; turn.step = '5';
   turn.value = String(figurePlacement.turnDeg);
@@ -552,7 +549,7 @@ function buildDrapeSections(): HTMLElement[] {
   placeRow.append(up, turn);
   const placeNote = createElement('div', undefined,
     'Upload placement: up axis (STL, OBJ, PLY; glTF and USD carry their own) and turn (deg), applied when a mesh is loaded. Any mesh is scaled to fit the panel; Figure Size and the X / Y size then resize it.');
-  placeNote.style.fontSize = '10px';
+  placeNote.style.fontSize = '11px';
   placeNote.style.color = 'var(--text3)';
 
   const btnRow = createElement('div');
@@ -579,11 +576,11 @@ function buildDrapeSections(): HTMLElement[] {
   status.id = 'drapeStatus';
   status.setAttribute('role', 'status');
   status.style.margin = '6px 0';
-  status.style.fontSize = '10px';
+  status.style.fontSize = '11px';
   status.style.color = 'var(--text2)';
   const about = createElement('div', undefined,
     'Silk cloth hung from the top of the figure under gravity, simulated in this tab (Jolt Physics). The relief is the front view at the X / Y size (3:4), cut to Material Thickness and Relief Depth.');
-  about.style.fontSize = '10px';
+  about.style.fontSize = '11px';
   about.style.color = 'var(--text3)';
 
   // Presets: one click sets every cloth, force and pose control.
@@ -616,7 +613,7 @@ function buildDrapeSections(): HTMLElement[] {
   });
   const note = (text: string): HTMLDivElement => {
     const n = createElement('div', undefined, text);
-    n.style.fontSize = '10px'; n.style.color = 'var(--text3)'; n.style.margin = '4px 0';
+    n.style.fontSize = '11px'; n.style.color = 'var(--text3)'; n.style.margin = '4px 0';
     return n;
   };
   const windMode = enumSelect('drapeWindMode', 'Mode', [['off', 'Off'], ['wind', 'Wind (fixed direction)'], ['pressure', 'Pressure (onto the cloth)']]);
@@ -649,7 +646,7 @@ function buildDrapeSections(): HTMLElement[] {
 function reliefMasterInfo(): HTMLDivElement {
   const note = createElement('div', 'relief-master-info');
   note.style.margin = '6px 0 8px';
-  note.style.fontSize = '10px';
+  note.style.fontSize = '11px';
   note.style.color = 'var(--text3)';
   const m = STATE.reliefMaster;
   if (!m) { note.style.display = 'none'; return note; }
@@ -665,7 +662,7 @@ function reliefMasterInfo(): HTMLDivElement {
 function buildViewControlsSection(): HTMLElement {
   const note = createElement('div');
   note.style.marginTop = '8px';
-  note.style.fontSize = '10px';
+  note.style.fontSize = '11px';
   note.style.color = 'var(--text3)';
   note.textContent = 'Left drag = orbit/tilt · Right/Shift drag = pan · Scroll = zoom · Double-click = fit';
 
@@ -757,6 +754,7 @@ function wireControls(): void {
       const v = readRangeValue(sl);
       (STATE as unknown as Record<string, unknown>)[key] = v;
       syncRange(sl, v);
+      if (key.startsWith('relief')) syncReliefControls();
 
       // Aspect ratio lock
       if (STATE.aspectLocked && STATE.depthMapAR && (key === 'meshX' || key === 'meshY')) {
@@ -815,6 +813,18 @@ function wireControls(): void {
     });
   });
 
+  const domed = document.getElementById('sl_reliefInvertProfile') as HTMLInputElement | null;
+  domed?.addEventListener('change', () => {
+    STATE.reliefInvertProfile = domed.checked ? 1 : 0;
+    STATE.activePreset = null;
+    STATE.activeProfile = null;
+    const preset = document.getElementById('selPreset') as HTMLSelectElement | null;
+    if (preset) preset.value = '';
+    document.querySelector('.preset-pill.active[data-profile]')?.classList.remove('active');
+    syncReliefControls();
+    debouncedGenerate('reliefInvertProfile', 'full');
+  });
+
   // Click value label to type exact number
   document.querySelectorAll<HTMLElement>('.control-label .val').forEach(valSpan => {
     const id = valSpan.id;
@@ -830,6 +840,7 @@ function wireControls(): void {
     const key = sel.dataset.key!;
     sel.addEventListener('change', () => {
       (STATE as unknown as Record<string, unknown>)[key] = sel.value;
+      if (key.startsWith('relief')) syncReliefControls();
       // Shading is view-only: swap the material, keep the mesh and the active preset.
       if (key === 'viewMaterial') {
         applySurfaceMaterial();

@@ -6,10 +6,25 @@ interface PaneView {
 }
 
 let activePane: Pane = 'controls';
-const views: Record<Pane, PaneView> = {
-  controls: { scrollTop: 0, focusId: null },
-  sponsors: { scrollTop: 0, focusId: null },
-};
+let presentPane: ((pane: Pane) => void) | null = null;
+
+/** Reveal the selected task before this module restores its view or focus. */
+export function setSidebarPanePresentation(present: (pane: Pane) => void): void {
+  presentPane = present;
+}
+const views = new Map<string, PaneView>();
+export function sidebarIsMobile(): boolean {
+  const applied = document.body.dataset.mobileLayout;
+  return applied === undefined ? window.matchMedia('(max-width: 900px)').matches : applied === 'true';
+}
+
+function currentView(): PaneView {
+  const task = document.getElementById('controlsPane')?.dataset.activeTask ?? 'shape';
+  const key = sidebarIsMobile() ? `mobile:${activePane === 'controls' ? task : activePane}` : activePane;
+  let view = views.get(key);
+  if (!view) { view = { scrollTop: 0, focusId: null }; views.set(key, view); }
+  return view;
+}
 const sectionOpen = new Map<string, boolean>();
 let sectionsInitialized = false;
 const observedSidebars = new WeakSet<HTMLElement>();
@@ -21,9 +36,10 @@ export function captureSidebarView(completedEdit?: KeyboardEvent): boolean {
     observedSidebars.add(sidebar);
     sidebar.addEventListener('focusin', () => { captureSidebarView(); });
     sidebar.addEventListener('input', () => { captureSidebarView(); });
+    sidebar.addEventListener('scroll', () => { currentView().scrollTop = sidebar.scrollTop; }, { passive: true });
     sidebar.addEventListener('keydown', event => { captureSidebarView(event); });
   }
-  const view = views[activePane];
+  const view = currentView();
   view.scrollTop = sidebar.scrollTop;
   if (completedEdit?.target instanceof HTMLInputElement && completedEdit.target.classList.contains('val-edit')
     && (completedEdit.key === 'Enter' || completedEdit.key === 'Escape')) {
@@ -54,7 +70,7 @@ export function restoreSidebarView(focus = true): boolean {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return false;
   // Focusing a restored editor emits focusin and updates the live view; retain its saved draft.
-  const view = { ...views[activePane] };
+  const view = { ...currentView() };
   let restored = false;
   if (focus && view.focusId) {
     const element = document.getElementById(view.focusId);
@@ -72,7 +88,7 @@ export function restoreSidebarView(focus = true): boolean {
 }
 
 /** Sponsors is a pane, independent of the current generation mode. */
-export function showSidebarPane(pane: Pane, focus = true): void {
+export function showSidebarPane(pane: Pane, focus = true, prepare?: () => void): void {
   captureSidebarView();
   const changed = activePane !== pane;
   activePane = pane;
@@ -80,6 +96,8 @@ export function showSidebarPane(pane: Pane, focus = true): void {
   const sponsors = document.getElementById('sponsorsPane');
   if (controls) controls.hidden = pane !== 'controls';
   if (sponsors) sponsors.hidden = pane !== 'sponsors';
+  prepare?.();
+  presentPane?.(pane);
   const button = document.getElementById('btnSponsors');
   button?.classList.toggle('active', pane === 'sponsors');
   button?.setAttribute('aria-expanded', String(pane === 'sponsors'));
@@ -87,7 +105,11 @@ export function showSidebarPane(pane: Pane, focus = true): void {
   if (changed && focus) {
     if (pane === 'sponsors') document.getElementById('btnSponsorsBack')?.focus({ preventScroll: true });
     else {
-      if (!restoreSidebarView()) document.getElementById('btnSponsors')?.focus({ preventScroll: true });
+      if (!restoreSidebarView()) {
+        const fallback = document.body.dataset.mobileLayout === 'true'
+          ? document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') : document.getElementById('btnSponsors');
+        fallback?.focus({ preventScroll: true });
+      }
     }
   }
 }
@@ -107,7 +129,7 @@ function setSectionOpen(section: Element, open: boolean): void {
 export function restoreSections(root: Element): void {
   const sections = [...root.querySelectorAll('.section')];
   if (root.matches('.section')) sections.unshift(root);
-  const mobile = window.matchMedia('(max-width: 900px)').matches;
+  const mobile = sidebarIsMobile();
   let visibleOpen = false;
   for (const section of sections) {
     const id = sectionId(section);
@@ -129,7 +151,7 @@ export function wireSectionAccordion(section: Element): void {
   if (!header.id) header.id = `${sectionId(section)}-toggle`;
   header.addEventListener('click', () => {
     const open = section.classList.contains('collapsed');
-    if (window.matchMedia('(max-width: 900px)').matches) {
+    if (sidebarIsMobile()) {
       document.getElementById('controlsPane')?.querySelectorAll('.section').forEach(sibling => {
         if ((sibling as HTMLElement).offsetParent !== null) setSectionOpen(sibling, false);
       });

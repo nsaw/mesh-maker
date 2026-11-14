@@ -519,7 +519,7 @@ export function buildSBPSection(): HTMLElement {
 
   const toolsNote = createElement('div', undefined, `Tools: ${tools.length} embedded (${SBP_STATE.materialProfile})`);
   toolsNote.style.marginTop = '10px';
-  toolsNote.style.fontSize = '10px';
+  toolsNote.style.fontSize = '11px';
   toolsNote.style.color = 'var(--text3)';
   body.append(toolsNote);
 
