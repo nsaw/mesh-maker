@@ -30,6 +30,14 @@ async function copyState(page) {
 }
 async function fit(page) {
   await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().iterations)).map(animation => animation.finished)));
+  // The full-resolution result rewrites the stats and dims overlays, which bound the fit frame.
+  // Fit only once generation is idle and both overlays hold still, or a slow renderer fits early.
+  await page.waitForFunction(() => !document.getElementById('genOverlay')?.classList.contains('visible'));
+  await page.waitForFunction(() => new Promise(resolve => {
+    const boxes = () => ['statsOverlay', 'dimsOverlay'].map(id => JSON.stringify(document.getElementById(id)?.getBoundingClientRect())).join();
+    const before = boxes();
+    setTimeout(() => resolve(boxes() === before && !document.getElementById('genOverlay')?.classList.contains('visible')), 250);
+  }), undefined, { polling: 'raf', timeout: 30000 });
   if (page.viewportSize().width <= 900) await page.locator('#btnOverflow').click();
   const sequence = await page.evaluate(() => window.fitProbe?.sequence ?? 0);
   await page.locator('#btnZoomExtents').click();

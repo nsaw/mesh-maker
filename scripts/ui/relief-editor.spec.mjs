@@ -288,7 +288,8 @@ try {
     assert.equal(Number(await handlePage.locator('#sl_' + xKey).inputValue()), pendingX, 'cancel restores the prior pending handle position');
     await confirmLayout(handlePage, '#btnCellApply', true); await handlePage.waitForFunction(() => !document.getElementById('cellEditorStatus')?.textContent?.includes('Preparing')); await idle(handlePage);
     const appliedHandle = await save(handlePage);
-    assert.equal(appliedHandle.params[xKey], pendingX); assert.notDeepEqual(appliedHandle.sites, handleInitial.sites, 'Apply replaces the layout from the pending handle');
+    // The slider's string rounds the applied double in its last digit on some hosts.
+    assert(Math.abs(appliedHandle.params[xKey] - pendingX) < 1e-12, `applied ${appliedHandle.params[xKey]} matches pending ${pendingX}`); assert.notDeepEqual(appliedHandle.sites, handleInitial.sites, 'Apply replaces the layout from the pending handle');
     await handlePage.click('#btnCellUndo'); await idle(handlePage); assert.deepEqual((await save(handlePage)).sites, handleInitial.sites);
     assert.match(await handlePage.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
     await handlePage.click('#btnCellUndo'); assert.doesNotMatch(await handlePage.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
