@@ -91,6 +91,63 @@ export class SiteGrid {
     return false;
   }
 
+  /** Complete compact support, in stable site order. Metric inflation bounds the search
+   * by the world-space radius; the final distance predicate owns membership. */
+  withinRadius(x: number, y: number, radius: number, cosA = 1, sinA = 0, scale = 1): Array<{index: number; distance: number}> {
+    if (!Number.isFinite(radius) || radius < 0) throw new RangeError('Site radius must be finite and nonnegative');
+    const result: Array<{index: number; distance: number}> = [];
+    const margin = 16 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), radius);
+    const x0 = this.column(x - radius - margin), x1 = this.column(x + radius + margin);
+    const y0 = this.row(y - radius - margin), y1 = this.row(y + radius + margin);
+    const isotropic = scale <= 1.0001;
+    for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) {
+      for (const index of this.buckets[j * this.columns + i] ?? []) {
+        const dx = x - this.sites[index].x, dy = y - this.sites[index].y;
+        const distance = isotropic ? Math.hypot(dx, dy)
+          : Math.hypot((dx * cosA + dy * sinA) * scale, -dx * sinA + dy * cosA);
+        if (distance < radius) result.push({index, distance});
+      }
+    }
+    return result.sort((a, b) => a.index - b.index);
+  }
+
+  /** Relative coordinates avoid cancellation between rounded radial distances. */
+  bisectorDistance(x: number, y: number, owner: number, index: number, cosA = 1, sinA = 0, scale = 1): number {
+    let dx = this.sites[index].x - this.sites[owner].x;
+    let dy = this.sites[index].y - this.sites[owner].y;
+    let qx = x - this.sites[owner].x, qy = y - this.sites[owner].y;
+    if (scale > 1.0001) {
+      const sx = (dx * cosA + dy * sinA) * scale;
+      dy = -dx * sinA + dy * cosA; dx = sx;
+      const tx = (qx * cosA + qy * sinA) * scale;
+      qy = -qx * sinA + qy * cosA; qx = tx;
+    }
+    const separation = Math.hypot(dx, dy);
+    // Only identical positions have no separating plane. Their IDs still own field weights.
+    if (separation === 0) return Infinity;
+    return Math.max(0, separation / 2 - qx * (dx / separation) - qy * (dy / separation));
+  }
+
+  /** Exact capped bisector minimum. In the stretched Euclidean metric,
+   * bij >= (Fj-F1)/2, so the radius F1+2B contains every possible improvement. */
+  boundaryDistance(x: number, y: number, owner: number, nearest: number, bound: number,
+    cosA = 1, sinA = 0, scale = 1): number {
+    return this.boundaryNeighborhood(x, y, owner, nearest, bound, cosA, sinA, scale).distance;
+  }
+
+  /** One complete traversal can also supply the compact field support. */
+  boundaryNeighborhood(x: number, y: number, owner: number, nearest: number, bound: number,
+    cosA = 1, sinA = 0, scale = 1, supportRadius = 0): {distance: number; candidates: Array<{index: number; distance: number}>} {
+    const margin = 64 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), nearest, bound) * Math.max(1, scale);
+    const candidates = this.withinRadius(x, y, Math.max(supportRadius, nearest + 2 * bound + margin), cosA, sinA, scale);
+    for (const candidate of candidates) {
+      if (candidate.index === owner) continue;
+      const distance = this.bisectorDistance(x, y, owner, candidate.index, cosA, sinA, scale);
+      bound = Math.min(bound, distance);
+    }
+    return {distance: bound, candidates};
+  }
+
   nearestOwner(x: number, y: number): number {
     return this.query(x, y, 1, 0, 1, true).idx;
   }

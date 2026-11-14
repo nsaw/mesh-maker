@@ -32,6 +32,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:cli
       - run: npm run test:relief
+      - run: npm run test:relief-junction-mutants
       - run: npm run test:presets:geometry
       - run: npm run test:gh-parity
       - run: npm run test:gh-site-grid

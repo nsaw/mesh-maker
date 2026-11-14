@@ -1,3 +1,4 @@
+import './relief-junction.spec';
 import './gaussian-smoothing.spec';
 import './relief-correctness.spec';
 /**
@@ -176,13 +177,13 @@ function countMeanCrossings(grid: number[][]): number {
   return crossings;
 }
 
-function countLocalMinima(grid: number[][]): number {
+function countLocalMinima(grid: number[][], prominence = 0.03): number {
   let minima = 0;
   for (let j = 1; j < grid.length - 1; j++) {
     for (let i = 1; i < grid[j].length - 1; i++) {
       const v = grid[j][i];
       const local = (grid[j - 1][i] + grid[j + 1][i] + grid[j][i - 1] + grid[j][i + 1]) / 4;
-      if (v < local - 0.03 && v < grid[j - 1][i] && v < grid[j + 1][i]
+      if (v < local - prominence && v < grid[j - 1][i] && v < grid[j + 1][i]
         && v < grid[j][i - 1] && v < grid[j][i + 1]) {
         minima++;
       }
@@ -1139,6 +1140,18 @@ function measureFocusEnclosure(
 
   const starburstCrossings = countMeanCrossings(starburst);
   const starburstMinima = countLocalMinima(starburst);
+  const starburstBasins = countLocalMinima(starburst, 0);
+  process.stdout.write(`starburst seed 13: strict basins ${starburstBasins}, sharp dips ${starburstMinima}\n`);
+  // These controls separate a flat-field regression from excessive sharp features. Smooth
+  // bowls need local minima but do not need dips deeper than 0.03 below adjacent samples.
+  const flatControl = Array.from({length: 240}, () => Array<number>(120).fill(0));
+  const slivers = Array.from({length: 240}, (_, j) => Array.from({length: 120}, (_, i) => (i + j) % 2 ? .1 : -.1));
+  const smoothBowls = Array.from({length: 240}, (_, j) => Array.from({length: 120}, (_, i) =>
+    .1 * (Math.cos((i + .2) * Math.PI / 12) + Math.cos((j + .3) * Math.PI / 12))));
+  assert(countLocalMinima(flatControl, 0) < 5, 'flat negative control fails the basin lower bound');
+  assert(countLocalMinima(slivers) > 1200, 'dense sliver negative control fails the unchanged sharp-dip ceiling');
+  assert(countLocalMinima(smoothBowls, 0) >= 5 && countLocalMinima(smoothBowls) === 0,
+    'smooth bowls pass the basin lower bound without requiring sharp dips');
   // v16 preset: cellSize 4 on a 120×240 grid with a wave base — broad organic pockets.
   // Bounds bracket the measured value generously (v19 tilted floors oscillate around the
   // panel mean more: measured 9134); they exist to catch a dense-lattice or flat-panel
@@ -1146,9 +1159,10 @@ function measureFocusEnclosure(
   assert(starburstCrossings > 500 && starburstCrossings < 13000,
     'starburst preset stays in broad-pocket crossing range (not dense lattice, not flat)',
     `crossings=${starburstCrossings}`);
-  assert(starburstMinima >= 5 && starburstMinima <= 1200,
-    'starburst preset keeps organic minima count (not dense sliver field)',
-    `localMinima=${starburstMinima}`);
+  assert(starburstBasins >= 5, 'starburst preset contains local basins (not flat)', `basins=${starburstBasins}`);
+  assert(starburstMinima <= 1200,
+    'starburst preset stays below the sharp-dip ceiling (not dense sliver field)',
+    `sharpDips=${starburstMinima}`);
 
   const fociOff = new VoronoiReliefGen(13).sampleGrid(starburstPresetParams({
     seed: 13,

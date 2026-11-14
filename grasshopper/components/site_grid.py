@@ -90,6 +90,51 @@ class _SiteGrid(object):
                         return True
         return False
 
+    def within_radius(self, x, y, radius, cos_a=1.0, sin_a=0.0, scale=1.0):
+        if radius != radius or radius < 0 or radius > self.MAX_COORDINATE:
+            raise ValueError('Site radius exceeds supported numeric range')
+        result = []
+        margin = 16 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y), radius)
+        isotropic = scale <= 1.0001
+        for j in range(self._row(y - radius - margin), self._row(y + radius + margin) + 1):
+            for i in range(self._column(x - radius - margin), self._column(x + radius + margin) + 1):
+                for index in self.buckets.get((i, j), ()):
+                    dx = x - self.sites[index][0]
+                    dy = y - self.sites[index][1]
+                    xr = dx * cos_a + dy * sin_a
+                    yr = -dx * sin_a + dy * cos_a
+                    d = math.sqrt(dx * dx + dy * dy) if isotropic else math.sqrt((xr * scale) ** 2 + yr * yr)
+                    if d < radius:
+                        result.append((index, d))
+        return sorted(result, key=lambda item: item[0])
+
+    def bisector_distance(self, x, y, owner, index, cos_a=1.0, sin_a=0.0, scale=1.0):
+        dx = self.sites[index][0] - self.sites[owner][0]
+        dy = self.sites[index][1] - self.sites[owner][1]
+        qx = x - self.sites[owner][0]; qy = y - self.sites[owner][1]
+        if scale > 1.0001:
+            sx = (dx * cos_a + dy * sin_a) * scale
+            dy = -dx * sin_a + dy * cos_a; dx = sx
+            tx = (qx * cos_a + qy * sin_a) * scale
+            qy = -qx * sin_a + qy * cos_a; qx = tx
+        separation = math.hypot(dx, dy)
+        if separation == 0.0:
+            return float('inf')  # Coincident IDs retain field weights, but define no plane.
+        return max(0.0, separation / 2.0 - qx * (dx / separation) - qy * (dy / separation))
+
+    def boundary_distance(self, x, y, owner, nearest, bound, cos_a=1.0, sin_a=0.0, scale=1.0):
+        return self.boundary_neighborhood(x, y, owner, nearest, bound, cos_a, sin_a, scale)[0]
+
+    def boundary_neighborhood(self, x, y, owner, nearest, bound, cos_a=1.0, sin_a=0.0, scale=1.0, support_radius=0.0):
+        margin = 64 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y), nearest, bound) * max(1.0, scale)
+        candidates = self.within_radius(x, y, max(support_radius, nearest + 2 * bound + margin), cos_a, sin_a, scale)
+        for index, distance in candidates:
+            if index == owner:
+                continue
+            plane = self.bisector_distance(x, y, owner, index, cos_a, sin_a, scale)
+            bound = min(bound, plane)
+        return bound, candidates
+
     def nearest(self, x, y, distance_limit=float('inf')):
         if x != x or y != y or abs(x) > self.MAX_COORDINATE or abs(y) > self.MAX_COORDINATE:
             raise ValueError('Site query coordinates exceed supported numeric range')

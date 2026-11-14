@@ -17,6 +17,7 @@ export function getExportSurface(forToolpath = false): ExportSurface | string {
   if (STATE.mode === 'drape' && !m) return DRAPE_NO_RELIEF;
   // Toolpaths cut the top surface only, so the watertight enclosure's floor rule does not apply.
   if (m) return reliefMasterSurface(m, forToolpath ? false : STATE.watertight);
+  if (STATE.mode === 'noise' && STATE.noiseGenerationError) return STATE.noiseGenerationError;
   const { vertices, cols, rows, meshX, meshY } = STATE;
   if (!vertices) return 'Generate a mesh first';
   if (cols < 2 || rows < 2) return 'Mesh too small to export (need at least 2\u00d72 grid)';

@@ -13,6 +13,7 @@
     "lint:fix": "eslint src/ cli/ --fix",
     "stl-to-sbp": "tsx cli/stl-to-sbp.ts",
     "test:relief": "tsx cli/voronoi-relief.spec.ts",
+    "test:relief-junction-mutants": "python3 scripts/test-relief-junction-mutants.py",
     "test:presets": "tsx cli/presets.spec.ts",
     "test:presets:geometry": "tsx cli/presets.spec.ts --geometry",
     "test:presets:export": "tsx cli/presets.spec.ts --export",
