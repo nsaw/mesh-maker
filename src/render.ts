@@ -119,6 +119,8 @@ function ensureRenderer(): void {
   _renderer.setSize(w, h);
   _renderer.setClearColor(BG_COLOR);
   _renderer.autoClear = false;
+  // three.js rebuilds GL state on restore, but nothing redraws until the next input (iOS backgrounding).
+  canvas.addEventListener('webglcontextrestored', () => requestRender());
 
   _scene = new THREE.Scene();
 

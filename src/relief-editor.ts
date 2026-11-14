@@ -31,6 +31,8 @@ export class ReliefEditor {
   onChange: () => void = () => undefined;
   constructor(private readonly jobs: EditorJobs) {}
   get current(): ReliefProject | null { return this.history?.current ?? null; }
+  /** Shared read-only document for drawing and lookups; never mutate it. */
+  get view(): ReliefProject | null { return this.history?.view ?? null; }
   get revision(): number { return this.epoch; }
   get dirty(): boolean { return this.history?.dirty ?? false; }
   get canUndo(): boolean { return this.history?.canUndo ?? false; }
@@ -48,11 +50,11 @@ export class ReliefEditor {
   }
   stage(patch: Partial<ReliefProjectParams>): void {
     if (!this.history) return;
-    const before = this.history.current.params, preview = {...before, ...this.history.pending, ...patch};
+    const before = this.history.view.params, preview = {...before, ...this.history.pending, ...patch};
     preview.amplitude = clampCutDepth(preview.amplitude, preview.baseThickness);
     this.history.stage(Object.fromEntries(Object.entries(preview).filter(([key, value]) => !Object.is(value, before[key as keyof ReliefProjectParams]))), true); this.changed();
   }
-  pendingParams(): ReliefProjectParams | null { return this.history ? {...this.history.current.params, ...this.history.pending} : null; }
+  pendingParams(): ReliefProjectParams | null { return this.history ? {...this.history.view.params, ...this.history.pending} : null; }
   discardPending(): void { this.history?.stage({}, true); this.changed(); }
   updateParams(patch: Partial<ReliefProjectParams>): void {
     if (!this.history) return;

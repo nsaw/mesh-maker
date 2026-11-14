@@ -4,8 +4,17 @@ export interface Rational {
   readonly d: bigint;
 }
 const MAX_BITS = 16384;
+/** Magnitudes at or above 2^MAX_BITS have more than MAX_BITS binary digits. */
+const BIT_LIMIT = 1n << BigInt(MAX_BITS);
 function gcd(a: bigint, b: bigint): bigint {
   a = a < 0n ? -a : a;
+  // Exact fast path: float-derived denominators stay powers of two through add, sub and mul, and
+  // the gcd of anything with 2^k is the smaller of 2^k and the operand's lowest set bit.
+  if (b > 0n && (b & (b - 1n)) === 0n) {
+    if (a === 0n) return b;
+    const low = a & -a;
+    return low < b ? low : b;
+  }
   while (b !== 0n) {
     const next = a % b;
     a = b;
@@ -20,9 +29,11 @@ export function rational(n: bigint, d = 1n): Rational {
     d = -d;
   }
   const divisor = gcd(n, d);
-  n /= divisor;
-  d /= divisor;
-  if (n.toString(2).length > MAX_BITS || d.toString(2).length > MAX_BITS)
+  if (divisor !== 1n) {
+    n /= divisor;
+    d /= divisor;
+  }
+  if ((n < 0n ? -n : n) >= BIT_LIMIT || d >= BIT_LIMIT)
     throw new Error('Exact graph rational bit budget exceeded');
   return { n, d };
 }

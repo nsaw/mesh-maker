@@ -1,7 +1,11 @@
 import { clampCutDepth } from './carve-limits';
 import { assertFrozenReliefWork } from './noise/relief-work-budget';
-import { noiseGridShape } from './noise/grid-shape';
-import { CURRENT_PAYLOAD_VERSION, DEFAULTS } from './state';
+import { MAX_GRID_NODES, noiseGridShape } from './noise/grid-shape';
+import { DEFAULTS } from './state';
+
+/** Bump only when relief generation changes so a saved layout would carve differently. It is
+ * independent of the share-link version, which changes for unrelated controls. */
+export const PROJECT_GENERATION = 24;
 import type { ReliefQueryDescription, ReliefSiteSet } from './types';
 import { buildNoiseSurface, NOISE_SURFACE_KEYS, noiseSurfaceParams, type NoiseSurface, type NoiseSurfaceParams } from './noise/surface';
 import { describeReliefQuery, sampleReliefParamsFromState } from './noise/voronoi-relief';
@@ -9,7 +13,7 @@ import { SIMPLEX_KERNEL_IMPLEMENTATION } from './noise/generators';
 import { copyReliefSource, sameReliefKernel, validateReliefSites } from './noise/relief-sites';
 
 export const MAX_PROJECT_BYTES = 1_000_000;
-export const MAX_PROJECT_GRID_NODES = 4_194_304;
+export const MAX_PROJECT_GRID_NODES = MAX_GRID_NODES;
 export type ReliefProjectParams = Omit<NoiseSurfaceParams, 'reliefSites' | 'reliefRevision'>;
 export interface ReliefProject { params: ReliefProjectParams; sites: ReliefSiteSet; query: ReliefQueryDescription }
 const PARAM_KEYS = NOISE_SURFACE_KEYS.filter((key): key is keyof ReliefProjectParams => key !== 'reliefSites' && key !== 'reliefRevision');
@@ -133,7 +137,7 @@ export function encodeReliefProject(project: ReliefProject): string {
   const settings = params(project.params), description = query(project.query);
   validateReliefSites(project.sites, settings.meshX, settings.meshY);
   checkQuery(settings, description);
-  const wire = {format: 'meshcraft-project', version: 1, kind: 'procedural-voronoi-relief', generation: CURRENT_PAYLOAD_VERSION,
+  const wire = {format: 'meshcraft-project', version: 1, kind: 'procedural-voronoi-relief', generation: PROJECT_GENERATION,
     params: settings, query: description, sites: siteWire(project.sites)};
   const text = JSON.stringify(wire, (_key, value: unknown) => Object.is(value, -0) ? '-0' : value);
   if (text.length > MAX_PROJECT_BYTES) throw new Error('Project exceeds the supported file size');
@@ -142,7 +146,7 @@ export function encodeReliefProject(project: ReliefProject): string {
 export function parseReliefProject(text: string): ReliefProject {
   if (text.length > MAX_PROJECT_BYTES || new TextEncoder().encode(text).length > MAX_PROJECT_BYTES) throw new Error('Project exceeds the supported file size');
   const wire = record(JSON.parse(text), ['format', 'version', 'kind', 'generation', 'params', 'query', 'sites']);
-  if (wire.format !== 'meshcraft-project' || wire.version !== 1 || wire.kind !== 'procedural-voronoi-relief' || wire.generation !== CURRENT_PAYLOAD_VERSION) throw new Error('Unsupported project format or generation');
+  if (wire.format !== 'meshcraft-project' || wire.version !== 1 || wire.kind !== 'procedural-voronoi-relief' || wire.generation !== PROJECT_GENERATION) throw new Error('Unsupported project format or generation');
   const settings = params(wire.params), description = query(wire.query), sites = parseSites(wire.sites, settings.meshX, settings.meshY);
   checkQuery(settings, description);
   return {params: settings, sites, query: description};
@@ -192,6 +196,12 @@ export class ReliefProjectHistory {
   }
   get revision(): number { return this.epoch; }
   get current(): ReliefProject { return copyReliefProject(this.document); }
+  private viewCache: {document: ReliefProject; copy: ReliefProject} | null = null;
+  /** Read-only copy shared until the document changes. Callers that edit must take `current`. */
+  get view(): ReliefProject {
+    if (this.viewCache?.document !== this.document) this.viewCache = {document: this.document, copy: copyReliefProject(this.document)};
+    return this.viewCache.copy;
+  }
   get pending(): Partial<ReliefProjectParams> { return {...this.layout}; }
   get dirty(): boolean { return this.saved !== encodeReliefProject(this.document); }
   get canUndo(): boolean { return this.past.length > 0; }

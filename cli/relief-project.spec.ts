@@ -4,7 +4,7 @@ import { NoiseGeneration, type NoiseWorker } from '../src/noise/controller';
 import { rankSitesExactly } from './exact-metric-rank-oracle';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { DEFAULTS, CURRENT_PAYLOAD_VERSION } from '../src/state';
+import { DEFAULTS } from '../src/state';
 import { presetState } from '../src/noise/presets';
 import { SimplexNoiseGen } from '../src/noise/generators';
 import { SiteGrid } from '../src/noise/site-grid';
@@ -14,7 +14,7 @@ import { buildNoiseSurface, noiseSurfaceParams } from '../src/noise/surface';
 import { packNoiseSurface, unpackNoiseSurface } from '../src/noise/messages';
 import { copyReliefSites, editReliefSite, validateReliefSites } from '../src/noise/relief-sites';
 import { sampleReliefParamsFromState, describeReliefQuery, VoronoiReliefGen, reliefOwnerOracle, relaxReliefSites } from '../src/noise/voronoi-relief';
-import { captureReliefProject, copyReliefProject, encodeReliefProject, parseReliefProject, projectSurfaceParams, preflightReliefProject, assertReliefProjectGenerationWork, ReliefProjectHistory } from '../src/relief-project';
+import { captureReliefProject, copyReliefProject, encodeReliefProject, parseReliefProject, projectSurfaceParams, preflightReliefProject, assertReliefProjectGenerationWork, ReliefProjectHistory, PROJECT_GENERATION } from '../src/relief-project';
 import type { ReliefSiteSet } from '../src/types';
 
 const make = (key = 'relief-pockets', resolution = 64) => buildNoiseSurface(noiseSurfaceParams({...DEFAULTS, ...presetState(key), resolution}));
@@ -355,7 +355,7 @@ history.replace(document);assert(!history.canRedo);
 // Invalid and future documents leave the active source/history untouched.
 const valid = JSON.parse(encodeReliefProject(document));
 const invalids = [
-  {...valid,version:2},{...valid,generation:CURRENT_PAYLOAD_VERSION+1},{...valid,kind:'drape'},{...valid,asset:{}},
+  {...valid,version:2},{...valid,generation:PROJECT_GENERATION+1},{...valid,kind:'drape'},{...valid,asset:{}},
   {...valid,params:{...valid.params,mode:'depthmap'}},{...valid,params:{...valid.params,noiseType:'simplex'}},
   {...valid,params:{...valid.params,resolution:2.5}},{...valid,params:{...valid.params,amplitude:false}},
   {...valid,params:{...valid.params,meshX:40}},{...valid,params:{...valid.params,meshX:1,meshY:24,resolution:1024}},{...valid,query:{...valid.query,warp:{...valid.query.warp,amplitude:999}}},

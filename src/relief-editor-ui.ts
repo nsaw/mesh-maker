@@ -23,7 +23,7 @@ let generatingGesture = false;
 let editorChanged: () => void = () => undefined;
 export function setEditorChangeListener(callback: () => void): void { editorChanged = callback; }
 export function selectCell(id: number | null): void { selectedCell = id; syncCellEditor(); editorChanged(); }
-export function editorIsActive(): boolean { return STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && reliefEditor.current !== null; }
+export function editorIsActive(): boolean { return STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && reliefEditor.view !== null; }
 export function restoreReliefDocument(): void {
   const project = reliefEditor.current;
   if (!project || STATE.noiseType !== 'voronoi-relief') return;
@@ -41,7 +41,7 @@ export function endReliefControlGesture(key: string, cancel = false): void {
 }
 /** Controls call this before mutating STATE. A staged layout never becomes the export source. */
 export function changeReliefParams(patch: Partial<ReliefProjectParams>): boolean {
-  const returning = STATE.mode === 'noise' && reliefEditor.current !== null && STATE.noiseType !== 'voronoi-relief' && patch.noiseType === 'voronoi-relief';
+  const returning = STATE.mode === 'noise' && reliefEditor.view !== null && STATE.noiseType !== 'voronoi-relief' && patch.noiseType === 'voronoi-relief';
   if (returning) {
     reliefEditor.navigation(); STATE.noiseType = 'voronoi-relief'; restoreReliefDocument();
     STATE.activePreset = null; STATE.activeProfile = null;
@@ -114,7 +114,7 @@ export function buildCellEditor(): HTMLElement {
     const label = document.createElement('label'); label.textContent = `${axis} in`;
     const input = document.createElement('input'); input.id = `cell${axis}`; input.type = 'number'; input.step = 'any'; input.min = '0';
     input.addEventListener('change', () => {
-      const project = reliefEditor.current;
+      const project = reliefEditor.view;
       if (!project || selectedCell === null) return;
       const i = project.sites.ids.indexOf(selectedCell), v = Number(input.value);
       try {
@@ -154,7 +154,7 @@ function saveProject(): void {
 }
 
 export function syncCellEditor(): void {
-  const project = reliefEditor.current, active = editorIsActive();
+  const project = reliefEditor.view, active = editorIsActive();
   if (active && project) {
     const settings = reliefEditor.pendingParams()!;
     for (const key of NOISE_SURFACE_KEYS) {
@@ -194,7 +194,7 @@ export function setupCellEditor(): void {
   if (ready) return; ready = true;
   reliefEditor.onChange = () => {
     if (!reliefEditor.gesturing) controlGesture = null;
-    const project = reliefEditor.current;
+    const project = reliefEditor.view;
     if (editorIsActive() && project) {
       const encoded = encodeReliefProject(project);
       if (encoded !== applied) {
@@ -214,7 +214,7 @@ export function setupCellEditor(): void {
     syncCellEditor(); editorChanged();
   };
   noiseGeneration.subscribeFullRelief(source => {
-    if (STATE.mode === 'noise' && STATE.reliefSites !== null && !reliefEditor.current) reliefEditor.freeze(source, true);
+    if (STATE.mode === 'noise' && STATE.reliefSites !== null && !reliefEditor.view) reliefEditor.freeze(source, true);
   });
   window.addEventListener('beforeunload', event => { if (reliefEditor.dirty || reliefEditor.hasPending) { event.preventDefault(); event.returnValue = ''; } });
 }

@@ -173,7 +173,8 @@ export class NoiseGeneration {
     const request: Request = { id, revision, quality, gesture: this.gesture, worker: null, promise, settle,
       timer: setTimeout(() => { this.fail(request, 'Noise generation timed out. Generate again.'); }, this.options.timeoutMs) };
     this.request = request;
-    this.onBusy(true);
+    // The veil marks full-resolution work only; drag previews must stay visible while they stream.
+    this.onBusy(quality === 'full');
     const input = { requestId: id, includeWire: this.includeWire(), params: noiseSurfaceParams({ ...params,
       resolution: quality === 'preview' ? Math.min(params.resolution, 120) : params.resolution }) };
     try {

@@ -615,6 +615,10 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // an unbounded payload value explodes the padded coarse-grid allocation.
     if ('distortion' in result) clampField('distortion', 0, 2);
     if ('warpFreq' in result) clampField('warpFreq', 0.02, 0.5);
+    if ('reliefCellSize' in result) clampField('reliefCellSize', 0.4, 6);
+    if ('reliefJitter' in result) clampField('reliefJitter', 0, 1);
+    if ('reliefSeamDepth' in result) clampField('reliefSeamDepth', 0.05, 1);
+    if ('reliefAnisotropyAngle' in result) clampField('reliefAnisotropyAngle', 0, 180);
     if ('reliefRelaxIterations' in result) clampField('reliefRelaxIterations', 0, 2, true);
     if ('reliefDensityStrength' in result)  clampField('reliefDensityStrength',  0, 2);
     // anisotropy enters the metric scale `1 + anisotropy·1.5`; an unbounded value degenerates

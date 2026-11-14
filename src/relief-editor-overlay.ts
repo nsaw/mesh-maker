@@ -25,7 +25,7 @@ export function drawCellOverlay(): void {
   if (!installed) return;
   canvas.hidden = STATE.viewMode !== 'plan' || !editorIsActive();
   if (canvas.hidden) return;
-  const project = reliefEditor.current;
+  const project = reliefEditor.view;
   if (!project) return;
   const rect = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
   const w = Math.round(rect.width * dpr), h = Math.round(rect.height * dpr);
@@ -61,9 +61,9 @@ export function drawCellOverlay(): void {
   }
 }
 function addCell(x: number, y: number): void {
-  const before = new Set(reliefEditor.current!.sites.ids);
+  const before = new Set(reliefEditor.view!.sites.ids);
   reliefEditor.edit({kind: 'add', x, y});
-  selectCell(reliefEditor.current!.sites.ids.find(id => !before.has(id)) ?? null);
+  selectCell(reliefEditor.view!.sites.ids.find(id => !before.has(id)) ?? null);
 }
 function report(error: unknown): void { showToast(error instanceof Error ? error.message : String(error), 6000); }
 export function setupCellOverlay(): void {
@@ -79,7 +79,7 @@ export function setupCellOverlay(): void {
   const local = (event: PointerEvent): {x: number; y: number} => {
     const rect = canvas.getBoundingClientRect(); return {x: event.clientX - rect.left, y: event.clientY - rect.top};
   };
-  const world = (event: PointerEvent, dimensions = reliefEditor.current!.params): {x: number; y: number} => {
+  const world = (event: PointerEvent, dimensions = reliefEditor.view!.params): {x: number; y: number} => {
     const p = local(event), q = screenToPlan(p.x, p.y);
     return {x: Math.max(0, Math.min(dimensions.meshX, q.x)), y: Math.max(0, Math.min(dimensions.meshY, q.y))};
   };
@@ -89,7 +89,7 @@ export function setupCellOverlay(): void {
     if (pointers.size > 1) { blocked = true; cancel(); return; }
     if (blocked || !editorIsActive()) return;
     canvas.focus({preventScroll: true});
-    const p = local(event), project = reliefEditor.current!;
+    const p = local(event), project = reliefEditor.view!;
     if (event.button === 2 || event.shiftKey || event.button === 1) {
       drag = {id: event.pointerId, pan: {x: event.clientX, y: event.clientY, panX: STATE.panX, panY: STATE.panY}}; return;
     }
@@ -130,7 +130,7 @@ export function setupCellOverlay(): void {
   };
   canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end); canvas.addEventListener('lostpointercapture', end);
   canvas.addEventListener('keydown', event => {
-    const project = reliefEditor.current; if (!project) return;
+    const project = reliefEditor.view; if (!project) return;
     try {
       if (event.key === 'Escape') { event.preventDefault(); cancel(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); if (event.shiftKey) reliefEditor.redo(); else reliefEditor.undo(); return; }
