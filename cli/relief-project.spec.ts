@@ -8,11 +8,12 @@ import { DEFAULTS, CURRENT_PAYLOAD_VERSION } from '../src/state';
 import { presetState } from '../src/noise/presets';
 import { SimplexNoiseGen } from '../src/noise/generators';
 import { SiteGrid } from '../src/noise/site-grid';
+import { noiseGridShape } from '../src/noise/grid-shape';
 import { assertFrozenReliefWork, frozenReliefQueryWork, MAX_FROZEN_RELIEF_QUERY_WORK, reliefMeasurementShape } from '../src/noise/relief-work-budget';
 import { buildNoiseSurface, noiseSurfaceParams } from '../src/noise/surface';
 import { packNoiseSurface, unpackNoiseSurface } from '../src/noise/messages';
 import { copyReliefSites, editReliefSite, validateReliefSites } from '../src/noise/relief-sites';
-import { sampleReliefParamsFromState, VoronoiReliefGen, reliefOwnerOracle, relaxReliefSites } from '../src/noise/voronoi-relief';
+import { sampleReliefParamsFromState, describeReliefQuery, VoronoiReliefGen, reliefOwnerOracle, relaxReliefSites } from '../src/noise/voronoi-relief';
 import { captureReliefProject, copyReliefProject, encodeReliefProject, parseReliefProject, projectSurfaceParams, preflightReliefProject, assertReliefProjectGenerationWork, ReliefProjectHistory } from '../src/relief-project';
 import type { ReliefSiteSet } from '../src/types';
 
@@ -144,6 +145,32 @@ const fullGridSites: ReliefSiteSet={
 };
 assert.doesNotThrow(()=>assertReliefProjectGenerationWork({...document,params:{...document.params,meshX:1,meshY:24,resolution:400},sites:fullGridSites}),
   'distributed frozen sites remain supported near the project grid-node limit');
+
+// Admission uses the producer's exact floating-point operation order at a rounding tie.
+// Reassociating resolution * (Y / X) as resolution * Y / X adds a row here.
+const boundaryParams={...clusterBase.params,resolution:3,meshX:1.8154845485377136,meshY:7.564518952240473};
+assert.equal(Math.max(4,Math.round(boundaryParams.resolution*boundaryParams.meshY/boundaryParams.meshX)),13);
+const boundaryShape=noiseGridShape(boundaryParams.resolution,boundaryParams.meshX,boundaryParams.meshY);
+assert.deepEqual(boundaryShape,{cols:3,rows:12});
+const boundarySites: ReliefSiteSet={xy:new Float64Array(2301*2),ids:Uint32Array.from({length:2301},(_,i)=>i),pinned:new Uint8Array(2301),truncatedFrom:0};
+const boundaryProject={params:boundaryParams,sites:boundarySites,query:describeReliefQuery(sampleReliefParamsFromState(
+  boundaryShape.cols,boundaryShape.rows,boundaryParams.meshX,boundaryParams.meshY,boundaryParams.seed,boundaryParams))};
+const boundaryRestored=parseReliefProject(encodeReliefProject(boundaryProject));
+assert.deepEqual(boundaryRestored,boundaryProject);
+assert.equal(frozenReliefQueryWork({...boundaryShape,meshX:boundaryParams.meshX,meshY:boundaryParams.meshY},boundarySites),16_774_290);
+assert.doesNotThrow(()=>assertReliefProjectGenerationWork(boundaryRestored));
+assert.throws(()=>assertFrozenReliefWork({...boundaryShape,rows:13,meshX:boundaryParams.meshX,meshY:boundaryParams.meshY},boundarySites),/coincident-site query work/);
+let boundaryHeavyEntries=0;
+SiteGrid.fromSites=()=>{boundaryHeavyEntries++;throw new Error('Boundary admission reached heavy index');};
+try {
+  assert.throws(()=>preflightReliefProject(boundaryRestored),/Boundary admission reached heavy index/,
+    'project preflight admits the same represented shape as direct generation');
+  assert.throws(()=>buildNoiseSurface(noiseSurfaceParams({...boundaryParams,reliefSites:boundarySites,reliefRevision:0})),
+    /Boundary admission reached heavy index/,'direct frozen sampling agrees without executing the expensive geometry');
+  assert.equal(boundaryHeavyEntries,2);
+} finally {SiteGrid.fromSites=originalFromSites;}
+const smallBoundary=buildNoiseSurface(noiseSurfaceParams({...boundaryParams,reliefSites:pair,reliefRevision:0}));
+assert.equal(smallBoundary.cols,boundaryShape.cols);assert.equal(smallBoundary.rows,boundaryShape.rows);
 
 // Independent distance ordering covers clustered, sparse, collinear and coincident
 // authored populations. Bucket sizing must change only work, not arithmetic or ties.

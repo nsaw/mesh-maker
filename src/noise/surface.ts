@@ -1,4 +1,5 @@
 import type { SurfaceBuffers } from '../render-geometry';
+import { noiseGridShape } from './grid-shape';
 import type { MeshState } from '../state';
 import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 import { createNoiseGen, SimplexNoiseGen } from './generators';
@@ -269,7 +270,7 @@ export function buildNoiseSurface(params: NoiseSurfaceParams): NoiseSurface {
   const { frequency, amplitude, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
           distortion, warpFreq, warpCurl, meshX, meshY, resolution, smoothRadiusIn, noiseType, baseThickness } = params;
 
-  const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
+  const {cols, rows} = noiseGridShape(resolution, meshX, meshY);
 
   const metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus' | 'reliefSource'> = { truncatedFrom: 0, crestClipStatus: 'none' };
   const noiseConfig: NoiseConfig = { cellJitter: params.cellJitter, cellMetric: params.cellMetric, gaborAngle: params.gaborAngle, gaborBandwidth: params.gaborBandwidth };

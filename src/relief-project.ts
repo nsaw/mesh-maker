@@ -1,5 +1,6 @@
 import { clampCutDepth } from './carve-limits';
 import { assertFrozenReliefWork } from './noise/relief-work-budget';
+import { noiseGridShape } from './noise/grid-shape';
 import { CURRENT_PAYLOAD_VERSION, DEFAULTS } from './state';
 import type { ReliefQueryDescription, ReliefSiteSet } from './types';
 import { buildNoiseSurface, NOISE_SURFACE_KEYS, noiseSurfaceParams, type NoiseSurface, type NoiseSurfaceParams } from './noise/surface';
@@ -58,8 +59,8 @@ function params(value: unknown): ReliefProjectParams {
   }
   const result = out as ReliefProjectParams;
   if (!Object.is(clampCutDepth(result.amplitude, result.baseThickness), result.amplitude)) throw new Error('Project cut depth exceeds its stock');
-  const rows = Math.max(4, Math.round(result.resolution * result.meshY / result.meshX));
-  if (rows * result.resolution > MAX_PROJECT_GRID_NODES) throw new Error('Project exceeds the supported generation grid');
+  const {cols, rows} = noiseGridShape(result.resolution, result.meshX, result.meshY);
+  if (rows * cols > MAX_PROJECT_GRID_NODES) throw new Error('Project exceeds the supported generation grid');
   return Object.freeze(result);
 }
 export function validateReliefProjectParams(state: NoiseSurfaceParams): ReliefProjectParams {
@@ -90,8 +91,8 @@ function query(value: unknown): ReliefQueryDescription {
   return Object.freeze({implementation: q.implementation, ownerPolicy: q.ownerPolicy, meshX: number(q.meshX), meshY: number(q.meshY), seed: number(q.seed), metric, warp});
 }
 function checkQuery(settings: ReliefProjectParams, description: ReliefQueryDescription): void {
-  const rows = Math.max(4, Math.round(settings.resolution * settings.meshY / settings.meshX));
-  const expected = describeReliefQuery(sampleReliefParamsFromState(settings.resolution, rows, settings.meshX, settings.meshY, settings.seed, settings));
+  const {cols, rows} = noiseGridShape(settings.resolution, settings.meshX, settings.meshY);
+  const expected = describeReliefQuery(sampleReliefParamsFromState(cols, rows, settings.meshX, settings.meshY, settings.seed, settings));
   if (!Object.is(expected.meshX, description.meshX) || !Object.is(expected.meshY, description.meshY) || !Object.is(expected.seed, description.seed)
     || Object.keys(expected.metric).some(key => !Object.is(expected.metric[key as keyof typeof expected.metric], description.metric[key as keyof typeof expected.metric]))
     || (['amplitude', 'frequency', 'seed'] as const).some(key => !Object.is(expected.warp[key], description.warp[key]))
@@ -150,8 +151,8 @@ export function copyReliefProject(project: ReliefProject): ReliefProject { retur
 /** Resource admission remains separate from the lossless project data contract. */
 export function assertReliefProjectGenerationWork(project: ReliefProject): void {
   const p = project.params;
-  const rows = Math.max(4, Math.round(p.resolution * p.meshY / p.meshX));
-  assertFrozenReliefWork({cols: p.resolution, rows, meshX: p.meshX, meshY: p.meshY}, project.sites);
+  const {cols, rows} = noiseGridShape(p.resolution, p.meshX, p.meshY);
+  assertFrozenReliefWork({cols, rows, meshX: p.meshX, meshY: p.meshY}, project.sites);
 }
 export function projectSurfaceParams(project: ReliefProject, revision: number): NoiseSurfaceParams {
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid project source revision');
