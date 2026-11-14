@@ -116,7 +116,7 @@ sequenceDiagram
 
 - `src/depth-estimate.ts`, `src/geometry.ts`, `src/mesh.ts`, `src/drape-sim/`, `src/drape-ui.ts`, `src/drape-controls.ts`, `src/types.ts` -> [docs/mesh-generation-core.md](docs/mesh-generation-core.md)
 - `src/noise/**`, `docs/voronoi-relief-target-spec.md` -> [docs/noise-and-relief-system.md](docs/noise-and-relief-system.md)
-- `grasshopper/builder/**`, `grasshopper/components/**`, `grasshopper/VORONOI_RELIEF_NATIVE.md`, `grasshopper/mesh-maker.gh` -> [docs/grasshopper-integration.md](docs/grasshopper-integration.md)
+- `grasshopper/builder/**`, `grasshopper/components/**`, `grasshopper/VORONOI_RELIEF_NATIVE.md`, external `sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/meshcraft-repo/` artifacts -> [docs/grasshopper-integration.md](docs/grasshopper-integration.md)
 - `cli/**`, `stl-to-sbp.sh`, `tsconfig.cli.json` -> [docs/cli-tools.md](docs/cli-tools.md)
 - `src/sbp/**`, `src/sbp-export.ts`, `src/export.ts` -> [docs/sbp-export-pipeline.md](docs/sbp-export-pipeline.md)
 - `src/state.ts`, `src/ui.ts`, `src/main.ts`, `src/toolbar.ts`, `src/interaction.ts`, `src/render.ts`, `src/slider-utils.ts`, `src/stats.ts`, `src/toast.ts`, `src/sponsor.ts`, `index.html` -> [docs/ui-and-state.md](docs/ui-and-state.md)

@@ -108,6 +108,10 @@ meshcraft/
 │   ├── relief-master.spec.ts  # npm run test:relief-master (data contract, export fidelity)
 │   ├── relief-roundtrip.ts    # npm run relief-roundtrip (master -> STL [-> SBP -> cut report])
 │   └── png.ts                 # Minimal PNG writer for CLI diagnostics
+├── grasshopper/               # Git-tracked Python components, native alternative and builder
+│   ├── components/            # Canonical GhPython source
+│   └── builder/               # Builder source and source-marshaling probe, no native .gh files
+├── docs/images/               # README Grasshopper previews
 ├── public/
 │   ├── _redirects             # Cloudflare Pages: / -> /index.html
 │   └── monalisa-depthMap.jpeg # Demo depth map
@@ -131,6 +135,12 @@ meshcraft/
 - **Preset ownership**: `presetState()` resets all noise, relief, dimensions, stock and smoothing fields from defaults before applying a preset. Seed, resolution, camera, mode and export settings are retained; texture profiles remain modifiers.
 
 ---
+
+The two native `.gh` artifacts live in
+`/Users/sawyer/Code/sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/meshcraft-repo/`.
+Current Python sources and parity tests stay here. Read that folder's README before
+regenerating artifacts in Rhino 7. The separate DLL work-in-progress branch remains in
+the parent Grasshopper library.
 
 ## Deployment
 

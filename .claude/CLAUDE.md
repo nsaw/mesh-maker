@@ -21,9 +21,9 @@ The file-by-file map, the key design decisions, and the external-resource table 
 `AGENTS.md` at the repo root. That is the single copy on purpose. Read it before touching
 `src/` or `cli/`.
 
-Its tree omits the top-level `grasshopper/`, `CONTEXT/`, `sourceTruth/`, `docs/`, `assets/`
-and `scripts/` directories (`verification/` is gitignored, so it is not part of the repo). Correct `AGENTS.md` when you touch those areas
-rather than forking a second description here.
+The tree includes the reusable Grasshopper source and documentation-image roles.
+`CONTEXT/`, `sourceTruth/`, `assets/` and `scripts/` also exist. `verification/` is local
+and gitignored. Keep the architecture map current when a slice adds modules.
 
 ## Commands
 
@@ -87,7 +87,13 @@ landing sites, not one:** the TypeScript in `src/noise/`, the standalone compone
 `src/noise/presets.ts` alone will pass typecheck, pass lint, ship to the web app, and be
 silently absent from Grasshopper. Run `npm run test:gh-parity` after any such change. The suite also compares TypeScript preset values with the Python dictionary, excluding web-only stock thickness.
 
-Slice 1 changes the Presets component outputs to include `gabor_angle` and `gabor_bw`. Before merging it, run the builder in Rhino 7 and confirm a preset generates. Passing the text/value parity suite does not clear that runtime gate.
+Native `.gh` artifacts live outside this repository at
+`/Users/sawyer/Code/sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/meshcraft-repo/`.
+The Python components, builder and parity test remain here. Regenerate with the current
+builder into `meshcraft_builder.gh` in that folder after input changes, then open the saved
+definition in Rhino 7 and confirm one preset generates. Passing text/value parity does not
+clear that runtime gate. The move preserves historical bytes and does not certify that the
+old artifacts embed the latest source. Keep the DLL branch separate.
 
 ## Correctness rules specific to this tool
 
