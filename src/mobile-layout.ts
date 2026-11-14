@@ -1,6 +1,6 @@
 import { STATE } from './state';
 import { captureInitialViewportFrame, resizeCanvas } from './render';
-import { captureSidebarView, restoreSidebarView, setSidebarPanePresentation, showSidebarPane, sidebarIsMobile } from './sidebar-state';
+import { captureSidebarView, openFirstVisibleSection, restoreSidebarView, setSidebarPanePresentation, showSidebarPane, sidebarIsMobile } from './sidebar-state';
 
 type Pane = 'shape' | 'generator' | 'view' | 'export' | 'sponsors';
 type Snap = 'peek' | 'half' | 'full';
@@ -10,6 +10,9 @@ let active: Pane = 'shape';
 let previousControls: Exclude<Pane, 'sponsors'> = 'shape';
 let snap: Snap = 'peek';
 let installed = false;
+const visitedPanes = new Set<Pane>(['shape']);
+/** Live height while the handle is dragged; observers must not snap it back mid-gesture. */
+let dragHeight: number | null = null;
 const mobile = sidebarIsMobile;
 const viewportIsMobile = (): boolean => matchMedia('(max-width: 900px)').matches;
 
@@ -54,6 +57,11 @@ export function selectMobilePane(pane: Pane, focus = false): void {
     if (mobile() && pane === 'export') setSheetSnap('full');
     else if (mobile() && snap === 'peek') setSheetSnap('half');
   });
+  if (mobile() && !visitedPanes.has(pane)) {
+    visitedPanes.add(pane);
+    const host = document.querySelector(`[data-control-pane="${pane}"]`);
+    if (host) openFirstVisibleSection(host);
+  }
   if (focus) restoreSidebarView();
 }
 
@@ -84,13 +92,14 @@ export function revealSceneForFit(fit: () => void): void {
   requestAnimationFrame(() => { resizeCanvas(); fit(); });
 }
 
-function layoutSheet(height = snapHeight(snap)): void {
+function layoutSheet(height = dragHeight ?? snapHeight(snap)): void {
   if (document.body.dataset.mobileLayout !== String(viewportIsMobile())) return;
   syncMobilePanes();
-  const viewport = window.visualViewport;
-  document.documentElement.style.setProperty('--app-width', `${viewport?.width ?? innerWidth}px`);
-  document.documentElement.style.setProperty('--app-height', `${viewport?.height ?? innerHeight}px`);
-  document.documentElement.style.setProperty('--app-top', `${viewport?.offsetTop ?? 0}px`);
+  // Follow the visual viewport only at scale 1 (the iOS keyboard shrinks it). Under pinch-zoom it is
+  // the zoomed region, and sizing the app to it would reflow the whole layout into that region.
+  const viewport = window.visualViewport, unzoomed = !viewport || Math.abs(viewport.scale - 1) < 0.01;
+  document.documentElement.style.setProperty('--app-height', `${unzoomed && viewport ? viewport.height : innerHeight}px`);
+  document.documentElement.style.setProperty('--app-top', `${unzoomed && viewport ? viewport.offsetTop : 0}px`);
   document.documentElement.style.setProperty('--sheet-height', `${height}px`);
   requestAnimationFrame(resizeCanvas);
 }
@@ -153,11 +162,12 @@ export function setupMobileLayout(): void {
     if (!drag || event.pointerId !== drag.id) return;
     const delta = drag.startY - event.clientY;
     drag.moved ||= Math.abs(delta) > 5;
-    if (drag.moved) layoutSheet(Math.max(Math.min(peekHeight(), availableHeight()), Math.min(availableHeight(), drag.startHeight + delta)));
+    if (drag.moved) layoutSheet(dragHeight = Math.max(Math.min(peekHeight(), availableHeight()), Math.min(availableHeight(), drag.startHeight + delta)));
   });
   const endDrag = (event: PointerEvent): void => {
     if (!drag || event.pointerId !== drag.id) return;
     const cancelled = event.type === 'pointercancel';
+    dragHeight = null;
     if (drag.moved && !cancelled) {
       const height = Math.max(0, drag.startHeight + drag.startY - event.clientY);
       setSheetSnap(snaps.reduce((best, candidate) => Math.abs(snapHeight(candidate) - height) < Math.abs(snapHeight(best) - height) ? candidate : best));

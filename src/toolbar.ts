@@ -10,7 +10,7 @@ import { doExport } from './export';
 import { applyPendingFit, applyReliefMasterControls, buildSidebar, syncDepthCaps, updateSectionVisibility, fitMeshToAspect, randomSeed, showDemoDepthMap } from './ui';
 import { updateStats, zoomExtents } from './stats';
 import { showToast } from './toast';
-import { ensureDrapeFigure, restoreSizeAfterDrape } from './drape-ui';
+import { ensureDrapeFigure, restoreSizeAfterDrape, setDrapeFrontView } from './drape-ui';
 
 export function setupTabs(): void {
   // Mode tabs
@@ -120,7 +120,8 @@ export function setupToolbar(): void {
   document.getElementById('btnRandomSeed')!.addEventListener('click', randomSeed);
   document.getElementById('btnZoomExtents')!.addEventListener('click', () => revealSceneForFit(zoomExtents));
   document.getElementById('btnResetCamera')!.addEventListener('click', () => {
-    for (const key of ['orbit', 'tilt', 'roll', 'zoom', 'panX', 'panY'] as const) STATE[key] = DEFAULTS[key];
+    if (STATE.mode === 'drape') setDrapeFrontView();
+    else for (const key of ['orbit', 'tilt', 'roll', 'zoom', 'panX', 'panY'] as const) STATE[key] = DEFAULTS[key];
     buildSidebar();
     setCameraFromState();
   });

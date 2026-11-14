@@ -642,7 +642,7 @@ body.mode-depthmap .noise-only { display: none; }
 button:focus-visible, [role="button"]:focus-visible, input:focus-visible, select:focus-visible, .editable-value:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
-body[data-mobile-layout="true"] { position: fixed; top: var(--app-top, 0px); width: var(--app-width, 100%); padding-top: env(safe-area-inset-top, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); height: var(--app-height, 100dvh); overflow: hidden; }
+body[data-mobile-layout="true"] { position: fixed; top: var(--app-top, 0px); width: 100%; padding-top: env(safe-area-inset-top, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); height: var(--app-height, 100dvh); overflow: hidden; }
 body[data-mobile-layout="true"] .header { padding: 0 8px; height: 44px; gap: 4px; }
 body[data-mobile-layout="true"] .header-left { gap: 0; min-width: 0; flex: 1; }
 body[data-mobile-layout="true"] .brand,
@@ -780,8 +780,12 @@ body[data-mobile-layout="true"] .dims-overlay *,
 body[data-mobile-layout="true"] .toast { font-size: max(13px, 1em) !important; }
 body[data-mobile-layout="true"] .sidebar input[type="text"],
 body[data-mobile-layout="true"] .sidebar input[type="number"],
+body[data-mobile-layout="true"] .sidebar select,
 body[data-mobile-layout="true"] .sidebar .val-edit,
 body[data-mobile-layout="true"] .export-bar .filename-input { font-size: 16px !important; }
+/* After the 13px floor above, which would otherwise flatten these. */
+body[data-mobile-layout="true"] .section-title { font-size: 16px !important; }
+body[data-mobile-layout="true"] .sponsor-name { font-size: 18px !important; }
 body[data-mobile-layout="true"] .control-reset { min-width: 44px; min-height: 44px; }
 body[data-mobile-layout="true"] .sponsor-img-wrap { min-height: 44px; }
 

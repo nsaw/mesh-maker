@@ -145,6 +145,12 @@ export function restoreSections(root: Element): void {
   sectionsInitialized = true;
 }
 
+/** First visit to a mobile pane: open its first visible section unless one is already open. */
+export function openFirstVisibleSection(pane: Element): void {
+  const visible = [...pane.querySelectorAll('.section')].filter(section => (section as HTMLElement).offsetParent !== null);
+  if (visible.length && visible.every(section => section.classList.contains('collapsed'))) setSectionOpen(visible[0], true);
+}
+
 export function wireSectionAccordion(section: Element): void {
   const header = section.querySelector<HTMLElement>('.section-header');
   if (!header) return;
