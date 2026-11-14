@@ -40,6 +40,7 @@ jobs:
       - run: npm run test:cell-graph
       - run: npm run test:cell-graph-bounds
       - run: npm run test:cell-graph-warp
+      - run: npm run test:cell-graph-worker
       - run: npm run test:fit-frame
       - run: npm run test:render-geometry
       - run: npm run test:relief-project

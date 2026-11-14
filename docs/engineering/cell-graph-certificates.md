@@ -55,3 +55,11 @@ A bi-Lipschitz bound gives `distanceWorld >= distanceQuery/(1+L)`. Nonincident q
 At a shared junction, inverse-Jacobian intervals enclose all outgoing tangents. Determinant or opposite-cone tests preserve the exact query rays' cyclic order. Endpoint errors are included in the chord cones. On one query line, the inverse has strictly positive projection along that line when L<1. The emitted chains and disconnected fragments must preserve the same projection order.
 
 Board roots retain their side coordinate and are ordered by disjoint side intervals. The outline is one separate closed path containing these shared boundary nodes and the corners. The cell network paths remain open. R12 ASCII DXF writes POLYLINE/VERTEX, Y up, zero Z, CUT_INNER and CUT_OUTER, with inch metadata. Final unit interpretation remains a native Aspire acceptance gate.
+
+## Worker lifetime
+
+`CellGraphController` owns a worker, deadline and abort listener per request ID. The default deadline is 120000 milliseconds; explicitly configured deadlines must be integers from 1 through 300000 milliseconds. A deadline bounds a silent worker independently of its internal geometry work cap.
+
+Construction, deadline scheduling or postMessage failure; worker error; response deserialization error; abort; supersession; stale source; message or graph revision mismatch; malformed response; timeout; explicit cancel; proof refusal; and success all settle through the same identity-guarded terminal path. That path cancels the deadline, removes the abort listener, detaches every worker handler and terminates the worker before resolving. Cleanup actions are attempted independently so one cleanup exception cannot leave the Promise pending.
+
+Saved callbacks carry the original request ID. Replaying a retired timer, response, error, messageerror or abort cannot retire a newer request. Tests cover those callbacks, cancellation during construction, synchronous deadline expiry, all terminal paths and a real silent-worker deadline with an owned watchdog that is cleared on both success and failure.
