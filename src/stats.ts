@@ -1,3 +1,4 @@
+import { noiseGeneration } from './noise/controller';
 import { syncRange } from './slider-utils';
 import { STATE, activeMaster } from './state';
 import { setCameraFromState } from './render';
@@ -40,7 +41,10 @@ export function updateStats(): void {
 
   let statData: [string, string][];
 
-  if (STATE.exportFormat === 'sbp') {
+  const noisePending = STATE.mode === 'noise' && noiseGeneration.displayPending;
+  if (noisePending) {
+    statData = [['Preview', `${cols} x ${rows}; display approximation`], ['Export', noiseGeneration.failed ? 'Generation failed; generate again' : 'Waiting for full resolution']];
+  } else if (STATE.exportFormat === 'sbp') {
     statData = STATE.sbpStats ? [
       ['Grid', `${STATE.sbpStats.heightmapCols} x ${STATE.sbpStats.heightmapRows}`],
       ['Roughing', STATE.sbpStats.roughingMoves.toLocaleString()],
@@ -68,7 +72,7 @@ export function updateStats(): void {
     ];
   }
 
-  if (STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief') {
+  if (!noisePending && STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief') {
     const [minZ, maxZ] = gridMinMax(STATE.vertices, rows, cols);
     statData.push(['Actual depth', `${(maxZ - minZ).toFixed(3)}"`]);
     if (STATE.reliefTruncatedFrom > 0) {

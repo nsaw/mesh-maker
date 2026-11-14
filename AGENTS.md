@@ -46,6 +46,10 @@ meshcraft/
 │   ├── state.ts               # MeshState interface, STATE singleton, URL serialize/deserialize
 │   ├── types.ts               # NoiseGenerator, FBMGenerator, relief and noise-grid parameter types
 │   ├── noise/
+│   │   ├── surface.ts         # Pure immutable noise/relief builder, shared by Node and Worker
+│   │   ├── controller.ts      # Revision ownership, cancellation, full-export waiters and fallback
+│   │   ├── messages.ts        # Float64 worker transport and generation quality
+│   │   ├── worker.ts          # Noise worker entry
 │   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
 │   │   ├── site-grid.ts       # Exact bucket lookup and incremental minimum separation
 │   │   ├── metric-order.ts    # Guarded nearest-rank comparison and exact dyadic tie resolution
@@ -96,6 +100,7 @@ meshcraft/
 │       ├── generate.ts        # SBP pipeline orchestrator
 │       └── worker.ts          # Web Worker entry for uploaded STL processing
 ├── cli/
+│   ├── noise-worker.spec.ts   # npm run test:noise-worker (exact extraction, request lifecycle)
 │   ├── stl-to-sbp.ts          # CLI entry point (tsx/Node)
 │   ├── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
 │   ├── voronoi-relief.spec.ts # npm run test:relief
@@ -128,6 +133,7 @@ meshcraft/
 
 ### Key Design Decisions
 
+- **Noise worker** (`src/noise/surface.ts`, `controller.ts`, `worker.ts`): a complete immutable snapshot owns each generation. Authoritative settings revisions settle superseded full-resolution waiters. Within one pointer gesture a running coarse request may finish as a labeled display approximation while newer input is queued; its successor samples only the newest queued settings. Release, a new gesture, mode/preset/reset changes and errors retire that preview epoch. Slider drags request at most 120 columns, release requests the selected resolution, and numeric/programmatic-only inputs also finish at full resolution. Every generated-surface export waits for its captured revision at full resolution; edits or mode changes refuse that export. Direct surface reads refuse coarse, pending, failed or stale noise grids. Worker construction failure uses the same builder inline; load failures retain the existing update message without reloading.
 - **Three.js WebGL renderer** (`src/render.ts`): Phong surface with analytical heightfield normals, an on-demand render loop (renders only when state changes), and an elevation-ramp or neutral surface material. Grids up to 400 columns (~250k cells) render interactively. (An earlier Canvas 2D painter's-algorithm renderer was replaced.)
 - **Typed STATE singleton**: `MeshState` interface with 40+ typed keys. Direct mutation — no reactive/observer pattern. The call graph is explicit (slider → debounce → generate → render).
 - **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar. Incompatible older payloads reset to defaults with a toast.

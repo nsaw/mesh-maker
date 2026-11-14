@@ -1,8 +1,9 @@
+import { ensureFullNoiseSurface } from './mesh';
 import { captureSidebarView, restoreSections, restoreSidebarView, wireSectionAccordion } from './sidebar-state';
 import { STATE, activeMaster, stockTopIn } from './state';
 import { getReliefRidgeInfo } from './noise/relief-features';
 import { attachControlReset, attachValueEdit, configureRange, readRangeValue, syncRange } from './slider-utils';
-import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface, surfaceHeightmap } from './export-surface';
+import { DRAPE_CARVE_PENDING, drapeCarvePending, captureExportSource, getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { parseSTLBinary } from './sbp/stl-parser';
 import { updateStats } from './stats';
@@ -220,11 +221,10 @@ function buildSbpToastMessage(stats: SbpStats): string {
 
 /** Export the current surface: the relief master at full resolution when one is active, otherwise
  *  the generated grid. Runs in the worker, since a 1201 x 2401 master takes seconds to compensate. */
-function exportFromMesh(): void {
+function exportFromMesh(config: SbpConfig, filename: string): void {
   const surface = getExportSurface(true);
   if (typeof surface === 'string') { showToast(surface, 6000); return; }
   const heightmap = surfaceHeightmap(surface);
-  const config = buildConfig();
   config.materialX = surface.meshX;
   config.materialY = surface.meshY;
   // Only emit the seam-rounding warning when finishing is actually enabled. The warning
@@ -232,7 +232,7 @@ function exportFromMesh(): void {
   const reliefWarning = config.finishingEnabled
     ? buildReliefStepoverWarning(config.finishingTool.cutting.stepover)
     : undefined;
-  runSbpWorker({ kind: 'heightmap', heightmap, config }, [heightmap.z.buffer as ArrayBuffer], reliefWarning);
+  runSbpWorker({ kind: 'heightmap', heightmap, config }, [heightmap.z.buffer as ArrayBuffer], reliefWarning, filename);
 }
 
 /** The nominal guide never suppresses observed clipping, a disabled band or query deformation. */
@@ -251,16 +251,16 @@ export function buildReliefStepoverWarning(stepoverIn: number): string | undefin
 }
 
 /** Export using uploaded STL via Web Worker */
-function exportFromSTL(): void {
+function exportFromSTL(config: SbpConfig, filename: string, resolution: number): void {
   if (!SBP_STATE.stlBuffer || SBP_STATE.stlBuffer.byteLength === 0) {
     showToast('No STL uploaded');
     return;
   }
   const stlBuffer = SBP_STATE.stlBuffer;
-  runSbpWorker({ kind: 'stl', stlBuffer, config: buildConfig(), resolution: SBP_STATE.resolution }, [stlBuffer]);
+  runSbpWorker({ kind: 'stl', stlBuffer, config, resolution }, [stlBuffer], undefined, filename);
 }
 
-function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: string): void {
+function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning: string | undefined, filename: string): void {
   if (sbpWorkerRunning) {
     showToast('SBP generation already in progress');
     return;
@@ -270,7 +270,7 @@ function runSbpWorker(input: SbpWorkerInput, transfer: ArrayBuffer[], warning?: 
   // and the source it was built from. A result for a source that has since been replaced is still
   // delivered under its own name, but never labelled with or attached to the current model.
   const jobSource = currentSbpSource();
-  const jobFilename = `${STATE.filename}.sbp`;
+  const jobFilename = `${filename}.sbp`;
   showToast(`${input.kind === 'stl' ? 'Generating SBP from STL' : 'Generating SBP'}... a full-size relief takes a few minutes`, 600000);
 
   const worker = new Worker(
@@ -319,14 +319,19 @@ function currentSbpSource(): unknown {
 }
 
 /** Main export entry point -- called from export.ts */
-export function doSBPExport(): void {
+export async function doSBPExport(): Promise<void> {
   // Material Z comes from the stock top (stockTopIn), so an uploaded STL waits for a pending drape
   // carve remap too, like every surface export (getExportSurface).
   if (drapeCarvePending()) { showToast(DRAPE_CARVE_PENDING, 6000); return; }
+  const config = buildConfig(), filename = STATE.filename, resolution = SBP_STATE.resolution;
   if (SBP_STATE.stlBuffer) {
-    exportFromSTL();
+    exportFromSTL(config, filename, resolution);
   } else {
-    exportFromMesh();
+    const source = captureExportSource();
+    const blocked = await ensureFullNoiseSurface();
+    const refusal = blocked ?? source() ?? (SBP_STATE.stlBuffer ? 'The export source changed. Export again.' : null);
+    if (refusal) { showToast(refusal, 6000); return; }
+    exportFromMesh(config, filename);
   }
 }
 

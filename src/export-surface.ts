@@ -1,3 +1,5 @@
+import { noiseGeneration } from './noise/controller';
+import { noiseSurfaceParams } from './noise/surface';
 import { STATE, activeMaster } from './state';
 import { drapeCarveFor } from './drape-controls';
 import { MIN_WATERTIGHT_THICKNESS } from './geometry';
@@ -10,6 +12,10 @@ import type { Heightmap } from './sbp/types';
  *  the generated grid. Returns a reason string when there is nothing exportable. `forToolpath`
  *  skips the watertight-only checks. */
 export function getExportSurface(forToolpath = false): ExportSurface | string {
+  if (STATE.mode === 'noise') {
+    const blocked = noiseGeneration.exportBlock(noiseSurfaceParams(STATE));
+    if (blocked) return blocked;
+  }
   const m = activeMaster();
   if (drapeCarvePending()) return DRAPE_CARVE_PENDING;
   // DRAPE exports only its relief: until the figure's relief exists, STATE.vertices can still hold the
@@ -17,13 +23,31 @@ export function getExportSurface(forToolpath = false): ExportSurface | string {
   if (STATE.mode === 'drape' && !m) return DRAPE_NO_RELIEF;
   // Toolpaths cut the top surface only, so the watertight enclosure's floor rule does not apply.
   if (m) return reliefMasterSurface(m, forToolpath ? false : STATE.watertight);
-  if (STATE.mode === 'noise' && STATE.noiseGenerationError) return STATE.noiseGenerationError;
   const { vertices, cols, rows, meshX, meshY } = STATE;
   if (!vertices) return 'Generate a mesh first';
   if (cols < 2 || rows < 2) return 'Mesh too small to export (need at least 2\u00d72 grid)';
   const z = new Float64Array(rows * cols);
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) z[j * cols + i] = vertices[j][i];
   return { z, cols, rows, meshX, meshY, diagonal: 'shortest', watertight: STATE.watertight };
+}
+
+/** A captured source owns export preparation and final delivery. Preview replacement is allowed
+ * only for noise while its same authoritative revision is being promoted to full resolution. */
+export function captureExportSource(): () => string | null {
+  const mode = STATE.mode, master = activeMaster(), image = STATE.depthMap, grid = STATE.vertices;
+  const watertight = STATE.watertight;
+  const params = noiseSurfaceParams(STATE);
+  const revision = mode === 'noise' ? noiseGeneration.invalidate(params) : 0;
+  const imageKey = (): string => JSON.stringify([STATE.meshX, STATE.meshY, STATE.baseThickness, STATE.resolution,
+    STATE.dmHeightScale, STATE.dmOffset, STATE.dmSmoothRadiusIn, STATE.dmBackgroundCutoff]);
+  const key = mode === 'noise' ? JSON.stringify(params) : imageKey();
+  return () => {
+    const same = STATE.mode === mode && activeMaster() === master && STATE.watertight === watertight
+      && (master ? !drapeCarvePending() : mode === 'noise'
+        ? noiseGeneration.isRevisionCurrent(revision) && JSON.stringify(noiseSurfaceParams(STATE)) === key
+        : STATE.depthMap === image && STATE.vertices === grid && imageKey() === key);
+    return same ? null : 'The export source changed. Export again for the current model.';
+  };
 }
 
 /** True when relief master `m` was not cut to the drape carve the controls show (STATE.drapeStock,

@@ -32,6 +32,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:cli
       - run: npm run test:relief
+      - run: npm run test:noise-worker
       - run: npm run test:relief-near-ties
       - run: npm run test:relief-near-ties-mutants
       - run: npm run test:native-distance-consumers
@@ -47,6 +48,8 @@ jobs:
       - run: npm run test:relief-master
       - run: npm run build
       - run: npx playwright install --with-deps chromium
+      - run: npm run test:noise-browser
+      - run: npm run test:export-authority
       - run: npm run test:ui-values
       - run: npm run test:ui-interruptions
 

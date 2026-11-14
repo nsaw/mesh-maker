@@ -1,7 +1,8 @@
+import { ensureFullNoiseSurface } from './mesh';
 import { STATE } from './state';
 import { showToast } from './toast';
 import { doSBPExport } from './sbp-export';
-import { getExportSurface } from './export-surface';
+import { captureExportSource, getExportSurface } from './export-surface';
 import { buildIndexedMesh, writeAsciiSTL, writeBinarySTL, writeOBJ } from './mesh-writer';
 import type { ExportSurface, IndexedMesh } from './mesh-writer';
 
@@ -69,10 +70,9 @@ async function loadRhino3dm(): Promise<RhinoApi> {
   return _rhinoPromise;
 }
 
-async function exportRhino3DM(mesh: IndexedMesh): Promise<Blob> {
+async function exportRhino3DM(mesh: IndexedMesh, asPointCloud: boolean): Promise<Blob> {
   const rhino = await loadRhino3dm();
   const { positions: p, triangles: t } = mesh;
-  const asPointCloud = STATE.export3dmAsPointCloud;
 
   let m: RhinoMesh | null = null;
   let cloud: RhinoPointCloud | null = null;
@@ -165,6 +165,8 @@ export async function doExport(): Promise<void> {
   _exportInFlight = true;
   try {
     return await _doExportInner();
+  } catch (error: unknown) {
+    showToast(`Export failed: ${error instanceof Error ? error.message : String(error)}`, 8000);
   } finally {
     _exportInFlight = false;
   }
@@ -172,19 +174,26 @@ export async function doExport(): Promise<void> {
 
 async function _doExportInner(): Promise<void> {
   const fmt = STATE.exportFormat;
+  const filename = STATE.filename;
+  const binary = STATE.binary;
+  const pointCloud = STATE.export3dmAsPointCloud;
 
   if (fmt === 'sbp') {
-    doSBPExport();
+    await doSBPExport();
     return;
   }
 
+  const source = captureExportSource();
+  const blocked = await ensureFullNoiseSurface();
+  const refusal = blocked ?? source();
+  if (refusal) { showToast(refusal, 6000); return; }
   const surface = getExportSurface();
   if (typeof surface === 'string') { showToast(surface, 6000); return; }
 
   if (fmt === 'heightmap') {
     const blob = await exportHeightmapPNG(surface);
     if (!blob) { showToast('Heightmap export failed'); return; }
-    triggerDownload(blob, `${STATE.filename}_heightmap.png`);
+    downloadCurrentSource(blob, `${filename}_heightmap.png`, source);
     return;
   }
 
@@ -193,7 +202,7 @@ async function _doExportInner(): Promise<void> {
   let ext: string;
 
   if (fmt === 'stl') {
-    if (STATE.binary) {
+    if (binary) {
       blob = new Blob([writeBinarySTL(mesh)], { type: 'application/octet-stream' });
     } else {
       blob = new Blob(writeAsciiSTL(mesh), { type: 'text/plain' });
@@ -205,7 +214,7 @@ async function _doExportInner(): Promise<void> {
   } else if (fmt === '3dm') {
     try {
       if (!_rhino) showToast('Loading Rhino3DM\u2026', 15000);
-      blob = await exportRhino3DM(mesh);
+      blob = await exportRhino3DM(mesh, pointCloud);
       ext = '3dm';
     } catch (e: unknown) {
       blob = new Blob(writeOBJ(mesh), { type: 'text/plain' });
@@ -218,17 +227,28 @@ async function _doExportInner(): Promise<void> {
     return;
   }
 
-  triggerDownload(blob, `${STATE.filename}.${ext}`);
+  if (!downloadCurrentSource(blob, `${filename}.${ext}`, source)) return;
   if (fmt === '3dm' && ext === '3dm') showToast('3DM exported!');
+}
+
+/** Every asynchronous surface encoder revalidates the same captured source at delivery. */
+export function downloadCurrentSource(blob: Blob, filename: string, source: () => string | null): boolean {
+  const refusal = source();
+  if (refusal) { showToast(refusal, 6000); return false; }
+  triggerDownload(blob, filename);
+  return true;
 }
 
 export function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  try {
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+  } finally {
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
 }

@@ -4,7 +4,7 @@ Verify against live code before citing it as authoritative. -->
 
 # Noise and Relief System
 
-Procedural height data for meshes comes from pluggable noise generators in `src/noise/generators.ts`, selected by name via `createNoiseGen`. Most types are per-pixel scalar fields sampled inside a shared warp/FBM/shaping loop in `src/mesh.ts`. The Voronoi relief type (`src/noise/voronoi-relief.ts`) is different: it is grid-aware, computing cell identity and per-cell radius across the whole panel before any per-pixel value can be produced, so it bypasses that shared loop entirely. Presets in `src/noise/presets.ts` bundle noise type plus all shaping/mesh parameters into one-click configurations, including four Voronoi-relief presets that reproduce a specific "lafabricatrun" reference look.
+Procedural height data for meshes comes from pluggable noise generators in `src/noise/generators.ts`, selected by name via `createNoiseGen`. Most types are per-pixel scalar fields sampled inside a shared warp/FBM/shaping loop in `src/noise/surface.ts`. The Voronoi relief type (`src/noise/voronoi-relief.ts`) is different: it is grid-aware, computing cell identity and per-cell radius across the whole panel before any per-pixel value can be produced, so it bypasses that shared loop entirely. Presets in `src/noise/presets.ts` bundle noise type plus all shaping/mesh parameters into one-click configurations, including four Voronoi-relief presets that reproduce a specific "lafabricatrun" reference look.
 
 ## Mental model
 
@@ -15,7 +15,7 @@ flowchart TD
   B -->|voronoi-relief| D[VoronoiReliefGen.sampleGrid]
   C --> E[grid of raw heights]
   D --> E
-  E --> F[smoothing + CNC-z normalization in mesh.ts]
+  E --> F[smoothing + CNC-z normalization in noise/surface.ts]
   F --> G[mesh vertices]
 ```
 
@@ -23,7 +23,7 @@ flowchart TD
 
 `generators.ts` implements one family of interchangeable `NoiseGenerator`/`FBMGenerator` classes: `SimplexNoiseGen`, `PerlinNoiseGen`, `ValueNoiseGen`, `OpenSimplex2NoiseGen` as raw noise; `RidgedNoiseGen`, `BillowNoiseGen`, `FBMNoiseGen`, `TurbulenceNoiseGen` as basic fractal wrappers; `HybridMultifractalGen` and `HeteroTerrainGen` as multifractal variants that weight each octave by the running result; `DomainWarpNoiseGen` which warps its own coordinates using a second Simplex field before sampling; `VoronoiNoiseGen` and `WorleyNoiseGen` as cellular (F1/F2 distance) noise; and `GaborNoiseGen`/`WaveletNoiseGen` as more specialized textures (oriented Gabor kernels, a precomputed tileable wavelet grid). All of these implement `.noise(x, y)` and, where fractal, `.fbm(x, y, octaves, persistence, lacunarity)`. `createNoiseGen(type, seed, config)` is the single factory switch; `voronoi-relief` is the one case that returns a `VoronoiReliefGen` rather than a plain `NoiseGenerator`.
 
-`src/mesh.ts`'s `sampleNoiseGrid` (around line 31) is the shared per-pixel driver for every type except `voronoi-relief`: for each grid cell it optionally applies domain warp (convergent + curl blend, using a `warpGen` Simplex instance), samples the generator's `fbm` or manual octave loop, then applies `contrast`, `sharpness`, `noiseExp`, `peakExp`/`valleyExp`, and `valleyFloor` shaping in a fixed order. The result is a raw, un-normalized grid; `generateNoiseMesh` then smooths and runs a CNC-z mapping pass over the combined data, with separate scalar full-depth and relief non-amplifying mappings.
+`src/noise/surface.ts`'s `sampleNoiseGrid` is the shared per-pixel driver for every type except `voronoi-relief`: for each grid cell it optionally applies domain warp (convergent + curl blend, using a `warpGen` Simplex instance), samples the generator's `fbm` or manual octave loop, then applies `contrast`, `sharpness`, `noiseExp`, `peakExp`/`valleyExp`, and `valleyFloor` shaping in a fixed order. The result is a raw, un-normalized grid; `buildNoiseSurface` then smooths and runs a CNC-z mapping pass over the combined data, with separate scalar full-depth and relief non-amplifying mappings.
 
 ## Voronoi relief: why it needs its own path
 
@@ -40,7 +40,7 @@ The algorithm's structural mechanisms (v16+):
 - **Membrane cushions** (v22–v23): rather than a distance-field crown, cushion shape comes from a per-cell Poisson (Gauss-Seidel/SOR) relaxation over cushion-region pixels, clamped to zero at the gutter ring — replacing an earlier medial-axis-traced crown that produced biased, uneven cushions. `pillowCoverage === 0` must fully disable cushions even though the smooth threshold alone would leave a residual.
 - **Pass 2** re-samples the nearest four distances at `W(x,y)`, remaps through the wall band, applies the bowl profile, superposes onto the base wave, adds junction lift gated by the normalized `(F3-F1)/(F3+F1)` gap (`reliefJunctionLift`) so crests rise toward three-way junctions, applies per-cell depth-tier/seam-jitter variation (`reliefDepthVariation`), and clamps output to `±OUTPUT_HEIGHT_CLAMP` (1.05), left in noise-native range for the relief mapper. After physical Gaussian smoothing, relief heights are anchored at the sampled maximum and multiplied by `cutDepth * min(1, 1/range)`. A small raw range remains shallower than the requested depth; scalar noise retains full-depth normalization.
 
-`sampleReliefParamsFromState` adapts `STATE` fields (all the `relief*` keys plus the shared `distortion`/`warpFreq` sliders) into the `ReliefSampleParams` struct `sampleGrid` expects, and is the only place that wires the global warp UI into relief mode.
+`sampleReliefParamsFromState` adapts immutable request fields from `STATE` (all the `relief*` keys plus the shared `distortion`/`warpFreq` sliders) into the `ReliefSampleParams` struct `sampleGrid` expects, and is the only place that wires the global warp UI into relief mode.
 
 ## Presets
 
@@ -62,10 +62,10 @@ Relief presets fit the 24 in bed height: vertical and pockets use 12 x 24 in, ra
 When these files or sections are changed, remember to consider these:
 
 - If a new field is added to `ReliefSampleParams` (`src/types.ts`), update both `sampleReliefParamsFromState` in `voronoi-relief.ts` and every relevant `CNC_PRESETS` entry in `presets.ts`. Add generation controls to `PRESET_OWNED_KEYS` so omitted preset values reset to their documented defaults.
-- If `createNoiseGen`'s switch in `generators.ts` gains a new `type` string, verify `sampleNoiseGrid` in `src/mesh.ts` still special-cases it correctly (grid-aware types must skip the per-pixel warp/FBM loop) and that `NoiseGridParams`/`ReliefGenerator` typing in `src/types.ts` covers the new generator's shape.
+- If `createNoiseGen`'s switch in `generators.ts` gains a new `type` string, verify `sampleNoiseGrid` in `src/noise/surface.ts` still special-cases it correctly (grid-aware types must skip the per-pixel warp/FBM loop) and that `NoiseGridParams`/`ReliefGenerator` typing in `src/types.ts` covers the new generator's shape.
 - If sampler limits or radius-field constants change, rerun production-resolution timing and exactness tests. Both distance passes use `SiteGrid` bucket queries with conservative stopping bounds; clustered or sparse inputs can still require a full site scan. Lloyd ownership and minimum-separation queries use the same index, with accepted site moves updating buckets in order.
-- If the global `distortion`/`warpFreq` sliders' semantics change in `mesh.ts`'s per-pixel warp path, check `sampleReliefParamsFromState` still maps them consistently into `warpDistortion`/`warpFrequency` for site-position warping.
-- If mesh-side smoothing or CNC-z normalization in `src/mesh.ts` changes its assumed input range, verify it still matches the `±OUTPUT_HEIGHT_CLAMP` (1.05) contract that `VoronoiReliefGen.sampleGrid` outputs.
+- If the global `distortion`/`warpFreq` sliders' semantics change in `src/noise/surface.ts`'s per-pixel warp path, check `sampleReliefParamsFromState` still maps them consistently into `warpDistortion`/`warpFrequency` for site-position warping.
+- If mesh-side smoothing or CNC-z normalization in `src/noise/surface.ts` changes its assumed input range, verify it still matches the `±OUTPUT_HEIGHT_CLAMP` (1.05) contract that `VoronoiReliefGen.sampleGrid` outputs.
 
 ## Important failure modes
 
@@ -84,7 +84,7 @@ When these files or sections are changed, remember to consider these:
 | `src/noise/generators.ts` | All per-pixel noise/fractal generator classes and the `createNoiseGen` factory switch |
 | `src/noise/voronoi-relief.ts` | Grid-aware Voronoi relief algorithm: site generation, Lloyd relaxation, radius field, dome/seam/attractor compositing |
 | `src/noise/presets.ts` | `PROFILES` shape presets and `CNC_PRESETS` full configuration presets, including the four relief presets and their tuning history in comments |
-| `src/mesh.ts` | `sampleNoiseGrid` (shared per-pixel loop and the `voronoi-relief` bypass), `generateNoiseMesh` (wires STATE into generators and presets, then smooths/normalizes) |
+| `src/noise/surface.ts` | Immutable noise/relief request, shared sampler, smoothing and CNC normalization; used by the Worker and synchronous Node adapter |
 | `src/types.ts` | `NoiseGenerator`, `FBMGenerator`, `ReliefGenerator`, `ReliefSampleParams`, and related enum types shared across generators and mesh code |
 | `docs/voronoi-relief-target-spec.md` | Author-written acceptance spec describing the reference "lafabricatrun" panel geometry and a mechanism-mapping table tying each spec property to a sampler mechanism |
 | `cli/voronoi-relief.spec.ts` | Deterministic regression suite (18+ assertion blocks) that guards `sampleGrid` behavior against reintroducing prior artifacts (see `docs/cli-tools.md`) |

@@ -23,10 +23,12 @@ flowchart TD
 
 ## Entry points and dispatch
 
-`src/export.ts`'s `_doExportInner` checks `STATE.exportFormat`; when it is `'sbp'` it calls `doSBPExport()` from `src/sbp-export.ts` and returns immediately (no shared post-processing with the other export formats). `doSBPExport` picks one of two source paths based on whether an STL was uploaded (`SBP_STATE.stlBuffer`):
+`src/export.ts`'s `_doExportInner` checks `STATE.exportFormat`; when it is `'sbp'` it awaits `doSBPExport()` from `src/sbp-export.ts` before returning (no shared post-processing with the other export formats). `doSBPExport` picks one of two source paths based on whether an STL was uploaded (`SBP_STATE.stlBuffer`):
 
 - **Mesh path** (`exportFromMesh`): reads `getExportSurface(true)` (`src/export-surface.ts`): the full-resolution relief master when one is active (`activeMaster()`: an imported `.mcrelief` in DEPTH MAP, the drape relief in DRAPE), else the generated `STATE.vertices` grid. `surfaceHeightmap()` turns it into a `Heightmap` (copy, with row spacing and diagonal) and the job runs in `src/sbp/worker.ts`, like the STL path.
 - **STL path** (`exportFromSTL`): posts the raw STL `ArrayBuffer`, the resolved `SbpConfig`, and a heightmap `resolution` (cells per inch) to the same worker, which parses and rasterizes it first. Both paths share `runSbpWorker`, which guards concurrent runs with `sbpWorkerRunning`, captures the job's filename and source when it starts (a result for a replaced model is downloaded under its own name and not attached to the current one), and hands a transferred `stlBuffer` back only if no newer upload replaced it.
+
+Before asynchronous mesh preparation, direct SBP captures its filename, config and `captureExportSource()` authority. It refuses master/image/grid changes or an arriving STL before worker handoff; noise waits for its captured full-resolution request. The uploaded-STL path does not wait for noise. After handoff, the existing identified-job delivery behavior remains unchanged.
 
 Both paths converge on the same `generateSBP` function (`src/sbp/generate.ts`), so behavior is identical for a given heightmap regardless of source — the worker doesn't get a different pipeline.
 

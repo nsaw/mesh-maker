@@ -1,0 +1,149 @@
+{
+  "source": "15237baf-daeaf3c8-8a930736-73acd622-ce984577 render geometry before material reuse",
+  "buffers": [
+    {
+      "target": 34962,
+      "bytes": 1281600,
+      "type": "Float32Array",
+      "hash": "a05289b2-6a3e3d32-9753c979-273cf9ab-341c8fbd-1e05190c-6ea1e42b-bd0e7a54"
+    },
+    {
+      "target": 34962,
+      "bytes": 1281600,
+      "type": "Float32Array",
+      "hash": "10be779c-e970ff89-f4db81ce-2b424d1d-250b8a77-db5e5d80-f736dc96-8b0e8e87"
+    },
+    {
+      "target": 34962,
+      "bytes": 854400,
+      "type": "Float32Array",
+      "hash": "0c77842f-dc598b3b-b480b0b7-7e551cc6-6fe64aa7-bc6e68dd-62754bd4-05f160bf"
+    },
+    {
+      "target": 34962,
+      "bytes": 48,
+      "type": "Float32Array",
+      "hash": "af33aea2-c1595a62-7fa101b4-c7404d67-952905bf-6bd1360a-8e166843-1d352789"
+    },
+    {
+      "target": 34962,
+      "bytes": 48,
+      "type": "Float32Array",
+      "hash": "a0de3fc1-9353a669-77862687-2d2a7cb8-afbf2eec-74d18ffb-009d826f-ad2e14c3"
+    },
+    {
+      "target": 34962,
+      "bytes": 32,
+      "type": "Float32Array",
+      "hash": "f3a0a463-01c6859e-5b64bead-ee234c4e-eec1dec8-c4735dc7-bf40ea09-e762e189"
+    },
+    {
+      "target": 34962,
+      "bytes": 9600,
+      "type": "Float32Array",
+      "hash": "3eabfea1-b960a3a2-d40263e9-4067c1a3-4ddab0f3-38ce8453-7f908663-4d592963"
+    },
+    {
+      "target": 34962,
+      "bytes": 9600,
+      "type": "Float32Array",
+      "hash": "50d4e137-09c71a41-36431891-41826643-bdc8d099-2e0e087b-bfb20455-8c44881c"
+    },
+    {
+      "target": 34962,
+      "bytes": 9600,
+      "type": "Float32Array",
+      "hash": "d1525e05-04016440-9d3952fe-ed779299-cd04e3c1-def77e3f-26555b99-b6ec1a94"
+    },
+    {
+      "target": 34962,
+      "bytes": 9600,
+      "type": "Float32Array",
+      "hash": "50d4e137-09c71a41-36431891-41826643-bdc8d099-2e0e087b-bfb20455-8c44881c"
+    },
+    {
+      "target": 34962,
+      "bytes": 6408,
+      "type": "Float32Array",
+      "hash": "ab618783-2097956d-c4d709cf-8e5dd8bd-e528dc97-b3802887-260ca4f4-c802ae32"
+    },
+    {
+      "target": 34962,
+      "bytes": 6408,
+      "type": "Float32Array",
+      "hash": "460e518a-4596bfd8-51683f75-b7538399-50edfc78-1e0724da-3d4c8c95-a5385713"
+    },
+    {
+      "target": 34962,
+      "bytes": 6408,
+      "type": "Float32Array",
+      "hash": "ebd4fc8b-ebdec612-a19aa6f4-cee5e0b2-94a7cd39-f88f5253-342690d0-b2e296c5"
+    },
+    {
+      "target": 34962,
+      "bytes": 6408,
+      "type": "Float32Array",
+      "hash": "460e518a-4596bfd8-51683f75-b7538399-50edfc78-1e0724da-3d4c8c95-a5385713"
+    },
+    {
+      "target": 34963,
+      "bytes": 2547216,
+      "type": "Uint32Array",
+      "hash": "079e1dca-ed80237d-b5c17b4c-abff7416-8f22da19-39ff8e1a-28681202-d9c3712f"
+    },
+    {
+      "target": 34963,
+      "bytes": 3192,
+      "type": "Uint16Array",
+      "hash": "f637f8c8-61ea13fb-81086efa-ded2e197-a4e0f566-44c0196b-a32160c1-b2b7f2b9"
+    },
+    {
+      "target": 34963,
+      "bytes": 4788,
+      "type": "Uint16Array",
+      "hash": "869d82ee-6672fecb-c504b206-029c575c-e72756e0-729d7152-f948c458-78e272d7"
+    },
+    {
+      "target": 34963,
+      "bytes": 12,
+      "type": "Uint16Array",
+      "hash": "e6a29e1c-ddde89f6-6d85917b-2e1d6873-8a5aed98-1405a0c4-1de23d7c-87004314"
+    },
+    {
+      "target": 34963,
+      "bytes": 4788,
+      "type": "Uint16Array",
+      "hash": "869d82ee-6672fecb-c504b206-029c575c-e72756e0-729d7152-f948c458-78e272d7"
+    },
+    {
+      "target": 34963,
+      "bytes": 3192,
+      "type": "Uint16Array",
+      "hash": "f637f8c8-61ea13fb-81086efa-ded2e197-a4e0f566-44c0196b-a32160c1-b2b7f2b9"
+    },
+    {
+      "target": 34962,
+      "bytes": 72,
+      "type": "Float32Array",
+      "hash": "54ef00ac-3f78118b-fc079a45-ab2d6305-11b173f4-4b1ebc43-f396eeab-362c22a1"
+    },
+    {
+      "target": 34962,
+      "bytes": 72,
+      "type": "Float32Array",
+      "hash": "52efc8c6-01a3323d-b086f8a4-5562252b-6cfdf5bf-431ef8c5-8d1f11a5-ad62d75f"
+    },
+    {
+      "target": 34962,
+      "bytes": 80,
+      "type": "Float32Array",
+      "hash": "7ce4598b-3b2cf30c-4510672d-4401e87b-f22c6a04-fd32dd38-99f155dc-c8ef5df6"
+    },
+    {
+      "target": 34963,
+      "bytes": 12,
+      "type": "Uint16Array",
+      "hash": "4a16b824-acb5d55f-3f9fcaca-42323d85-6db13089-fdde0166-ae1699c8-9a2710b0"
+    }
+  ]
+}

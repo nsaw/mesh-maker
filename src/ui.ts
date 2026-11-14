@@ -1,3 +1,4 @@
+import { noiseGeneration } from './noise/controller';
 import { numericDomain } from './numeric-domain';
 import { captureSidebarView, restoreSections, restoreSidebarView, wireSectionAccordion } from './sidebar-state';
 export { wireSectionAccordion } from './sidebar-state';
@@ -10,7 +11,7 @@ import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
 import { attachControlReset, attachValueEdit, configureRange, readRangeValue, refreshControlResets, syncRange } from './slider-utils';
 import { CNC_PRESETS, PROFILES, presetState } from './noise/presets';
-import { generateMesh, debouncedGenerate } from './mesh';
+import { generateMesh, debouncedGenerate, beginNoiseGesture, endNoiseGesture } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ, syncSbpSafeZIfStockMoved, updateEffectiveOffsetDisplay } from './sbp-export';
 import { updateExportControls } from './toolbar';
 import { estimateDepth } from './depth-estimate';
@@ -704,7 +705,27 @@ function wireControls(): void {
   // Sliders
   document.querySelectorAll<HTMLInputElement>('input[type="range"][data-key]').forEach(sl => {
     const key = sl.dataset.key!;
+    let pointerDown = false;
+    let completionTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearCompletion = (): void => {
+      if (completionTimer !== null) { clearTimeout(completionTimer); completionTimer = null; }
+    };
+    const finish = (): void => {
+      pointerDown = false;
+      endNoiseGesture(key);
+      clearCompletion();
+      if (drapeControlEffect(key)) return;
+      if (STATE.mode === 'drape' && ['baseThickness', 'meshX', 'meshY'].includes(key)) return;
+      if (controlIsReadOnly(key)) return;
+      debouncedGenerate(key, 'full');
+    };
+    sl.addEventListener('pointerdown', () => { pointerDown = true; clearCompletion(); beginNoiseGesture(key); });
+    sl.addEventListener('pointerup', finish);
+    sl.addEventListener('pointercancel', finish);
+    sl.addEventListener('lostpointercapture', () => { if (pointerDown) finish(); });
+    sl.addEventListener('change', finish);
     sl.addEventListener('input', () => {
+      if (!pointerDown) endNoiseGesture(key);
       // DRAPE owns its material thickness (drapeStock); baseThickness follows it there.
       if (STATE.mode === 'drape' && key === 'baseThickness') {
         const v = Math.min(DRAPE_STOCK_RANGE[1], Math.max(DRAPE_STOCK_RANGE[0], readRangeValue(sl)));
@@ -772,7 +793,17 @@ function wireControls(): void {
       }
 
       if (key === 'meshX' || key === 'meshY') updateEffectiveOffsetDisplay();
-      debouncedGenerate(key);
+      debouncedGenerate(key, 'preview');
+      clearCompletion();
+      // Numeric edits, resets and programmatic inputs may emit no change or pointer-release event.
+      if (!pointerDown) {
+        const mode = STATE.mode;
+        const token = noiseGeneration.completionToken;
+        completionTimer = setTimeout(() => {
+          completionTimer = null;
+          if (STATE.mode === mode && (mode !== 'noise' || noiseGeneration.completionToken === token)) finish();
+        }, 180);
+      }
     });
 
     // Double-click slider to reset to default

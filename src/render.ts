@@ -1,3 +1,4 @@
+import { noiseGeneration } from './noise/controller';
 import * as THREE from 'three';
 import { STATE, activeMaster } from './state';
 import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
@@ -571,6 +572,10 @@ export function resizeCanvas(): void {
 export function updateDimsOverlay(): void {
   const el = document.getElementById('dimsOverlay')!;
   if (!STATE.vertices) { el.textContent = ''; return; }
+  if (STATE.mode === 'noise' && noiseGeneration.displayPending) {
+    el.textContent = noiseGeneration.failed ? 'Display approximation; generation failed' : 'Display approximation; full-resolution surface pending';
+    return;
+  }
   const zMin = _cachedZMin;
   const zMax = _cachedZMax;
   const totalZ = STATE.watertight ? Math.max(zMax, 0) : zMax - zMin;

@@ -8,7 +8,9 @@ import { SiteGrid } from '../src/noise/site-grid';
 import { DEFAULTS, STATE } from '../src/state';
 import { getExportSurface } from '../src/export-surface';
 import { encodeReliefMaster, parseReliefMaster } from '../src/relief-master';
-import { generateNoiseMesh, generateMesh } from '../src/mesh';
+import { generateNoiseMesh } from '../src/mesh';
+import { noiseGeneration, NoiseGeneration } from '../src/noise/controller';
+import { noiseSurfaceParams } from '../src/noise/surface';
 
 // The limit cannot depend on which unequal multiplier becomes the owner or runner-up.
 const values = [0.1, 0.35, 0.8, 0.95];
@@ -178,35 +180,30 @@ print(json.dumps(scope['VoronoiReliefNoise'](5).sample_grid(payload['params'])))
   process.stdout.write(`mixed-crest Python full-grid max error ${error}\n`);
 }
 
-// A failed source build propagates its RangeError and retires the busy overlay.
+// A rejected worker/inline request settles, retires busy state and preserves committed geometry.
+const rejected = new NoiseGeneration({createWorker:()=>{throw new Error('Workers unavailable');}});
+const busy: boolean[]=[];
+rejected.onBusy=value=>busy.push(value);
+const invalid=noiseSurfaceParams({...DEFAULTS,noiseType:'voronoi-relief',reliefCellSize:0});
+const outcome=await rejected.start(invalid,'full');
+assert('reason' in outcome); assert.match(outcome.reason,/Relief site enumeration exceeds supported work budget/);
+assert.deepEqual(busy,[true,false]); assert(rejected.failed);
+
+// The synchronous adapter rethrows the original failure and retains all committed metadata.
 const master = await parseReliefMaster(await encodeReliefMaster({format:'meshcraft-relief',version:1,units:'in',
     cols:2,rows:2,width:1,height:1,dtype:'float64',rowOrder:'bottom-up',heightOrigin:'panel-back',
     backing:.1,stock:.75,triangulation:'tr-bl',mask:false},new Float64Array([.5,.75,.25,.6])));
-const previousState = {...STATE}, oldDocument = Object.getOwnPropertyDescriptor(globalThis,'document');
-const oldRaf = Object.getOwnPropertyDescriptor(globalThis,'requestAnimationFrame');
-const classes = new Set<string>(), frames: FrameRequestCallback[] = [];
-const overlay = {classList:{add:(name:string)=>classes.add(name),remove:(name:string)=>classes.delete(name)}};
-Object.defineProperty(globalThis,'document',{configurable:true,value:{getElementById:(id:string)=>id==='genOverlay'?overlay:null}});
-Object.defineProperty(globalThis,'requestAnimationFrame',{configurable:true,value:(callback:FrameRequestCallback)=>{frames.push(callback);return frames.length;}});
+const previousState = {...STATE};
 try {
-  Object.assign(STATE,DEFAULTS,{mode:'noise',noiseType:'voronoi-relief',reliefCellSize:0,vertices:[[123]]});
-  const retained = STATE.vertices;
-  generateMesh(); assert(classes.has('visible'));
-  frames.shift()!(0); assert(classes.has('visible'));
-  assert.throws(()=>frames.shift()!(0),{name:'RangeError',message:'Relief site enumeration exceeds supported work budget'});
-  assert(!classes.has('visible')); assert.equal(STATE.vertices,retained);
-
   Object.assign(STATE, DEFAULTS, {mode:'noise', noiseType:'simplex', resolution:16});
   generateNoiseMesh();
   const record = {vertices:STATE.vertices,cols:STATE.cols,rows:STATE.rows,genTime:STATE.genTime,
     reliefTruncatedFrom:STATE.reliefTruncatedFrom,reliefCrestClipStatus:STATE.reliefCrestClipStatus};
   Object.assign(STATE,{resolution:32,noiseType:'voronoi-relief',reliefCellSize:0});
-  generateMesh(); frames.shift()!(0);
-  assert.throws(()=>frames.shift()!(0),RangeError);
+  assert.throws(()=>generateNoiseMesh(),RangeError);
   assert.deepEqual({vertices:STATE.vertices,cols:STATE.cols,rows:STATE.rows,genTime:STATE.genTime,
     reliefTruncatedFrom:STATE.reliefTruncatedFrom,reliefCrestClipStatus:STATE.reliefCrestClipStatus},record);
   assert.equal(STATE.vertices, record.vertices);
-  assert(!classes.has('visible'));
   for (const toolpath of [false,true]) assert.match(String(getExportSurface(toolpath)),/Noise generation failed/);
   // A prior nonzero diagnostic must survive just like its generated grid.
   Object.assign(STATE,DEFAULTS,{mode:'noise',noiseType:'voronoi-relief',meshX:6,meshY:4,
@@ -225,12 +222,11 @@ try {
   const masterSurface=getExportSurface(); assert(typeof masterSurface!=='string');
   assert.equal(masterSurface.z,master.heightsIn);
   Object.assign(STATE,{mode:'noise',noiseType:'simplex'}); generateNoiseMesh();
-  assert.equal(STATE.noiseGenerationError,null);
+  assert.equal(noiseGeneration.failed,false);
   const recovered=getExportSurface(); assert(typeof recovered!=='string');
   assert.equal(recovered.cols,32); assert.equal(recovered.rows,21);
 
 } finally {
   Object.assign(STATE,previousState);
-  if(oldDocument)Object.defineProperty(globalThis,'document',oldDocument);else Reflect.deleteProperty(globalThis,'document');
-  if(oldRaf)Object.defineProperty(globalThis,'requestAnimationFrame',oldRaf);else Reflect.deleteProperty(globalThis,'requestAnimationFrame');
+
 }

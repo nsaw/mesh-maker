@@ -10,10 +10,10 @@ import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
 import { syncSbpSafeZIfStockMoved, updateEffectiveOffsetDisplay } from './sbp-export';
 import { syncAspectLockButton } from './ui';
-import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, masterOffCarve } from './export-surface';
+import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, captureExportSource, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
 import { syncRange } from './slider-utils';
-import { triggerDownload } from './export';
+import { downloadCurrentSource } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, MAX_DETAIL_BYTES, splitForDrape, type Figure, type FigurePose } from './drape-sim/figure';
 import { bareDepth, FIGURE_FIT, reliefHeights } from './drape-sim/pipeline';
@@ -367,8 +367,10 @@ export function cancelDrape(announce = true): void {
 /** Download the relief DRAPE mode shows, as a .mcrelief (opens in the Depth Map tab or the CLI). */
 export async function downloadDrapeRelief(): Promise<void> {
   const m = STATE.drapeMaster;
-  if (!m) { showToast(DRAPE_NO_RELIEF, 6000); return; }
+  const filename = STATE.filename || 'drape';
+  if (STATE.mode !== 'drape' || !m) { showToast(DRAPE_NO_RELIEF, 6000); return; }
   if (drapeCarvePending()) { showToast(DRAPE_CARVE_PENDING, 6000); return; }
+  const source = captureExportSource();
   const heights = new Float32Array(m.cols * m.rows);
   // Back to the file layout: metres, rows top-down (MeshCraft's grid has row 0 at the bottom).
   for (let j = 0; j < m.rows; j++) for (let i = 0; i < m.cols; i++)
@@ -377,7 +379,7 @@ export async function downloadDrapeRelief(): Promise<void> {
   if (m.mask) for (let j = 0; j < m.rows; j++) for (let i = 0; i < m.cols; i++) mask[(m.rows - 1 - j) * m.cols + i] = m.mask[j * m.cols + i];
   const buf = await encodeReliefMaster({ ...m.header, units: 'm', dtype: 'float32', rowOrder: 'top-down',
     width: m.widthIn * 0.0254, height: m.heightIn * 0.0254, backing: m.backingIn * 0.0254, stock: m.stockIn * 0.0254 }, heights, m.mask ? mask : undefined);
-  triggerDownload(new Blob([buf], { type: 'application/octet-stream' }), `${STATE.filename || 'drape'}.mcrelief`);
+  downloadCurrentSource(new Blob([buf], { type: 'application/octet-stream' }), `${filename}.mcrelief`, source);
 }
 
 /** Upload a figure: .mcfig as is, or a mesh (STL, OBJ, PLY, glTF, USD) turned with the sidebar's up axis

@@ -96,3 +96,5 @@ When these files or sections are changed, remember to consider these:
 | `src/sponsor.ts`, `src/sidebar-state.ts` | Explicit Sponsors pane and persistent sidebar presentation state |
 | `src/main.ts` | Single entrypoint: URL state apply, module wiring order, initial `generateMesh()` |
 | `index.html` | DOM structure and element IDs that every module above queries by ID |
+
+Noise slider input starts a leading preview immediately, including input faster than a frame. One running same-gesture request coalesces newer settings; its result is a labeled display approximation, never an export source. Release/change and bounded numeric-input completion request the full resolution. View-only input leaves generation scheduling intact. `captureExportSource()` in `export-surface.ts` validates source identity/settings at asynchronous preparation and delivery boundaries; `downloadCurrentSource()` shares the final encoder-delivery guard. SBP captures its source, filename and config before preparation, then preserves the existing identified-job delivery behavior after worker handoff.
