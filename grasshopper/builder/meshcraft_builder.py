@@ -575,22 +575,6 @@ class RidgedNoise(object):
 class BillowNoise(object):
     def __init__(self, seed=0): self.base = SimplexNoise(seed)
     def noise(self, x, y): return abs(self.base.noise(x,y))*2.0-1.0
-
-
-class FBMNoise(object):
-    def __init__(self, seed=0): self.base = SimplexNoise(seed)
-    def noise(self, x, y): return self.base.noise(x, y)
-    def fbm(self, x, y, octs, pers, lac):
-        val = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
-        for i in range(octs):
-            val += self.base.noise(x*freq, y*freq)*amp
-            mx += amp; amp *= pers; freq *= lac
-        return val/mx
-
-
-class TurbulenceNoise(object):
-    def __init__(self, seed=0): self.base = SimplexNoise(seed)
-    def noise(self, x, y): return self.base.noise(x, y)
     def fbm(self, x, y, octs, pers, lac):
         val = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
         for i in range(octs):
@@ -645,38 +629,58 @@ class DomainWarpNoise(object):
         return val/mx
 
 
-class VoronoiNoise(object):
-    def __init__(self, seed=0): self.seed = seed
-    def _sr(self, s): x = math.sin(s)*10000.0; return x-math.floor(x)
-    def _hash(self, x, y):
-        return int(math.floor(self._sr(x*374761393.0+y*668265263.0+self.seed)*1000.0))
-    def noise(self, x, y):
-        cx = int(math.floor(x)); cy = int(math.floor(y)); mn = float('inf')
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = cx+i; ny = cy+j; h = self._hash(nx, ny)
-                px = nx+self._sr(h); py = ny+self._sr(h+1)
-                d = math.hypot(x-px, y-py)
-                if d < mn: mn = d
-        return 1.0-mn*2.0
-
-
-class WorleyNoise(object):
-    def __init__(self, seed=0): self.seed = seed
-    def _sr(self, s): x = math.sin(s)*10000.0; return x-math.floor(x)
-    def _hash(self, x, y):
-        return int(math.floor(self._sr(x*374761393.0+y*668265263.0+self.seed)*1000.0))
-    def noise(self, x, y):
+class _Cellular(object):
+    @staticmethod
+    def avalanche(value):
+        value &= 0xffffffff
+        h = ((value ^ (value >> 16)) * 0x7feb352d) & 0xffffffff
+        h = ((h ^ (h >> 15)) * 0x846ca68b) & 0xffffffff
+        return (h ^ (h >> 16)) & 0xffffffff
+    @staticmethod
+    def hash01(x, y, seed):
+        h = _Cellular.avalanche((int(seed) & 0xffffffff) ^ 0x9e3779b9)
+        h = _Cellular.avalanche(h + int(x) * 0x85ebca6b)
+        h = _Cellular.avalanche(h + (int(x) // 4294967296) * 0x9e3779b1)
+        h = _Cellular.avalanche(h + int(y) * 0xc2b2ae35)
+        h = _Cellular.avalanche(h + (int(y) // 4294967296) * 0x27d4eb2d)
+        return float(h) / 4294967296.0
+    @staticmethod
+    def site(x, y, seed, jitter):
+        seed32 = int(seed) & 0xffffffff
+        return (x + 0.5 + (_Cellular.hash01(x, y, seed32) - 0.5) * jitter,
+                y + 0.5 + (_Cellular.hash01(x, y, (seed32 + 1013) & 0xffffffff) - 0.5) * jitter)
+    @staticmethod
+    def distances(x, y, seed, jitter, metric):
+        if x != x or y != y or abs(x) > 9007199254740987 or abs(y) > 9007199254740987 or jitter != jitter or jitter < 0 or jitter > 1:
+            raise ValueError('Cellular samples require finite coordinates and jitter in [0, 1]')
         cx = int(math.floor(x)); cy = int(math.floor(y))
-        f1 = float('inf'); f2 = float('inf')
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = cx+i; ny = cy+j; h = self._hash(nx, ny)
-                px = nx+self._sr(h); py = ny+self._sr(h+1)
-                d = math.hypot(x-px, y-py)
-                if d < f1: f2 = f1; f1 = d
-                elif d < f2: f2 = d
-        return min((f2-f1)*1.5, 1.0)*2.0-1.0
+        f1 = float('inf'); f2 = float('inf'); radius = 0
+        while True:
+            for i in range(-radius, radius + 1):
+                for j in range(-radius, radius + 1):
+                    if radius and abs(i) != radius and abs(j) != radius: continue
+                    px, py = _Cellular.site(cx + i, cy + j, seed, jitter)
+                    dx = abs(x - px); dy = abs(y - py)
+                    d = dx + dy if metric == 'manhattan' else max(dx, dy) if metric == 'chebyshev' else math.hypot(dx, dy)
+                    if d < f1: f2 = f1; f1 = d
+                    elif d < f2: f2 = d
+            outside = min(x - (cx - radius), cx + radius + 1 - x,
+                          y - (cy - radius), cy + radius + 1 - y)
+            if outside >= f2: return (f1, f2)
+            radius += 1
+
+
+class VoronoiNoise(object):
+    def __init__(self, seed=0, jitter=1.0, metric='euclidean'):
+        self.seed = seed; self.jitter = jitter; self.metric = metric
+    def noise(self, x, y):
+        return 1.0 - _Cellular.distances(x, y, self.seed, self.jitter, self.metric)[0] * 2.0
+
+
+class WorleyNoise(VoronoiNoise):
+    def noise(self, x, y):
+        f1, f2 = _Cellular.distances(x, y, self.seed, self.jitter, self.metric)
+        return min((f2 - f1) * 1.5, 1.0) * 2.0 - 1.0
 
 
 class GaborNoise(object):
@@ -1617,19 +1621,19 @@ _NOISE_MAP = {
     'opensimplex2': lambda s, cfg: OpenSimplex2Noise(s),
     'ridged':       lambda s, cfg: RidgedNoise(s),
     'billow':       lambda s, cfg: BillowNoise(s),
-    'fbm':          lambda s, cfg: FBMNoise(s),
-    'turbulence':   lambda s, cfg: TurbulenceNoise(s),
     'hybrid':       lambda s, cfg: HybridMultifractal(s),
     'hetero':       lambda s, cfg: HeteroTerrain(s),
     'domainwarp':   lambda s, cfg: DomainWarpNoise(s),
-    'voronoi':      lambda s, cfg: VoronoiNoise(s),
-    'worley':       lambda s, cfg: WorleyNoise(s),
+    'voronoi':      lambda s, cfg: VoronoiNoise(s, cfg['jitter'], cfg['metric']),
+    'worley':       lambda s, cfg: WorleyNoise(s, cfg['jitter'], cfg['metric']),
     'gabor':        lambda s, cfg: GaborNoise(s, cfg.get('angle', 45.0), cfg.get('bw', 1.5)),
     'wavelet':      lambda s, cfg: WaveletNoise(s),
     'voronoi-relief': lambda s, cfg: VoronoiReliefNoise(s),
 }
 
-cfg = {'angle': gabor_angle, 'bw': gabor_bw}
+cell_jitter = float(globals().get('cell_jitter') if globals().get('cell_jitter') is not None else 1.0)
+cell_metric = globals().get('cell_metric') or 'euclidean'
+cfg = {'angle': gabor_angle, 'bw': gabor_bw, 'jitter': cell_jitter, 'metric': cell_metric}
 gen = _NOISE_MAP.get(str(noise_type), _NOISE_MAP['simplex'])(seed, cfg)
 has_fbm = hasattr(gen, 'fbm')
 is_relief = isinstance(gen, VoronoiReliefNoise)
@@ -1723,55 +1727,43 @@ else:
 # mesh_x and mesh_y pass through so Shape component can build the point grid
 """
 
-    SHAPE_SCRIPT = """# GHPython component script — MeshCraft | Shape
+    SHAPE_SCRIPT = """#! python 2
+# -*- coding: utf-8 -*-
+# GHPython component script — MeshCraft | Shape
 # Runtime: IronPython 2.7 (Rhino 7)
 #
 # Inputs:  z_values (list), cols (int), rows (int), mesh_x (float), mesh_y (float),
-#          amplitude, noise_exp, peak_exp, valley_exp, valley_floor,
-#          offset, contrast, sharpness
+#          amplitude, peak_exp, valley_exp, valley_floor,
+#          offset, invert
 # Outputs: pts (list of Point3d), cols (int passthrough), rows (int passthrough)
 import Rhino.Geometry as rg
 
+invert = globals().get('invert', False)
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 if amplitude    is None: amplitude    = 0.65
-if noise_exp    is None: noise_exp    = 0.5
-if peak_exp     is None: peak_exp     = 1.0
-if valley_exp   is None: valley_exp   = 1.0
+if peak_exp     is None: peak_exp     = 0.5
+if valley_exp   is None: valley_exp   = 0.5
 if valley_floor is None: valley_floor = 0.0
 if offset       is None: offset       = 0.0
-if contrast     is None: contrast     = 1.0
-if sharpness    is None: sharpness    = 0.0
 
 amplitude    = float(amplitude)
-noise_exp    = float(noise_exp)
 peak_exp     = float(peak_exp)
 valley_exp   = float(valley_exp)
 valley_floor = float(valley_floor)
 offset       = float(offset)
-contrast     = float(contrast)
-sharpness    = float(sharpness)
 cols_i = int(cols)
 rows_i = int(rows)
 mx = float(mesh_x)
 my = float(mesh_y)
 
-# ── Shaping pipeline (mirrors mesh.ts generateNoiseMesh lines 47-65) ──────────
+# ── Shaping pipeline (signed-amplitude path; web normalizes the shaped grid) ──────────
 pts = []
 for j in range(rows_i):
     for i in range(cols_i):
         n = float(z_values[j * cols_i + i])
 
-        # Contrast
-        n *= contrast
-
-        # Sharpness — preserves sign, amplifies curvature
-        if sharpness > 0:
-            sgn = 1 if n >= 0 else -1
-            n = sgn * (abs(n) ** (1.0 + sharpness))
-
-        # Noise exponent
-        sgn = 1 if n >= 0 else -1
-        n = sgn * (abs(n) ** noise_exp)
+        if bool(invert): n = -n
 
         # Peak / valley exponents applied to positive / negative halves separately
         if n >= 0:
@@ -1925,42 +1917,44 @@ if sigma > 0.0 and any(p.Z != pts[0].Z for p in pts):
 # Runtime: IronPython 2.7 (Rhino 7)
 #
 # Inputs:  preset (str) — name of preset to load
-# Outputs: noise_type, frequency, amplitude, noise_exp, peak_exp, valley_exp,
+# Outputs: noise_type, frequency, amplitude, invert, peak_exp, valley_exp,
 #          valley_floor, offset, octaves, persistence, lacunarity, distortion,
-#          contrast, sharpness, mesh_x, mesh_y, smooth_radius_in,
+#          cell_jitter, cell_metric, mesh_x, mesh_y, smooth_radius_in,
 #          gabor_angle, gabor_bw
 #
 # Usage: wire any output to the matching input on Noise/Shape/Smooth components
 #        to override the slider value for that parameter.
 
 PRESETS = {
-    'gentle-waves': {'noise_type':'simplex', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':2, 'persistence':0.3, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.07813763041664107},
-    'organic-terrain': {'noise_type':'fbm', 'frequency':0.1, 'amplitude':0.8, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':4, 'persistence':0.55, 'lacunarity':2, 'distortion':0.3, 'contrast':1.2, 'sharpness':0.2, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.040350098842101466},
-    'sharp-ridges': {'noise_type':'ridged', 'frequency':0.08, 'amplitude':0.5, 'noise_exp':1.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0, 'contrast':1.5, 'sharpness':0.8, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.0},
-    'voronoi-cells': {'noise_type':'voronoi', 'frequency':0.15, 'amplitude':0.3, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.06988842128494586},
-    'subtle-texture': {'noise_type':'perlin', 'frequency':0.12, 'amplitude':0.25, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.4, 'lacunarity':2.5, 'distortion':0.1, 'contrast':0.8, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.0754881226948038},
-    'deep-carve': {'noise_type':'fbm', 'frequency':0.05, 'amplitude':2, 'noise_exp':1.2, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.6, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.8, 'sharpness':0.5, 'mesh_x':24, 'mesh_y':18, 'smooth_radius_in':0.0},
-    'sculptural': {'noise_type':'fbm', 'frequency':0.04, 'amplitude':1.5, 'noise_exp':0.7, 'peak_exp':1.8, 'valley_exp':0.35, 'valley_floor':0.6, 'offset':0, 'octaves':3, 'persistence':0.55, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.3, 'sharpness':0.15, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.0605251482631522},
-    'hard-wave': {'noise_type':'simplex', 'frequency':0.05, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':2, 'valley_exp':0.3, 'valley_floor':0.75, 'offset':0, 'octaves':2, 'persistence':0.4, 'lacunarity':2, 'distortion':0.25, 'contrast':1.4, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.07813763041664107},
-    'eroded-stone': {'noise_type':'ridged', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1.5, 'valley_exp':0.4, 'valley_floor':0.5, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0.35, 'contrast':1.6, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.03494421064247293},
-    'billowy-clouds': {'noise_type':'billow', 'frequency':0.07, 'amplitude':0.8, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.45, 'lacunarity':2, 'distortion':0.15, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.06379910807698173},
-    'turbulent-marble': {'noise_type':'turbulence', 'frequency':0.08, 'amplitude':1, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.55, 'lacunarity':2.2, 'distortion':0.3, 'contrast':1.4, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.03494421064247293},
-    'natural-ridge': {'noise_type':'hybrid', 'frequency':0.06, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':1.2, 'valley_exp':0.5, 'valley_floor':0.3, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2, 'distortion':0.2, 'contrast':1.2, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.040350098842101466},
-    'organic-swirl': {'noise_type':'domainwarp', 'frequency':0.05, 'amplitude':1, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':1.8, 'distortion':0, 'contrast':1.1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.06379910807698173},
-    'worley-cracks': {'noise_type':'worley', 'frequency':0.12, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.1, 'contrast':1.2, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.040350098842101466},
-    'brushed-metal': {'noise_type':'gabor', 'frequency':0.1, 'amplitude':0.3, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'gabor_angle':15, 'gabor_bw':1.2, 'mesh_x':36, 'mesh_y':24, 'smooth_radius_in':0.03494421064247293},
-    'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':0.75, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.55, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.16, 'warp_curl':0, 'relief_cell_size':0.8, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'parabolic', 'relief_seam_depth':0.95, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_base_amp':0.5, 'relief_base_freq':0.2, 'relief_cell_size_gradient':1, 'relief_void_strength':0.7, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.6, 'relief_attractor_noise':0, 'relief_attractor_noise_freq':0.3, 'relief_density_noise':0.3, 'relief_density_noise_freq':0.16, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_radius_in':0.027317146052007444},
-    'relief-radial': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1.333333333333333, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.4, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.733333333333333, 'relief_jitter':0.8, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.7, 'relief_wall_width':0.12, 'relief_anisotropy':0.25, 'relief_anisotropy_angle':35, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.62, 'relief_attractor_y':0.42, 'relief_attractor_radius':0.55, 'relief_attractor_falloff':0.9, 'relief_density_strength':2, 'relief_intensity_strength':0.55, 'relief_transition_softness':0.15, 'relief_base_mode':'wave', 'relief_base_amp':0.25, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.38, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.45, 'relief_pillow_coverage':0.75, 'relief_depth_variation':0.2, 'relief_junction_lift':0.25, 'relief_crest_variation':0.15, 'relief_attractor_noise':0.25, 'relief_attractor_noise_freq':0.15, 'relief_density_noise':0.55, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':16, 'mesh_y':24, 'smooth_radius_in':0.028355159145325215},
-    'relief-pockets': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':1.2, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.12, 'warp_curl':0, 'relief_cell_size':2, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.62, 'relief_wall_width':0.11, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.14, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.5, 'relief_pillow_coverage':0.85, 'relief_depth_variation':0.35, 'relief_junction_lift':0.3, 'relief_crest_variation':0.5, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.2, 'relief_density_noise':1, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':1, 'relief_radial_focus1_x':0.3, 'relief_radial_focus1_y':0.42, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':2.2, 'relief_radial_falloff':0.32, 'relief_radial_grow':1.6, 'relief_radial_warp':0.5, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_radius_in':0.020175049421050733},
-    'relief-starburst': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.2, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1, 'relief_density_strength':0, 'relief_intensity_strength':1, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.35, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.25, 'relief_crest_variation':0.4, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.18, 'relief_density_noise':0.2, 'relief_density_noise_freq':0.12, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':1.2, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.3, 'relief_radial_warp':0.65, 'relief_radial_mode':'rays', 'mesh_x':8, 'mesh_y':24, 'smooth_radius_in':0.007765380142771763},
+    'gentle-waves': {'noise_type': 'simplex', 'frequency': 0.06, 'amplitude': 0.5, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 2, 'persistence': 0.3, 'lacunarity': 2, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.07813763041664107},
+    'organic-terrain': {'noise_type': 'simplex', 'frequency': 0.1, 'amplitude': 0.8, 'peak_exp': 0.84, 'valley_exp': 0.84, 'valley_floor': 0.0, 'offset': 0, 'octaves': 4, 'persistence': 0.55, 'lacunarity': 2, 'distortion': 0.3, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.040350098842101466},
+    'sharp-ridges': {'noise_type': 'ridged', 'frequency': 0.08, 'amplitude': 0.5, 'peak_exp': 2.7, 'valley_exp': 2.7, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.5, 'lacunarity': 2.2, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.0},
+    'voronoi-cells': {'noise_type': 'voronoi', 'frequency': 0.15, 'amplitude': 0.3, 'peak_exp': 0.8, 'valley_exp': 0.8, 'valley_floor': 0.0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.06988842128494586},
+    'subtle-texture': {'noise_type': 'perlin', 'frequency': 0.12, 'amplitude': 0.25, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.4, 'lacunarity': 2.5, 'distortion': 0.1, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.0754881226948038},
+    'deep-carve': {'noise_type': 'simplex', 'frequency': 0.05, 'amplitude': 2, 'peak_exp': 1.7999999999999998, 'valley_exp': 1.7999999999999998, 'valley_floor': 0.0, 'offset': 0, 'octaves': 5, 'persistence': 0.6, 'lacunarity': 1.8, 'distortion': 0.4, 'mesh_x': 24, 'mesh_y': 18, 'smooth_radius_in': 0.0},
+    'sculptural': {'noise_type': 'simplex', 'frequency': 0.04, 'amplitude': 1.5, 'peak_exp': 1.4489999999999998, 'valley_exp': 0.28174999999999994, 'valley_floor': 0.7055174172996764, 'offset': 0, 'octaves': 3, 'persistence': 0.55, 'lacunarity': 1.8, 'distortion': 0.4, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.0605251482631522},
+    'hard-wave': {'noise_type': 'simplex', 'frequency': 0.05, 'amplitude': 1.2, 'peak_exp': 1.32, 'valley_exp': 0.198, 'valley_floor': 0.8286104444190472, 'offset': 0, 'octaves': 2, 'persistence': 0.4, 'lacunarity': 2, 'distortion': 0.25, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.07813763041664107},
+    'eroded-stone': {'noise_type': 'ridged', 'frequency': 0.06, 'amplitude': 0.5, 'peak_exp': 1.56, 'valley_exp': 0.41600000000000004, 'valley_floor': 0.7079503136385321, 'offset': 0, 'octaves': 4, 'persistence': 0.5, 'lacunarity': 2.2, 'distortion': 0.35, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.03494421064247293},
+    'billowy-clouds': {'noise_type': 'billow', 'frequency': 0.07, 'amplitude': 0.8, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.45, 'lacunarity': 2, 'distortion': 0.15, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.06379910807698173},
+    'turbulent-marble': {'noise_type': 'billow', 'frequency': 0.08, 'amplitude': 1, 'peak_exp': 0.9099999999999999, 'valley_exp': 0.9099999999999999, 'valley_floor': 0.0, 'offset': 0, 'octaves': 5, 'persistence': 0.55, 'lacunarity': 2.2, 'distortion': 0.3, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.03494421064247293},
+    'natural-ridge': {'noise_type': 'hybrid', 'frequency': 0.06, 'amplitude': 1.2, 'peak_exp': 0.792, 'valley_exp': 0.33, 'valley_floor': 0.3565477788936814, 'offset': 0, 'octaves': 4, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.2, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.040350098842101466},
+    'organic-swirl': {'noise_type': 'domainwarp', 'frequency': 0.05, 'amplitude': 1, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.5, 'lacunarity': 1.8, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.06379910807698173},
+    'worley-cracks': {'noise_type': 'worley', 'frequency': 0.12, 'amplitude': 0.5, 'peak_exp': 1.04, 'valley_exp': 1.04, 'valley_floor': 0.0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.1, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.040350098842101466},
+    'brushed-metal': {'noise_type': 'gabor', 'frequency': 0.1, 'amplitude': 0.3, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0, 'gabor_angle': 15, 'gabor_bw': 1.2, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.03494421064247293},
+    'relief-vertical': {'noise_type': 'voronoi-relief', 'frequency': 0.2, 'amplitude': 0.75, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.55, 'relief_warp_freq': 0.16, 'warp_curl': 0, 'relief_cell_size': 0.8, 'relief_jitter': 0.95, 'relief_relax_iter': 1, 'relief_polarity': 'domes', 'relief_profile': 'parabolic', 'relief_seam_depth': 0.95, 'relief_wall_width': 0.08, 'relief_anisotropy': 0, 'relief_anisotropy_angle': 0, 'relief_attractor_mode': 'vertical', 'relief_attractor_x': 0.5, 'relief_attractor_y': 0, 'relief_attractor_radius': 0.5, 'relief_attractor_falloff': 2.2, 'relief_density_strength': 1.8, 'relief_intensity_strength': 1, 'relief_transition_softness': 0.45, 'relief_base_mode': 'wave', 'relief_base_amp': 0.5, 'relief_base_freq': 0.2, 'relief_cell_size_gradient': 1, 'relief_void_strength': 0.7, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0, 'relief_pillow_coverage': 0.6, 'relief_attractor_noise': 0, 'relief_attractor_noise_freq': 0.3, 'relief_density_noise': 0.3, 'relief_density_noise_freq': 0.16, 'relief_radial_foci_count': 0, 'relief_radial_focus1_x': 0.5, 'relief_radial_focus1_y': 0.25, 'relief_radial_focus2_x': 0.25, 'relief_radial_focus2_y': 0.6, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.8, 'relief_radial_strength': 1.5, 'relief_radial_falloff': 0.3, 'relief_radial_grow': 0.45, 'relief_radial_warp': 0.4, 'relief_radial_mode': 'rays', 'mesh_x': 12, 'mesh_y': 24, 'smooth_radius_in': 0.027317146052007444},
+    'relief-radial': {'noise_type': 'voronoi-relief', 'frequency': 0.15, 'amplitude': 1.333333333333333, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.4, 'relief_warp_freq': 0.105, 'warp_curl': 0, 'relief_cell_size': 1.733333333333333, 'relief_jitter': 0.8, 'relief_relax_iter': 1, 'relief_polarity': 'pockets', 'relief_profile': 'cosine', 'relief_seam_depth': 0.7, 'relief_wall_width': 0.12, 'relief_anisotropy': 0.25, 'relief_anisotropy_angle': 35, 'relief_attractor_mode': 'radial', 'relief_attractor_x': 0.62, 'relief_attractor_y': 0.42, 'relief_attractor_radius': 0.55, 'relief_attractor_falloff': 0.9, 'relief_density_strength': 2, 'relief_intensity_strength': 0.55, 'relief_transition_softness': 0.15, 'relief_base_mode': 'wave', 'relief_base_amp': 0.25, 'relief_base_freq': 0.09, 'relief_cell_size_gradient': 0.8, 'relief_void_strength': 0.38, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0.45, 'relief_pillow_coverage': 0.75, 'relief_depth_variation': 0.2, 'relief_junction_lift': 0.25, 'relief_crest_variation': 0.15, 'relief_attractor_noise': 0.25, 'relief_attractor_noise_freq': 0.15, 'relief_density_noise': 0.55, 'relief_density_noise_freq': 0.09, 'relief_radial_foci_count': 0, 'relief_radial_focus1_x': 0.5, 'relief_radial_focus1_y': 0.25, 'relief_radial_focus2_x': 0.25, 'relief_radial_focus2_y': 0.6, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.8, 'relief_radial_strength': 1.5, 'relief_radial_falloff': 0.3, 'relief_radial_grow': 0.45, 'relief_radial_warp': 0.4, 'relief_radial_mode': 'rays', 'mesh_x': 16, 'mesh_y': 24, 'smooth_radius_in': 0.028355159145325215},
+    'relief-pockets': {'noise_type': 'voronoi-relief', 'frequency': 0.2, 'amplitude': 1.2, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.35, 'relief_warp_freq': 0.12, 'warp_curl': 0, 'relief_cell_size': 2, 'relief_jitter': 0.85, 'relief_relax_iter': 1, 'relief_polarity': 'pockets', 'relief_profile': 'cosine', 'relief_seam_depth': 0.62, 'relief_wall_width': 0.11, 'relief_anisotropy': 0.2, 'relief_anisotropy_angle': 75, 'relief_attractor_mode': 'vertical', 'relief_attractor_x': 0.5, 'relief_attractor_y': 0, 'relief_attractor_radius': 0.5, 'relief_attractor_falloff': 0.35, 'relief_density_strength': 1.2, 'relief_intensity_strength': 0.9, 'relief_transition_softness': 0.35, 'relief_base_mode': 'wave', 'relief_base_amp': 0.3, 'relief_base_freq': 0.14, 'relief_cell_size_gradient': 0.8, 'relief_void_strength': 0, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0.5, 'relief_pillow_coverage': 0.85, 'relief_depth_variation': 0.35, 'relief_junction_lift': 0.3, 'relief_crest_variation': 0.5, 'relief_attractor_noise': 0.5, 'relief_attractor_noise_freq': 0.2, 'relief_density_noise': 1, 'relief_density_noise_freq': 0.09, 'relief_radial_foci_count': 1, 'relief_radial_focus1_x': 0.3, 'relief_radial_focus1_y': 0.42, 'relief_radial_focus2_x': 0.25, 'relief_radial_focus2_y': 0.6, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.8, 'relief_radial_strength': 2.2, 'relief_radial_falloff': 0.32, 'relief_radial_grow': 1.6, 'relief_radial_warp': 0.5, 'relief_radial_mode': 'rays', 'mesh_x': 12, 'mesh_y': 24, 'smooth_radius_in': 0.020175049421050733},
+    'relief-starburst': {'noise_type': 'voronoi-relief', 'frequency': 0.15, 'amplitude': 1, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.35, 'relief_warp_freq': 0.105, 'warp_curl': 0, 'relief_cell_size': 1.2, 'relief_jitter': 0.55, 'relief_relax_iter': 1, 'relief_polarity': 'pockets', 'relief_profile': 'cosine', 'relief_seam_depth': 0.5, 'relief_wall_width': 0.08, 'relief_anisotropy': 0, 'relief_anisotropy_angle': 0, 'relief_attractor_mode': 'none', 'relief_attractor_x': 0.5, 'relief_attractor_y': 0.5, 'relief_attractor_radius': 0.5, 'relief_attractor_falloff': 1, 'relief_density_strength': 0, 'relief_intensity_strength': 1, 'relief_transition_softness': 0.5, 'relief_base_mode': 'wave', 'relief_base_amp': 0.35, 'relief_base_freq': 0.09, 'relief_cell_size_gradient': 0.4, 'relief_void_strength': 0, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0, 'relief_pillow_coverage': 0.5, 'relief_depth_variation': 0.35, 'relief_junction_lift': 0.25, 'relief_crest_variation': 0.4, 'relief_attractor_noise': 0.2, 'relief_attractor_noise_freq': 0.18, 'relief_density_noise': 0.2, 'relief_density_noise_freq': 0.12, 'relief_radial_foci_count': 3, 'relief_radial_focus1_x': 0.7, 'relief_radial_focus1_y': 0.18, 'relief_radial_focus2_x': 0.2, 'relief_radial_focus2_y': 0.5, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.85, 'relief_radial_strength': 1.2, 'relief_radial_falloff': 0.3, 'relief_radial_grow': 0.3, 'relief_radial_warp': 0.65, 'relief_radial_mode': 'rays', 'mesh_x': 8, 'mesh_y': 24, 'smooth_radius_in': 0.007765380142771763},
 }
 
 p = PRESETS.get(str(preset), PRESETS['gentle-waves'])
+invert = False
+cell_jitter = 1.0
+cell_metric = 'euclidean'
 
 noise_type   = p['noise_type']
 frequency    = p['frequency']
 amplitude    = p['amplitude']
-noise_exp    = p['noise_exp']
 peak_exp     = p['peak_exp']
 valley_exp   = p['valley_exp']
 valley_floor = p['valley_floor']
@@ -1969,8 +1963,6 @@ octaves      = p['octaves']
 persistence  = p['persistence']
 lacunarity   = p['lacunarity']
 distortion   = p['distortion']
-contrast     = p['contrast']
-sharpness    = p['sharpness']
 mesh_x       = p['mesh_x']
 mesh_y       = p['mesh_y']
 smooth_radius_in = p['smooth_radius_in']
@@ -2105,8 +2097,6 @@ relief_cut_depth_in = min(2.6, amplitude)
         ("OpenSimplex2",        "opensimplex2"),
         ("Ridged",              "ridged"),
         ("Billow",              "billow"),
-        ("FBM",                 "fbm"),
-        ("Turbulence",          "turbulence"),
         ("Hybrid Multifractal", "hybrid"),
         ("Hetero Terrain",      "hetero"),
         ("Domain Warp",         "domainwarp"),
@@ -2187,7 +2177,7 @@ relief_cut_depth_in = min(2.6, amplitude)
     ni = {}
     for name in ["noise_type","seed","frequency","octaves","persistence",
                  "lacunarity","distortion","gabor_angle","gabor_bw",
-                 "mesh_x","mesh_y","resolution"]:
+                 "mesh_x","mesh_y","resolution","cell_jitter","cell_metric"]:
         ni[name] = add_in(noise_comp, name)
     # Voronoi-relief input pins. Unwired by default — the embedded NOISE_SCRIPT
     # handles missing/None values via `_relief_default`, so these pins can sit
@@ -2209,8 +2199,8 @@ relief_cut_depth_in = min(2.6, amplitude)
     si["z_values"] = add_in(shape_comp, "z_values", ghk.GH_ParamAccess.list)
     for name in ["cols","rows","mesh_x","mesh_y"]:
         si[name] = add_in(shape_comp, name)
-    for name in ["amplitude","noise_exp","peak_exp","valley_exp",
-                 "valley_floor","offset","contrast","sharpness"]:
+    for name in ["amplitude","invert","peak_exp","valley_exp",
+                 "valley_floor","offset"]:
         si[name] = add_in(shape_comp, name)
 
     so = {}
@@ -2239,10 +2229,10 @@ relief_cut_depth_in = min(2.6, amplitude)
     pri["preset"] = add_in(preset_comp, "preset")
 
     pro = {}
-    for name in ["noise_type","frequency","amplitude","noise_exp","peak_exp",
+    for name in ["noise_type","frequency","amplitude","invert","peak_exp",
                  "valley_exp","valley_floor","offset","octaves","persistence",
-                 "lacunarity","distortion","contrast","sharpness",
-                 "mesh_x","mesh_y","smooth_radius_in","gabor_angle","gabor_bw"]:
+                 "lacunarity","distortion",
+                 "mesh_x","mesh_y","smooth_radius_in","gabor_angle","gabor_bw","cell_jitter","cell_metric"]:
         pro[name] = add_out(preset_comp, name)
     # Voronoi-relief preset outputs — wire to the Noise component's matching pins
     # to use the relief presets (relief-vertical / relief-radial / relief-pockets).
@@ -2262,6 +2252,8 @@ relief_cut_depth_in = min(2.6, amplitude)
     sl["distortion"]  = fslider("distortion",  SL1, Y, 0.0, 1.0, 0.0)     ; Y += DY
     sl["gabor_angle"] = fslider("gabor_angle", SL1, Y, 0.0, 180., 45., 1) ; Y += DY
     sl["gabor_bw"]    = fslider("gabor_bw",    SL1, Y, 0.1, 3.0, 1.5)     ; Y += DY
+    sl["cell_jitter"] = fslider("cell_jitter", SL1, Y, 0.0, 1.0, 1.0) ; Y += DY
+    vl_metric = vlist(SL1, Y, [("Euclidean", "euclidean"), ("Manhattan", "manhattan"), ("Chebyshev", "chebyshev")], 0) ; Y += DY
     sl["mesh_x"]      = fslider("mesh_x",      SL1, Y, 1.0, 36., 36., 1)  ; Y += DY
     sl["mesh_y"]      = fslider("mesh_y",      SL1, Y, 1.0, 24., 24., 1)  ; Y += DY
     sl["resolution"]  = islider("resolution",   SL1, Y,  16, 256, 96)      ; Y += DY
@@ -2269,13 +2261,11 @@ relief_cut_depth_in = min(2.6, amplitude)
     # ── Sliders: Shape ────────────────────────────────────────────────────
     Y = 100
     sl["amplitude"]    = fslider("amplitude",    SL2, Y, .01, 2.6, .65)   ; Y += DY
-    sl["noise_exp"]    = fslider("noise_exp",    SL2, Y, 0.1, 3.0, 0.5)   ; Y += DY
-    sl["peak_exp"]     = fslider("peak_exp",     SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
-    sl["valley_exp"]   = fslider("valley_exp",   SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
+    sl["invert"] = islider("invert", SL2, Y, 0, 1, 0) ; Y += DY
+    sl["peak_exp"]     = fslider("Peak Shape",     SL2, Y, 0.1, 5.4, 0.5)   ; Y += DY
+    sl["valley_exp"]   = fslider("Valley Shape",   SL2, Y, 0.1, 5.4, 0.5)   ; Y += DY
     sl["valley_floor"] = fslider("valley_floor", SL2, Y, 0.0, 1.0, 0.0)   ; Y += DY
     sl["offset"]       = fslider("offset",       SL2, Y,-2.0, 2.0, 0.0)   ; Y += DY
-    sl["contrast"]     = fslider("contrast",     SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
-    sl["sharpness"]    = fslider("sharpness",    SL2, Y, 0.0, 2.0, 0.0)   ; Y += DY
 
     # ── Sliders: Smooth ───────────────────────────────────────────────────
     Y = 100
@@ -2287,6 +2277,8 @@ relief_cut_depth_in = min(2.6, amplitude)
     a = "checkpoint: step 6 - wiring " + str(len(sl)) + " sliders"
     # ── Wire: sliders → Noise Gen ─────────────────────────────────────────
     ni["noise_type"].AddSource(vl_noise)
+    ni["cell_jitter"].AddSource(sl["cell_jitter"])
+    ni["cell_metric"].AddSource(vl_metric)
     for k in ["seed","frequency","octaves","persistence","lacunarity",
               "distortion","gabor_angle","gabor_bw","mesh_x","mesh_y","resolution"]:
         ni[k].AddSource(sl[k])
@@ -2299,8 +2291,8 @@ relief_cut_depth_in = min(2.6, amplitude)
     si["mesh_y"].AddSource(no["mesh_y"])
 
     # ── Wire: sliders → Shape ─────────────────────────────────────────────
-    for k in ["amplitude","noise_exp","peak_exp","valley_exp",
-              "valley_floor","offset","contrast","sharpness"]:
+    for k in ["amplitude","invert","peak_exp","valley_exp",
+              "valley_floor","offset"]:
         si[k].AddSource(sl[k])
 
     # ── Wire: Shape → Smooth ──────────────────────────────────────────────

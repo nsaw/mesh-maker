@@ -11,13 +11,15 @@ export interface MeshState extends DrapeSettings {
   viewMode: 'solid' | 'wireframe' | 'both' | 'points';
   exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp';
   // Noise params
-  noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi'
-    | 'value' | 'opensimplex2' | 'worley' | 'billow' | 'turbulence'
+  noiseType: 'simplex' | 'perlin' | 'ridged' | 'voronoi'
+    | 'value' | 'opensimplex2' | 'worley' | 'billow'
     | 'hybrid' | 'hetero' | 'domainwarp' | 'gabor' | 'wavelet'
     | 'voronoi-relief';
   frequency: number;
   amplitude: number;
-  noiseExp: number;
+  cellJitter: number;
+  cellMetric: 'euclidean' | 'manhattan' | 'chebyshev';
+  invert: boolean;
   peakExp: number;
   valleyExp: number;
   valleyFloor: number;
@@ -29,8 +31,6 @@ export interface MeshState extends DrapeSettings {
   distortion: number;
   warpFreq: number;
   warpCurl: number;
-  contrast: number;
-  sharpness: number;
   gaborAngle: number;
   gaborBandwidth: number;
   // Voronoi-relief params (only used when noiseType === 'voronoi-relief')
@@ -171,9 +171,11 @@ export const DEFAULTS: MeshState = {
   noiseType: 'simplex',
   frequency: 0.1,
   amplitude: 0.50,
-  noiseExp: 0.5,
-  peakExp: 1.0,
-  valleyExp: 1.0,
+  cellJitter: 1,
+  cellMetric: 'euclidean',
+  invert: false,
+  peakExp: 0.5,
+  valleyExp: 0.5,
   valleyFloor: 0,
   offset: 0,
   seed: 0,
@@ -183,8 +185,6 @@ export const DEFAULTS: MeshState = {
   distortion: 0,
   warpFreq: 0.1,
   warpCurl: 0,
-  contrast: 1.0,
-  sharpness: 0,
   gaborAngle: 45,
   gaborBandwidth: 1.5,
   reliefCellSize: 1.5,
@@ -353,6 +353,7 @@ const ENUM_VALUES: {
   viewMode: Record<MeshState['viewMode'], true>;
   viewMaterial: Record<MeshState['viewMaterial'], true>;
   drapeWindMode: Record<DrapeWindMode, true>;
+  cellMetric: Record<MeshState['cellMetric'], true>;
   reliefPolarity: Record<ReliefPolarity, true>;
   reliefProfile: Record<ReliefProfile, true>;
   reliefAttractorMode: Record<ReliefAttractorMode, true>;
@@ -361,13 +362,14 @@ const ENUM_VALUES: {
 } = {
   mode: { noise: true, depthmap: true, drape: true },
   noiseType: {
-    simplex: true, perlin: true, ridged: true, fbm: true, voronoi: true, value: true, opensimplex2: true,
-    worley: true, billow: true, turbulence: true, hybrid: true, hetero: true, domainwarp: true,
+    simplex: true, perlin: true, ridged: true, voronoi: true, value: true, opensimplex2: true,
+    worley: true, billow: true, hybrid: true, hetero: true, domainwarp: true,
     gabor: true, wavelet: true, 'voronoi-relief': true,
   },
   viewMode: { solid: true, wireframe: true, both: true, points: true },
   viewMaterial: { elevation: true, neutral: true },
   drapeWindMode: { off: true, wind: true, pressure: true },
+  cellMetric: { euclidean: true, manhattan: true, chebyshev: true },
   reliefPolarity: { pockets: true, domes: true },
   reliefProfile: { hemisphere: true, cosine: true, parabolic: true },
   reliefAttractorMode: { none: true, vertical: true, horizontal: true, radial: true, point: true },
@@ -376,9 +378,9 @@ const ENUM_VALUES: {
 };
 
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
-  'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
+  'mode', 'noiseType', 'frequency', 'amplitude', 'cellJitter', 'cellMetric', 'invert', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth',
+  'warpFreq', 'warpCurl', 'gaborAngle', 'gaborBandwidth',
   'reliefCellSize', 'reliefJitter', 'reliefRelaxIterations', 'reliefPolarity', 'reliefProfile',
   'reliefSeamDepth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
   'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
@@ -401,7 +403,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 ];
 
 // Generation and preset semantics changed. Incompatible links reset explicitly.
-export const CURRENT_PAYLOAD_VERSION = 23;
+export const CURRENT_PAYLOAD_VERSION = 24;
 let outdatedLinkReset = false;
 
 /** Read and clear the reset notice from the latest deserialize operation. */
@@ -527,8 +529,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // Clamp untrusted numeric ranges from URL payloads. Sliders enforce these in the UI,
     // but payloads can come from any source (manual URL edit, third-party share). Without
     // these guards, a crafted link can spin the browser:
-    //   - reliefRelaxIterations: each pass scans every sample × every site (O(rows·cols·sites))
-    //   - reliefDensityStrength: multiplies the site count itself, then both Pass 1+2 scan all sites
+    //   - reliefRelaxIterations repeats relaxation over the bounded site population
+    //   - reliefDensityStrength increases candidate population before representative selection
     //
     // The allowlist boundary admits only actual finite numbers for numeric STATE fields.
     const clampField = (key: keyof MeshState, lo: number, hi: number, integer = false): void => {
@@ -558,6 +560,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     };
     clampEnum('mode', ENUM_VALUES.mode);
     clampEnum('noiseType', ENUM_VALUES.noiseType);
+    clampEnum('cellMetric', ENUM_VALUES.cellMetric);
+    if ('cellJitter' in result) clampField('cellJitter', 0, 1);
     clampEnum('viewMode', ENUM_VALUES.viewMode);
     clampEnum('viewMaterial', ENUM_VALUES.viewMaterial);
     clampEnum('drapeWindMode', ENUM_VALUES.drapeWindMode);
@@ -568,10 +572,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     clampEnum('reliefRadialMode', ENUM_VALUES.reliefRadialMode);
     clampEnum('activePreset', CNC_PRESETS, true);
     clampEnum('activeProfile', PROFILES, true);
-    // Booleans must be booleans: "false" is a truthy string, and an array or number would flow
-    // into watertight's floor logic the same way. watertight is the only boolean link key.
-    if ('watertight' in result && typeof result.watertight !== 'boolean') {
-      delete (result as Record<string, unknown>).watertight;
+    for (const key of ['watertight', 'invert'] as const) {
+      if (key in result && typeof result[key] !== 'boolean') delete result[key];
     }
     // distortion drives the relief space-warp amplitude AND the radius-field padding —
     // an unbounded payload value explodes the padded coarse-grid allocation.

@@ -11,7 +11,7 @@ Procedural height data for meshes comes from pluggable noise generators in `src/
 ```mermaid
 flowchart TD
   A[STATE / preset params] --> B{noiseType}
-  B -->|simplex/perlin/fbm/ridged/etc| C[per-pixel loop: warp -> FBM -> shaping]
+  B -->|simplex/perlin/billow/ridged/etc| C[per-pixel loop: warp -> FBM -> shaping]
   B -->|voronoi-relief| D[VoronoiReliefGen.sampleGrid]
   C --> E[grid of raw heights]
   D --> E
@@ -21,9 +21,11 @@ flowchart TD
 
 ## Base and fractal generators
 
-`generators.ts` implements one family of interchangeable `NoiseGenerator`/`FBMGenerator` classes: `SimplexNoiseGen`, `PerlinNoiseGen`, `ValueNoiseGen`, `OpenSimplex2NoiseGen` as raw noise; `RidgedNoiseGen`, `BillowNoiseGen`, `FBMNoiseGen`, `TurbulenceNoiseGen` as basic fractal wrappers; `HybridMultifractalGen` and `HeteroTerrainGen` as multifractal variants that weight each octave by the running result; `DomainWarpNoiseGen` which warps its own coordinates using a second Simplex field before sampling; `VoronoiNoiseGen` and `WorleyNoiseGen` as cellular (F1/F2 distance) noise; and `GaborNoiseGen`/`WaveletNoiseGen` as more specialized textures (oriented Gabor kernels, a precomputed tileable wavelet grid). All of these implement `.noise(x, y)` and, where fractal, `.fbm(x, y, octaves, persistence, lacunarity)`. `createNoiseGen(type, seed, config)` is the single factory switch; `voronoi-relief` is the one case that returns a `VoronoiReliefGen` rather than a plain `NoiseGenerator`.
+`generators.ts` implements one family of interchangeable `NoiseGenerator`/`FBMGenerator` classes: `SimplexNoiseGen`, `PerlinNoiseGen`, `ValueNoiseGen`, `OpenSimplex2NoiseGen` as raw noise; `RidgedNoiseGen` and `BillowNoiseGen` as basic fractal wrappers; `HybridMultifractalGen` and `HeteroTerrainGen` as multifractal variants that weight each octave by the running result; `DomainWarpNoiseGen` which warps its own coordinates using a second Simplex field before sampling; `VoronoiNoiseGen` and `WorleyNoiseGen` as cellular (F1/F2 distance) noise; and `GaborNoiseGen`/`WaveletNoiseGen` as more specialized textures (oriented Gabor kernels, a precomputed tileable wavelet grid). All of these implement `.noise(x, y)` and, where fractal, `.fbm(x, y, octaves, persistence, lacunarity)`. `createNoiseGen(type, seed, config)` is the single factory switch; `voronoi-relief` is the one case that returns a `VoronoiReliefGen` rather than a plain `NoiseGenerator`.
 
-`src/noise/surface.ts`'s `sampleNoiseGrid` is the shared per-pixel driver for every type except `voronoi-relief`: for each grid cell it optionally applies domain warp (convergent + curl blend, using a `warpGen` Simplex instance), samples the generator's `fbm` or manual octave loop, then applies `contrast`, `sharpness`, `noiseExp`, `peakExp`/`valleyExp`, and `valleyFloor` shaping in a fixed order. The result is a raw, un-normalized grid; `buildNoiseSurface` then smooths and runs a CNC-z mapping pass over the combined data, with separate scalar full-depth and relief non-amplifying mappings.
+`src/noise/surface.ts`'s `sampleNoiseGrid` is the shared per-pixel driver for every type except `voronoi-relief`: for each grid cell it optionally applies domain warp (convergent + curl blend, using a `warpGen` Simplex instance), samples the generator's `fbm` or manual octave loop, then applies `invert` before separate `peakExp`/`valleyExp` powers and `valleyFloor` shaping. The result is a raw, un-normalized grid; `buildNoiseSurface` then smooths and runs a CNC-z mapping pass over the combined data, with separate scalar full-depth and relief non-amplifying mappings.
+
+FBM remains the octave-summation technique and interface method. Its former separate menu entry is folded into Simplex; the former Turbulence entry is folded into Billow. Plain Voronoi/Worley use ordered coordinate hashing, jitter from 0 to 1 and Euclidean, Manhattan or Chebyshev distance with complete F1/F2 search. Their hash is separate from the legacy relief cell hash. Historical migration fixtures retain removed fields as input provenance.
 
 ## Voronoi relief: why it needs its own path
 
@@ -44,7 +46,7 @@ The algorithm's structural mechanisms (v16+):
 
 ## Presets
 
-`presets.ts` exports `PROFILES` (shape-only overrides: octaves/persistence/lacunarity/distortion/contrast/sharpness for smooth/rough/organic/geometric/crystalline/waves) and `CNC_PRESETS`, which bundle a full noise type plus mesh/smoothing parameters keyed by name (e.g. `gentle-waves`, `sharp-ridges`, `voronoi-cells`). `presetState()` first restores `PRESET_OWNED_KEYS` from `DEFAULTS`, then applies the selected preset. Owned fields cover noise, relief, board dimensions, stock and smoothing, so omitted values do not leak from the previous preset. Seed, resolution, camera, mode, export, depth-map and drape settings are retained. Profiles remain modifiers of the current texture.
+`presets.ts` exports `PROFILES` (shape-only overrides: octaves/persistence/lacunarity/distortion/peakExp/valleyExp for smooth/rough/organic/geometric/crystalline/waves) and `CNC_PRESETS`, which bundle a full noise type plus mesh/smoothing parameters keyed by name (e.g. `gentle-waves`, `sharp-ridges`, `voronoi-cells`). `presetState()` first restores `PRESET_OWNED_KEYS` from `DEFAULTS`, then applies the selected preset. Owned fields cover noise, relief, board dimensions, stock and smoothing, so omitted values do not leak from the previous preset. Seed, resolution, camera, mode, export, depth-map and drape settings are retained. Profiles remain modifiers of the current texture.
 
 Four relief presets target a specific reference look (`lafabricatrun`-style wood carvings):
 - `relief-vertical`: smooth wave field at top fading to dense domed cells at the bottom (`attractorMode: 'vertical'`, `attractorY: 0`).

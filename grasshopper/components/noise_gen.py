@@ -506,22 +506,6 @@ class RidgedNoise(object):
 class BillowNoise(object):
     def __init__(self, seed=0): self.base = SimplexNoise(seed)
     def noise(self, x, y): return abs(self.base.noise(x,y))*2.0-1.0
-
-
-class FBMNoise(object):
-    def __init__(self, seed=0): self.base = SimplexNoise(seed)
-    def noise(self, x, y): return self.base.noise(x, y)
-    def fbm(self, x, y, octs, pers, lac):
-        val = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
-        for i in range(octs):
-            val += self.base.noise(x*freq, y*freq)*amp
-            mx += amp; amp *= pers; freq *= lac
-        return val/mx
-
-
-class TurbulenceNoise(object):
-    def __init__(self, seed=0): self.base = SimplexNoise(seed)
-    def noise(self, x, y): return self.base.noise(x, y)
     def fbm(self, x, y, octs, pers, lac):
         val = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
         for i in range(octs):
@@ -576,38 +560,58 @@ class DomainWarpNoise(object):
         return val/mx
 
 
-class VoronoiNoise(object):
-    def __init__(self, seed=0): self.seed = seed
-    def _sr(self, s): x = math.sin(s)*10000.0; return x-math.floor(x)
-    def _hash(self, x, y):
-        return int(math.floor(self._sr(x*374761393.0+y*668265263.0+self.seed)*1000.0))
-    def noise(self, x, y):
-        cx = int(math.floor(x)); cy = int(math.floor(y)); mn = float('inf')
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = cx+i; ny = cy+j; h = self._hash(nx, ny)
-                px = nx+self._sr(h); py = ny+self._sr(h+1)
-                d = math.hypot(x-px, y-py)
-                if d < mn: mn = d
-        return 1.0-mn*2.0
-
-
-class WorleyNoise(object):
-    def __init__(self, seed=0): self.seed = seed
-    def _sr(self, s): x = math.sin(s)*10000.0; return x-math.floor(x)
-    def _hash(self, x, y):
-        return int(math.floor(self._sr(x*374761393.0+y*668265263.0+self.seed)*1000.0))
-    def noise(self, x, y):
+class _Cellular(object):
+    @staticmethod
+    def avalanche(value):
+        value &= 0xffffffff
+        h = ((value ^ (value >> 16)) * 0x7feb352d) & 0xffffffff
+        h = ((h ^ (h >> 15)) * 0x846ca68b) & 0xffffffff
+        return (h ^ (h >> 16)) & 0xffffffff
+    @staticmethod
+    def hash01(x, y, seed):
+        h = _Cellular.avalanche((int(seed) & 0xffffffff) ^ 0x9e3779b9)
+        h = _Cellular.avalanche(h + int(x) * 0x85ebca6b)
+        h = _Cellular.avalanche(h + (int(x) // 4294967296) * 0x9e3779b1)
+        h = _Cellular.avalanche(h + int(y) * 0xc2b2ae35)
+        h = _Cellular.avalanche(h + (int(y) // 4294967296) * 0x27d4eb2d)
+        return float(h) / 4294967296.0
+    @staticmethod
+    def site(x, y, seed, jitter):
+        seed32 = int(seed) & 0xffffffff
+        return (x + 0.5 + (_Cellular.hash01(x, y, seed32) - 0.5) * jitter,
+                y + 0.5 + (_Cellular.hash01(x, y, (seed32 + 1013) & 0xffffffff) - 0.5) * jitter)
+    @staticmethod
+    def distances(x, y, seed, jitter, metric):
+        if x != x or y != y or abs(x) > 9007199254740987 or abs(y) > 9007199254740987 or jitter != jitter or jitter < 0 or jitter > 1:
+            raise ValueError('Cellular samples require finite coordinates and jitter in [0, 1]')
         cx = int(math.floor(x)); cy = int(math.floor(y))
-        f1 = float('inf'); f2 = float('inf')
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = cx+i; ny = cy+j; h = self._hash(nx, ny)
-                px = nx+self._sr(h); py = ny+self._sr(h+1)
-                d = math.hypot(x-px, y-py)
-                if d < f1: f2 = f1; f1 = d
-                elif d < f2: f2 = d
-        return min((f2-f1)*1.5, 1.0)*2.0-1.0
+        f1 = float('inf'); f2 = float('inf'); radius = 0
+        while True:
+            for i in range(-radius, radius + 1):
+                for j in range(-radius, radius + 1):
+                    if radius and abs(i) != radius and abs(j) != radius: continue
+                    px, py = _Cellular.site(cx + i, cy + j, seed, jitter)
+                    dx = abs(x - px); dy = abs(y - py)
+                    d = dx + dy if metric == 'manhattan' else max(dx, dy) if metric == 'chebyshev' else math.hypot(dx, dy)
+                    if d < f1: f2 = f1; f1 = d
+                    elif d < f2: f2 = d
+            outside = min(x - (cx - radius), cx + radius + 1 - x,
+                          y - (cy - radius), cy + radius + 1 - y)
+            if outside >= f2: return (f1, f2)
+            radius += 1
+
+
+class VoronoiNoise(object):
+    def __init__(self, seed=0, jitter=1.0, metric='euclidean'):
+        self.seed = seed; self.jitter = jitter; self.metric = metric
+    def noise(self, x, y):
+        return 1.0 - _Cellular.distances(x, y, self.seed, self.jitter, self.metric)[0] * 2.0
+
+
+class WorleyNoise(VoronoiNoise):
+    def noise(self, x, y):
+        f1, f2 = _Cellular.distances(x, y, self.seed, self.jitter, self.metric)
+        return min((f2 - f1) * 1.5, 1.0) * 2.0 - 1.0
 
 
 class GaborNoise(object):
@@ -1548,19 +1552,19 @@ _NOISE_MAP = {
     'opensimplex2': lambda s, cfg: OpenSimplex2Noise(s),
     'ridged':       lambda s, cfg: RidgedNoise(s),
     'billow':       lambda s, cfg: BillowNoise(s),
-    'fbm':          lambda s, cfg: FBMNoise(s),
-    'turbulence':   lambda s, cfg: TurbulenceNoise(s),
     'hybrid':       lambda s, cfg: HybridMultifractal(s),
     'hetero':       lambda s, cfg: HeteroTerrain(s),
     'domainwarp':   lambda s, cfg: DomainWarpNoise(s),
-    'voronoi':      lambda s, cfg: VoronoiNoise(s),
-    'worley':       lambda s, cfg: WorleyNoise(s),
+    'voronoi':      lambda s, cfg: VoronoiNoise(s, cfg['jitter'], cfg['metric']),
+    'worley':       lambda s, cfg: WorleyNoise(s, cfg['jitter'], cfg['metric']),
     'gabor':        lambda s, cfg: GaborNoise(s, cfg.get('angle', 45.0), cfg.get('bw', 1.5)),
     'wavelet':      lambda s, cfg: WaveletNoise(s),
     'voronoi-relief': lambda s, cfg: VoronoiReliefNoise(s),
 }
 
-cfg = {'angle': gabor_angle, 'bw': gabor_bw}
+cell_jitter = float(globals().get('cell_jitter') if globals().get('cell_jitter') is not None else 1.0)
+cell_metric = globals().get('cell_metric') or 'euclidean'
+cfg = {'angle': gabor_angle, 'bw': gabor_bw, 'jitter': cell_jitter, 'metric': cell_metric}
 gen = _NOISE_MAP.get(str(noise_type), _NOISE_MAP['simplex'])(seed, cfg)
 has_fbm = hasattr(gen, 'fbm')
 is_relief = isinstance(gen, VoronoiReliefNoise)

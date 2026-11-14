@@ -3,39 +3,39 @@ import type { MeshState } from '../state';
 
 export const PROFILES: Record<string, Record<string, number> | null> = {
   custom: null,
-  smooth: { octaves: 2, persistence: 0.3, lacunarity: 2.0, distortion: 0.1, contrast: 0.8, sharpness: 0.1 },
-  rough: { octaves: 6, persistence: 0.7, lacunarity: 2.5, distortion: 0.3, contrast: 1.5, sharpness: 0.8 },
-  organic: { octaves: 4, persistence: 0.6, lacunarity: 1.8, distortion: 0.5, contrast: 1.2, sharpness: 0.3 },
-  geometric: { octaves: 3, persistence: 0.4, lacunarity: 3.0, distortion: 0.1, contrast: 2.0, sharpness: 1.5 },
-  crystalline: { octaves: 5, persistence: 0.5, lacunarity: 2.2, distortion: 0.2, contrast: 1.8, sharpness: 1.2 },
-  waves: { octaves: 3, persistence: 0.6, lacunarity: 1.5, distortion: 0.8, contrast: 1.0, sharpness: 0.4 },
+  smooth: { octaves: 2, persistence: 0.3, lacunarity: 2.0, distortion: 0.1, peakExp: 0.55, valleyExp: 0.55 },
+  rough: { octaves: 6, persistence: 0.7, lacunarity: 2.5, distortion: 0.3, peakExp: 0.9, valleyExp: 0.9 },
+  organic: { octaves: 4, persistence: 0.6, lacunarity: 1.8, distortion: 0.5, peakExp: 0.65, valleyExp: 0.65 },
+  geometric: { octaves: 3, persistence: 0.4, lacunarity: 3.0, distortion: 0.1, peakExp: 1.25, valleyExp: 1.25 },
+  crystalline: { octaves: 5, persistence: 0.5, lacunarity: 2.2, distortion: 0.2, peakExp: 1.1, valleyExp: 1.1 },
+  waves: { octaves: 3, persistence: 0.6, lacunarity: 1.5, distortion: 0.8, peakExp: 0.7, valleyExp: 0.7 },
 };
 
 type PresetConfig = Record<string, string | number>;
 
 export const CNC_PRESETS: Record<string, PresetConfig> = {
-  'gentle-waves': { noiseType:'simplex', frequency:0.06, amplitude:0.5, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:2, persistence:0.3, lacunarity:2, distortion:0, contrast:1, sharpness:0, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.07813763041664107 },
-  'organic-terrain': { noiseType:'fbm', frequency:0.1, amplitude:0.8, noiseExp:0.7, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:4, persistence:0.55, lacunarity:2, distortion:0.3, contrast:1.2, sharpness:0.2, baseThickness:1.05, meshX:36, meshY:24, smoothRadiusIn:0.040350098842101466 },
-  'sharp-ridges': { noiseType:'ridged', frequency:0.08, amplitude:0.5, noiseExp:1.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.5, lacunarity:2.2, distortion:0, contrast:1.5, sharpness:0.8, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.0 },
-  'voronoi-cells': { noiseType:'voronoi', frequency:0.15, amplitude:0.3, noiseExp:0.8, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, contrast:1, sharpness:0, baseThickness:0.55, meshX:36, meshY:24, smoothRadiusIn:0.06988842128494586 },
-  'subtle-texture': { noiseType:'perlin', frequency:0.12, amplitude:0.25, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.4, lacunarity:2.5, distortion:0.1, contrast:0.8, sharpness:0, baseThickness:0.5, meshX:36, meshY:24, smoothRadiusIn:0.0754881226948038 },
-  'deep-carve': { noiseType:'fbm', frequency:0.05, amplitude:2.0, noiseExp:1.2, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:5, persistence:0.6, lacunarity:1.8, distortion:0.4, contrast:1.8, sharpness:0.5, baseThickness:2.5, meshX:24, meshY:18, smoothRadiusIn:0.0 },
-  'sculptural': { noiseType:'fbm', frequency:0.04, amplitude:1.5, noiseExp:0.7, peakExp:1.8, valleyExp:0.35, valleyFloor:0.6, offset:0, octaves:3, persistence:0.55, lacunarity:1.8, distortion:0.4, contrast:1.3, sharpness:0.15, baseThickness:1.75, meshX:36, meshY:24, smoothRadiusIn:0.0605251482631522 },
-  'hard-wave': { noiseType:'simplex', frequency:0.05, amplitude:1.2, noiseExp:0.6, peakExp:2.0, valleyExp:0.3, valleyFloor:0.75, offset:0, octaves:2, persistence:0.4, lacunarity:2, distortion:0.25, contrast:1.4, sharpness:0.1, baseThickness:1.45, meshX:36, meshY:24, smoothRadiusIn:0.07813763041664107 },
-  'eroded-stone': { noiseType:'ridged', frequency:0.06, amplitude:0.5, noiseExp:0.8, peakExp:1.5, valleyExp:0.4, valleyFloor:0.5, offset:0, octaves:4, persistence:0.5, lacunarity:2.2, distortion:0.35, contrast:1.6, sharpness:0.3, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.03494421064247293 },
-  'billowy-clouds': { noiseType:'billow', frequency:0.07, amplitude:0.8, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.45, lacunarity:2, distortion:0.15, contrast:1, sharpness:0, baseThickness:1.05, meshX:36, meshY:24, smoothRadiusIn:0.06379910807698173 },
-  'turbulent-marble': { noiseType:'turbulence', frequency:0.08, amplitude:1.0, noiseExp:0.7, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:5, persistence:0.55, lacunarity:2.2, distortion:0.3, contrast:1.4, sharpness:0.3, baseThickness:1.25, meshX:36, meshY:24, smoothRadiusIn:0.03494421064247293 },
-  'natural-ridge': { noiseType:'hybrid', frequency:0.06, amplitude:1.2, noiseExp:0.6, peakExp:1.2, valleyExp:0.5, valleyFloor:0.3, offset:0, octaves:4, persistence:0.5, lacunarity:2, distortion:0.2, contrast:1.2, sharpness:0.1, baseThickness:1.45, meshX:36, meshY:24, smoothRadiusIn:0.040350098842101466 },
-  'organic-swirl': { noiseType:'domainwarp', frequency:0.05, amplitude:1.0, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:3, persistence:0.5, lacunarity:1.8, distortion:0, contrast:1.1, sharpness:0, baseThickness:1.25, meshX:36, meshY:24, smoothRadiusIn:0.06379910807698173 },
-  'worley-cracks': { noiseType:'worley', frequency:0.12, amplitude:0.5, noiseExp:0.8, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.1, contrast:1.2, sharpness:0.3, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.040350098842101466 },
-  'brushed-metal': { noiseType:'gabor', frequency:0.1, amplitude:0.3, noiseExp:0.5, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, contrast:1, sharpness:0, gaborAngle:15, gaborBandwidth:1.2, baseThickness:0.55, meshX:36, meshY:24, smoothRadiusIn:0.03494421064247293 },
+  'gentle-waves': { noiseType:'simplex', frequency:0.06, amplitude:0.5, peakExp:0.5, valleyExp:0.5, valleyFloor:0.0, offset:0, octaves:2, persistence:0.3, lacunarity:2, distortion:0, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.07813763041664107 },
+  'organic-terrain': { noiseType:'simplex', frequency:0.1, amplitude:0.8, peakExp:0.84, valleyExp:0.84, valleyFloor:0.0, offset:0, octaves:4, persistence:0.55, lacunarity:2, distortion:0.3, baseThickness:1.05, meshX:36, meshY:24, smoothRadiusIn:0.040350098842101466 },
+  'sharp-ridges': { noiseType:'ridged', frequency:0.08, amplitude:0.5, peakExp:2.7, valleyExp:2.7, valleyFloor:0.0, offset:0, octaves:3, persistence:0.5, lacunarity:2.2, distortion:0, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.0 },
+  'voronoi-cells': { noiseType:'voronoi', frequency:0.15, amplitude:0.3, peakExp:0.8, valleyExp:0.8, valleyFloor:0.0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, baseThickness:0.55, meshX:36, meshY:24, smoothRadiusIn:0.06988842128494586 },
+  'subtle-texture': { noiseType:'perlin', frequency:0.12, amplitude:0.25, peakExp:0.5, valleyExp:0.5, valleyFloor:0.0, offset:0, octaves:3, persistence:0.4, lacunarity:2.5, distortion:0.1, baseThickness:0.5, meshX:36, meshY:24, smoothRadiusIn:0.0754881226948038 },
+  'deep-carve': { noiseType:'simplex', frequency:0.05, amplitude:2.0, peakExp:1.7999999999999998, valleyExp:1.7999999999999998, valleyFloor:0.0, offset:0, octaves:5, persistence:0.6, lacunarity:1.8, distortion:0.4, baseThickness:2.5, meshX:24, meshY:18, smoothRadiusIn:0.0 },
+  'sculptural': { noiseType:'simplex', frequency:0.04, amplitude:1.5, peakExp:1.4489999999999998, valleyExp:0.28174999999999994, valleyFloor:0.7055174172996764, offset:0, octaves:3, persistence:0.55, lacunarity:1.8, distortion:0.4, baseThickness:1.75, meshX:36, meshY:24, smoothRadiusIn:0.0605251482631522 },
+  'hard-wave': { noiseType:'simplex', frequency:0.05, amplitude:1.2, peakExp:1.32, valleyExp:0.198, valleyFloor:0.8286104444190472, offset:0, octaves:2, persistence:0.4, lacunarity:2, distortion:0.25, baseThickness:1.45, meshX:36, meshY:24, smoothRadiusIn:0.07813763041664107 },
+  'eroded-stone': { noiseType:'ridged', frequency:0.06, amplitude:0.5, peakExp:1.56, valleyExp:0.41600000000000004, valleyFloor:0.7079503136385321, offset:0, octaves:4, persistence:0.5, lacunarity:2.2, distortion:0.35, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.03494421064247293 },
+  'billowy-clouds': { noiseType:'billow', frequency:0.07, amplitude:0.8, peakExp:0.5, valleyExp:0.5, valleyFloor:0.0, offset:0, octaves:3, persistence:0.45, lacunarity:2, distortion:0.15, baseThickness:1.05, meshX:36, meshY:24, smoothRadiusIn:0.06379910807698173 },
+  'turbulent-marble': { noiseType:'billow', frequency:0.08, amplitude:1.0, peakExp:0.9099999999999999, valleyExp:0.9099999999999999, valleyFloor:0.0, offset:0, octaves:5, persistence:0.55, lacunarity:2.2, distortion:0.3, baseThickness:1.25, meshX:36, meshY:24, smoothRadiusIn:0.03494421064247293 },
+  'natural-ridge': { noiseType:'hybrid', frequency:0.06, amplitude:1.2, peakExp:0.792, valleyExp:0.33, valleyFloor:0.3565477788936814, offset:0, octaves:4, persistence:0.5, lacunarity:2, distortion:0.2, baseThickness:1.45, meshX:36, meshY:24, smoothRadiusIn:0.040350098842101466 },
+  'organic-swirl': { noiseType:'domainwarp', frequency:0.05, amplitude:1.0, peakExp:0.5, valleyExp:0.5, valleyFloor:0.0, offset:0, octaves:3, persistence:0.5, lacunarity:1.8, distortion:0, baseThickness:1.25, meshX:36, meshY:24, smoothRadiusIn:0.06379910807698173 },
+  'worley-cracks': { noiseType:'worley', frequency:0.12, amplitude:0.5, peakExp:1.04, valleyExp:1.04, valleyFloor:0.0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.1, baseThickness:0.75, meshX:36, meshY:24, smoothRadiusIn:0.040350098842101466 },
+  'brushed-metal': { noiseType:'gabor', frequency:0.1, amplitude:0.3, peakExp:0.5, valleyExp:0.5, valleyFloor:0.0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0, gaborAngle:15, gaborBandwidth:1.2, baseThickness:0.55, meshX:36, meshY:24, smoothRadiusIn:0.03494421064247293 },
   // Voronoi Relief presets — reproduce lafabricatrun-style 3D Voronoi cell carvings.
   // v16: all four presets ride the base-superposition model (cells carved INTO a wave
   // surface), use finite wall widths, and get multi-scale cell patchiness from
   // reliefDensityNoise. Distortion drives the flow component of the space-warp.
   // `relief-vertical` targets the tall panel reference: smooth wave field at top, dense
   // domed cells in the middle, cut-through spike fingers at the bottom.
-  'relief-vertical': { noiseType:'voronoi-relief', frequency:0.2, amplitude:0.75, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55, contrast:1, sharpness:0,
+  'relief-vertical': { noiseType:'voronoi-relief', frequency:0.2, amplitude:0.75, peakExp:1.0, valleyExp:1.0, valleyFloor:0.0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.55,
     warpFreq:0.16, warpCurl:0,
     reliefCellSize:0.8, reliefJitter:0.95, reliefRelaxIterations:1, reliefPolarity:'domes', reliefProfile:'parabolic',
     reliefSeamDepth:0.95, reliefWallWidth:0.08, reliefAnisotropy:0, reliefAnisotropyAngle:0,
@@ -59,7 +59,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // outward into giant stretched bowls. Full-bowl profile (seamDepth 0.9 leaves almost
   // no flat floor), wide sanded crowns, heavy smoothing. The size gradient is
   // attractor-driven and SMOOTH, not patchy (low densityNoise).
-  'relief-radial': { noiseType:'voronoi-relief', frequency:0.15, amplitude:1.333333333333333, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4, contrast:1, sharpness:0,
+  'relief-radial': { noiseType:'voronoi-relief', frequency:0.15, amplitude:1.333333333333333, peakExp:1.0, valleyExp:1.0, valleyFloor:0.0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.4,
     warpFreq:0.105, warpCurl:0,
     reliefCellSize:1.733333333333333, reliefJitter:0.8, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
     reliefSeamDepth:0.7, reliefWallWidth:0.12, reliefAnisotropy:0.25, reliefAnisotropyAngle:35,
@@ -82,7 +82,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   // base (superposition) gives the undulating ridge network; wallWidth gives the walls
   // finite width; densityNoise produces giant-vs-small cell patches; distortion drives
   // the flow warp that elongates cells organically.
-  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.2, amplitude:1.2, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35, contrast:1, sharpness:0,
+  'relief-pockets': { noiseType:'voronoi-relief', frequency:0.2, amplitude:1.2, peakExp:1.0, valleyExp:1.0, valleyFloor:0.0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35,
     warpFreq:0.12, warpCurl:0,
     reliefCellSize:2, reliefJitter:0.85, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
     // seamDepth = saturation point: 0.75 keeps only the biggest cells reaching full depth,
@@ -113,7 +113,7 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
   //   reliefRadialGrow     → focal expansion of the continuous radius field (broader pockets)
   //   reliefRadialWarp     → wobble on the displacement direction (organic, not rosette)
   //   reliefRadialMode     → 'rays' (radial elongation) / 'rings' (tangential) / 'spiral'
-  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.15, amplitude:1, noiseExp:1, peakExp:1, valleyExp:1, valleyFloor:0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35, contrast:1, sharpness:0,
+  'relief-starburst': { noiseType:'voronoi-relief', frequency:0.15, amplitude:1, peakExp:1.0, valleyExp:1.0, valleyFloor:0.0, offset:0, octaves:1, persistence:0.5, lacunarity:2, distortion:0.35,
     warpFreq:0.105, warpCurl:0,
     reliefCellSize:1.2, reliefJitter:0.55, reliefRelaxIterations:1, reliefPolarity:'pockets', reliefProfile:'cosine',
     reliefSeamDepth:0.5, reliefWallWidth:0.08, reliefAnisotropy:0, reliefAnisotropyAngle:0,
@@ -133,9 +133,9 @@ export const CNC_PRESETS: Record<string, PresetConfig> = {
 
 /** Controls a preset replaces. View, export, seed and mode settings stay with the user. */
 export const PRESET_OWNED_KEYS = [
-  'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
+  'noiseType', 'frequency', 'amplitude', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth',
+  'warpFreq', 'warpCurl', 'gaborAngle', 'gaborBandwidth', 'invert', 'cellJitter', 'cellMetric',
   'reliefCellSize', 'reliefJitter', 'reliefRelaxIterations', 'reliefPolarity', 'reliefProfile',
   'reliefSeamDepth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
   'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',

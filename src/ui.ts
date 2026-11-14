@@ -247,7 +247,7 @@ function buildNoiseParametersSection(): HTMLElement {
     },
     {
       label: 'Fractal',
-      options: [['fbm', 'FBM (Fractional Brownian)'], ['ridged', 'Ridged'], ['billow', 'Billow'], ['turbulence', 'Turbulence']],
+      options: [['ridged', 'Ridged'], ['billow', 'Billow']],
     },
     {
       label: 'Multi-Fractal',
@@ -315,11 +315,26 @@ function buildNoiseParametersSection(): HTMLElement {
     return buildSection('Noise Parameters', children, false, 'noise-only');
   }
 
+  if (STATE.noiseType === 'voronoi' || STATE.noiseType === 'worley') {
+    children.push(
+      slider('cellJitter', 'Cell Jitter', 0, 1, 0.01),
+      enumSelect('cellMetric', 'Cell Distance', [['euclidean', 'Euclidean'], ['manhattan', 'Manhattan'], ['chebyshev', 'Chebyshev']]),
+    );
+  }
+  const invertRow = createElement('div', 'check-row');
+  const invert = createElement('input');
+  invert.type = 'checkbox'; invert.id = 'sl_invert';
+  invert.dataset.key = 'invert'; invert.dataset.default = String(Number(DEFAULTS.invert));
+  invert.checked = STATE.invert;
+  const invertLabel = createElement('label', undefined, 'Invert');
+  invertLabel.htmlFor = invert.id;
+  invertRow.append(invert, invertLabel);
+
   children.push(
     slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005),
     slider('amplitude', 'Cut Depth (inches)', 0, Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness), 0.05),
-    slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05),
     slider('offset', 'Vertical Offset', -2, 2, 0.05),
+    invertRow,
     seedRow,
   );
 
@@ -432,8 +447,8 @@ function buildPeakValleySection(): HTMLElement {
   description.textContent = 'Asymmetric control: shape peaks and valleys independently.';
   return buildSection('Peak / Valley Shaping', [
     description,
-    slider('peakExp', 'Peak Sharpness (>1 = crisper ridges)', 0.2, 4, 0.05),
-    slider('valleyExp', 'Valley Softness (<1 = broader valleys)', 0.1, 3, 0.05),
+    slider('peakExp', 'Peak Shape', 0.1, 4, 0.05),
+    slider('valleyExp', 'Valley Shape', 0.1, 3, 0.05),
     slider('valleyFloor', 'Valley Floor (0=deep, 1=flat)', 0, 1, 0.01),
   ], false, 'noise-only');
 }
@@ -446,8 +461,6 @@ function buildAdvancedNoiseSection(): HTMLElement {
     slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05),
     slider('warpFreq', 'Warp Frequency', 0.02, 0.4, 0.01),
     slider('warpCurl', 'Warp Curl (0=fold, 1=flow)', 0, 1, 0.05),
-    slider('contrast', 'Contrast', 0.1, 3, 0.05),
-    slider('sharpness', 'Sharpness', 0, 2, 0.05),
   ], false, 'noise-only');
 }
 
@@ -811,6 +824,18 @@ function wireControls(): void {
       syncRange(sl, Number(def));
       sl.dispatchEvent(new Event('input', { bubbles: true }));
     });
+  });
+
+  const invert = document.getElementById('sl_invert') as HTMLInputElement | null;
+  invert?.addEventListener('change', () => {
+    STATE.invert = invert.checked;
+    STATE.activePreset = null;
+    STATE.activeProfile = null;
+    const preset = document.getElementById('selPreset') as HTMLSelectElement | null;
+    if (preset) preset.value = '';
+    document.querySelector('.preset-pill.active[data-profile]')?.classList.remove('active');
+    refreshControlResets();
+    debouncedGenerate('invert', 'full');
   });
 
   const domed = document.getElementById('sl_reliefInvertProfile') as HTMLInputElement | null;

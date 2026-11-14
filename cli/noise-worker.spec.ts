@@ -15,7 +15,7 @@ const fixture = JSON.parse(readFileSync(new URL('./fixtures/noise-surface-baseli
   source: string;
   fixtures: { name: string; settings: object; hash: string; cols: number; rows: number; truncatedFrom: number; crestClipStatus: string }[];
 };
-assert.equal(fixture.source, 'slice7a-kernel-physical-cell-measurement-v1');
+assert.equal(fixture.source, 'slice3e-physical-cell-measurement-v1');
 for (const item of fixture.fixtures) {
   Object.assign(STATE, DEFAULTS, item.settings);
   const params = noiseSurfaceParams(STATE);

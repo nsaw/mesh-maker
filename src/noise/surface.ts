@@ -12,7 +12,9 @@ export const NOISE_SURFACE_KEYS = [
   'noiseType',
   'frequency',
   'amplitude',
-  'noiseExp',
+  'cellJitter',
+  'cellMetric',
+  'invert',
   'peakExp',
   'valleyExp',
   'valleyFloor',
@@ -24,8 +26,6 @@ export const NOISE_SURFACE_KEYS = [
   'distortion',
   'warpFreq',
   'warpCurl',
-  'contrast',
-  'sharpness',
   'gaborAngle',
   'gaborBandwidth',
   'reliefCellSize',
@@ -88,7 +88,9 @@ export function noiseSurfaceParams(s: NoiseSurfaceParams): NoiseSurfaceParams {
     noiseType: s.noiseType,
     frequency: s.frequency,
     amplitude: s.amplitude,
-    noiseExp: s.noiseExp,
+    cellJitter: s.cellJitter,
+    cellMetric: s.cellMetric,
+    invert: s.invert,
     peakExp: s.peakExp,
     valleyExp: s.valleyExp,
     valleyFloor: s.valleyFloor,
@@ -100,8 +102,6 @@ export function noiseSurfaceParams(s: NoiseSurfaceParams): NoiseSurfaceParams {
     distortion: s.distortion,
     warpFreq: s.warpFreq,
     warpCurl: s.warpCurl,
-    contrast: s.contrast,
-    sharpness: s.sharpness,
     gaborAngle: s.gaborAngle,
     gaborBandwidth: s.gaborBandwidth,
     reliefCellSize: s.reliefCellSize,
@@ -171,8 +171,8 @@ export interface NoiseSurface {
 /** Sample a raw noise grid with domain warping + FBM + post-processing.
  *  Returns values in noise-native range (no CNC normalization, no smoothing). */
 function sampleNoiseGrid(p: NoiseGridParams, params: NoiseSurfaceParams, metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus'>): number[][] {
-  const { cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp,
-          valleyFloor, contrast, sharpness, octaves, persistence, lacunarity,
+  const { cols, rows, meshX, meshY, frequency, peakExp, valleyExp,
+          valleyFloor, octaves, persistence, lacunarity,
           distortion, warpFreq, warpCurl, gen, warpGen } = p;
 
   // Grid-aware generators bypass the per-pixel loop. Domain-warp + discrete cells produces
@@ -239,13 +239,7 @@ function sampleNoiseGrid(p: NoiseGridParams, params: NoiseSurfaceParams, metadat
         n = gen.noise(x * frequency, y * frequency);
       }
 
-      n *= contrast;
-      if (sharpness > 0) {
-        const s = n >= 0 ? 1 : -1;
-        n = s * Math.pow(Math.abs(n), 1 + sharpness);
-      }
-      const sgn = n >= 0 ? 1 : -1;
-      n = sgn * Math.pow(Math.abs(n), noiseExp);
+      if (params.invert) n = -n;
       if (n >= 0) n = Math.pow(n, peakExp);
       else n = -Math.pow(-n, valleyExp);
       if (valleyFloor > 0 && n < 0) n = n * (1 - valleyFloor);
@@ -258,19 +252,19 @@ function sampleNoiseGrid(p: NoiseGridParams, params: NoiseSurfaceParams, metadat
 
 export function buildNoiseSurface(params: NoiseSurfaceParams): NoiseSurface {
   const t0 = performance.now();
-  const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothRadiusIn, noiseType, baseThickness } = params;
+  const { frequency, amplitude, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
+          distortion, warpFreq, warpCurl, meshX, meshY, resolution, smoothRadiusIn, noiseType, baseThickness } = params;
 
   const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
 
   const metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus'> = { truncatedFrom: 0, crestClipStatus: 'none' };
-  const noiseConfig: NoiseConfig = { gaborAngle: params.gaborAngle, gaborBandwidth: params.gaborBandwidth };
+  const noiseConfig: NoiseConfig = { cellJitter: params.cellJitter, cellMetric: params.cellMetric, gaborAngle: params.gaborAngle, gaborBandwidth: params.gaborBandwidth };
   const gen = createNoiseGen(noiseType, seed, noiseConfig);
   const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
 
   const verts = sampleNoiseGrid({
-    cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp, valleyFloor,
-    contrast, sharpness, octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
+    cols, rows, meshX, meshY, frequency, invert: params.invert, peakExp, valleyExp, valleyFloor,
+    octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
     gen, warpGen,
   }, params, metadata);
 

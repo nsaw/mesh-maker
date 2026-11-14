@@ -4,7 +4,7 @@ Verify against live code before citing it as authoritative. -->
 
 # Grasshopper Integration
 
-The `grasshopper/` directory ports the web app's mesh-generation math into native Rhino/Grasshopper components so a designer can build panels inside CAD without leaving Rhino. `grasshopper/builder/meshcraft_builder.py` is a GHPython bootstrap script that programmatically constructs a four-component Grasshopper graph (Noise, Shape, Smooth, Presets) by embedding each component's full source as a string and injecting it into a `GH_Document` via the RhinoCommon/Grasshopper SDK. The embedded scripts are line-for-line IronPython 2.7 ports of the TypeScript noise generators (`src/noise/*`) and mesh shaping pipeline (`mesh.ts`), including a from-scratch Voronoi-relief sampler that must stay numerically identical to `src/noise/voronoi-relief.ts`.
+The `grasshopper/` directory ports the web app's mesh-generation math into native Rhino/Grasshopper components so a designer can build panels inside CAD without leaving Rhino. `grasshopper/builder/meshcraft_builder.py` is a GHPython bootstrap script that programmatically constructs a four-component Grasshopper graph (Noise, Shape, Smooth, Presets) by embedding each component's full source as a string and injecting it into a `GH_Document` via the RhinoCommon/Grasshopper SDK. The embedded scripts are IronPython 2.7 ports of the TypeScript noise generators (`src/noise/*`) and mesh shaping pipeline (`src/noise/surface.ts`), including a from-scratch Voronoi-relief sampler that must stay numerically identical to `src/noise/voronoi-relief.ts`.
 
 ## Mental model
 
@@ -12,7 +12,7 @@ The `grasshopper/` directory ports the web app's mesh-generation math into nativ
 |---|---|---|---|
 | Bootstrap | `meshcraft_builder.py` (GHPython, run once) | n/a | builds & saves `.gh` file |
 | Noise | embedded `NOISE_SCRIPT` → "MeshCraft \| Noise" | `src/noise/*.ts`, `voronoi-relief.ts` | `z_values`, `cols`, `rows` |
-| Shape | embedded `SHAPE_SCRIPT` → "MeshCraft \| Shape" | `mesh.ts` `generateNoiseMesh` (lines ~47-65) | `pts` (Point3d grid) |
+| Shape | embedded `SHAPE_SCRIPT` → "MeshCraft \| Shape" | `src/noise/surface.ts` scalar shaping | `pts` (Point3d grid) |
 | Smooth | embedded `SMOOTH_SCRIPT` → "MeshCraft \| Smooth" | `src/geometry.ts` `gaussianSmooth` | smoothed `pts` |
 | Presets | embedded `PRESETS_SCRIPT` → "MeshCraft \| Presets" | web app preset table | slider-override outputs |
 
@@ -22,17 +22,19 @@ The `grasshopper/` directory ports the web app's mesh-generation math into nativ
 
 ## Component responsibilities
 
-**Noise** (`NOISE_SCRIPT`, embedded at meshcraft_builder.py:67, standalone copy `grasshopper/components/noise_gen.py`) implements sixteen generators as small classes (Simplex, Perlin, Value, OpenSimplex2, Ridged, Billow, FBM, Turbulence, HybridMultifractal, HeteroTerrain, DomainWarp, Voronoi, Worley, Gabor, Wavelet, VoronoiRelief), selected via the `_NOISE_MAP` factory keyed by `noise_type`. The fifteen "classic" types walk a `cols × rows` grid applying domain warp and octave/`fbm` summation identically to the TS implementations, emitting `z_values` plus `cols`/`rows`/`mesh_x`/`mesh_y` passthroughs.
+**Noise** (`NOISE_SCRIPT`, standalone copy `grasshopper/components/noise_gen.py`) implements the retained generators as small classes (Simplex, Perlin, Value, OpenSimplex2, Ridged, Billow, HybridMultifractal, HeteroTerrain, DomainWarp, Voronoi, Worley, Gabor, Wavelet, VoronoiRelief), selected via the `_NOISE_MAP` factory keyed by `noise_type`. The scalar types walk a `cols × rows` grid applying domain warp and octave/`fbm` summation identically to the TS implementations, emitting `z_values` plus `cols`/`rows`/`mesh_x`/`mesh_y` passthroughs.
 
 `voronoi-relief` is a grid-aware special case. `VoronoiReliefNoise.sample_grid` enumerates Cartesian and polar candidates before one global representative selection at the site cap. Selection preserves each focal nucleus and the original order, leaving Cartesian sites as a prefix and pinned polar sites as a suffix. No cohort has first claim on the cap. It optionally Lloyd-relaxes Cartesian sites using Halton samples proportional to retained site count. The height passes measure cell radii/inradii and construct crest, wall and floor profiles using shared-boundary distances. Cell, crest, junction and crown contributions share the depth-aware slope budget; a base wave, attractor shaping, cushions and void mode compose the result. Its mulberry32 PRNG preserves the site-selection sequence across the language ports. Missing and unwired `relief_*` inputs use documented defaults. `relief_cut_depth_in` supplies the requested physical cut depth for the slope budget.
 
-**Shape** (`SHAPE_SCRIPT`, at meshcraft_builder.py:826, standalone `grasshopper/components/shape_pts.py`) converts flat `z_values` into a `Point3d` grid, applying contrast, sharpness (sign-preserving power curve), noise exponent, separate peak/valley exponents, and valley-floor softening — explicitly documented as a port of `mesh.ts` lines 47-65.
+**Shape** (`SHAPE_SCRIPT`, standalone `grasshopper/components/shape_pts.py`) converts flat `z_values` into a `Point3d` grid, applying invert before separate peak/valley powers and valley-floor softening. These shaping operations mirror the scalar order in `src/noise/surface.ts`.
+
+The current Shape pins are `amplitude`, `invert`, `peak_exp`, `valley_exp`, `valley_floor` and `offset`, plus the incoming grid and panel dimensions. Removed contrast, sharpness and noise-exponent pins require regeneration of saved definitions. Historical fixture metadata retains those former inputs for migration tests. Noise exposes `cell_jitter` and `cell_metric` for plain Voronoi/Worley; the separate FBM and Turbulence menu entries are folded into Simplex and Billow.
 
 Shape retains its signed noise-times-amplitude-plus-offset mapping. It does not implement the web stock/backing model. Sampler, depth-budget and Gaussian checks therefore do not certify matching physical Z values between the native and web pipelines.
 
 **Smooth** (`SMOOTH_SCRIPT`, standalone `grasshopper/components/smoother.py`) accepts `smooth_radius_in`, a Gaussian sigma in inches. It derives independent X/Y pitches from the point grid, applies separable three-sigma kernels, and renormalizes truncated kernels with half-weight physical endpoints. Kernels with more than 32 weights use a zero-padded FFT; smaller kernels use direct summation. Exactly constant heights remain unchanged. `npm run test:gh-parity` compares all four embedded scripts with their canonical files and numerically compares this Gaussian with the TypeScript implementation at edges and unequal pitches. The same suite compares global capped-site selection and ordered coordinates against a Python class host for the committed fixtures. Neither numerical host replaces Rhino serialization/runtime checks.
 
-**Presets** (`PRESETS_SCRIPT`, at meshcraft_builder.py:950, standalone `grasshopper/components/presets.py`) is a static dictionary of named parameter bundles (`gentle-waves`, `organic-terrain`, ... `relief-vertical`, `relief-radial`, `relief-pockets`) whose outputs are meant to be manually rewired over the sliders on Noise/Shape/Smooth. The relief preset dictionaries mirror the web values, with web-only stock thickness excluded. The parity suite compares TypeScript values against the Python dictionary as well as the two Python source copies.
+**Presets** (`PRESETS_SCRIPT`, standalone `grasshopper/components/presets.py`) is a static dictionary of named parameter bundles (`gentle-waves`, `organic-terrain`, ... `relief-vertical`, `relief-radial`, `relief-pockets`) whose outputs are meant to be manually rewired over the sliders on Noise/Shape/Smooth. The relief preset dictionaries mirror the web values, with web-only stock thickness excluded. The parity suite compares TypeScript values against the Python dictionary as well as the two Python source copies.
 
 Input changes require a Rhino 7 builder smoke test and a preset solve after save/reopen. The Presets component supplies `gabor_angle`, `gabor_bw`, `smooth_radius_in` and `relief_cut_depth_in`. Text/value parity cannot establish that a saved definition has these pins.
 
@@ -42,7 +44,7 @@ If `src/noise/voronoi-relief.ts` changes any constant, formula, or default (e.g.
 
 A new `relief_*` parameter on the TS sampler must be added to all of: the `_relief_default` calls in `NOISE_SCRIPT`, the `RELIEF_INPUTS` list in `meshcraft_builder.py` (drives both Noise input pins and Presets output pins), and the `relief_*` preset dicts in `PRESETS_SCRIPT`/`presets.py` — missing any one leaves that pin permanently defaulted with no way to wire it from Presets.
 
-Changes to `mesh.ts`'s `generateNoiseMesh` shaping order or `gaussianSmooth` physical kernel require matching edits in `SHAPE_SCRIPT`/`shape_pts.py` or `SMOOTH_SCRIPT`/`smoother.py` — both cite explicit TS line numbers that go stale otherwise.
+Changes to the scalar shaping order in `src/noise/surface.ts` or the physical Gaussian kernel in `src/geometry.ts` require matching edits in `SHAPE_SCRIPT`/`shape_pts.py` or `SMOOTH_SCRIPT`/`smoother.py`.
 
 `noise_type` and preset names are matched by string key (`_NOISE_MAP`, `PRESETS` dict); renaming one in the TS/web app without updating both Python copies breaks the Grasshopper equivalent silently, falling back to `'simplex'`/`'gentle-waves'` rather than erroring.
 
@@ -60,7 +62,7 @@ When these files or sections are changed, remember to consider these:
 
 - Any edit to `src/noise/voronoi-relief.ts` (constants, formulas, parameter defaults) must be mirrored in both `grasshopper/builder/meshcraft_builder.py`'s embedded `NOISE_SCRIPT` and the standalone `grasshopper/components/noise_gen.py` — check the PRNG (`mulberry32`), radius-field constants, and crest-band clamp first since these are the most fragility-prone.
 - A new `relief_*` parameter needs updates in four places: `_relief_default` calls, the `RELIEF_INPUTS` list, the relief preset dicts in `PRESETS_SCRIPT`, and `grasshopper/components/presets.py`.
-- Changes to `mesh.ts` `generateNoiseMesh` or `gaussianSmooth` require matching edits in `SHAPE_SCRIPT`/`shape_pts.py` or `SMOOTH_SCRIPT`/`smoother.py` — both cite explicit TS line numbers that should be re-verified.
+- Changes to scalar shaping in `src/noise/surface.ts` or Gaussian smoothing in `src/geometry.ts` require matching edits in `SHAPE_SCRIPT`/`shape_pts.py` or `SMOOTH_SCRIPT`/`smoother.py`.
 - Adding/renaming a noise type or preset key in the web app requires a matching update to `_NOISE_MAP` and/or `PRESETS` in the Python components, or Grasshopper silently falls back to a default rather than failing.
 - If `ZuiPythonComponent`'s API changes in a future Rhino/GhPython release, re-check `make_ghpy`'s `Code` setter and parameter-creation calls in `meshcraft_builder.py`.
 
@@ -81,7 +83,7 @@ When these files or sections are changed, remember to consider these:
 | `grasshopper/builder/meshcraft_builder.py` | The bootstrap script; embeds and wires all four components programmatically |
 | `grasshopper/builder/test_ghpy_output.py` | Standalone diagnostic for GhPython/`ZuiPythonComponent` API availability, not part of the runtime pipeline |
 | `grasshopper/components/noise_gen.py` | Standalone copy of the Noise component, including `VoronoiReliefNoise` — must stay in sync with the embedded copy |
-| `grasshopper/components/shape_pts.py` | Standalone copy of the Shape component (port of `mesh.ts` shaping) |
+| `grasshopper/components/shape_pts.py` | Standalone copy of the Shape component (scalar shaping order from `src/noise/surface.ts`) |
 | `grasshopper/components/smoother.py` | Standalone copy of the Smooth component, using physical `gaussianSmooth` kernels |
 | `grasshopper/components/presets.py` | Standalone copy of the Presets component, including the relief presets |
 | `sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/meshcraft-repo/mesh-maker.gh` | Historical native definition in the external library, preserved by the migration receipt |

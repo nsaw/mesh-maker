@@ -45,7 +45,7 @@ Generate 3D meshes from procedural noise or depth map images, tuned for CNC mach
 
 ### Features
 
-- **16+ noise algorithms** — Simplex, Perlin, OpenSimplex2, Value, FBM, Ridged, Billow, Turbulence, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet, Voronoi Relief (3D cellular relief with attractor masks)
+- **Noise algorithms**: Simplex, Perlin, OpenSimplex2, Value, Ridged, Billow, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet, Voronoi Relief (3D cellular relief with attractor masks)
 - **Depth map import**: Upload any image as a relief, or a `.mcrelief` master at full resolution
 - **Drape**: Hang a silk veil over a 3D figure (the bundled Venus de Milo bust or your STL, OBJ, PLY, glTF or USDZ, scaled to fit) and carve the front view as a relief from 3 x 4 to 18 x 24 in in up to 2.6 in of material, simulated in the browser. Presets for the gathered and plain silk drapes, and controls for the pose, figure size, cloth size, resolution, thickness, bending, clearance, crown attachment, damping, attraction to the figure (overall and on the face), wind or pressure on a target area, their timing, a post-solve surface fit, solver accuracy and display smoothing
 - **CNC presets** — Presets tuned for the ShopBot Desktop Max ATC (36" x 24", 6" Z)
@@ -94,7 +94,7 @@ src/
 ├── state.ts             # Typed STATE singleton, URL serialize/deserialize
 ├── types.ts             # Shared interfaces (Vertex3D, Triangle, MeshData)
 ├── noise/
-│   ├── generators.ts        # 16+ noise classes + factory
+│   ├── generators.ts        # Noise classes + factory
 │   ├── voronoi-relief.ts    # 3D Voronoi cell relief sampler (grid-aware)
 │   └── presets.ts           # 18 CNC presets, 6 texture profiles
 ├── mesh.ts              # Mesh generation + smoothing

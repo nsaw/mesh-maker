@@ -146,6 +146,8 @@ export interface ReliefSampleParams extends ReliefParams {
 }
 
 export interface NoiseConfig {
+  cellJitter?: number;
+  cellMetric?: 'euclidean' | 'manhattan' | 'chebyshev';
   gaborAngle?: number;
   gaborBandwidth?: number;
 }
@@ -162,12 +164,10 @@ export interface NoiseGridParams {
   meshX: number;
   meshY: number;
   frequency: number;
-  noiseExp: number;
+  invert: boolean;
   peakExp: number;
   valleyExp: number;
   valleyFloor: number;
-  contrast: number;
-  sharpness: number;
   octaves: number;
   persistence: number;
   lacunarity: number;

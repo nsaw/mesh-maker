@@ -22,8 +22,8 @@ geometry (not a per-pixel distance-field sampler like the web app).
 [MeshCraft | Shape]  →  [MeshCraft | Smooth]  →  [Point Mesh Surface]  →  STL
 ```
 
-`MeshCraft | Shape`, `Smooth`, and `Point Mesh Surface` stay unchanged — they
-just consume the new z-values.
+The downstream Shape component consumes the new z-values. The current builder
+uses the Shape pins listed below; regenerate saved definitions after pin changes.
 
 ---
 
@@ -49,12 +49,12 @@ just consume the new z-values.
 
 ---
 
-## Suggested starting values (matches the reference photo)
+## Historical native study starting values
 
 ```
-mesh_x = 24, mesh_y = 48          # panel proportions like the reference (web relief-pockets)
+mesh_x = 24, mesh_y = 48          # historical native study, not current web preset dimensions
 resolution = 128                   # 64×128 grid, ~8K pixels (128 along the longer axis)
-cell_size = 5.0                    # matches the retuned web preset's proportions
+cell_size = 5.0                    # historical native study scale
 jitter = 0.6                       # V2: LIVE — randomizes local radius ±30% for size variety
 relax_iter = 1                     # tightens cell shapes; bump to 2-4 for very regular cells
 attractor_pt = (12, 0, 0)          # bottom-center of panel (dense zone at bottom)
@@ -67,7 +67,7 @@ seam_sharpness = 0                 # 0 = pure profile; 1 = razor V-groove at rid
 seam_depth = 0.5                   # v18 wall extent — walls span half the inradius, floor the rest
 base_amp = 0.7                     # v16 base wave — ridge tops undulate (0 = V1 flat look)
 base_freq = 0.05                   # wave cycles per panel inch
-wall_width = 0.08                  # v18 crest plateau on the shared boundary (matches web preset)
+wall_width = 0.08                  # native crest-band study setting
 density_noise = 0.9                # giant-vs-small cell patches
 density_noise_freq = 0.06          # patch scale (lower = larger patches)
 ```
@@ -76,7 +76,8 @@ On `MeshCraft | Shape`:
 
 - `amplitude` = desired ridge-to-floor range (the Voronoi node already shaped
   the relief; Shape just rescales/positions).
-- `peak_exp = valley_exp = noise_exp = 1.0`
+- `peak_exp = valley_exp = 1.0`
+- `invert = False`
 - `valley_floor = 0`
 - `offset` = wood-surface z (the ridge plane).
 

@@ -34,6 +34,8 @@ jobs:
       - run: npm run test:relief
       - run: npm run test:relief-measurement-mutants
       - run: npm run test:generators
+      - run: npm run test:generator-migration
+      - run: npm run test:cellular-hash-mutant
       - run: npm run test:noise-worker
       - run: npm run test:fit-frame
       - run: npm run test:render-geometry
@@ -57,6 +59,7 @@ jobs:
       - run: npm run test:ui-values
       - run: npm run test:ui-interruptions
       - run: npm run test:mobile-layout
+      - run: npm run test:generator-controls
 
   preset_export_list:
     name: Preset export matrix
