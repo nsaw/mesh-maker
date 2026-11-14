@@ -2,7 +2,7 @@
  * Deterministic verification of the Voronoi Relief sampler.
  * Run: npm run test:relief  (or: npx tsx cli/voronoi-relief.spec.ts)
  *
- * 18 numbered test blocks covering: determinism, finiteness + range bounds, polarity
+ * Numbered test blocks covering: determinism, finiteness + range bounds, polarity
  * inversion sign-symmetry, density-attractor mode effect, dome profile peak/decay
  * sanity, v16 base superposition + wall band + transitionSoftness semantics, Lloyd
  * relaxation effect, warp displacement, warp frequency, void mode, cell-size gradient,
@@ -16,8 +16,10 @@
  * vs ≈ 0.25 at wallWidth 0.
  */
 
-import { VoronoiReliefGen, sampleReliefParamsFromState } from '../src/noise/voronoi-relief';
-import { CNC_PRESETS } from '../src/noise/presets';
+import { VoronoiReliefGen, sampleReliefParamsFromState, __bruteForceForTest, __sitesForTest } from '../src/noise/voronoi-relief';
+import { CNC_PRESETS, presetState } from '../src/noise/presets';
+import { DEFAULTS } from '../src/state';
+import { SiteGrid } from '../src/noise/site-grid';
 import type { ReliefSampleParams } from '../src/types';
 
 let failures = 0;
@@ -1191,6 +1193,104 @@ function countLocalMinima(grid: number[][]): number {
     }
   }
   assert(poisonedAllFinite, 'NaN/Infinity foci coords are filtered, output stays finite');
+}
+
+// 19. Exact indexed queries preserve ordered full-scan ties and sequential placement.
+{
+  process.stdout.write('19. exact spatial index against the original full scan\n');
+  const cases: Array<[string, ReliefSampleParams]> = [];
+  for (const key of ['relief-vertical', 'relief-radial', 'relief-pockets', 'relief-starburst']) {
+    const state = { ...DEFAULTS, ...presetState(key) };
+    cases.push([key, sampleReliefParamsFromState(400, Math.max(4, Math.round(400 * state.meshY / state.meshX)),
+      state.meshX, state.meshY, state.seed, state)]);
+  }
+  cases.push(['defaults', sampleReliefParamsFromState(400, 267, DEFAULTS.meshX, DEFAULTS.meshY, DEFAULTS.seed, DEFAULTS)]);
+  cases.push(['anisotropy 1 at 35 degrees', baseParams({ cols: 400, rows: 267, anisotropy: 1, anisotropyAngle: 35 })]);
+  cases.push(['cell size 0.5', baseParams({ cols: 400, rows: 267, cellSize: 0.5, relaxIterations: 2 })]);
+  for (const [name, params] of cases) {
+    const start = performance.now();
+    const indexed = new VoronoiReliefGen(params.seed).sampleGrid(params);
+    const indexedMs = performance.now() - start;
+    const bruteStart = performance.now();
+    const brute = __bruteForceForTest(params);
+    process.stdout.write(`  timing ${name}: indexed ${indexedMs.toFixed(1)} ms; brute ${(performance.now() - bruteStart).toFixed(1)} ms\n`);
+    assert(indexed.length === brute.length && indexed.every((row, j) => row.length === brute[j].length
+      && row.every((value, i) => value === brute[j][i])), `${name}: every sample is bit-identical`);
+    const small = { ...params, cols: 2, rows: 4 };
+    assert(JSON.stringify(__sitesForTest(small, false)) === JSON.stringify(__sitesForTest(small, true)),
+      `${name}: ordered post-Lloyd sites are unchanged`);
+    if (name === 'relief-vertical') {
+      // Timing is diagnostic in shared CI; the isolated local acceptance run enforces 1 s.
+      assert(indexedMs < 1000 || process.env.CI === 'true', 'relief-vertical local resolution-400 sampling stays below 1000 ms',
+        `${indexedMs.toFixed(1)} ms`);
+    }
+  }
+}
+
+// 20. Adversarial bucket geometry includes ties, sparse/outside queries and moved sites.
+{
+  process.stdout.write('20. bucket boundary, tie and incremental separation cases\n');
+  const sets = [[], [{ x: 2, y: 3 }], [{ x: -1, y: 0 }, { x: 1, y: 0 }],
+    [{ x: 0, y: 1 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: -1, y: 0 }, { x: 0, y: 1 }],
+    Array.from({ length: 100 }, (_, i) => ({ x: i % 10, y: Math.floor(i / 10) })),
+    Array.from({ length: 100 }, (_, i) => ({ x: i * 0.1, y: i * 0.01 }))];
+  let exact = true;
+  for (const sites of sets) for (const spacing of [0.07, 0.5, 3, 100]) {
+    const grid = new SiteGrid(sites, spacing);
+    for (const [x, y] of [[0, 0], [0.5, 0.5], [-100, 500], [1000, -100], [2, 3], [3, 3]]) {
+      for (const [angle, scale] of [[0, 1], [35, 2.5], [90, 4], [75, 1.00005]]) {
+        const cosA = Math.cos(angle * Math.PI / 180), sinA = Math.sin(angle * Math.PI / 180);
+        const expected = sites.map((site, index) => {
+          const dx = x - site.x, dy = y - site.y;
+          const distance = scale <= 1.0001 ? Math.hypot(dx, dy)
+            : Math.hypot((dx * cosA + dy * sinA) * scale, -dx * sinA + dy * cosA);
+          return { distance, index };
+        }).sort((a, b) => a.distance - b.distance || a.index - b.index).slice(0, 4);
+        const result = grid.nearestFour(x, y, cosA, sinA, scale);
+        const distances = [result.f1, result.f2, result.f3, result.f4];
+        const indices = [result.idx, result.idx2, result.idx3, result.idx4];
+        exact &&= distances.every((distance, i) => distance === (expected[i]?.distance ?? Infinity))
+          && indices.every((index, i) => index === (expected[i]?.index ?? (i === 0 ? 0 : -1)));
+      }
+      const owner = sites.map((site, index) => ({ index, distance: (site.x - x) ** 2 + (site.y - y) ** 2 }))
+        .sort((a, b) => a.distance - b.distance || a.index - b.index)[0]?.index ?? 0;
+      exact &&= grid.nearestOwner(x, y) === owner;
+      for (const radius of [0.1, 0.5, 1, 100]) {
+        const brute = sites.some(site => (site.x - x) ** 2 + (site.y - y) ** 2 < radius * radius);
+        exact &&= grid.hasWithin(x, y, radius) === brute;
+      }
+    }
+  }
+  let randomSeed = 17;
+  const random = (): number => {
+    randomSeed = (Math.imul(randomSeed, 1664525) + 1013904223) | 0;
+    return (randomSeed >>> 0) / 4294967296;
+  };
+  for (const origin of [0, 1e9, -1e9]) {
+    const points = Array.from({ length: 250 }, () => ({ x: origin + random() * 36, y: origin + random() * 24 }));
+    const grid = SiteGrid.fromSites(points);
+    for (let query = 0; query < 1000; query++) {
+      const x = origin + random() * 60 - 10, y = origin + random() * 40 - 10;
+      const angle = random() * Math.PI * 2, cosA = Math.cos(angle), sinA = Math.sin(angle), scale = 1 + random() * 3;
+      const expected = points.map((point, index) => ({ index,
+        distance: Math.hypot(((x - point.x) * cosA + (y - point.y) * sinA) * scale,
+          -(x - point.x) * sinA + (y - point.y) * cosA),
+      })).sort((a, b) => a.distance - b.distance || a.index - b.index).slice(0, 4);
+      const result = grid.nearestFour(x, y, cosA, sinA, scale);
+      exact &&= [result.f1, result.f2, result.f3, result.f4].every((value, i) => value === expected[i].distance)
+        && [result.idx, result.idx2, result.idx3, result.idx4].every((value, i) => value === expected[i].index);
+    }
+  }
+  assert(exact, 'nearest four, squared owner and strict separation match independent scans');
+  const sites: Array<{ x: number; y: number }> = [];
+  const dynamic = new SiteGrid(sites, 0.5, { minX: 0, minY: 0, maxX: 10, maxY: 10 });
+  sites.push({ x: 1, y: 1 }); dynamic.add(0);
+  sites.push({ x: 8, y: 8 }); dynamic.add(1);
+  dynamic.move(0, 7.9, 8);
+  assert(!dynamic.hasWithin(1, 1, 0.3) && dynamic.hasWithin(7.9, 8, 0.3, 1)
+    && !dynamic.hasWithin(7.9, 8, 0.01, 0), 'incremental moves remove old buckets and retain exclusion semantics');
+  const exactRadius = new SiteGrid([{ x: 0, y: 0 }], 1);
+  assert(!exactRadius.hasWithin(1, 0, 1), 'strict minimum separation accepts the exact radius');
 }
 
 if (failures === 0) {
