@@ -73,6 +73,7 @@ export async function applyCellLayout(): Promise<void> {
       Object.assign(STATE, pending, {reliefSites: null, reliefRevision: reliefEditor.revision});
       buildSidebar(); generateMesh(); return;
     }
+    if (!window.confirm('Replace the frozen cell layout? Undo restores the current layout.')) return;
     if (!await reliefEditor.apply()) showToast('The project changed. Layout was kept.');
     buildSidebar();
   } catch (error: unknown) { report(error); }

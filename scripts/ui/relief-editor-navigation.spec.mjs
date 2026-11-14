@@ -50,6 +50,7 @@ try {
       if (route === 'preset') {
         assert.match(await page.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
         await page.screenshot({path: 'screenshots/playwright/relief-editor-return-preset.png'});
+        page.once('dialog', dialog => dialog.accept());
         await page.click('#btnCellApply'); await idle(page); const applied = await matchesSource(page); assert.equal(applied.params.meshX, 12); assert.equal(applied.params.meshY, 24);
         await page.click('#btnCellUndo'); await idle(page); await matchesSource(page, initial); assert.match(await page.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
         await page.click('#btnCellDiscard');

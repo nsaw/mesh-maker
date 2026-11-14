@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
 import {preview} from 'vite';
+import {mobilePane, toolbarAction} from './mobile-navigation.mjs';
 
 const source = await readFile(new URL('../../src/state.ts', import.meta.url), 'utf8');
 const version = Number(source.match(/CURRENT_PAYLOAD_VERSION = (\d+)/)?.[1]);
@@ -20,6 +21,65 @@ const save = async page => JSON.parse((await download(page, '#btnSaveProject')).
 async function dxf(page) { await page.click('[data-fmt="dxf"]'); const text = await download(page, '#btnExport'); await page.click('[data-fmt="stl"]'); return text; }
 const unloadGuard = page => page.evaluate(() => {const event = new Event('beforeunload', {cancelable:true}); window.dispatchEvent(event); return event.defaultPrevented;});
 const idle = async page => {await page.waitForFunction(() => !document.getElementById('genOverlay')?.classList.contains('visible'));};
+async function confirmLayout(page, button, accept) {
+  const waiting = page.waitForEvent('dialog', {timeout: 5000});
+  const action = button === '#btnRegenerate' ? toolbarAction(page, 'btnRegenerate') : page.click(button);
+  const dialog = await waiting;
+  assert.equal(dialog.type(), 'confirm');
+  assert.equal(dialog.message(), 'Replace the frozen cell layout? Undo restores the current layout.');
+  if (accept) await dialog.accept(); else await dialog.dismiss();
+  await action;
+}
+async function checkLayoutReplacement(page, edited, acceptButton) {
+  let workers = 0;
+  const created = worker => {if (worker.url().includes('relief-editor-worker')) workers++;};
+  page.on('worker', created);
+  const editorPane = async () => {
+    await mobilePane(page, 'generator');
+    const header = page.locator('.cell-editor .section-header');
+    if (await header.getAttribute('aria-expanded') === 'false') await header.click();
+  };
+  const meshBytes = async () => {
+    await mobilePane(page, 'export');
+    const bytes = await download(page, '#btnExport');
+    await editorPane(); return bytes;
+  };
+  try {
+    assert.equal(await unloadGuard(page), false, 'saved manual edits still need replacement protection');
+    for (const button of ['#btnRegenerate', '#btnCellApply']) {
+      await confirmLayout(page, button, false);
+      assert.equal(workers, 0); assert.deepEqual(await save(page), edited, 'Cancel preserves saved edits without pending controls');
+    }
+    const seed = edited.params.seed + 101;
+    const noise = page.locator('#noise-parameters-section-body-toggle');
+    if (await noise.getAttribute('aria-expanded') === 'false') await noise.click();
+    await page.locator('#seedInput').fill(String(seed)); await page.locator('#seedInput').dispatchEvent('change');
+    await editorPane();
+    const history = [await page.locator('#btnCellUndo').isDisabled(), await page.locator('#btnCellRedo').isDisabled()];
+    const mesh = await meshBytes();
+    for (const button of ['#btnRegenerate', '#btnCellApply']) {
+      await confirmLayout(page, button, false);
+      assert.equal(workers, 0, 'Cancel never starts a cell-generation Worker');
+      assert.deepEqual(await save(page), edited, 'Cancel keeps exact applied parameters, site bytes, identities and pins');
+      assert.deepEqual(await meshBytes(), mesh, 'Cancel keeps the export source unchanged');
+      assert.equal(await page.locator('#seedInput').inputValue(), String(seed));
+      assert.match(await page.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
+      assert.deepEqual([await page.locator('#btnCellUndo').isDisabled(), await page.locator('#btnCellRedo').isDisabled()], history);
+    }
+    await confirmLayout(page, acceptButton, true);
+    await page.waitForFunction(() => !document.getElementById('cellEditorStatus')?.textContent?.includes('Preparing')); await idle(page);
+    const generated = await save(page);
+    assert.equal(workers, 1); assert.equal(generated.params.seed, seed); assert.notDeepEqual(generated.sites, edited.sites);
+    await page.click('#btnCellUndo'); await idle(page);
+    assert.deepEqual(await save(page), edited, 'Undo Accept restores the complete saved edited source');
+    assert.deepEqual(await meshBytes(), mesh, 'Undo Accept restores the edited export bytes');
+    assert.equal(await page.locator('#seedInput').inputValue(), String(seed), 'Undo also restores the prior pending seed');
+    await page.click('#btnCellUndo');
+    assert.doesNotMatch(await page.locator('#cellEditorStatus').innerText(), /Layout changes pending/, 'one more Undo removes only the seed draft');
+    assert.equal(await page.locator('#seedInput').inputValue(), String(edited.params.seed));
+    process.stdout.write(`Frozen layout Cancel/Accept/Undo passed at ${page.viewportSize().width}px via ${acceptButton}.\n`);
+  } finally {page.off('worker', created);}
+}
 async function point(page, x, y) {
   const rect = await page.locator('#cellOverlay').boundingBox(); assert(rect);
   const height = Math.max(6 * 1.15, 8 * 1.15 * rect.height / rect.width), width = height * rect.width / rect.height;
@@ -45,6 +105,7 @@ try {
   await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(start.x + start.inch, start.y, {steps: 8}); await page.mouse.up(); await idle(page);
   const moved = await save(page), movedXY = xy(moved);
   assert(Math.abs(movedXY[index * 2] - initialXY[index * 2] - 1) < 0.02, 'actual mouse drag moves the producer site one inch');
+  await checkLayoutReplacement(page, moved, '#btnCellApply');
   assert.notDeepEqual(await dxf(page), beforeDxf, 'the same completed-source cell boundary graph changes with a one-inch move');
   const owner = (coords, x, y) => {let best = Infinity, id = -1; for (let i = 0; i < coords.length / 2; i++) {const d = (coords[i*2]-x)**2 + (coords[i*2+1]-y)**2; if (d < best) {best = d; id = i;}} return id;};
   assert(Array.from({length: 4096}, (_, i) => [i % 64 / 63 * 8, Math.floor(i / 64) / 63 * 6]).some(([x,y]) => owner(initialXY,x,y) !== owner(movedXY,x,y)), 'the actual Euclidean owner oracle changes after the drag');
@@ -79,6 +140,7 @@ try {
   await page.locator('#cellProjectInput').setInputFiles({name: 'exact.mcproject', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(pinned))});
   await page.waitForFunction(() => document.getElementById('cellEditorStatus')?.textContent?.includes('No unsaved source changes.')); await idle(page);
   assert.deepEqual((await save(page)).sites, pinned.sites, 'Save/Open preserves exact Float64 sites, identities and pins');
+  await checkLayoutReplacement(page, pinned, '#btnRegenerate');
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.click('#btnCopyLink'); const linked = await page.evaluate(() => navigator.clipboard.readText());
   const payload = JSON.parse(Buffer.from(new URL(linked).hash.slice(3), 'base64url').toString()), ids = Buffer.from(payload._sites.identities, 'base64');
@@ -177,7 +239,7 @@ try {
   await changeNumber('baseThickness', 0.3);
   assert.equal(Number(await page.locator('#sl_amplitude').getAttribute('max')), 0.3);
   assert.deepEqual((await save(page)).params, couplingBefore.params, 'stock/depth changes remain pending with a layout draft');
-  await page.click('#btnCellApply'); await page.waitForFunction(() => !document.getElementById('cellEditorStatus')?.textContent?.includes('Preparing')); await idle(page);
+  await confirmLayout(page, '#btnCellApply', true); await page.waitForFunction(() => !document.getElementById('cellEditorStatus')?.textContent?.includes('Preparing')); await idle(page);
   const appliedCoupling = await save(page); assert.equal(appliedCoupling.params.reliefAttractorMode, 'point'); assert.equal(appliedCoupling.params.baseThickness, 0.3); assert.equal(appliedCoupling.params.amplitude, 0.3);
   await page.click('#btnCellUndo'); await idle(page); assert.deepEqual((await save(page)).params, couplingBefore.params); assert.deepEqual(await download(page, '#btnExport'), couplingMesh);
   assert.equal(await page.locator('#sl_reliefAttractorX').isVisible(), true, 'Undo Apply restores the prior pending mode and source');
@@ -223,7 +285,7 @@ try {
     await handlePage.mouse.move(pendingPoint.x - pendingPoint.inch / 3, pendingPoint.y);
     await handlePage.locator('#cellOverlay').dispatchEvent('pointercancel', {pointerId: 1, pointerType: 'mouse'}); await handlePage.mouse.up();
     assert.equal(Number(await handlePage.locator('#sl_' + xKey).inputValue()), pendingX, 'cancel restores the prior pending handle position');
-    await handlePage.click('#btnCellApply'); await handlePage.waitForFunction(() => !document.getElementById('cellEditorStatus')?.textContent?.includes('Preparing')); await idle(handlePage);
+    await confirmLayout(handlePage, '#btnCellApply', true); await handlePage.waitForFunction(() => !document.getElementById('cellEditorStatus')?.textContent?.includes('Preparing')); await idle(handlePage);
     const appliedHandle = await save(handlePage);
     assert.equal(appliedHandle.params[xKey], pendingX); assert.notDeepEqual(appliedHandle.sites, handleInitial.sites, 'Apply replaces the layout from the pending handle');
     await handlePage.click('#btnCellUndo'); await idle(handlePage); assert.deepEqual((await save(handlePage)).sites, handleInitial.sites);
@@ -260,6 +322,7 @@ try {
     await pinInput.focus(); await phone.keyboard.press('Space'); await idle(phone);
     assert.equal(await pinInput.isChecked(), true, 'keyboard Space still toggles the pin');
     assert.equal((await save(phone)).sites.pinned[0], 1, 'keyboard pin persists in the saved source');
+    await checkLayoutReplacement(phone, await save(phone), '#btnRegenerate');
     await pinInput.scrollIntoViewIfNeeded();
 
     await phone.screenshot({path: `screenshots/playwright/relief-editor-controls-${width}.png`});
