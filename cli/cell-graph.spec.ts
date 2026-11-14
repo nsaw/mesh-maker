@@ -118,6 +118,11 @@ const staleKernel=structuredClone(active.query);
 Reflect.set(staleKernel.warp.kernel!.perm,0,staleKernel.warp.kernel!.perm[0]^1);
 assert.throws(()=>validateCellGraphQuery(staleKernel),/actual Simplex kernel/);
 
+for (const xy of [[], [2, 2]]) {
+  const input = source(xy);
+  input.query.warp = { amplitude: 50, frequency: 2, seed: 37, kernel: new SimplexNoiseGen(37).describeKernel() };
+  assert.equal(graph(input).inner.length, 0, 'empty and one-owner graphs need no nonlinear boundary proof');
+}
 const two=graph(source(fixtures.two)),dxf=cellGraphDxf(two);
 const codes=dxf.trimEnd().split('\n');
 assert.equal(codes.length%2,0);

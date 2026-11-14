@@ -51,6 +51,7 @@
     "test:relief-near-ties": "tsx cli/relief-near-ties.spec.ts",
     "test:relief-near-ties-mutants": "python3 scripts/test-relief-near-ties-mutants.py",
     "test:native-distance-consumers": "python3 scripts/test-native-distance-consumers.py",
+    "test:cell-graph-warp": "tsx cli/cell-graph-warp.spec.ts",
     "test:cell-graph-bounds": "tsx cli/cell-graph-bounds.spec.ts"
   },
   "devDependencies": {

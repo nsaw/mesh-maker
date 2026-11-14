@@ -1,6 +1,6 @@
 # Cell graph proof contract
 
-The input is a completed producer snapshot, copied once. Ordered Float64 sites, stable IDs and the effective query metric determine the graph. Placement and current UI state are not consulted. Every failure returns a reason without a graph. No DXF is emitted on failure.
+The input is a completed query `/2` producer snapshot, copied once. The owner policy and runtime kernel coefficients are checked as specified in [kernel binding](cell-graph-kernel-binding.md). Ordered Float64 sites, stable IDs and the effective query metric determine the graph. Placement and current UI state are not consulted. Every failure returns a reason without a graph. No DXF is emitted on failure.
 
 ## Exact constant metric
 
@@ -16,7 +16,7 @@ The model is the full sum of the compactly supported corner polynomial
 
 `70 max(0, 1/2 - |r|²)^4 (g dot r)`
 
-on the ideal triangular lattice, with exactly the runtime's copied permutation and gradient table. The ideal skew constants use an outward interval around sqrt(3). The runtime descriptor has an explicit implementation tag. A changed or unsupported tag refuses certification.
+on the ideal triangular lattice, with exactly the runtime's copied permutation and gradient table. The ideal skew constants use an outward interval around sqrt(3). The runtime descriptor has an explicit implementation tag. The supported tag is `meshcraft-simplex2-fisher-yates-mulberry32-v1`. A changed or unsupported tag or mismatched coefficient table refuses certification.
 
 A support disk has radius sqrt(1/2). Under the skew transform, each coordinate differs from its lattice index by at most sqrt(3/2), which is less than two. Enumerating the skew-coordinate box expanded by two therefore includes every possible contributing vertex. The interval implementation enumerates those vertices rather than selecting a simplex from the midpoint.
 

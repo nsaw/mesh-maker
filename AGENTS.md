@@ -83,6 +83,8 @@ meshcraft/
 │   ├── export-surface.ts      # The one surface every export and toolpath reads (master or grid)
 │   ├── mesh-writer.ts         # Pure grid -> indexed mesh -> STL/OBJ writers (browser + CLI)
 │   ├── relief-project.ts      # Procedural relief project codec and revision-bound history
+│   ├── cell-graph/            # Producer-owned exact diagram, nonlinear certificates, inch DXF,
+│   │                          #   cancellable Worker/controller and source-revision binding
 │   ├── relief-master.ts       # .mcrelief data contract: parse/encode/verify, preview resample
 │   ├── sbp-export.ts          # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 │   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets, SBP section
