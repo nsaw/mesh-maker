@@ -99,6 +99,8 @@ src/
 │   └── presets.ts           # 18 CNC presets, 6 texture profiles
 ├── mesh.ts              # Mesh generation + smoothing
 ├── render.ts            # Three.js WebGL rendering (Phong shading, custom camera)
+├── render-geometry.ts   # Exact display attributes, wire lines and prepared bounds
+├── render-wire-worker.ts # Lazy view-only wire preparation
 ├── export.ts            # STL, OBJ, heightmap PNG, SBP export dispatcher
 ├── sbp-export.ts        # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 ├── ui.ts                # Sidebar, sliders, depth map upload, SBP config panel

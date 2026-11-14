@@ -33,6 +33,7 @@ jobs:
       - run: npm run typecheck:cli
       - run: npm run test:relief
       - run: npm run test:noise-worker
+      - run: npm run test:render-geometry
       - run: npm run test:relief-near-ties
       - run: npm run test:relief-near-ties-mutants
       - run: npm run test:native-distance-consumers

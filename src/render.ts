@@ -1,20 +1,28 @@
 import { noiseGeneration } from './noise/controller';
+import type { WireWorkerOutput } from './render-wire-worker';
+import { showToast } from './toast';
 import * as THREE from 'three';
 import { STATE, activeMaster } from './state';
-import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
+import { buildSurfaceBuffers, buildWireBuffers, type SurfaceBuffers, type SurfaceBounds, type WireBuffers } from './render-geometry';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;
 let _scene: THREE.Scene;
 let _camera: THREE.PerspectiveCamera;
-let _surfaceMesh: THREE.Mesh | null = null;
+let _surfaceMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhongMaterial> | null = null;
 let _wireLines: THREE.LineSegments | null = null;
 let _pointsObj: THREE.Points | null = null;
+let _wireMaterial: THREE.LineBasicMaterial | null = null;
+let _pointMaterial: THREE.PointsMaterial | null = null;
 /** Inputs for the lazily built wireframe and points of the current surface. */
 let _overlaySource: {
-  positions: Float32Array; vertices: number[][]; cols: number; rows: number; zMin: number; zRange: number;
+  positions: Float32Array; vertices: number[][]; cols: number; rows: number; zMin: number; zRange: number; bounds: SurfaceBounds; wire?: WireBuffers;
 } | null = null;
+let _wireWorker: Worker | null = null;
+let _wireTimer: ReturnType<typeof setTimeout> | null = null;
 let _encGroup: THREE.Group | null = null;
+let _enclosureSideMaterial: THREE.MeshPhongMaterial | null = null;
+let _enclosureBottomMaterial: THREE.MeshPhongMaterial | null = null;
 let _hemi: THREE.HemisphereLight | null = null;
 let _keyLight: THREE.DirectionalLight | null = null;
 let _fillLight: THREE.DirectionalLight | null = null;
@@ -266,13 +274,13 @@ export function requestRender(): void {
 
 // --- Geometry ---
 
-function disposeGroup(obj: THREE.Object3D | null): void {
+function disposeGroup(obj: THREE.Object3D | null, keepMaterial = false): void {
   if (!obj || !_scene) return;
   _scene.remove(obj);
   obj.traverse(child => {
     if ('geometry' in child && child.geometry)
       (child.geometry as THREE.BufferGeometry).dispose();
-    if ('material' in child && child.material) {
+    if (!keepMaterial && 'material' in child && child.material) {
       const mat = child.material;
       if (Array.isArray(mat)) mat.forEach(m => m.dispose());
       else (mat as THREE.Material).dispose();
@@ -326,109 +334,110 @@ export function applySurfaceMaterial(): void {
 
 function buildSurface(
   vertices: number[][], cols: number, rows: number,
-  meshX: number, meshY: number,
+  meshX: number, meshY: number, prepared?: SurfaceBuffers,
 ): void {
-  disposeGroup(_surfaceMesh); _surfaceMesh = null;
-  disposeGroup(_wireLines); _wireLines = null;
-  disposeGroup(_pointsObj); _pointsObj = null;
+  retireWireWorker();
+  // Geometry changes do not change shading. Keep the material's cached GPU program alive.
+  const material = _surfaceMesh?.material;
+  if (_surfaceMesh) { _scene.remove(_surfaceMesh); _surfaceMesh.geometry.dispose(); _surfaceMesh = null; }
+  disposeGroup(_wireLines, true); _wireLines = null;
+  disposeGroup(_pointsObj, true); _pointsObj = null;
 
-  const positions = new Float32Array(rows * cols * 3);
-  const uvs = new Float32Array(rows * cols * 2);
-
-  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
-  const zRange = zMax - zMin || 1;
-  _cachedZMin = zMin;
-  _cachedZMax = zMax;
-  _cachedZMid = (zMin + zMax) / 2;
-
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const idx = j * cols + i;
-      positions[idx * 3] = (i / (cols - 1)) * meshX;
-      positions[idx * 3 + 1] = (j / (rows - 1)) * meshY;
-      positions[idx * 3 + 2] = vertices[j][i];
-
-      // UV: normalized Z maps to color ramp texture (per-pixel sampling = no banding)
-      const t = Math.max(0, Math.min(1, (vertices[j][i] - zMin) / zRange));
-      uvs[idx * 2] = t;
-      uvs[idx * 2 + 1] = 0.5;
-
-    }
-  }
-
-  // Indexed triangles (2 per quad, shortest-diagonal split)
-  // A relief master declares its triangulation; draw the preview with it, as the export does.
   const master = activeMaster();
-  const fixedDiagonal = master ? master.diagonalZ00Z11 : null;
-  const indices = new Uint32Array((rows - 1) * (cols - 1) * 6);
-  let ti = 0;
-  for (let j = 0; j < rows - 1; j++)
-    for (let i = 0; i < cols - 1; i++) {
-      const a = j * cols + i;
-      const [t1, t2] = cellTriangleOffsets(fixedDiagonal ?? preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
-      indices[ti++] = a + t1[0]; indices[ti++] = a + t1[1]; indices[ti++] = a + t1[2];
-      indices[ti++] = a + t2[0]; indices[ti++] = a + t2[1]; indices[ti++] = a + t2[2];
-    }
-
-  // Analytical heightfield normals from central differences -- much smoother than
-  // computeVertexNormals() which averages discrete face normals and creates visible
-  // faceting seams on steep terrain.
-  const normals = new Float32Array(rows * cols * 3);
-  const sx = meshX / (cols - 1);
-  const sy = meshY / (rows - 1);
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const il = i > 0 ? i - 1 : i, ir = i < cols - 1 ? i + 1 : i;
-      const jd = j > 0 ? j - 1 : j, ju = j < rows - 1 ? j + 1 : j;
-      const dzdx = (vertices[j][ir] - vertices[j][il]) / ((ir - il) * sx);
-      const dzdy = (vertices[ju][i] - vertices[jd][i]) / ((ju - jd) * sy);
-      const len = Math.sqrt(dzdx * dzdx + dzdy * dzdy + 1);
-      const idx = j * cols + i;
-      normals[idx * 3] = -dzdx / len;
-      normals[idx * 3 + 1] = -dzdy / len;
-      normals[idx * 3 + 2] = 1 / len;
-    }
-  }
+  const ready = prepared && prepared.cols === cols && prepared.rows === rows
+    && prepared.meshX === meshX && prepared.meshY === meshY;
+  const { positions, normals, uvs, indices, zMin, zMax, zRange, bounds, wire } = ready ? prepared
+    : buildSurfaceBuffers(vertices, cols, rows, meshX, meshY, master ? master.diagonalZ00Z11 : null);
+  _cachedZMin = zMin; _cachedZMax = zMax; _cachedZMid = (zMin + zMax) / 2;
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  setPreparedBounds(geo, bounds);
 
-  _surfaceMesh = new THREE.Mesh(geo, makeSurfaceMaterial());
+  _surfaceMesh = new THREE.Mesh(geo, material ?? makeSurfaceMaterial());
   _scene.add(_surfaceMesh);
 
   // Wireframe and points are built on first use (updateVisibility): at 400 columns they add about
   // 4 MB of line vertices that most sessions never display.
-  _overlaySource = { positions, vertices, cols, rows, zMin, zRange };
+  _overlaySource = { positions, vertices, cols, rows, zMin, zRange, bounds, wire };
+}
+
+function setPreparedBounds(geometry: THREE.BufferGeometry, bounds: SurfaceBounds): void {
+  geometry.boundingBox = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max));
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(...bounds.center), bounds.radius);
+}
+
+function retireWireWorker(): void {
+  _wireWorker?.terminate(); _wireWorker = null;
+  if (_wireTimer !== null) { clearTimeout(_wireTimer); _wireTimer = null; }
+}
+
+/** View-only first use prepares lines without regenerating noise. Surface replacement retires it. */
+function prepareLazyWire(source: NonNullable<typeof _overlaySource>): void {
+  if (_wireWorker) return;
+  const { positions, vertices, cols, rows, zMin, zRange } = source;
+  const mode = STATE.mode;
+  const current = (): boolean => _overlaySource === source && STATE.vertices === vertices && STATE.mode === mode;
+  const heights = new Float64Array(cols * rows);
+  for (let j = 0; j < rows; j++) heights.set(vertices[j], j * cols);
+  const apply = (buffers: WireBuffers): void => {
+    if (!current()) return;
+    source.wire = buffers;
+    if (STATE.viewMode === 'wireframe' || STATE.viewMode === 'both') ensureWireframe();
+    requestRender();
+  };
+  const inline = (): void => {
+    const z = heights.byteLength ? heights : new Float64Array(cols * rows);
+    if (!heights.byteLength) for (let j = 0; j < rows; j++) z.set(vertices[j], j * cols);
+    apply(buildWireBuffers(positions, z, cols, rows, zMin, zRange));
+  };
+  let worker: Worker;
+  try { worker = new Worker(new URL('./render-wire-worker.ts', import.meta.url), { type: 'module' }); }
+  catch { inline(); return; } // A blocked Worker constructor retains the exact inline path.
+  _wireWorker = worker;
+  const failed = (message: string): void => {
+    if (_wireWorker !== worker) return;
+    const active = current(); retireWireWorker();
+    if (!active) return;
+    inline();
+    showToast(`Wire preview used the inline fallback: ${message}`, 6000);
+  };
+  _wireTimer = setTimeout(() => {
+    if (_wireWorker !== worker) return;
+    const active = current(); retireWireWorker();
+    if (active) showToast('Wire preview timed out. Select the view again to retry.', 6000);
+  }, 30_000);
+  worker.onmessage = (event: MessageEvent<WireWorkerOutput>) => {
+    if (_wireWorker !== worker) return;
+    if (!current()) { retireWireWorker(); return; }
+    if ('error' in event.data) { failed(event.data.error); return; }
+    const expected = (rows * (cols - 1) + cols * (rows - 1)) * 6;
+    if (event.data.buffers.positions.length !== expected || event.data.buffers.colors.length !== expected) {
+      failed('incomplete wire buffers'); return;
+    }
+    retireWireWorker(); apply(event.data.buffers);
+  };
+  worker.onerror = event => { event.preventDefault(); failed(event.message || 'worker load failed'); };
+  worker.onmessageerror = () => failed('unreadable worker result');
+  const copy = positions.slice();
+  try { worker.postMessage({ positions: copy, heights, cols, rows, zMin, zRange }, [copy.buffer, heights.buffer]); }
+  catch (error: unknown) { failed(error instanceof Error ? error.message : String(error)); }
 }
 
 function ensureWireframe(): void {
   if (_wireLines || !_overlaySource) return;
-  const { positions, vertices, cols, rows, zMin, zRange } = _overlaySource;
-  // Grid lines (horizontal + vertical, no triangle diagonals)
-  const nSeg = rows * (cols - 1) + cols * (rows - 1);
-  const wPos = new Float32Array(nSeg * 6);
-  const wCol = new Float32Array(nSeg * 6);
-  let w = 0;
-  function pushWireVtx(wj: number, wi: number): void {
-    const widx = wj * cols + wi;
-    wPos[w] = positions[widx * 3]; wPos[w + 1] = positions[widx * 3 + 1]; wPos[w + 2] = positions[widx * 3 + 2];
-    const vt = Math.max(0, Math.min(1, (vertices[wj][wi] - zMin) / zRange));
-    const g = (40 + vt * 120) / 255;
-    wCol[w] = g; wCol[w + 1] = g + 15 / 255; wCol[w + 2] = g + 30 / 255;
-    w += 3;
-  }
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols - 1; i++) { pushWireVtx(j, i); pushWireVtx(j, i + 1); }
-  for (let i = 0; i < cols; i++)
-    for (let j = 0; j < rows - 1; j++) { pushWireVtx(j, i); pushWireVtx(j + 1, i); }
+  const source = _overlaySource;
+  if (!source.wire) { prepareLazyWire(source); return; }
+  const { positions: wPos, colors: wCol } = source.wire;
 
   const wGeo = new THREE.BufferGeometry();
   wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
   wGeo.setAttribute('color', new THREE.BufferAttribute(wCol, 3));
-  _wireLines = new THREE.LineSegments(wGeo, new THREE.LineBasicMaterial({
+  setPreparedBounds(wGeo, _overlaySource.bounds);
+  _wireLines = new THREE.LineSegments(wGeo, _wireMaterial ??= new THREE.LineBasicMaterial({
     vertexColors: true, transparent: true, opacity: 0.7,
   }));
   _scene.add(_wireLines);
@@ -438,20 +447,37 @@ function ensurePoints(): void {
   if (_pointsObj || !_overlaySource) return;
   const pGeo = new THREE.BufferGeometry();
   pGeo.setAttribute('position', new THREE.BufferAttribute(_overlaySource.positions.slice(), 3));
-  _pointsObj = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  setPreparedBounds(pGeo, _overlaySource.bounds);
+  _pointsObj = new THREE.Points(pGeo, _pointMaterial ??= new THREE.PointsMaterial({
     size: 2, sizeAttenuation: false, color: 0x4eaaff, transparent: true, opacity: 0.8,
   }));
   _scene.add(_pointsObj);
+}
+
+/** Enclosure geometry is replaced on generation; its two bounded materials stay shared and alive. */
+function disposeEnclosure(keepMaterials = false): void {
+  if (_encGroup) {
+    _scene.remove(_encGroup);
+    _encGroup.traverse(child => {
+      if (child instanceof THREE.Mesh) child.geometry.dispose();
+    });
+    _encGroup = null;
+  }
+  if (!keepMaterials) {
+    _enclosureSideMaterial?.dispose(); _enclosureSideMaterial = null;
+    _enclosureBottomMaterial?.dispose(); _enclosureBottomMaterial = null;
+  }
 }
 
 function buildEnclosure(
   vertices: number[][], cols: number, rows: number,
   meshX: number, meshY: number,
 ): void {
-  disposeGroup(_encGroup);
+  disposeEnclosure(true);
   _encGroup = new THREE.Group();
   const zBase = 0;
-  const sideMat = new THREE.MeshPhongMaterial({ color: 0xe8e8e8, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+  const sideMat = _enclosureSideMaterial ??= new THREE.MeshPhongMaterial({ color: 0xe8e8e8, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+  const bottomMat = _enclosureBottomMaterial ??= new THREE.MeshPhongMaterial({ color: 0xe0e0e0, transparent: true, opacity: 0.7 });
 
   // Bottom face
   const botGeo = new THREE.PlaneGeometry(meshX, meshY);
@@ -466,7 +492,7 @@ function buildEnclosure(
     botGeo.setIndex(arr);
   }
   botGeo.computeVertexNormals();
-  _encGroup.add(new THREE.Mesh(botGeo, new THREE.MeshPhongMaterial({ color: 0xe0e0e0, transparent: true, opacity: 0.7 })));
+  _encGroup.add(new THREE.Mesh(botGeo, bottomMat));
 
   // Side walls (4 edge strips connecting top surface to z=0)
   function buildWall(edge: { x: number; y: number; z: number }[]): THREE.BufferGeometry {
@@ -523,7 +549,7 @@ function updateVisibility(): void {
 
 // --- Public API ---
 
-export function renderViewport(): void {
+export function renderViewport(prepared?: SurfaceBuffers): void {
   ensureRenderer();
 
   const verticesChanged = STATE.vertices !== _lastVerticesRef
@@ -537,13 +563,16 @@ export function renderViewport(): void {
     _lastRows = STATE.rows;
     _lastCols = STATE.cols;
     if (STATE.vertices) {
-      buildSurface(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
+      buildSurface(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY, prepared);
       buildEnclosure(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
     } else {
+      retireWireWorker();
       disposeGroup(_surfaceMesh); _surfaceMesh = null;
-      disposeGroup(_wireLines); _wireLines = null;
-      disposeGroup(_pointsObj); _pointsObj = null;
-      disposeGroup(_encGroup); _encGroup = null;
+      disposeGroup(_wireLines, true); _wireLines = null;
+      disposeGroup(_pointsObj, true); _pointsObj = null;
+      _wireMaterial?.dispose(); _wireMaterial = null;
+      _pointMaterial?.dispose(); _pointMaterial = null;
+      disposeEnclosure();
       _overlaySource = null;
     }
   }

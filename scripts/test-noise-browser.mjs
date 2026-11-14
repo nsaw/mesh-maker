@@ -33,9 +33,11 @@ try {
   const installProbe = () => {
     const NativeWorker = window.Worker;
     window.noiseProbe = { requests: [], results: [], failNext: false, constructorFails: false, hold: false, longTasks: [] };
-    window.renderProbe = { buffers: [], deletedBuffers: 0, deletedPrograms: 0 };
+    window.renderProbe = { buffers: [], uploads: 0, deletedBuffers: 0, deletedPrograms: 0 };
+    window.wireProbe = { requests: [], hold: false, held: [], failNext: false, constructorFails: false };
     const bufferData = WebGL2RenderingContext.prototype.bufferData;
     WebGL2RenderingContext.prototype.bufferData = function(target, data, ...rest) {
+      window.renderProbe.uploads++;
       // Capture only the initial frame for byte parity. Later generation measurements avoid hashing overhead.
       if (ArrayBuffer.isView(data) && window.renderProbe.capture !== false) {
         window.renderProbe.buffers.push(crypto.subtle.digest('SHA-256', data).then(hash => ({ target,
@@ -53,18 +55,30 @@ try {
     }).observe({ type: 'longtask', buffered: true });
     window.Worker = class extends NativeWorker {
       constructor(url, options) {
+        if (String(url).includes('render-wire-worker') && window.wireProbe.constructorFails) throw new Error('Wire constructor blocked');
         if (window.noiseProbe.constructorFails) throw new Error('Worker construction blocked for fallback regression');
         super(url, options);
-        this.entry = null;
+        this.entry = null; this.isWire = String(url).includes('render-wire-worker');
         this.addEventListener('message', event => {
+          if (this.isWire && window.wireProbe.hold) {
+            event.stopImmediatePropagation(); window.wireProbe.held.push({ worker: this, data: event.data }); return;
+          }
           if (this.entry && event.data.type === 'result' && event.data.surface) {
             window.noiseProbe.results.push({ id: event.data.requestId, at: performance.now(),
               elapsed: performance.now() - this.entry.at, params: this.entry.params,
+              renderPrepared: Boolean(event.data.surface.renderBuffers), wirePrepared: Boolean(event.data.surface.renderBuffers?.wire),
               heights: Array.from(event.data.surface.heights), cols: event.data.surface.cols, rows: event.data.surface.rows });
           }
         });
       }
       postMessage(input, ...rest) {
+        if (this.isWire) {
+          window.wireProbe.requests.push(this);
+          if (window.wireProbe.failNext) {
+            window.wireProbe.failNext = false;
+            setTimeout(() => this.dispatchEvent(new ErrorEvent('error', { message: 'Injected wire failure', cancelable: true })), 10); return;
+          }
+        }
         if (input.params?.noiseType) {
           this.entry = { id: input.requestId, at: performance.now(), params: input.params, terminated: false };
           window.noiseProbe.requests.push(this.entry);
@@ -102,6 +116,8 @@ try {
   assert.deepEqual(renderedBuffers, renderFixture.buffers, 'positions, normals, UVs, indices and enclosure buffers retain their pre-reuse bytes');
   await page.evaluate(() => { window.renderProbe.capture = false; });
   receipt.initialRenderBuffers = renderedBuffers.length;
+  assert(await page.evaluate(() => window.noiseProbe.results[0].renderPrepared), 'worker prepares exact surface buffers');
+  assert.equal(await page.evaluate(() => window.noiseProbe.results[0].wirePrepared), false, 'solid mode retains lazy wire allocation');
   receipt.gpu = await page.locator('#viewport').evaluate(canvas => { const gl = canvas.getContext('webgl2'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unavailable'; });
   process.stdout.write(`initial surface ${receipt.gpu}\n`);
   await page.locator('#selPreset').selectOption('relief-vertical');
@@ -131,12 +147,13 @@ try {
   receipt.generationLongTasks = await page.evaluate(start => window.noiseProbe.longTasks.filter(task => task.at >= start), responseStart);
   const disposalAfter = await page.evaluate(() => ({ buffers: window.renderProbe.deletedBuffers, programs: window.renderProbe.deletedPrograms }));
   assert(disposalAfter.buffers - disposalBefore.buffers >= 20, 'replaced full geometry disposes its GPU buffers');
+  assert.equal(disposalAfter.programs, disposalBefore.programs, 'same shading regeneration retains shader programs');
   receipt.replacedBuffersDisposed = disposalAfter.buffers - disposalBefore.buffers;
   receipt.cpuThrottleRate = 4;
-  receipt.hardwareRenderer = !/swiftshader|llvmpipe|software/i.test(receipt.gpu);
-  receipt.fullFrameAcceptance = 'required-dependent-4b';
-  // Slice 4a records full-frame work. The required dependent 4b gate asserts its 100ms bound.
-  process.stdout.write(`responsiveness checked ${JSON.stringify({ gpu: receipt.gpu, hardwareRenderer: receipt.hardwareRenderer, longTasks: receipt.generationLongTasks })}\n`);
+  receipt.hardwareCompletionGate = !/swiftshader|llvmpipe|software/i.test(receipt.gpu);
+  if (receipt.hardwareCompletionGate) assert(receipt.generationLongTasks.every(task => task.duration < 100),
+    `4x hardware full-frame completion exceeded 100ms: ${JSON.stringify(receipt.generationLongTasks)}`);
+  process.stdout.write(`responsiveness checked ${JSON.stringify({ gpu: receipt.gpu, hardwareCompletionGate: receipt.hardwareCompletionGate, longTasks: receipt.generationLongTasks })}\n`);
   await page.locator('#selPreset').selectOption('relief-pockets'); await waitFull();
   if (await page.locator('#sponsorBackdrop.visible').count()) await page.keyboard.press('Escape');
   await page.locator('#sl_reliefJitter').scrollIntoViewIfNeeded();
@@ -303,10 +320,68 @@ try {
     await page.locator(`[data-view="${view}"]`).click();
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const before = await page.evaluate(() => ({ deleted: window.renderProbe.deletedPrograms, id: window.noiseProbe.requests.at(-1).id }));
+    const renderStarted = await page.evaluate(() => performance.now());
     await setRange('reliefJitter', view === 'wireframe' || view === 'points' ? 0.65 : 0.7, 'change');
     await waitFull(before.id);
+    assert.equal(await page.evaluate(() => window.noiseProbe.results.at(-1).wirePrepared), view === 'wireframe' || view === 'both');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.evaluate(() => window.renderProbe.deletedPrograms), before.deleted, `${view} regeneration retains overlay programs`);
+    await page.waitForTimeout(50);
+    const tasks = await page.evaluate(start => window.noiseProbe.longTasks.filter(task => task.at >= start), renderStarted);
+    (receipt.viewLongTasks ??= {})[view] = tasks;
+    if (receipt.hardwareCompletionGate) assert(tasks.every(task => task.duration < 100), `${view} full render exceeded 100ms: ${JSON.stringify(tasks)}`);
+  }
+  // Real lazy-wire workers: view changes cache only the current source; retired results cannot upload.
+  const lazyCounts = [];
+  async function freshSolid(value) {
+    await page.locator('[data-view="solid"]').click();
+    const id = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
+    await setRange('reliefJitter', value, 'change'); await waitFull(id);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
+  async function holdWire() {
+    await page.evaluate(() => { window.wireProbe.hold = true; window.wireProbe.held = []; });
+    await page.locator('[data-view="wireframe"]').click();
+    await page.waitForFunction(() => window.wireProbe.held.length === 1);
+  }
+  async function releaseWire() {
+    await page.evaluate(() => {
+      window.wireProbe.hold = false;
+      for (const held of window.wireProbe.held) held.worker.dispatchEvent(new MessageEvent('message', { data: held.data }));
+      window.wireProbe.held = [];
+    });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  }
+  await freshSolid(0.45); await holdWire();
+  await page.locator('[data-view="solid"]').click();
+  const cached = await page.evaluate(() => ({ uploads: window.renderProbe.uploads, noise: window.noiseProbe.requests.length }));
+  await releaseWire();
+  assert.equal(await page.evaluate(() => window.renderProbe.uploads), cached.uploads, 'hidden lazy wire does not upload');
+  await page.locator('[data-view="wireframe"]').click();
+  await page.waitForFunction(n => window.renderProbe.uploads > n, cached.uploads);
+  assert.equal(await page.evaluate(() => window.noiseProbe.requests.length), cached.noise, 'lazy wire never regenerates noise');
+  for (const race of ['replacement', 'mode']) {
+    await freshSolid(race === 'replacement' ? 0.5 : 0.65); await holdWire();
+    if (race === 'replacement') await freshSolid(0.6);
+    else {
+      await page.locator('[data-mode="depthmap"]').click();
+      await page.waitForFunction(() => !document.getElementById('genOverlay').classList.contains('visible'));
+    }
+    const uploads = await page.evaluate(() => window.renderProbe.uploads);
+    await releaseWire();
+    assert.equal(await page.evaluate(() => window.renderProbe.uploads), uploads, `${race} rejects retired lazy-wire delivery`);
+    if (race === 'mode') { await page.locator('[data-mode="noise"]').click(); await waitFull(); }
+    lazyCounts.push(race);
+  }
+  for (const fallback of ['failNext', 'constructorFails']) {
+    await freshSolid(fallback === 'failNext' ? 0.75 : 0.8);
+    const before = await page.evaluate(key => { window.wireProbe[key] = true; return window.renderProbe.uploads; }, fallback);
+    await page.locator('[data-view="wireframe"]').click();
+    await page.waitForFunction(n => window.renderProbe.uploads > n, before);
+    await page.evaluate(() => { window.wireProbe.constructorFails = false; });
+    lazyCounts.push(fallback);
+  }
+  receipt.lazyWireCases = lazyCounts;
   const beforeClear = await page.evaluate(() => window.renderProbe.deletedPrograms);
   await page.locator('[data-mode="depthmap"]').click();
   await page.waitForFunction(() => !document.getElementById('genOverlay').classList.contains('visible'));

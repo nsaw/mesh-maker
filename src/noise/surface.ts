@@ -1,3 +1,4 @@
+import type { SurfaceBuffers } from '../render-geometry';
 import type { MeshState } from '../state';
 import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 import { createNoiseGen, SimplexNoiseGen } from './generators';
@@ -158,6 +159,7 @@ export function noiseSurfaceParams(s: NoiseSurfaceParams): NoiseSurfaceParams {
 }
 
 export interface NoiseSurface {
+  renderBuffers?: SurfaceBuffers;
   vertices: number[][];
   cols: number;
   rows: number;

@@ -33,6 +33,7 @@
     "test:noise-worker": "tsx cli/noise-worker.spec.ts",
     "test:noise-browser": "node scripts/test-noise-browser.mjs",
     "test:export-authority": "node scripts/test-export-authority.mjs",
+    "test:render-geometry": "tsx cli/render-geometry.spec.ts",
     "test:ui-values": "node scripts/ui/values.spec.mjs",
     "test:ui-interruptions": "node scripts/ui/interruptions.spec.mjs",
     "test:relief-near-ties": "tsx cli/relief-near-ties.spec.ts",

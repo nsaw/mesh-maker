@@ -15,7 +15,9 @@ flowchart LR
   Toolbar["toolbar.ts tabs/buttons"] -->|mutate| STATE
   Interaction["interaction.ts mouse/touch"] -->|mutate orbit/tilt/pan/zoom| STATE
   STATE -->|debouncedGenerate| Mesh["mesh.ts generateMesh()"]
-  Mesh -->|STATE.vertices, cols, rows| Render["render.ts renderViewport()"]
+  Mesh -->|noise snapshot| Worker["noise/worker.ts: heights + prepared display buffers"]
+  Worker -->|owned result| Mesh
+  Mesh -->|STATE.vertices; prepared noise buffers| Render["render.ts renderViewport()"]
   STATE -->|setCameraFromState| Render
   Render --> Canvas["viewport canvas + gizmo"]
   Mesh --> Stats["stats.ts / render.ts overlays"]
@@ -49,7 +51,9 @@ Range construction and every programmatic range update use `configureRange`/`syn
 
 `src/interaction.ts` binds mouse and touch listeners on `#canvasWrap` to drive `STATE.orbit`, `STATE.tilt`, `STATE.panX/panY`, and `STATE.zoom` directly — left-drag orbits, right/shift-drag or two-finger-drag pans, wheel/pinch zooms, double-click calls `zoomExtents()` (`src/stats.ts`). It throttles camera updates via `requestAnimationFrame` (`queueRender()`) rather than re-rendering per mousemove event, and keeps sliders visually in sync (`syncSlider()`) since orbit/tilt/zoom are also slider-editable in `ui.ts`.
 
-`src/render.ts` owns the actual three.js scene: `ensureRenderer()` lazily creates the renderer/scene/camera/gizmo on first use; `renderViewport()` rebuilds the surface/wireframe/points/enclosure geometry only when `STATE.vertices` (identity-compared) or dimensions changed, then calls `setCameraFromState()` to position the camera from `STATE.orbit/tilt/roll/zoom/panX/panY` and schedules a render via `requestRender()`'s on-demand rAF pattern (no permanent render loop — it renders only when `_needsRender` is set). Surface color comes from `makeSurfaceMaterial()`: with `STATE.viewMaterial === 'elevation'` (default) a precomputed height-ramp `DataTexture` (`getColorRampTexture()`) sampled by per-vertex UV rather than vertex colors, avoiding banding; with `'neutral'` a single warm-white Phong color, so shading alone shows the form (the ramp's iso-height bands read as contour lines). The View Controls shading select calls `applySurfaceMaterial()`, which swaps and disposes the material without regenerating geometry; the cached ramp texture is kept. `buildSurface()` also computes analytical per-vertex normals from central differences instead of `computeVertexNormals()`, avoiding facet seams on steep relief.
+`src/render.ts` owns the actual three.js scene: `ensureRenderer()` lazily creates the renderer/scene/camera/gizmo on first use; `renderViewport()` replaces surface/enclosure geometry when `STATE.vertices` (identity-compared) or dimensions change, creates wireframe/points lazily, then calls `setCameraFromState()` to position the camera from `STATE.orbit/tilt/roll/zoom/panX/panY` and schedules a render via `requestRender()`'s on-demand rAF pattern (no permanent render loop — it renders only when `_needsRender` is set). Surface color comes from `makeSurfaceMaterial()`: with `STATE.viewMaterial === 'elevation'` (default) a precomputed height-ramp `DataTexture` (`getColorRampTexture()`) sampled by per-vertex UV rather than vertex colors, avoiding banding; with `'neutral'` a single warm-white Phong color, so shading alone shows the form (the ramp's iso-height bands read as contour lines). The View Controls shading select calls `applySurfaceMaterial()`, which swaps and disposes the material without regenerating geometry; the cached ramp texture is kept. `buildSurface()` attaches prepared attributes and bounds to Three.js geometry. For noise, `src/noise/worker.ts` calls the shared `buildSurfaceBuffers()` in `src/render-geometry.ts` to prepare full-density Float32 positions, analytical central-difference normals and UVs, Uint32 triangle indices, an exact Float32 bounding box and a conservative bounding sphere. These buffers transfer with the owning request's Float64 heights; the prepared bounds avoid first-draw vertex scans. Non-noise previews and noise Worker-constructor fallback call the same builder inline, retaining a relief master's fixed diagonal.
+
+Wire buffers are prepared in the noise worker only when Wireframe or Both is requested. View-only first use otherwise runs `src/render-wire-worker.ts`, owned by the current source and mode and retired on surface replacement; blocked construction or worker failure retains the inline wire builder. Points remain lazy. Display Float32 buffers never become an export source: `getExportSurface()` reads the authoritative full-resolution Float64 heights, with noise revision guards and relief-master ownership unchanged.
 
 `src/stats.ts` (`updateStats()`, `zoomExtents()`) and the dims/warning overlay in `render.ts` (`updateDimsOverlay()`) read `STATE.vertices`/`cols`/`rows`/`genTime`/`sbpStats` to render the on-canvas HUD; both are called after mesh generation and after view-mode or export-format changes.
 
@@ -89,7 +93,8 @@ When these files or sections are changed, remember to consider these:
 | `src/ui.ts` | Sidebar section builders, generic slider/select wiring, preset/profile/depth-map upload handlers |
 | `src/toolbar.ts` | Mode tabs, view/export-format buttons, Copy Link, resize hookup |
 | `src/interaction.ts` | Mouse/touch orbit/pan/zoom drag handling, rAF-throttled camera updates |
-| `src/render.ts` | three.js scene setup, on-demand render scheduling, surface/wireframe/points/enclosure geometry build |
+| `src/render.ts` | Three.js scene, prepared-buffer attachment, lazy overlays, enclosure geometry and render scheduling |
+| `src/render-geometry.ts`, `src/render-wire-worker.ts` | Shared exact display-buffer/bounds arithmetic and cancellable view-only lazy wire preparation |
 | `src/slider-utils.ts` | Click-to-edit value label behavior shared by all sliders |
 | `src/stats.ts` | Zoom-extents camera fit, HUD stat overlay (triangle/vertex counts, SBP stats) |
 | `src/toast.ts` | Transient toast message singleton |

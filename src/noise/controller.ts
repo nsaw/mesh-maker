@@ -42,6 +42,7 @@ export class NoiseGeneration {
   private tracked = false;
   private gesture = 0;
   private dragging = false;
+  includeWire: () => boolean = () => false;
   onCommit: (surface: NoiseSurface, quality: GenerationQuality) => void = () => undefined;
   onBusy: (busy: boolean) => void = () => undefined;
   onError: (reason: string) => void = () => undefined;
@@ -136,7 +137,7 @@ export class NoiseGeneration {
       timer: setTimeout(() => { this.fail(request, 'Noise generation timed out. Generate again.'); }, this.options.timeoutMs) };
     this.request = request;
     this.onBusy(true);
-    const input = { requestId: id, params: noiseSurfaceParams({ ...params,
+    const input = { requestId: id, includeWire: this.includeWire(), params: noiseSurfaceParams({ ...params,
       resolution: quality === 'preview' ? Math.min(params.resolution, 120) : params.resolution }) };
     try {
       request.worker = this.options.createWorker();

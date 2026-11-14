@@ -1,3 +1,4 @@
+import { buildSurfaceBuffers } from '../src/render-geometry';
 /** Exact extraction fixtures and request-lifecycle regressions. No browser or wall-clock sampler oracle. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -44,7 +45,9 @@ class FakeWorker implements NoiseWorker {
   emit(output: NoiseWorkerOutput): void { this.onmessage?.({ data: output } as MessageEvent<NoiseWorkerOutput>); }
   succeed(): void {
     assert(this.input);
-    this.emit({ type: 'result', requestId: this.input.requestId, surface: packNoiseSurface(buildNoiseSurface(this.input.params)) });
+    const source = buildNoiseSurface(this.input.params);
+    const renderBuffers = buildSurfaceBuffers(source.vertices, source.cols, source.rows, this.input.params.meshX, this.input.params.meshY);
+    this.emit({ type: 'result', requestId: this.input.requestId, surface: packNoiseSurface({ ...source, renderBuffers }) });
   }
   fail(message: string): void { this.onerror?.({ message, preventDefault: () => undefined } as ErrorEvent); }
 }
@@ -160,6 +163,20 @@ function refused(outcome: NoiseOutcome): void { assert('reason' in outcome); }
   workers[0].emit({ type: 'result', requestId: workers[0].input!.requestId, surface });
   refused(await pending);
   assert.match(controller.exportBlock(params) ?? '', /incomplete surface/);
+}
+// Invalid prepared attributes must settle the same request rather than reaching Three.js.
+for (const field of ['positions', 'wire'] as const) {
+  const { controller, workers } = fakeController();
+  const pending = controller.start(params, 'full');
+  const renderBuffers = buildSurfaceBuffers(scalar.vertices, scalar.cols, scalar.rows, params.meshX, params.meshY);
+  if (field === 'positions') renderBuffers.positions = new Float32Array(1);
+  else renderBuffers.wire = { positions: new Float32Array(1), colors: new Float32Array(1) };
+  const surface = packNoiseSurface({ ...scalar, renderBuffers });
+  assert(workers[0].input);
+  workers[0].emit({ type: 'result', requestId: workers[0].input.requestId, surface });
+  refused(await pending);
+  assert(workers[0].terminated);
+  assert.match(controller.exportBlock(params) ?? '', /incomplete/);
 }
 // Gesture previews have display authority only inside their original epoch. Source/export authority
 // still changes on every input, and release must retire even a completed-but-queued coarse result.

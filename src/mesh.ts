@@ -105,12 +105,13 @@ function setGenerationBusy(busy: boolean): void {
   updateDimsOverlay();
 }
 
+noiseGeneration.includeWire = () => STATE.viewMode === 'wireframe' || STATE.viewMode === 'both';
 noiseGeneration.onBusy = setGenerationBusy;
 noiseGeneration.onError = reason => showToast(reason, 8000);
 noiseGeneration.onCommit = surface => {
   applyNoiseSurface(surface);
   STATE.sbpStats = null;
-  renderViewport();
+  renderViewport(surface.renderBuffers);
   updateStats();
 };
 

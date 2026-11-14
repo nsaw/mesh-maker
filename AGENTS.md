@@ -76,6 +76,8 @@ meshcraft/
 │   ├── numeric-domain.ts      # Finite numeric input boundary and semantic count domains
 │   ├── render.ts              # Three.js WebGL viewport: surface, wireframe, points, enclosure,
 │   │                          #   elevation or neutral surface material
+│   ├── render-geometry.ts     # Pure exact display buffers, wire lines and conservative bounds
+│   ├── render-wire-worker.ts  # Cancellable lazy wire preparation for view-only first use
 │   ├── export.ts              # Export dispatcher: STL (binary/ASCII), OBJ, 3DM, heightmap PNG
 │   ├── export-surface.ts      # The one surface every export and toolpath reads (master or grid)
 │   ├── mesh-writer.ts         # Pure grid -> indexed mesh -> STL/OBJ writers (browser + CLI)
@@ -101,6 +103,7 @@ meshcraft/
 │       └── worker.ts          # Web Worker entry for uploaded STL processing
 ├── cli/
 │   ├── noise-worker.spec.ts   # npm run test:noise-worker (exact extraction, request lifecycle)
+│   ├── render-geometry.spec.ts # npm run test:render-geometry (original-buffer oracle, bounds, transfer)
 │   ├── stl-to-sbp.ts          # CLI entry point (tsx/Node)
 │   ├── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
 │   ├── voronoi-relief.spec.ts # npm run test:relief
@@ -134,6 +137,7 @@ meshcraft/
 ### Key Design Decisions
 
 - **Noise worker** (`src/noise/surface.ts`, `controller.ts`, `worker.ts`): a complete immutable snapshot owns each generation. Authoritative settings revisions settle superseded full-resolution waiters. Within one pointer gesture a running coarse request may finish as a labeled display approximation while newer input is queued; its successor samples only the newest queued settings. Release, a new gesture, mode/preset/reset changes and errors retire that preview epoch. Slider drags request at most 120 columns, release requests the selected resolution, and numeric/programmatic-only inputs also finish at full resolution. Every generated-surface export waits for its captured revision at full resolution; edits or mode changes refuse that export. Direct surface reads refuse coarse, pending, failed or stale noise grids. Worker construction failure uses the same builder inline; load failures retain the existing update message without reloading.
+- **Prepared display geometry** (`src/render-geometry.ts`, `src/render-wire-worker.ts`): noise requests prepare full-density Float32 attributes, Uint32 triangle indices and conservative bounds in their owning worker, then transfer them with Float64 heights. Other sources and blocked Worker constructors use the same arithmetic inline. Wire lines are prepared only when requested; view-only first use owns a separate worker retired on surface replacement. Prepared bounds avoid first-draw vertex scans.
 - **Three.js WebGL renderer** (`src/render.ts`): Phong surface with analytical heightfield normals, an on-demand render loop (renders only when state changes), and an elevation-ramp or neutral surface material. Grids up to 400 columns (~250k cells) render interactively. (An earlier Canvas 2D painter's-algorithm renderer was replaced.)
 - **Typed STATE singleton**: `MeshState` interface with 40+ typed keys. Direct mutation — no reactive/observer pattern. The call graph is explicit (slider → debounce → generate → render).
 - **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar. Incompatible older payloads reset to defaults with a toast.
