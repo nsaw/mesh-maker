@@ -11,12 +11,12 @@
  */
 
 import { applyBackgroundCutoff, normalizeGrid, sampleLumaGrid } from '../src/geometry';
-import { STATE, CURRENT_PAYLOAD_VERSION, consumeOutdatedLinkReset, boardIsLinkBoard, deserializeConfig, rememberLinkBoard, restoreNoiseDims, saveNoiseDims, serializeConfig, stockTopIn } from '../src/state';
+import { STATE, controlIsReadOnly, RELIEF_LOCKED_KEYS, CURRENT_PAYLOAD_VERSION, consumeOutdatedLinkReset, boardIsLinkBoard, deserializeConfig, rememberLinkBoard, restoreNoiseDims, saveNoiseDims, serializeConfig, stockTopIn } from '../src/state';
 import { generateNoiseMesh, generateDepthMapMesh } from '../src/mesh';
-import { updateEffectiveOffsetDisplay } from '../src/sbp-export';
+import { SBP_STATE, buildConfig, syncSbpSafeZ, updateEffectiveOffsetDisplay } from '../src/sbp-export';
 import { fitAspectToBed, loadDepthMap, syncDepthCaps } from '../src/ui';
 import { DEFAULTS } from '../src/state';
-import type { ReliefMaster } from '../src/relief-master';
+import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from '../src/relief-master';
 
 let failures = 0;
 function assert(condition: boolean, label: string, detail = ''): void {
@@ -376,6 +376,85 @@ process.stdout.write('T18 zero-sized decoded images preserve the current documen
     else Reflect.deleteProperty(globalThis, 'Image');
     if (documentDescriptor) Object.defineProperty(globalThis, 'document', documentDescriptor);
     else Reflect.deleteProperty(globalThis, 'document');
+  }
+}
+
+process.stdout.write('T18 strict numeric URL boundary\n');
+{
+  const numeric = Object.fromEntries(Object.entries(DEFAULTS).filter(([, value]) => typeof value === 'number'));
+  const encoded = (payload: unknown): string => '?c=' + Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const accepted = deserializeConfig(encoded({ _v: CURRENT_PAYLOAD_VERSION, ...numeric }));
+  const keys = Object.keys(accepted).filter(key => typeof numeric[key] === 'number');
+  assert(keys.includes('frequency') && keys.includes('resolution'), 'numeric allowlist sweep includes unchecked continuous and count keys');
+  for (const bad of ['0.2', '', null, true, {}, [0.2], NaN, Infinity, -Infinity]) {
+    const payload = Object.fromEntries(keys.map(key => [key, bad]));
+    const parsed = deserializeConfig(encoded({ _v: CURRENT_PAYLOAD_VERSION, ...payload }));
+    assert(keys.every(key => !(key in parsed)), `every numeric key rejects ${JSON.stringify(bad)}`);
+  }
+  const overflow = '?c=' + Buffer.from(`{"_v":${CURRENT_PAYLOAD_VERSION},"frequency":1e400}`).toString('base64url');
+  assert(!('frequency' in deserializeConfig(overflow)), 'JSON exponent overflow is rejected before STATE assignment');
+  const exact = 0.12345678912345678;
+  assert(deserializeConfig(encoded({ _v: CURRENT_PAYLOAD_VERSION, frequency: exact })).frequency === exact, 'valid exact numeric values retain their full precision');
+}
+
+process.stdout.write('T19 source control ownership\n');
+{
+  const saved = { ...STATE };
+  try {
+    const master = await parseReliefMaster(await encodeReliefMaster({
+      format: 'meshcraft-relief', version: 1, units: 'in', cols: 2, rows: 2, width: 0.5, height: 0.75,
+      stock: 0.125, backing: 0.0625, dtype: 'float64', rowOrder: 'top-down', heightOrigin: 'panel-back', triangulation: 'tr-bl', mask: false,
+    }, Float64Array.from([0.0625, 0.125, 0.125, 0.125])));
+    for (const mode of ['noise', 'depthmap', 'drape'] as const) {
+      for (const imported of [null, master]) for (const generated of [null, master]) {
+        Object.assign(STATE, { mode, reliefMaster: imported, drapeMaster: generated });
+        for (const key of RELIEF_LOCKED_KEYS) assert(controlIsReadOnly(key) === (mode === 'depthmap' && imported !== null),
+          `${mode} source lock for ${key}, imported ${imported !== null}, generated ${generated !== null}`);
+        for (const key of ['resolution', 'orbit', 'drapeReliefDepth']) assert(!controlIsReadOnly(key), `${key} remains editable in ${mode}`);
+      }
+    }
+  } finally { Object.assign(STATE, saved); }
+}
+
+process.stdout.write('T19b physical smoothing retains continuous precision\n');
+{
+  const encode = (payload: unknown): string => '?c=' + Buffer.from(JSON.stringify(payload)).toString('base64url');
+  for (const radius of [0.12345678912345678, 0.23456789123456789]) {
+    const result = deserializeConfig(encode({ _v: CURRENT_PAYLOAD_VERSION, smoothRadiusIn: radius, dmSmoothRadiusIn: radius }));
+    assert(result.smoothRadiusIn === radius && result.dmSmoothRadiusIn === radius, `physical radius ${radius} retains exact digits`);
+  }
+  const bounds = deserializeConfig(encode({ _v: CURRENT_PAYLOAD_VERSION, smoothRadiusIn: -1, dmSmoothRadiusIn: 2 }));
+  assert(bounds.smoothRadiusIn === 0 && bounds.dmSmoothRadiusIn === 1, 'physical smoothing clamps in inches, without count quantization');
+}
+
+process.stdout.write('T20 stock changes normalize the clearance model before DOM synchronization\n');
+{
+  const saved = { ...STATE }, savedSbp = { ...SBP_STATE };
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  try {
+    const master = await parseReliefMaster(await encodeReliefMaster({ format: 'meshcraft-relief', version: 1, units: 'in', cols: 2, rows: 2,
+      width: 1, height: 1, stock: 1.25, backing: 0.5, dtype: 'float64', rowOrder: 'top-down', heightOrigin: 'panel-back', triangulation: 'tr-bl', mask: false,
+    }, Float64Array.from([0.5, 1.25, 1.25, 1.25])));
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { getElementById: () => null } });
+    const sources: Array<{ mode: typeof STATE.mode; reliefMaster: ReliefMaster | null; drapeMaster: ReliefMaster | null }> = [
+      { mode: 'noise', reliefMaster: master, drapeMaster: master },
+      { mode: 'depthmap', reliefMaster: null, drapeMaster: null },
+      { mode: 'depthmap', reliefMaster: master, drapeMaster: null },
+      { mode: 'drape', reliefMaster: null, drapeMaster: master },
+    ];
+    for (const source of sources) {
+      Object.assign(STATE, DEFAULTS, source, { baseThickness: 1.25, meshX: 1, meshY: 1 });
+      Object.assign(SBP_STATE, { safeZ: 0.9, homeZ: 1.45 }); syncSbpSafeZ();
+      assert(SBP_STATE.safeZ === 1.4 && SBP_STATE.homeZ === 1.9, `${source.mode} stock path commits a valid model pair without native controls`);
+      const config = buildConfig(); assert(config.safeZ === SBP_STATE.safeZ && config.homeZ === SBP_STATE.homeZ, `${source.mode} config equals the committed clearance model`);
+      for (const raised of [1.55, 2.125]) {
+        SBP_STATE.homeZ = raised; syncSbpSafeZ();
+        assert(Number(SBP_STATE.homeZ) === raised, `${source.mode} preserves valid Home ${raised}, including below its reset target`);
+      }
+    }
+  } finally {
+    Object.assign(STATE, saved); Object.assign(SBP_STATE, savedSbp);
+    if (documentDescriptor) Object.defineProperty(globalThis, 'document', documentDescriptor); else Reflect.deleteProperty(globalThis, 'document');
   }
 }
 

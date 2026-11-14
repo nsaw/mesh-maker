@@ -30,6 +30,7 @@
     "preview": "vite preview",
     "prepare": "husky",
     "postbuild": "node scripts/check-asset-size.mjs dist",
+    "test:ui-values": "node scripts/ui/values.spec.mjs",
     "test:relief-near-ties": "tsx cli/relief-near-ties.spec.ts",
     "test:relief-near-ties-mutants": "python3 scripts/test-relief-near-ties-mutants.py",
     "test:native-distance-consumers": "python3 scripts/test-native-distance-consumers.py"
@@ -42,6 +43,7 @@
     "better-sqlite3": "^12.8.0",
     "eslint": "^10.0.3",
     "husky": "^9.1.7",
+    "playwright": "1.61.1",
     "tsx": "^4.19.0",
     "typescript": "~5.7.0",
     "typescript-eslint": "^8.57.1",

@@ -154,12 +154,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  min-width: 0;
+  min-height: 24px;
 }
 .control-label .val {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--accent);
   min-width: 50px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   text-align: right;
 }
 input[type="range"] {
@@ -445,7 +451,7 @@ canvas {
   gap: 8px;
   align-items: flex-end;
 }
-.inline-row .control-row { flex: 1; }
+.inline-row .control-row { flex: 1 1 0; min-width: 0; }
 
 /* ASPECT LOCK */
 .aspect-lock-btn {
@@ -791,4 +797,34 @@ body.mode-depthmap .noise-only { display: none; }
 }
 .cnc-note.cnc-warn { color: var(--warn); }
 
-.inline-row .control-label > span:first-child { white-space: nowrap; }
+.inline-row .control-label > span:first-child { flex-basis: 100%; white-space: normal; }
+.inline-row .control-label .val { margin-left: auto; }
+
+/* Exact value editing and visible control reset. */
+.editable-value { cursor: pointer; }
+.val-edit {
+  width: 64px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--accent);
+  background: var(--bg3);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  text-align: right;
+  padding: 0 2px;
+}
+.control-reset {
+  flex-shrink: 0;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px 4px;
+  margin-left: 4px;
+  border: 1px solid var(--bg4);
+  border-radius: 4px;
+  background: var(--bg3);
+  color: var(--text2);
+  font: inherit;
+  cursor: pointer;
+}
+.control-reset:hover { color: var(--accent); border-color: var(--accent); }
+.control-label > span:first-child { min-width: 0; margin-right: auto; overflow-wrap: anywhere; }
