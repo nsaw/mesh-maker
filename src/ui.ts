@@ -113,6 +113,7 @@ function slider(key: string, label: string, min: number, max: number, step: numb
   const val = STATE[key as keyof typeof STATE] as number;
   const row = createElement('div', 'control-row');
   const exactDepth = ['amplitude', 'dmHeightScale', 'baseThickness', 'drapeReliefDepth'].includes(key);
+  const exactDimension = (key === 'meshX' || key === 'meshY') && (STATE.aspectLocked || !Number.isInteger(val));
   const displayStep = exactDepth ? 0.0001 : step;
   const valueText = typeof val === 'number' ? formatSliderValue(val, displayStep) : String(val);
   const input = createElement('input') as HTMLInputElement;
@@ -120,7 +121,7 @@ function slider(key: string, label: string, min: number, max: number, step: numb
   input.id = `sl_${key}`;
   input.min = String(min);
   input.max = String(max);
-  input.step = exactDepth ? 'any' : String(step);
+  input.step = exactDepth || exactDimension ? 'any' : String(step);
   input.dataset.step = String(displayStep);
   input.value = String(val);
   input.dataset.key = key;
@@ -752,20 +753,11 @@ function wireControls(): void {
       if (valEl) valEl.textContent = formatSliderValue(v, Number(sl.dataset.step ?? sl.step));
 
       // Aspect ratio lock
-      if (STATE.aspectLocked && STATE.depthMapAR) {
-        if (key === 'meshX') {
-          STATE.meshY = Math.max(1, Math.min(MACHINE_TRAVEL_IN.y, Math.round(v / STATE.depthMapAR)));
-          const ySlider = document.querySelector<HTMLInputElement>('input[data-key="meshY"]');
-          const yVal = document.getElementById('val_meshY');
-          if (ySlider) ySlider.value = String(STATE.meshY);
-          if (yVal) yVal.textContent = String(STATE.meshY);
-        } else if (key === 'meshY') {
-          STATE.meshX = Math.max(1, Math.min(MACHINE_TRAVEL_IN.x, Math.round(v * STATE.depthMapAR)));
-          const xSlider = document.querySelector<HTMLInputElement>('input[data-key="meshX"]');
-          const xVal = document.getElementById('val_meshX');
-          if (xSlider) xSlider.value = String(STATE.meshX);
-          if (xVal) xVal.textContent = String(STATE.meshX);
-        }
+      if (STATE.aspectLocked && STATE.depthMapAR && (key === 'meshX' || key === 'meshY')) {
+        const fitted = fitAspectToBed(STATE.depthMapAR, key === 'meshX' ? v : v * STATE.depthMapAR);
+        if (fitted) Object.assign(STATE, fitted);
+        else { STATE.aspectLocked = false; showToast('Aspect lock is unavailable for this image within the dimension limits.'); }
+        syncAspectLockButton();
       }
 
       if (key === 'baseThickness' || key === 'amplitude' || key === 'dmHeightScale') syncDepthCaps();
@@ -878,6 +870,17 @@ export function syncAspectLockButton(): void {
   lockBtn.classList.toggle('locked', STATE.aspectLocked);
   lockBtn.textContent = STATE.aspectLocked ? '\u{1F512}' : '\u{1F513}';
   lockBtn.title = STATE.aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio';
+  if (STATE.mode !== 'drape') {
+    for (const key of ['meshX', 'meshY'] as const) {
+      const input = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
+      if (input) {
+        input.step = STATE.aspectLocked || !Number.isInteger(STATE[key]) ? 'any' : '1';
+        input.value = String(STATE[key]);
+      }
+      const label = document.getElementById(`val_${key}`);
+      if (label) label.textContent = formatSliderValue(STATE[key], 1);
+    }
+  }
 }
 
 const isMobile = (): boolean => window.matchMedia('(max-width: 900px)').matches;
@@ -950,6 +953,10 @@ function wireSectionCollapse(): void {
     lockBtn.addEventListener('click', () => {
       STATE.aspectLocked = !STATE.aspectLocked;
       syncAspectLockButton();
+      if (STATE.aspectLocked && STATE.depthMapAR && STATE.mode !== 'drape') {
+        // Use the dimension handler so master locks and preset ownership also apply when relocking.
+        document.querySelector<HTMLInputElement>('input[data-key="meshX"]')?.dispatchEvent(new Event('input', { bubbles: true }));
+      }
     });
   }
 
@@ -1041,9 +1048,21 @@ export function applyPendingFit(): boolean {
   return true;
 }
 
+/** Fit a locked image without changing its aspect, within both sliders' physical bounds. */
+export function fitAspectToBed(aspect: number, requestedWidth: number): { meshX: number; meshY: number } | null {
+  if (!(Number.isFinite(aspect) && aspect > 0 && Number.isFinite(requestedWidth))) return null;
+  const minWidth = Math.max(1, aspect);
+  const maxWidth = Math.min(MACHINE_TRAVEL_IN.x, MACHINE_TRAVEL_IN.y * aspect);
+  if (minWidth > maxWidth) return null;
+  const meshX = Math.max(minWidth, Math.min(maxWidth, requestedWidth));
+  return { meshX, meshY: meshX / aspect };
+}
+
 function fitSizes(imgW: number, imgH: number): void {
   const ar = imgW / imgH;
-  if (ar >= 36 / 24) {
+  const fitted = fitAspectToBed(ar, MACHINE_TRAVEL_IN.x);
+  if (fitted) Object.assign(STATE, fitted);
+  else if (ar >= MACHINE_TRAVEL_IN.x / MACHINE_TRAVEL_IN.y) {
     STATE.meshX = 36;
     STATE.meshY = Math.max(1, Math.round(36 / ar));
   } else {
@@ -1061,7 +1080,8 @@ function fitSizes(imgW: number, imgH: number): void {
     Math.min(400, Math.floor(Math.sqrt(maxGridCells / Math.max(0.05, aspectRowsPerCol)))),
   );
   STATE.depthMapAR = ar;
-  STATE.aspectLocked = true;
+  STATE.aspectLocked = fitted !== null;
+  if (!fitted) showToast('Aspect lock is unavailable for this image within the dimension limits.');
 }
 
 /** Run monocular depth estimation on the current depth-map image and swap the result in
@@ -1123,6 +1143,10 @@ export function loadDepthMap(file: File): void {
   img.onload = () => {
     URL.revokeObjectURL(objUrl);
     if (revision !== uploadRevision) return;
+    if (!(img.width > 0 && img.height > 0)) {
+      showToast('Image must have positive width and height.');
+      return;
+    }
     STATE.reliefMaster = null;
     STATE.depthMap = img;
     STATE.depthMapName = file.name;

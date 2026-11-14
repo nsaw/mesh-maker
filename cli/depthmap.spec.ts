@@ -14,7 +14,7 @@ import { applyBackgroundCutoff, normalizeGrid, sampleLumaGrid } from '../src/geo
 import { STATE, CURRENT_PAYLOAD_VERSION, consumeOutdatedLinkReset, boardIsLinkBoard, deserializeConfig, rememberLinkBoard, restoreNoiseDims, saveNoiseDims, serializeConfig, stockTopIn } from '../src/state';
 import { generateNoiseMesh, generateDepthMapMesh } from '../src/mesh';
 import { updateEffectiveOffsetDisplay } from '../src/sbp-export';
-import { syncDepthCaps } from '../src/ui';
+import { fitAspectToBed, loadDepthMap, syncDepthCaps } from '../src/ui';
 import { DEFAULTS } from '../src/state';
 import type { ReliefMaster } from '../src/relief-master';
 
@@ -168,7 +168,7 @@ process.stdout.write('T15 share links\n');
   assert(capped.amplitude === 2.6 && capped.dmHeightScale === 2.6 && capped.drapeReliefDepth === 2.5375 && capped.meshX === 36 && capped.meshY === 24,
     'every cut depth and both dimensions respect the carve and bed limits', JSON.stringify(capped));
   const thinDepths = deserializeConfig(enc({ _v: CURRENT_PAYLOAD_VERSION, baseThickness: 0.25, amplitude: 4, dmHeightScale: 4 }));
-  assert(thinDepths.amplitude === 0.25 && thinDepths.dmHeightScale === 0.25, 'noise and image depths also respect thin stock');
+  assert(thinDepths.amplitude === 0.25 && thinDepths.dmHeightScale === 2.6, 'an omitted mode caps the active Noise depth to thin stock and the inactive image depth globally');
   // The board a link carries is clamped to the sliders (a meshX 200 link kept a 200 in board).
   const wide = deserializeConfig(enc({ _v: CURRENT_PAYLOAD_VERSION, mode: 'depthmap', meshX: 200, meshY: -4, resolution: 1e6, baseThickness: 99 }));
   assert(wide.meshX === 36 && wide.meshY === 1 && wide.resolution === 1024 && wide.baseThickness === 2.6, 'link board sizes clamp to their sliders', JSON.stringify(wide));
@@ -225,6 +225,47 @@ process.stdout.write('T15 share links\n');
 }
 
 
+process.stdout.write('T15b share links preserve inactive mode depth requests\n');
+{
+  const saved = { ...STATE };
+  try {
+    for (const mode of ['noise', 'depthmap', 'drape'] as const) {
+      Object.assign(STATE, DEFAULTS, { mode, baseThickness: 0.25,
+        amplitude: mode === 'noise' ? 0.2 : 2, dmHeightScale: mode === 'depthmap' ? 0.2 : 1.5,
+        drapeStock: 0.25, drapeReliefDepth: 0.1875 });
+      const encoded = serializeConfig();
+      const payload: Record<string, unknown> = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')));
+      const back = { ...DEFAULTS, ...deserializeConfig('?c=' + encoded) };
+      assert(back.mode === mode && back.amplitude === STATE.amplitude && back.dmHeightScale === STATE.dmHeightScale,
+        `${mode} serializer round-trip keeps inactive depths above the current thin stock`,
+        JSON.stringify({ amplitude: back.amplitude, dmHeightScale: back.dmHeightScale }));
+      if (mode === 'noise') assert(!('mode' in payload), 'the Noise round-trip exercises a serialized payload with its default mode omitted');
+      if (mode === 'drape') assert(back.drapeReliefDepth === 0.1875, 'the active Drape depth still respects its own thin stock');
+
+      Object.assign(STATE, { amplitude: 4, dmHeightScale: 5 });
+      const capped = { ...DEFAULTS, ...deserializeConfig('?c=' + serializeConfig()) };
+      assert(capped.amplitude === (mode === 'noise' ? 0.25 : 2.6)
+        && capped.dmHeightScale === (mode === 'depthmap' ? 0.25 : 2.6),
+        `${mode} stock-caps only its active request and globally caps oversized inactive requests`,
+        JSON.stringify({ amplitude: capped.amplitude, dmHeightScale: capped.dmHeightScale }));
+    }
+    Object.assign(STATE, DEFAULTS, { mode: 'depthmap', amplitude: 2, dmHeightScale: 4 });
+    const encoded = serializeConfig();
+    const payload: Record<string, unknown> = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')));
+    const back = { ...DEFAULTS, ...deserializeConfig('?c=' + encoded) };
+    assert(!('baseThickness' in payload) && back.amplitude === 2 && back.dmHeightScale === DEFAULTS.baseThickness,
+      'an omitted stock uses the default stock for the active request without shrinking the inactive request');
+    const invalidMode = '?c=' + Buffer.from(JSON.stringify({ _v: CURRENT_PAYLOAD_VERSION, mode: 'invalid',
+      baseThickness: 0.25, amplitude: 4, dmHeightScale: 5 })).toString('base64url');
+    const fallback = deserializeConfig(invalidMode);
+    assert(!('mode' in fallback) && fallback.amplitude === 0.25 && fallback.dmHeightScale === 2.6,
+      'an invalid mode is sanitized before selecting the default Noise stock cap');
+  } finally {
+    Object.assign(STATE, saved);
+  }
+}
+
+
 // Measure produced heights as well as controls: offsets are applied after requested depth.
 process.stdout.write('T16 generated depth limits including negative offsets\n');
 {
@@ -266,6 +307,77 @@ process.stdout.write('T16 generated depth limits including negative offsets\n');
   }
 }
 
+
+process.stdout.write('T17 locked image aspect fits both board dimensions\n');
+{
+  for (const [label, aspect, requestedWidth, expectedX, expectedY] of [
+    ['square width at bed edge', 1, 36, 24, 24],
+    ['wide image height at bed edge', 2, 24 * 2, 36, 18],
+    ['wide image minimum height', 2, 0.1, 2, 1],
+    ['tall image minimum width', 0.5, 0.1, 1, 2],
+    ['narrowest feasible image', 1 / 24, 36, 1, 24],
+    ['widest feasible image', 36, 1, 36, 1],
+  ] as const) {
+    const fit = fitAspectToBed(aspect, requestedWidth);
+    assert(fit !== null && Math.abs(fit.meshX - expectedX) < 1e-12 && Math.abs(fit.meshY - expectedY) < 1e-12,
+      label, JSON.stringify(fit));
+  }
+  const aspect = 17 / 13;
+  const fractional = fitAspectToBed(aspect, 17.25);
+  assert(fractional !== null && fractional.meshX === 17.25
+    && Math.abs(fractional.meshX / fractional.meshY - aspect) < 1e-12
+    && fractional.meshY !== Math.round(fractional.meshY),
+    'non-integer dimensions preserve the image ratio without rounding a peer dimension', JSON.stringify(fractional));
+  const capped = fitAspectToBed(aspect, 36);
+  assert(capped !== null && capped.meshY <= 24 && capped.meshX <= 36
+    && Math.abs(capped.meshX / capped.meshY - aspect) < 1e-12,
+    'a non-integer aspect stays exact when the other bed axis limits its size', JSON.stringify(capped));
+  for (const invalid of [0, -1, NaN, Infinity, -Infinity, 37, 1 / 25, 1e300, 1e-300]) {
+    assert(fitAspectToBed(invalid, 12) === null, `invalid or bed-incompatible aspect ${invalid} is refused`);
+  }
+  for (const width of [NaN, Infinity, -Infinity]) {
+    assert(fitAspectToBed(1, width) === null, `non-finite requested width ${width} is refused`);
+  }
+}
+
+
+process.stdout.write('T18 zero-sized decoded images preserve the current document\n');
+{
+  const saved = { ...STATE };
+  const imageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Image');
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const create = URL.createObjectURL, revoke = URL.revokeObjectURL;
+  const created: string[] = [], revoked: string[] = [];
+  try {
+    URL.createObjectURL = blob => { const url = create(blob); created.push(url); return url; };
+    URL.revokeObjectURL = url => { revoked.push(url); revoke(url); };
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { getElementById: () => null } });
+    Object.assign(STATE, DEFAULTS, { meshX: 12.25, meshY: 16.125, depthMapName: 'retained image' });
+    const before = { ...STATE };
+    for (const [width, height] of [[0, 2], [2, 0], [0, 0]]) {
+      Object.defineProperty(globalThis, 'Image', { configurable: true, value: class {
+        width = width;
+        height = height;
+        onload: (() => void) | null = null;
+        set src(_value: string) { this.onload?.(); }
+      } });
+      let error = '';
+      try { loadDepthMap(new File(['zero image'], 'empty.svg', { type: 'image/svg+xml' })); }
+      catch (e) { error = e instanceof Error ? e.message : String(e); }
+      assert(error === '' && STATE.depthMap === before.depthMap && STATE.depthMapName === before.depthMapName
+        && STATE.reliefMaster === before.reliefMaster && STATE.meshX === before.meshX && STATE.meshY === before.meshY,
+      `decoded ${width} x ${height} image is rejected before replacing state`, error);
+    }
+    assert(created.length === 3 && created.every((url, i) => url === revoked[i]), 'every rejected image revokes its actual object URL');
+  } finally {
+    Object.assign(STATE, saved);
+    URL.createObjectURL = create; URL.revokeObjectURL = revoke;
+    if (imageDescriptor) Object.defineProperty(globalThis, 'Image', imageDescriptor);
+    else Reflect.deleteProperty(globalThis, 'Image');
+    if (documentDescriptor) Object.defineProperty(globalThis, 'document', documentDescriptor);
+    else Reflect.deleteProperty(globalThis, 'document');
+  }
+}
 
 process.stdout.write(failures ? `\n${failures} FAILURE(S)\n` : '\nALL OK\n');
 process.exit(failures ? 1 : 0);

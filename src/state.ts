@@ -622,8 +622,10 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('resolution' in result) clampField('resolution', 16, 1024, true);
     if ('baseThickness' in result) clampField('baseThickness', 0.25, MAX_STOCK_THICKNESS_IN);
     const stock = typeof result.baseThickness === 'number' ? result.baseThickness : DEFAULTS.baseThickness;
-    if ('amplitude' in result) clampField('amplitude', 0, Math.min(MAX_CUT_DEPTH_IN, stock));
-    if ('dmHeightScale' in result) clampField('dmHeightScale', 0, Math.min(MAX_CUT_DEPTH_IN, stock));
+    // The shared stock belongs to the active mode. Keep other modes' requests when sharing a link.
+    const mode = result.mode ?? DEFAULTS.mode;
+    if ('amplitude' in result) clampField('amplitude', 0, mode === 'noise' ? Math.min(MAX_CUT_DEPTH_IN, stock) : MAX_CUT_DEPTH_IN);
+    if ('dmHeightScale' in result) clampField('dmHeightScale', 0, mode === 'depthmap' ? Math.min(MAX_CUT_DEPTH_IN, stock) : MAX_CUT_DEPTH_IN);
     // DRAPE controls: the slider ranges. Cloth resolution and frames set the solver's work, so a
     // crafted link must not raise them past the sliders.
     for (const c of DRAPE_CONTROLS) if (c.key in result) clampField(c.key, c.min, c.max);
