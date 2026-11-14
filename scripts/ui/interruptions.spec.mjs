@@ -27,7 +27,8 @@ try {
   await page.waitForSelector('#selPreset', { state: 'attached' });
   assert.equal(await page.locator('#seedInput').getAttribute('placeholder'), 'seed');
   await mobilePane(page, 'generator');
-  await page.locator('#noise-parameters-section-body-toggle').click();
+  // The first visit to a mobile pane opens its first section; open it only if still collapsed.
+  if (await page.locator('#noise-parameters-section-body-toggle').getAttribute('aria-expanded') !== 'true') await page.locator('#noise-parameters-section-body-toggle').click();
   const seed = await page.locator('#seedInput').inputValue();
   await page.locator('#seedInput').fill('');
   await page.locator('#seedInput').dispatchEvent('change');
@@ -86,7 +87,7 @@ try {
   await resolution.evaluate(element => { element.value = '40'; element.dispatchEvent(new Event('input', { bubbles: true })); });
 
   await mobilePane(page, 'view');
-  await page.locator('#view-controls-section-body-toggle').click();
+  if (await page.locator('#view-controls-section-body-toggle').getAttribute('aria-expanded') !== 'true') await page.locator('#view-controls-section-body-toggle').click();
   await page.locator('#sl_orbit').evaluate(element => { element.value = '90'; element.dispatchEvent(new Event('input', { bubbles: true })); });
   await toolbarAction(page, 'btnResetCamera');
   assert.equal(await page.locator('#sl_orbit').inputValue(), await page.locator('#sl_orbit').getAttribute('data-default'));

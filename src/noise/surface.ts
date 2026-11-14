@@ -1,5 +1,5 @@
 import type { SurfaceBuffers } from '../render-geometry';
-import { noiseGridShape } from './grid-shape';
+import { MAX_GRID_NODES, noiseGridShape } from './grid-shape';
 import type { MeshState } from '../state';
 import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 import { createNoiseGen, SimplexNoiseGen } from './generators';
@@ -271,6 +271,7 @@ export function buildNoiseSurface(params: NoiseSurfaceParams): NoiseSurface {
           distortion, warpFreq, warpCurl, meshX, meshY, resolution, smoothRadiusIn, noiseType, baseThickness } = params;
 
   const {cols, rows} = noiseGridShape(resolution, meshX, meshY);
+  if (cols * rows > MAX_GRID_NODES) throw new Error('This board and resolution exceed the supported generation grid. Lower Resolution.');
 
   const metadata: Pick<NoiseSurface, 'truncatedFrom' | 'crestClipStatus' | 'reliefSource'> = { truncatedFrom: 0, crestClipStatus: 'none' };
   const noiseConfig: NoiseConfig = { cellJitter: params.cellJitter, cellMetric: params.cellMetric, gaborAngle: params.gaborAngle, gaborBandwidth: params.gaborBandwidth };
