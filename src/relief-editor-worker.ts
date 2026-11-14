@@ -1,5 +1,6 @@
 import { captureReliefProject, copyReliefProject, preflightReliefProject, projectSurfaceParams, validateReliefProjectParams, type ReliefProject, type ReliefProjectParams } from './relief-project';
 import { buildNoiseSurface } from './noise/surface';
+import { noiseGridShape } from './noise/grid-shape';
 import { relaxReliefSites, sampleReliefParamsFromState } from './noise/voronoi-relief';
 
 export type EditorInput = {kind: 'preflight' | 'relax'; project: ReliefProject} | {kind: 'generate'; params: ReliefProjectParams};
@@ -11,8 +12,8 @@ export function runEditorJob(input: EditorInput): ReliefProject {
   }
   const project = copyReliefProject(input.project);
   if (input.kind === 'relax') {
-    const p = projectSurfaceParams(project, 0), rows = Math.max(4, Math.round(p.resolution * p.meshY / p.meshX));
-    project.sites = relaxReliefSites(sampleReliefParamsFromState(p.resolution, rows, p.meshX, p.meshY, p.seed, p), project.sites);
+    const p = projectSurfaceParams(project, 0), {cols, rows} = noiseGridShape(p.resolution, p.meshX, p.meshY);
+    project.sites = relaxReliefSites(sampleReliefParamsFromState(cols, rows, p.meshX, p.meshY, p.seed, p), project.sites);
   }
   preflightReliefProject(project);
   return project;

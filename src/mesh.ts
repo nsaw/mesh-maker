@@ -2,6 +2,7 @@ import { MAX_CUT_DEPTH_IN } from './sbp/types';
 import { STATE, activeMaster } from './state';
 import { previewErrorIn, reliefPreviewGrid } from './relief-master';
 import { buildNoiseSurface, noiseSurfaceParams, type NoiseSurface } from './noise/surface';
+import { noiseGridShape } from './noise/grid-shape';
 import { noiseGeneration, NOISE_CHANGED } from './noise/controller';
 import type { GenerationQuality } from './noise/messages';
 import { showToast } from './toast';
@@ -45,7 +46,7 @@ export function generateDepthMapMesh(): void {
   if (activeMaster()) { generateReliefMasterPreview(); return; }
   if (!depthMap) { STATE.vertices = null; return; }
 
-  const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
+  const {cols, rows} = noiseGridShape(resolution, meshX, meshY);
   STATE.cols = cols; STATE.rows = rows;
 
   const tmpCanvas = document.createElement('canvas');

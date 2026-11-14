@@ -3,13 +3,14 @@ import { captureReliefSourceProject, copyReliefProject, parseReliefProject, vali
 import { RELIEF_PLACEMENT_KEYS, describeReliefQuery, sampleReliefParamsFromState } from './noise/voronoi-relief';
 import { editReliefSite } from './noise/relief-sites';
 import type { NoiseSurface } from './noise/surface';
+import { noiseGridShape } from './noise/grid-shape';
 
 export const PLACEMENT_KEYS = new Set<keyof ReliefProjectParams>(['noiseType', ...RELIEF_PLACEMENT_KEYS]);
 export function projectWithParams(project: ReliefProject, patch: Partial<ReliefProjectParams>): ReliefProject {
   const params = {...project.params, ...patch};
   params.amplitude = clampCutDepth(params.amplitude, params.baseThickness);
-  const rows = Math.max(4, Math.round(params.resolution * params.meshY / params.meshX));
-  const query = describeReliefQuery(sampleReliefParamsFromState(params.resolution, rows, params.meshX, params.meshY, params.seed, params));
+  const {cols, rows} = noiseGridShape(params.resolution, params.meshX, params.meshY);
+  const query = describeReliefQuery(sampleReliefParamsFromState(cols, rows, params.meshX, params.meshY, params.seed, params));
   return copyReliefProject({...project, params, query});
 }
 export interface EditorJobs {
