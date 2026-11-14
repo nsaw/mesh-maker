@@ -1,3 +1,4 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
@@ -38,7 +39,7 @@ try {
   browser = await chromium.launch(); await mkdir('screenshots/playwright', {recursive: true});
   if (!process.argv.includes('--touch-only')) {
     const page = await browser.newPage({viewport: {width: 1440, height: 900}}), errors = []; page.on('pageerror', error => errors.push(error.message));
-    await page.route(/^https:\/\//, route => route.abort()); await page.goto(url); await idle(page); await page.click('#btnFreezeCells'); await idle(page); const initial = await matchesSource(page);
+    await restrictToAppOrigin(page, url); await page.goto(url); await idle(page); await page.click('#btnFreezeCells'); await idle(page); const initial = await matchesSource(page);
     for (const route of ['preset', 'type']) {
       await page.selectOption('#selPreset', 'gentle-waves'); await page.click('#btnCellApply'); await idle(page);
       await page.click('[data-profile="rough"]'); await idle(page);
@@ -60,7 +61,7 @@ try {
   }
   if (!process.argv.includes('--source-only')) {
     const page = await browser.newPage({viewport: {width: 1440, height: 900}, hasTouch: true}), errors = []; page.on('pageerror', error => errors.push(error.message));
-    await page.route(/^https:\/\//, route => route.abort()); await page.goto(url); await idle(page); await page.click('[data-view="plan"]');
+    await restrictToAppOrigin(page, url); await page.goto(url); await idle(page); await page.click('[data-view="plan"]');
     const cdp = await page.context().newCDPSession(page);
     async function pinch() {
       const r = await page.locator('#canvasWrap').boundingBox(), x = r.x + r.width / 2, y = r.y + r.height / 2;

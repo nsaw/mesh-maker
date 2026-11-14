@@ -1,6 +1,20 @@
 /** Frozen pre-extraction viewport arithmetic, copied from reviewed 405abf7:src/render.ts.
  * Only DOM/global assignments were removed and the master diagonal became an explicit argument. */
-import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from '../src/geometry';
+// These helpers are frozen with the oracle; live geometry changes must not update both sides.
+function preferZ00Z11Diagonal(z00: number, z10: number, z01: number, z11: number): boolean {
+  return Math.abs(z00 - z11) < Math.abs(z10 - z01);
+}
+function cellTriangleOffsets(useZ00Z11: boolean, cols: number): [[number, number, number], [number, number, number]] {
+  return useZ00Z11 ? [[0, 1, cols + 1], [0, cols + 1, cols]] : [[0, 1, cols], [1, cols + 1, cols]];
+}
+function gridMinMax(grid: number[][], rows: number, cols: number): [number, number] {
+  let min = Infinity, max = -Infinity;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    if (grid[j][i] < min) min = grid[j][i];
+    if (grid[j][i] > max) max = grid[j][i];
+  }
+  return [min, max];
+}
 
 export function originalSurfaceBuffers(vertices: number[][], cols: number, rows: number,
   meshX: number, meshY: number, fixedDiagonal: boolean | null = null) {

@@ -36,7 +36,7 @@
     "test:relief-project": "tsx cli/relief-project.spec.ts",
     "test:relief-link": "tsx cli/relief-link.spec.ts",
     "test:relief-link-browser": "node scripts/ui/relief-links.spec.mjs",
-    "test:noise-browser": "node scripts/test-noise-browser.mjs",
+    "test:noise-browser": "node --test scripts/test-noise-browser-waits.mjs && node scripts/test-noise-browser.mjs",
     "test:export-authority": "node scripts/test-export-authority.mjs",
     "test:render-geometry": "tsx cli/render-geometry.spec.ts",
     "test:ui-values": "node scripts/ui/values.spec.mjs",

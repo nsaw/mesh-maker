@@ -155,6 +155,7 @@ function requestMesh(quality: GenerationQuality): void {
       updateStats();
     } catch (error: unknown) {
       STATE.vertices = null;
+      renderViewport();
       showToast(`Generation failed: ${error instanceof Error ? error.message : String(error)}`, 8000);
     } finally {
       if (revision === frameRevision) setGenerationBusy(false);

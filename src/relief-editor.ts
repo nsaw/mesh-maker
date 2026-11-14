@@ -1,5 +1,5 @@
 import { clampCutDepth } from './carve-limits';
-import { captureReliefSourceProject, copyReliefProject, parseReliefProject, ReliefProjectHistory, MAX_PROJECT_BYTES, type ReliefProject, type ReliefProjectParams, type ProjectSave } from './relief-project';
+import { captureReliefSourceProject, copyReliefProject, parseReliefProject, validateReliefProjectParams, ReliefProjectHistory, MAX_PROJECT_BYTES, type ReliefProject, type ReliefProjectParams, type ProjectSave } from './relief-project';
 import { RELIEF_PLACEMENT_KEYS, describeReliefQuery, sampleReliefParamsFromState } from './noise/voronoi-relief';
 import { editReliefSite } from './noise/relief-sites';
 import type { NoiseSurface } from './noise/surface';
@@ -24,6 +24,7 @@ export class ReliefEditor {
   private history: ReliefProjectHistory | null = null;
   private epoch = 0;
   private importSequence = 0;
+  private operation = 0;
   private gesture = false;
   private busy = false;
   onChange: () => void = () => undefined;
@@ -37,7 +38,7 @@ export class ReliefEditor {
   get running(): boolean { return this.busy; }
   get hasPending(): boolean { return Object.keys(this.history?.pending ?? {}).length > 0; }
   pendingValue(key: keyof ReliefProjectParams): ReliefProjectParams[typeof key] | undefined { return this.history?.pending[key]; }
-  private changed(): void { this.epoch++; this.importSequence++; this.jobs.cancel(); this.busy = false; this.onChange(); }
+  private changed(): void { this.epoch++; this.importSequence++; this.operation++; this.jobs.cancel(); this.busy = false; this.onChange(); }
   navigation(): void { this.cancelGesture(); this.changed(); }
   freeze(source: NonNullable<NoiseSurface['reliefSource']>, saved = false): void {
     if (this.history) return;
@@ -100,7 +101,7 @@ export class ReliefEditor {
   }
   /** Selection owns the read and preflight phases, including when neither has committed yet. */
   async openFile(file: {size: number; text(): Promise<string>}, contextIsCurrent: () => boolean = () => true): Promise<boolean> {
-    const epoch = this.epoch, sequence = ++this.importSequence;
+    const epoch = this.epoch, sequence = ++this.importSequence, operation = ++this.operation;
     this.jobs.cancel(); this.busy = true; this.onChange();
     try {
       if (file.size > MAX_PROJECT_BYTES) throw new Error('Project exceeds the supported file size');
@@ -113,7 +114,7 @@ export class ReliefEditor {
       else this.history = new ReliefProjectHistory(candidate);
       this.history.markSaved(this.history.captureSave());
       this.changed(); return true;
-    } finally { if (sequence === this.importSequence) { this.busy = false; this.onChange(); } }
+    } finally { if (operation === this.operation) { this.busy = false; this.onChange(); } }
   }
   async relax(): Promise<boolean> {
     const project = this.current;
@@ -123,15 +124,16 @@ export class ReliefEditor {
   async apply(): Promise<boolean> {
     const project = this.current;
     if (!project || this.gesture) throw new Error('Finish editing before applying a layout');
-    return this.run(() => this.jobs.generate({...project.params, ...this.history!.pending}));
+    return this.run(() => this.jobs.generate(validateReliefProjectParams({...project.params, ...this.history!.pending, reliefSites: null, reliefRevision: 0})));
   }
   private async run(job: () => Promise<ReliefProject>): Promise<boolean> {
-    const epoch = this.epoch;
+    const epoch = this.epoch, operation = ++this.operation;
+    this.importSequence++;
     this.busy = true; this.onChange();
     try {
       const candidate = await job();
-      if (epoch !== this.epoch) return false;
+      if (epoch !== this.epoch || operation !== this.operation) return false;
       this.history!.replace(candidate, this.history!.revision, true); this.changed(); return true;
-    } finally { if (epoch === this.epoch) { this.busy = false; this.onChange(); } }
+    } finally { if (operation === this.operation) { this.busy = false; this.onChange(); } }
   }
 }

@@ -36,7 +36,9 @@ with tempfile.TemporaryDirectory(prefix='meshcraft-junction-mutants-') as temp:
          'seamScale, () => edgeHash01(Math.min(ownerIdx, idx3), Math.max(ownerIdx, idx3), seed + 53),', 'junction'),
         ('rank-side', sampler, r'const edgeSide = edgeShared \+ ownerFade \* \(localSide - edgeShared\);',
          'const edgeSide = edgeHash01(ownerIdx, idx3, seed + 59);', 'junction'),
-        ('relative-plane', grid, r'return Math.max\(0, separation / 2 - qx \* \(dx / separation\) - qy \* \(dy / separation\)\);',
+        ('relative-plane', grid, r'return Math.max\(0, separation / 2 - qx \* nx - qy \* ny\);',
+         'let dx = this.sites[index].x - this.sites[owner].x, dy = this.sites[index].y - this.sites[owner].y; '
+         'if (scale > 1.0001) { const tx = (dx * cosA + dy * sinA) * scale; dy = -dx * sinA + dy * cosA; dx = tx; } '
          'const a = Math.hypot(qx - dx, qy - dy), b = Math.hypot(qx, qy); return Math.max(0, (a - b) * (a + b) / (2 * separation));',
          'near-coincident relative-plane'),
         ('bisector', grid, r'if \(candidate.index === owner\) continue;',

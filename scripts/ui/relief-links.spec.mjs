@@ -1,3 +1,4 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
@@ -28,7 +29,7 @@ try {
     const context = await browser.newContext({viewport: {width, height: 900}, permissions: ['clipboard-read', 'clipboard-write']});
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.route(/^https:\/\//, route => route.abort());
+    await restrictToAppOrigin(page, origin);
     const expected = wire(1000);
     await page.goto(`${origin}/#c=${encode({_v: version, noiseType: 'voronoi-relief', resolution: 16, _sites: expected})}`);
     await page.waitForSelector('#selNoiseType', {state: 'attached'});

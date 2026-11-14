@@ -122,5 +122,28 @@ try {
     return immediate;
   });
   assert.equal(uploaded, 'stl');
+  // A failed image replacement clears both source authority and the retained GPU geometry.
+  await page.evaluate(async () => {
+    const {state, mesh} = window.modules;
+    window.deletedForImageFailure = 0;
+    const deleted = WebGL2RenderingContext.prototype.deleteBuffer;
+    WebGL2RenderingContext.prototype.deleteBuffer = function(...args) { window.deletedForImageFailure++; return deleted.apply(this, args); };
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
+    canvas.getContext('2d').fillRect(0, 0, 2, 2);
+    const image = new Image(); image.src = canvas.toDataURL(); await image.decode();
+    Object.assign(state.STATE, {mode:'depthmap', reliefMaster:null, depthMap:image, resolution:16}); mesh.generateMesh();
+  });
+  await page.waitForFunction(() => window.modules.state.STATE.vertices && !document.getElementById('genOverlay').classList.contains('visible'));
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const deletedBeforeFailure = await page.evaluate(() => {
+    window.originalReadback = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = () => { throw new Error('Injected image readback failure'); };
+    const before = window.deletedForImageFailure; window.modules.mesh.generateMesh(); return before;
+  });
+  await page.waitForFunction(() => document.getElementById('toast').textContent.includes('Injected image readback failure') && !document.getElementById('genOverlay').classList.contains('visible'));
+  assert.equal(await page.evaluate(() => window.modules.state.STATE.vertices), null);
+  assert(await page.evaluate(before => window.deletedForImageFailure > before, deletedBeforeFailure), 'failed image replacement disposes retained GPU buffers');
+  assert.equal(await page.locator('#dimsOverlay').textContent(), '');
+  await page.evaluate(() => { CanvasRenderingContext2D.prototype.getImageData = window.originalReadback; });
   assert.deepEqual(errors, []); process.stdout.write('Export authority races passed: PNG, master/image/STL handoff, captured filename/config, controlled Rhino initializer and network fallback.\n');
 } finally { await browser?.close(); server.kill(); await new Promise(resolve => server.exitCode !== null || server.signalCode !== null ? resolve() : server.once('exit', resolve)); }

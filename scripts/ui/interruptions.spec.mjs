@@ -1,3 +1,4 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import { mobilePane, toolbarAction } from './mobile-navigation.mjs';
 import { verifyEditorLifecycle, verifyPaneFocusAndNumericLinks, verifyMobileFirstUse } from './pane-regressions.mjs';
 import { chromium } from 'playwright';
@@ -21,7 +22,7 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   // Block remote imagery to exercise the offline layout and avoid optional demo timing.
-  await page.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(page, origin);
   await page.goto(origin);
   await page.waitForSelector('#selPreset', { state: 'attached' });
   assert.equal(await page.locator('#seedInput').getAttribute('placeholder'), 'seed');
@@ -164,7 +165,7 @@ try {
     const regressionContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
     const regressionPage = await regressionContext.newPage();
     regressionPage.on('pageerror', error => errors.push(error.message));
-    await regressionPage.route(/^https:\/\//, route => route.abort());
+    await restrictToAppOrigin(regressionPage, origin);
     await regressionPage.goto(origin);
     await regressionPage.waitForSelector('#selPreset');
     await verify(regressionPage);
@@ -175,7 +176,7 @@ try {
     const layoutContext = await browser.newContext({ viewport: { width, height }, hasTouch: width < 900 });
     const layoutPage = await layoutContext.newPage();
     layoutPage.on('pageerror', error => errors.push(error.message));
-    await layoutPage.route(/^https:\/\//, route => route.abort());
+    await restrictToAppOrigin(layoutPage, origin);
     await layoutPage.goto(origin);
     await layoutPage.waitForSelector('#selPreset', { state: 'attached' });
     await verifyDimensionResetLayout(layoutPage);
@@ -185,7 +186,7 @@ try {
   const firstUseContext = await browser.newContext({ viewport: { width: 390, height: 664 }, hasTouch: true });
   const firstUsePage = await firstUseContext.newPage();
   firstUsePage.on('pageerror', error => errors.push(error.message));
-  await firstUsePage.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(firstUsePage, origin);
   await firstUsePage.goto(origin);
   await firstUsePage.waitForSelector('#selPreset', { state: 'attached' });
   await verifyMobileFirstUse(firstUsePage);

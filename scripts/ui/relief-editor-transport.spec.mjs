@@ -1,3 +1,4 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {chromium} from 'playwright';
@@ -25,7 +26,7 @@ try {
   const address = server.httpServer.address(); assert(address && typeof address !== 'string'); const origin = `http://127.0.0.1:${address.port}`;
   browser = await chromium.launch(); const context = await browser.newContext({viewport: {width: 1440, height: 900}}); await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   const page = await context.newPage(), errors = []; context.on('page', p => p.on('pageerror', error => errors.push(error.message))); page.on('pageerror', error => errors.push(error.message));
-  await context.route(/^https:\/\//, route => route.abort()); await page.goto(origin + '/?c=' + Buffer.from(JSON.stringify(config)).toString('base64url'));
+  await restrictToAppOrigin(context, origin); await page.goto(origin + '/?c=' + Buffer.from(JSON.stringify(config)).toString('base64url'));
   await idle(page); await page.click('#btnFreezeCells'); await idle(page); const initial = await save(page);
   if (!only || only === 'links') {
     const thin = structuredClone(initial); Object.assign(thin.params, {baseThickness: 0.1, amplitude: 0.1, resolution: 12, reliefRadialStrength: 4, reliefRadialFalloff: 0.02, offset: '-0'});

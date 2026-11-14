@@ -89,6 +89,35 @@ assert.equal(pendingEditor.pendingValue('reliefAttractorX'), .3, 'cancel restore
 await pendingEditor.apply(); assert.equal(pendingEditor.current!.params.reliefAttractorX, .3); assert.equal(pendingEditor.hasPending, false);
 pendingEditor.undo(); assert.equal(encodeReliefProject(pendingEditor.current!), pendingSource); assert.equal(pendingEditor.pendingValue('reliefAttractorX'), .3);
 const fresh = new ReliefEditor(jobs); assert.equal(await fresh.open(saved.text), true); assert.equal(fresh.dirty, false, 'fresh Open establishes its saved baseline');
+// Cancelling an earlier job must not clear the busy state of a newer file operation.
+let rejectRelax: ((error: Error) => void) | undefined, readBusy: ((text: string) => void) | undefined;
+const busyEditor = new ReliefEditor({...jobs,
+  relax: () => new Promise<ReliefProject>((_resolve, reject) => { rejectRelax = reject; }),
+  cancel: () => { const reject = rejectRelax; rejectRelax = undefined; reject?.(new Error('cancelled prior operation')); },
+});
+busyEditor.freeze(source);
+const priorRelax = busyEditor.relax(), priorRejected = assert.rejects(priorRelax, /cancelled prior operation/);
+const busyOpen = busyEditor.openFile({size: saved.text.length, text: () => new Promise<string>(resolve => { readBusy = resolve; })});
+await priorRejected;
+assert.equal(busyEditor.running, true, 'retired Relax cannot clear a newer file read busy state');
+readBusy!(saved.text); assert.equal(await busyOpen, true); assert.equal(busyEditor.running, false);
+const oversized = {...initial.params, meshX: 1, meshY: 24, resolution: 1024};
+let generatedOversized = 0;
+const boundedEditor = new ReliefEditor({...jobs, generate: async () => { generatedOversized++; return initial; }});
+boundedEditor.freeze(source); boundedEditor.stage(oversized);
+await assert.rejects(boundedEditor.apply(), /supported generation grid/);
+assert.equal(generatedOversized, 0, 'over-budget staged settings refuse before starting a generation job');
+assert.equal(boundedEditor.running, false); assert.equal(boundedEditor.hasPending, true);
+assert.deepEqual(boundedEditor.current, initial, 'refused Apply retains applied source and staged settings');
+// A missing Worker-side guard must fail safely instead of allocating the oversized grid.
+const nativeFloat64 = globalThis.Float64Array;
+try {
+  globalThis.Float64Array = new Proxy(nativeFloat64, {construct(target, args, receiver) {
+    if (typeof args[0] === 'number' && args[0] > 4_194_304) throw new Error('HEAVY_GRID_SENTINEL');
+    return Reflect.construct(target, args, receiver);
+  }});
+  assert.throws(() => runEditorJob({kind: 'generate', params: oversized}), /supported generation grid/);
+} finally { globalThis.Float64Array = nativeFloat64; }
 let finishEarlier: (() => void) | undefined;
 const latest = new ReliefEditor({...jobs, preflight: () => new Promise<void>(resolve => { finishEarlier = resolve; })});
 latest.freeze(source); latest.edit({kind: 'add', x: .123, y: .456});

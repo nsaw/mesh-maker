@@ -79,9 +79,9 @@ export function setupCellOverlay(): void {
   const local = (event: PointerEvent): {x: number; y: number} => {
     const rect = canvas.getBoundingClientRect(); return {x: event.clientX - rect.left, y: event.clientY - rect.top};
   };
-  const world = (event: PointerEvent): {x: number; y: number} => {
-    const p = local(event), q = screenToPlan(p.x, p.y), project = reliefEditor.current!;
-    return {x: Math.max(0, Math.min(project.params.meshX, q.x)), y: Math.max(0, Math.min(project.params.meshY, q.y))};
+  const world = (event: PointerEvent, dimensions = reliefEditor.current!.params): {x: number; y: number} => {
+    const p = local(event), q = screenToPlan(p.x, p.y);
+    return {x: Math.max(0, Math.min(dimensions.meshX, q.x)), y: Math.max(0, Math.min(dimensions.meshY, q.y))};
   };
   canvas.addEventListener('pointerdown', event => {
     event.preventDefault(); event.stopPropagation(); pointers.add(event.pointerId);
@@ -115,11 +115,10 @@ export function setupCellOverlay(): void {
     event.preventDefault(); event.stopPropagation();
     if (drag.pan) { STATE.panX = drag.pan.panX + event.clientX - drag.pan.x; STATE.panY = drag.pan.panY + event.clientY - drag.pan.y; setCameraFromState(); return; }
     try {
-      const q = world(event);
-      if (drag.site !== undefined) reliefEditor.move(drag.site, q.x, q.y);
+      if (drag.site !== undefined) { const q = world(event); reliefEditor.move(drag.site, q.x, q.y); }
       else if (drag.handle) {
-        const project = reliefEditor.current!;
-        reliefEditor.moveHandle({[drag.handle.xKey]: q.x / project.params.meshX, [drag.handle.yKey]: q.y / project.params.meshY});
+        const dimensions = reliefEditor.pendingParams()!, q = world(event, dimensions);
+        reliefEditor.moveHandle({[drag.handle.xKey]: q.x / dimensions.meshX, [drag.handle.yKey]: q.y / dimensions.meshY});
       }
     } catch (error: unknown) { cancel(); report(error); }
   });

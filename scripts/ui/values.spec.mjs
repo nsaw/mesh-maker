@@ -1,7 +1,19 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { preview } from 'vite';
 import { verifyDrapeRequestDefaults, verifyStockClearanceCoherence, verifyExactNearDefaultReset, verifyExactClearances, verifyCameraResets, verifyCountDomains, verifyCoupledClearances, verifyDimensionResetLayout, verifyNumericLinks, verifyOffStepDrapeDefaults, verifyProgrammaticRangeSync, verifySbpDefaults, verifySmallMasterRanges, verifySourceOwnership } from './reset-regressions.mjs';
+
+// The offline policy must keep both HTTP and HTTPS app documents and chunks reachable.
+for (const app of ['https://meshcraft.test', 'http://127.0.0.1:5173']) {
+  let pattern, handler;
+  await restrictToAppOrigin({route: async (nextPattern, nextHandler) => { pattern = nextPattern; handler = nextHandler; }}, app);
+  for (const [url, expected] of [[app + '/index.html', 'continue'], [app + '/assets/app.js', 'continue'], ['https://third-party.test/image.png', 'abort'], ['http://third-party.test/image.png', 'abort']]) {
+    let action = 'continue';
+    if (pattern === '**/*' || pattern.test(url)) await handler({request: () => ({url: () => url}), continue: () => { action = 'continue'; }, abort: () => { action = 'abort'; }});
+    assert.equal(action, expected, `application-origin routing ${app} -> ${url}`);
+  }
+}
 
 let server;
 let browser;
@@ -21,7 +33,7 @@ try {
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.route(/^https:\/\//, route => route.abort());
+    await restrictToAppOrigin(page, origin);
     await page.goto(origin);
     await page.waitForSelector('#selPreset', { state: 'attached' });
     await verify(page);

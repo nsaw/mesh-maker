@@ -1,3 +1,4 @@
+import { waitForFullNoiseResult } from './noise-browser-waits.mjs';
 /** Production-bundle worker responsiveness and full-resolution export contract. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -106,10 +107,7 @@ try {
       if (data.event !== 'input') el.dispatchEvent(new Event(data.event, { bubbles: true }));
     }, { value, event });
   }
-  async function waitFull(after = 0) {
-    await page.waitForFunction(after => window.noiseProbe.results.some(result => result.id > after && result.params.resolution === 400)
-      && !document.getElementById('genOverlay').classList.contains('visible'), after, { timeout: 30_000 });
-  }
+  const waitFull = after => waitForFullNoiseResult(page, after);
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const renderedBuffers = await page.evaluate(() => Promise.all(window.renderProbe.buffers));
   const renderFixture = JSON.parse(await readFile('cli/fixtures/noise-render-buffers.json', 'utf8'));
@@ -120,13 +118,15 @@ try {
   assert.equal(await page.evaluate(() => window.noiseProbe.results[0].wirePrepared), false, 'solid mode retains lazy wire allocation');
   receipt.gpu = await page.locator('#viewport').evaluate(canvas => { const gl = canvas.getContext('webgl2'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unavailable'; });
   process.stdout.write(`initial surface ${receipt.gpu}\n`);
+  const beforeVertical = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
   await page.locator('#selPreset').selectOption('relief-vertical');
-  await waitFull();
+  await waitFull(beforeVertical);
   process.stdout.write('vertical surface\n');
   const profiling = process.env.NOISE_TEST_PROFILE === '1';
   if (profiling) { await session.send('Profiler.enable'); await session.send('Profiler.start'); }
   const disposalBefore = await page.evaluate(() => ({ buffers: window.renderProbe.deletedBuffers, programs: window.renderProbe.deletedPrograms }));
   const responseStart = await page.evaluate(() => performance.now());
+  const beforeResponse = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
   await setRange('reliefJitter', 0.55, 'change');
   await page.waitForFunction(() => document.getElementById('genOverlay').classList.contains('visible'));
   for (let i = 0; i < 8; i++) {
@@ -135,7 +135,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 12));
   }
   assert(Math.max(...receipt.responsivenessMs) < 100, `4x responsiveness ${JSON.stringify(receipt.responsivenessMs)}`);
-  await waitFull();
+  await waitFull(beforeResponse);
   // Include the completed full-density frame, not only the time while worker sampling runs.
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.waitForTimeout(50);
@@ -154,7 +154,8 @@ try {
   if (receipt.hardwareCompletionGate) assert(receipt.generationLongTasks.every(task => task.duration < 100),
     `4x hardware full-frame completion exceeded 100ms: ${JSON.stringify(receipt.generationLongTasks)}`);
   process.stdout.write(`responsiveness checked ${JSON.stringify({ gpu: receipt.gpu, hardwareCompletionGate: receipt.hardwareCompletionGate, longTasks: receipt.generationLongTasks })}\n`);
-  await page.locator('#selPreset').selectOption('relief-pockets'); await waitFull();
+  const beforePockets = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
+  await page.locator('#selPreset').selectOption('relief-pockets'); await waitFull(beforePockets);
   if (await page.locator('#sponsorBackdrop.visible').count()) await page.keyboard.press('Escape');
   await page.locator('#sl_reliefJitter').scrollIntoViewIfNeeded();
   const sliderBox = await page.locator('#sl_reliefJitter').boundingBox();
@@ -170,8 +171,9 @@ try {
   assert(receipt.sustainedPreviews >= 2, 'sustained 20ms mouse dragging must show coarse frames before release');
   assert.match(await page.locator('#statsOverlay').textContent(), /display approximation/);
   assert.match(await page.locator('#dimsOverlay').textContent(), /approximation/);
+  const beforeDragRelease = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
   await page.mouse.up();
-  await waitFull();
+  await waitFull(beforeDragRelease);
   process.stdout.write(`sustained previews ${receipt.sustainedPreviews}\n`);
   const rapid = await page.evaluate(async () => {
     const input = document.getElementById('sl_reliefJitter');
@@ -182,12 +184,13 @@ try {
       if (++i === 160) { clearInterval(timer); resolve(); }
     }, 8); });
     const during = window.noiseProbe.results.filter(result => result.at > start && result.cols === 120).length;
+    const beforeRelease = window.noiseProbe.requests.at(-1).id;
     input.dispatchEvent(new PointerEvent('pointerup', { pointerId: 19 }));
-    return during;
+    return {during, beforeRelease};
   });
-  assert(rapid > 0, '8ms sustained inputs must produce previews before release');
-  receipt.highRatePreviews = rapid;
-  await waitFull();
+  assert(rapid.during > 0, '8ms sustained inputs must produce previews before release');
+  receipt.highRatePreviews = rapid.during;
+  await waitFull(rapid.beforeRelease);
   const baseline = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
   // Hold a gesture open so previews never initiate a full request until its release.
   await page.locator('#sl_reliefJitter').dispatchEvent('pointerdown', { pointerId: 7 });
@@ -197,8 +200,10 @@ try {
     await page.waitForFunction(({ value, before }) => window.noiseProbe.results.some(result => result.at >= before && result.params.resolution === 120 && result.params.reliefJitter === value), { value, before });
     const elapsed = await page.evaluate(({ value, before }) => window.noiseProbe.results.findLast(result => result.params.resolution === 120 && result.params.reliefJitter === value).at - before, { value, before });
     receipt.previewMs.push(elapsed);
+    (receipt.previewTimeline ??= []).push({inputAt: before, resultAt: before + elapsed, value});
   }
-  assert(Math.min(...receipt.previewMs) >= 0 && Math.max(...receipt.previewMs) < 400, `4x preview ${JSON.stringify(receipt.previewMs)}`);
+  const previewContext = await page.evaluate(() => ({requests: window.noiseProbe.requests.slice(-10).map(r => ({id:r.id,at:r.at,terminated:r.terminated,resolution:r.params.resolution,jitter:r.params.reliefJitter})), results:window.noiseProbe.results.slice(-10).map(r=>({id:r.id,at:r.at,elapsed:r.elapsed,cols:r.cols,jitter:r.params.reliefJitter})),longTasks:window.noiseProbe.longTasks.slice(-16)}));
+  assert(Math.min(...receipt.previewMs) >= 0 && Math.max(...receipt.previewMs) < 400, `4x preview ${JSON.stringify(receipt.previewMs)} context ${JSON.stringify({timeline:receipt.previewTimeline,...previewContext})}`);
   for (let i = 0; i < 10; i++) await setRange('reliefJitter', 0.35 + i * 0.05);
   await page.locator('#sl_reliefJitter').dispatchEvent('pointerup', { pointerId: 7 });
   await waitFull(baseline);
@@ -242,7 +247,13 @@ try {
   receipt.exportVertices = vertexCount;
   // Programmatic-only input must finish at full resolution without a release event.
   for (const action of ['none', 'rebuild', 'gesture', 'mode']) {
-    await setRange('reliefJitter', 0.65, 'change'); await waitFull();
+    const resetBoundary = await page.evaluate(() => {
+      const request = window.noiseProbe.requests.at(-1), result = window.noiseProbe.results.at(-1);
+      // A repeated value may reuse an already completed current source instead of posting again.
+      const cached = result?.id === request.id && result.params.resolution === 400 && result.params.reliefJitter === 0.65;
+      return request.id - Number(cached);
+    });
+    await setRange('reliefJitter', 0.65, 'change'); await waitFull(resetBoundary);
     const prior = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
     await page.evaluate(action => {
       const input = document.getElementById('sl_reliefJitter');
@@ -287,7 +298,8 @@ try {
   await page.waitForFunction(() => document.getElementById('toast').textContent.includes('Settings changed'));
   assert.equal(downloads.length, downloadCount, 'superseded export produces no stale download');
   await page.evaluate(() => { window.noiseProbe.hold = false; });
-  await page.locator('#btnRegenerate').click(); await waitFull(failedId);
+  const beforeRetry = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
+  await page.locator('#btnRegenerate').click(); await waitFull(beforeRetry);
   // Mode changes also settle pending export waiters and discard the retired noise source.
   await page.evaluate(() => {
     window.noiseProbe.hold = true;
@@ -299,7 +311,8 @@ try {
   await page.waitForFunction(() => !document.getElementById('genOverlay').classList.contains('visible'));
   assert.equal(downloads.length, downloadCount, 'mode change produces no noise download');
   await page.evaluate(() => { window.noiseProbe.hold = false; });
-  await page.locator('[data-mode="noise"]').click(); await waitFull(failedId);
+  const beforeNoiseReturn = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
+  await page.locator('[data-mode="noise"]').click(); await waitFull(beforeNoiseReturn);
   // A constructor exception exercises the real inline adapter, including a full-resolution export.
   await page.locator('[data-mode="depthmap"]').click();
   await page.evaluate(() => { window.noiseProbe.constructorFails = true; });
@@ -372,7 +385,7 @@ try {
     const uploads = await page.evaluate(() => window.renderProbe.uploads);
     await releaseWire();
     assert.equal(await page.evaluate(() => window.renderProbe.uploads), uploads, `${race} rejects retired lazy-wire delivery`);
-    if (race === 'mode') { await page.locator('[data-mode="noise"]').click(); await waitFull(); }
+    if (race === 'mode') { const id = await page.evaluate(() => window.noiseProbe.requests.at(-1).id); await page.locator('[data-mode="noise"]').click(); await waitFull(id); }
     lazyCounts.push(race);
   }
   for (const fallback of ['failNext', 'constructorFails']) {
@@ -389,7 +402,8 @@ try {
   await page.waitForFunction(() => !document.getElementById('genOverlay').classList.contains('visible'));
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert(await page.evaluate(() => window.renderProbe.deletedPrograms) > beforeClear, 'clearing the source disposes retained programs');
-  await page.locator('[data-mode="noise"]').click(); await waitFull();
+  const beforeFinalNoise = await page.evaluate(() => window.noiseProbe.requests.at(-1).id);
+  await page.locator('[data-mode="noise"]').click(); await waitFull(beforeFinalNoise);
   const requestCountBeforeShading = await page.evaluate(() => window.noiseProbe.requests.length);
   await page.locator('#sl_viewMaterial').selectOption('neutral');
   await page.locator('#sl_viewMaterial').selectOption('elevation');

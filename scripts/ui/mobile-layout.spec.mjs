@@ -1,3 +1,4 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import { installDeferredLayoutProbe, verifyDeferredLayoutRebuild, verifyPresentationHistory, verifyRootPaneTransitions, verifyVisibleSiteCap } from './presentation-regressions.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -28,9 +29,11 @@ async function copyState(page) {
   return { ...config, ...camera };
 }
 async function fit(page) {
+  await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().iterations)).map(animation => animation.finished)));
   if (page.viewportSize().width <= 900) await page.locator('#btnOverflow').click();
+  const sequence = await page.evaluate(() => window.fitProbe?.sequence ?? 0);
   await page.locator('#btnZoomExtents').click();
-  await page.waitForTimeout(100);
+  await page.waitForFunction(before => (window.fitProbe?.sequence ?? 0) > before, sequence);
 }
 async function checkTargets(page) {
   const controls = page.locator('button, select, input:not([type="file"]), [role="button"], .editable-value, .check-row label, a');
@@ -99,7 +102,7 @@ try {
   const deferredContext = await browser.newContext({ viewport: { width: 390, height: 664 } });
   const deferred = await deferredContext.newPage();
   await deferred.addInitScript(installDeferredLayoutProbe);
-  await deferred.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(deferred, origin);
   await deferred.goto(origin);
   await deferred.waitForSelector('#selPreset', { state: 'attached' });
   await verifyDeferredLayoutRebuild(deferred);
@@ -107,7 +110,7 @@ try {
   process.stdout.write('PASS rebuilds during deferred layout transitions\n');
   const historyContext = await browser.newContext({ viewport: { width: 390, height: 664 }, hasTouch: true });
   const history = await historyContext.newPage();
-  await history.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(history, origin);
   await history.goto(origin);
   await history.waitForSelector('#selPreset', { state: 'attached' });
   await verifyPresentationHistory(history);
@@ -136,7 +139,7 @@ try {
       }
     };
   });
-  await early.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(early, origin);
   await early.goto(origin);
   await early.waitForFunction(() => Boolean(window.releaseInitialFrame));
   await pane(early, 'export');
@@ -155,7 +158,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(installFrameProbe);
-    await page.route(/^https:\/\//, route => route.abort());
+    await restrictToAppOrigin(page, origin);
     await page.goto(origin);
     await page.waitForSelector('#selPreset', { state: 'attached' });
     await page.waitForTimeout(300);
@@ -168,6 +171,7 @@ try {
       assert.equal(await page.locator('.export-bar').evaluate(e => e.parentElement.className), 'viewport');
       const small = await page.locator('body *').evaluateAll(elements => elements.filter(e => e.getBoundingClientRect().width && e.getBoundingClientRect().height && getComputedStyle(e).visibility === 'visible' && parseFloat(getComputedStyle(e).fontSize) < 11).map(e => e.className));
       assert.deepEqual(small, []);
+      assert.deepEqual(errors, [], 'desktop page has no runtime errors');
       await context.close();
       receipts.push({ width, desktopSidebar: true });
       process.stdout.write(`PASS desktop sidebar ${width}x${height}\n`);

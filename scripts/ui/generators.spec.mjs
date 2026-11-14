@@ -1,3 +1,4 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { preview } from 'vite';
@@ -26,7 +27,7 @@ try {
     const context = await browser.newContext({viewport:{width,height},hasTouch:true});
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.route(/^https:\/\//, route => route.abort());
+    await restrictToAppOrigin(page, origin);
     await page.goto(origin);
     await mobilePane(page,'generator'); await open(page,'noise-parameters');
     assert.equal(await page.locator('#selNoiseType option[value="fbm"], #selNoiseType option[value="turbulence"]').count(),0);

@@ -1,3 +1,4 @@
+import { restrictToAppOrigin } from './app-requests.mjs';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
@@ -93,7 +94,7 @@ try {
   await mkdir('screenshots/playwright', {recursive: true});
   const page = await browser.newPage({viewport: {width: 1440, height: 900}}), errors = [];
   page.on('pageerror', error => {errors.push(error.message); process.stderr.write(error.stack + '\n');});
-  await page.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(page, url);
   await page.goto(url); await idle(page); await page.click('#btnFreezeCells');
   await page.waitForSelector('#cellOverlay', {state: 'visible'}); await idle(page);
   await page.click('#btnZoomExtents'); await page.click('#btnResetCamera');
@@ -146,7 +147,7 @@ try {
   const payload = JSON.parse(Buffer.from(new URL(linked).hash.slice(3), 'base64url').toString()), ids = Buffer.from(payload._sites.identities, 'base64');
   assert.deepEqual(Array.from({length: payload._sites.count}, (_, i) => ids.readUInt32LE(i * 4)), pinned.sites.ids);
   assert.deepEqual(Array.from(Buffer.from(payload._sites.pins, 'base64')), pinned.sites.pinned);
-  const linkedPage = await browser.newPage({viewport: {width:1440,height:900}}); await linkedPage.route(/^https:\/\//, route => route.abort());
+  const linkedPage = await browser.newPage({viewport: {width:1440,height:900}}); await restrictToAppOrigin(linkedPage, url);
   const solidLink = new URL(linked); solidLink.hash = 'c=' + Buffer.from(JSON.stringify({...payload, viewMode:'solid'})).toString('base64url');
   await linkedPage.goto(solidLink.toString()); await idle(linkedPage); await linkedPage.waitForFunction(() => !document.getElementById('btnSaveProject')?.disabled);
   assert.equal(await unloadGuard(linkedPage), false, 'initial frozen-link adoption is clean');
@@ -256,13 +257,13 @@ try {
   await page.close();
   const invalidLinkPage = await browser.newPage({viewport: {width: 390, height: 664}}), invalidErrors = [];
   invalidLinkPage.on('pageerror', error => invalidErrors.push(error.message));
-  await invalidLinkPage.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(invalidLinkPage, url);
   await invalidLinkPage.goto(url.split('?')[0] + '?c=' + Buffer.from(JSON.stringify({...payload, frequency: -1})).toString('base64url'));
   await invalidLinkPage.waitForFunction(() => document.getElementById('toast')?.textContent?.includes('cell link is invalid'));
   await idle(invalidLinkPage); assert.deepEqual(invalidErrors, [], 'invalid frozen metadata refuses before automatic document adoption');
   await invalidLinkPage.close();
   const handlePage = await browser.newPage({viewport: {width: 1440, height: 900}});
-  await handlePage.route(/^https:\/\//, route => route.abort());
+  await restrictToAppOrigin(handlePage, url);
   const handleConfig = {...config, reliefRadialFociCount: 1, reliefRadialFocus1X: 0.3, reliefRadialFocus1Y: 0.5,
     reliefAttractorMode: 'point', reliefAttractorX: 0.7, reliefAttractorY: 0.7, reliefDensityStrength: 1.8};
   await handlePage.goto(url.split('?')[0] + '?c=' + Buffer.from(JSON.stringify(handleConfig)).toString('base64url'));
@@ -292,10 +293,21 @@ try {
     assert.match(await handlePage.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
     await handlePage.click('#btnCellUndo'); assert.doesNotMatch(await handlePage.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
   }
+  for (const [pendingWidth, targetX] of [[4, 2.2], [12, 8.25]]) {
+    await handlePage.locator('#sl_meshX').evaluate((input, value) => { input.value = String(value); input.dispatchEvent(new Event('input', {bubbles:true})); input.dispatchEvent(new Event('change', {bubbles:true})); }, pendingWidth);
+    const start = await point(handlePage, handleInitial.params.reliefRadialFocus1X * pendingWidth, handleInitial.params.reliefRadialFocus1Y * 6);
+    const target = await point(handlePage, targetX, handleInitial.params.reliefRadialFocus1Y * 6);
+    await handlePage.mouse.move(start.x, start.y); await handlePage.mouse.down();
+    await handlePage.mouse.move(target.x, target.y, {steps:6}); await handlePage.mouse.up();
+    assert(Math.abs(Number(await handlePage.locator('#sl_reliefRadialFocus1X').inputValue()) - targetX / pendingWidth) < 0.01, 'pending handles share their displayed board dimensions, including beyond the applied board');
+    assert.deepEqual((await save(handlePage)).params, handleInitial.params, 'pending board/handle edits retain the exact applied source');
+    await handlePage.click('#btnCellUndo'); await handlePage.click('#btnCellUndo');
+    assert.doesNotMatch(await handlePage.locator('#cellEditorStatus').innerText(), /Layout changes pending/);
+  }
   await handlePage.close();
   for (const width of [390, 430]) {
     const phone = await browser.newPage({viewport: {width, height: 664}, isMobile: true, hasTouch: true});
-    await phone.route(/^https:\/\//, route => route.abort()); await phone.goto(url); await idle(phone);
+    await restrictToAppOrigin(phone, url); await phone.goto(url); await idle(phone);
     await phone.click('#tab-generator');
     if (await phone.locator('.cell-editor .section-header').getAttribute('aria-expanded') === 'false') await phone.click('.cell-editor .section-header');
     await phone.click('#btnFreezeCells'); await phone.waitForSelector('#cellOverlay', {state: 'visible'}); await idle(phone);

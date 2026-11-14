@@ -1,7 +1,7 @@
 /** Observe matrices used by the actual production draw, independent of STATE and Fit arithmetic. */
 export function installFrameProbe() {
   const locations = new WeakMap(), programs = new WeakMap();
-  let currentProgram;
+  let currentProgram, sequence = 0;
   const prototype = WebGL2RenderingContext.prototype;
   const getLocation = prototype.getUniformLocation;
   prototype.getUniformLocation = function(program, name) {
@@ -24,7 +24,7 @@ export function installFrameProbe() {
   const draw = prototype.drawElements;
   prototype.drawElements = function(mode, count, ...rest) {
     const program = programs.get(currentProgram);
-    if (count >= 24 && program?.modelViewMatrix && program?.projectionMatrix) window.fitProbe = { ...program };
+    if (count >= 24 && program?.modelViewMatrix && program?.projectionMatrix) window.fitProbe = { ...program, sequence: ++sequence };
     return draw.call(this, mode, count, ...rest);
   };
 }

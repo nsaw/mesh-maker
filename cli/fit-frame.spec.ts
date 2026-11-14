@@ -4,7 +4,10 @@ import { fitDistance, type FitPoint, type Frame } from '../src/fit-frame';
 // Replay the perspective projection independently, including world-space screen pan.
 for (const [width, height] of [[390, 500], [834, 948], [1120, 760]]) {
   for (const [halfX, halfY, halfZ] of [[18, 2, 1.3], [1, 12, 0.2], [18, 12, 3]]) {
-    const frame: Frame = { x: 16, y: 96, width: width - 32, height: height - 160 };
+    for (const frame of [
+      { x: 16, y: 96, width: width - 32, height: height - 160 },
+      { x: 96, y: 96, width: width - 112, height: height - 160 },
+    ] satisfies Frame[]) {
     const points: FitPoint[] = [];
     for (const x of [-halfX, halfX]) for (const y of [-halfY, halfY]) for (const z of [-halfZ, halfZ]) points.push({ x, y, z });
     const fov = Math.PI / 3;
@@ -18,6 +21,7 @@ for (const [width, height] of [[390, 500], [834, 948], [1120, 760]]) {
       const y = height / 2 + (-point.y * scale + panY * distance) / (distance - point.z);
       assert(x >= frame.x - 1e-8 && x <= frame.x + frame.width + 1e-8, `${x} fits horizontal frame`);
       assert(y >= frame.y - 1e-8 && y <= frame.y + frame.height + 1e-8, `${y} fits vertical frame`);
+    }
     }
   }
 }
