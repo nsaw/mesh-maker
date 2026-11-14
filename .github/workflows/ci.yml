@@ -41,6 +41,8 @@ jobs:
       - run: npm run test:cut
       - run: npm run test:relief-master
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui-values
 
   preset_export_list:
     name: Preset export matrix

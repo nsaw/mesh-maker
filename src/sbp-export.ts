@@ -1,6 +1,6 @@
 import { STATE, activeMaster, stockTopIn } from './state';
 import { getReliefRidgeInfo } from './noise/relief-features';
-import { attachValueEdit } from './slider-utils';
+import { attachControlReset, attachValueEdit, configureRange, readRangeValue, syncRange } from './slider-utils';
 import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
 import { parseSTLBinary } from './sbp/stl-parser';
@@ -33,8 +33,8 @@ interface SbpState {
   stlName: string;
 }
 
-/** The SBP sidebar settings. Exported for cli/drape.spec.ts. */
-export const SBP_STATE: SbpState = {
+/** Initial SBP settings, retained as reset targets when controls are rebuilt. */
+const SBP_DEFAULTS: Readonly<SbpState> = {
   roughingEnabled: true,
   finishingEnabled: true,
   materialProfile: 'general',
@@ -53,6 +53,9 @@ export const SBP_STATE: SbpState = {
   stlBuffer: null,
   stlName: '',
 };
+
+/** The SBP sidebar settings. Exported for cli/drape.spec.ts. */
+export const SBP_STATE: SbpState = { ...SBP_DEFAULTS };
 
 let sbpWorkerRunning = false;
 let stlSize: { meshX: number; meshY: number } | null = null;
@@ -74,28 +77,51 @@ export function safeZForStock(stockIn: number): number {
   return Math.min(6, Math.max(0.5, Math.ceil((stockIn + 0.1) * 10 - 1e-6) / 10));
 }
 
+/** Clearance reset targets follow stock, independently of a user's raised values. */
+function clearanceDefaults(): { safeZ: number; homeZ: number } {
+  const safeZ = safeZForStock(stockTopIn());
+  return { safeZ, homeZ: Math.min(6, Math.max(1, Number((safeZ + 0.5).toFixed(1)))) };
+}
+
+/** Remove arithmetic noise at a short-decimal gap endpoint, such as 1.4 - 0.1.
+ *  The IEEE guard keeps genuinely precise derived bounds; user requests never pass through this. */
+function clearanceEndpoint(value: number): number {
+  const compact = Number(value.toFixed(12));
+  return Math.abs(compact - value) <= Number.EPSILON * 4 * Math.max(1, Math.abs(value)) ? compact : value;
+}
+
+/** A tenth-inch gap is shared by native ranges, reset clamping and input handlers. */
+function clearanceBounds(): { safeZMax: number; homeZMin: number } {
+  const safeZMax = Math.max(0.5, Math.min(6, clearanceEndpoint(SBP_STATE.homeZ - 0.1)));
+  const homeZMin = Math.min(6, Math.max(1, clearanceEndpoint(SBP_STATE.safeZ + 0.1)));
+  const slack = Number.EPSILON * 4 * Math.max(1, Math.abs(SBP_STATE.safeZ), Math.abs(SBP_STATE.homeZ));
+  const validPair = SBP_STATE.safeZ >= 0.5 && SBP_STATE.homeZ >= 1 && SBP_STATE.homeZ <= 6
+    && SBP_STATE.homeZ - SBP_STATE.safeZ >= 0.1 - slack;
+  // Derived endpoint cleanup must not displace an already legal exact model pair.
+  return {
+    safeZMax: validPair ? Math.max(safeZMax, SBP_STATE.safeZ) : safeZMax,
+    homeZMin: validPair ? Math.min(homeZMin, SBP_STATE.homeZ) : homeZMin,
+  };
+}
+
+function syncClearanceBounds(): void {
+  const bounds = clearanceBounds();
+  const safe = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
+  const home = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
+  const defaults = clearanceDefaults();
+  if (safe) syncRange(safe, SBP_STATE.safeZ, { max: bounds.safeZMax, defaultValue: defaults.safeZ });
+  if (home) syncRange(home, SBP_STATE.homeZ, { min: bounds.homeZMin, defaultValue: defaults.homeZ });
+}
+
 /** Sync SBP safe/home Z to the stock top (stockTopIn). Called when it changes. */
 export function syncSbpSafeZ(): void {
   safeZSyncedStock = stockTopIn();
-  const safeZ = safeZForStock(stockTopIn());
-  SBP_STATE.safeZ = safeZ;
-  if (SBP_STATE.homeZ <= safeZ) SBP_STATE.homeZ = Math.min(6, Math.max(1.0, parseFloat((safeZ + 0.5).toFixed(1))));
+  const defaults = clearanceDefaults();
+  SBP_STATE.safeZ = defaults.safeZ;
+  // Commit a legal pair before syncRange can clamp either displayed control.
+  if (SBP_STATE.homeZ < clearanceBounds().homeZMin) SBP_STATE.homeZ = defaults.homeZ;
 
-  const safeSlider = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
-  const safeVal = document.getElementById('val_sbpSafeZ');
-  if (safeSlider) {
-    safeSlider.value = String(SBP_STATE.safeZ);
-    safeSlider.dataset.default = String(SBP_STATE.safeZ);
-  }
-  if (safeVal) safeVal.textContent = SBP_STATE.safeZ.toFixed(1);
-
-  const homeSlider = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
-  const homeVal = document.getElementById('val_sbpHomeZ');
-  if (homeSlider) {
-    homeSlider.value = String(SBP_STATE.homeZ);
-    homeSlider.dataset.default = String(SBP_STATE.homeZ);
-  }
-  if (homeVal) homeVal.textContent = SBP_STATE.homeZ.toFixed(1);
+  syncClearanceBounds();
 }
 
 /** The SBP job settings from the sidebar and the stock top. Exported for cli/drape.spec.ts. */
@@ -318,28 +344,21 @@ function buildRangeControl(
   sliderId: string,
   valueId: string,
   label: string,
-  valueText: string,
   min: number,
   max: number,
   step: number,
   value: number,
+  defaultValue: number,
 ): HTMLDivElement {
   const row = createElement('div', 'control-row');
   const controlLabel = createElement('div', 'control-label');
   const labelSpan = createElement('span', undefined, label);
-  const valueSpan = createElement('span', 'val', valueText);
+  const valueSpan = createElement('span', 'val');
   valueSpan.id = valueId;
   controlLabel.append(labelSpan, valueSpan);
-
-  const input = createElement('input') as HTMLInputElement;
-  input.type = 'range';
+  const input = createElement('input');
   input.id = sliderId;
-  input.min = String(min);
-  input.max = String(max);
-  input.step = String(step);
-  input.value = String(value);
-  input.dataset.default = String(value);
-
+  configureRange(input, valueSpan, { min, max, step, value, defaultValue });
   row.append(controlLabel, input);
   return row;
 }
@@ -396,13 +415,17 @@ function syncClearStlButton(): void {
 /** Returns the SBP config sidebar section */
 export function buildSBPSection(): HTMLElement {
   const tools = getEmbeddedTools(SBP_STATE.materialProfile);
-  const roughingTool = getDefaultConfig(SBP_STATE.materialProfile).roughingTool;
-  const finishingTool = getDefaultConfig(SBP_STATE.materialProfile).finishingTool;
+  const configDefaults = getDefaultConfig(SBP_STATE.materialProfile);
+  const roughingTool = configDefaults.roughingTool;
+  const finishingTool = configDefaults.finishingTool;
+  const clearances = clearanceDefaults();
+  const bounds = clearanceBounds();
   const section = createElement('div', 'section sbp-only');
   section.id = 'sbpSection';
 
   const header = createElement('button', 'section-header') as HTMLButtonElement;
   header.type = 'button';
+  header.id = 'sbp-section-body-toggle';
   header.setAttribute('aria-expanded', 'true');
   header.setAttribute('aria-controls', 'sbp-section-body');
   header.append(
@@ -465,28 +488,23 @@ export function buildSBPSection(): HTMLElement {
     roughingRow,
     finishingRow,
     profileRow,
-    buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', SBP_STATE.leaveStock.toFixed(3), 0, 0.1, 0.005, SBP_STATE.leaveStock),
-    buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', SBP_STATE.offsetX.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetX),
-    buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', SBP_STATE.offsetY.toFixed(1), 0, 10, 0.5, SBP_STATE.offsetY),
+    buildRangeControl('sl_sbpLeaveStock', 'val_sbpLeaveStock', 'Leave Stock (in)', 0, 0.1, 0.005, SBP_STATE.leaveStock, SBP_DEFAULTS.leaveStock),
+    buildRangeControl('sl_sbpOffsetX', 'val_sbpOffsetX', 'Offset X (in)', 0, 10, 0.5, SBP_STATE.offsetX, SBP_DEFAULTS.offsetX),
+    buildRangeControl('sl_sbpOffsetY', 'val_sbpOffsetY', 'Offset Y (in)', 0, 10, 0.5, SBP_STATE.offsetY, SBP_DEFAULTS.offsetY),
     Object.assign(createElement('div', 'cnc-note'), { id: 'sbpEffectiveOffsets' }),
-    buildRangeControl('sl_sbpSafeZ', 'val_sbpSafeZ', 'Safe Z (in)', SBP_STATE.safeZ.toFixed(1), 0.5, 6, 0.1, SBP_STATE.safeZ),
-    buildRangeControl('sl_sbpHomeZ', 'val_sbpHomeZ', 'Home Z (in)', SBP_STATE.homeZ.toFixed(1), 1.0, 6, 0.1, SBP_STATE.homeZ),
-    buildRangeControl('sl_sbpRasterAngle', 'val_sbpRasterAngle', 'Raster Angle (deg)', String(SBP_STATE.finishRasterAngle), 0, 90, 5, SBP_STATE.finishRasterAngle),
-    buildRangeControl('sl_sbpFeedRate', 'val_sbpFeedRate', 'Feed Rate (ips)',
-      (SBP_STATE.feedRateOverride ?? finishingTool.cutting.feedRate).toFixed(1),
-      0.1, 8, 0.1, SBP_STATE.feedRateOverride ?? finishingTool.cutting.feedRate),
-    buildRangeControl('sl_sbpPlungeRate', 'val_sbpPlungeRate', 'Plunge Rate (ips)',
-      (SBP_STATE.plungeRateOverride ?? finishingTool.cutting.plungeRate).toFixed(2),
-      0.05, 3, 0.05, SBP_STATE.plungeRateOverride ?? finishingTool.cutting.plungeRate),
-    buildRangeControl('sl_sbpRpm', 'val_sbpRpm', 'Spindle RPM',
-      String(SBP_STATE.rpmOverride ?? finishingTool.cutting.rpm),
-      5000, 24000, 500, SBP_STATE.rpmOverride ?? finishingTool.cutting.rpm),
-    buildRangeControl('sl_sbpStepdown', 'val_sbpStepdown', 'Stepdown (in)',
-      (SBP_STATE.stepdownOverride ?? roughingTool.cutting.stepdown).toFixed(3),
-      0.01, 1, 0.01, SBP_STATE.stepdownOverride ?? roughingTool.cutting.stepdown),
-    buildRangeControl('sl_sbpStepover', 'val_sbpStepover', 'Stepover (in)',
-      (SBP_STATE.stepoverOverride ?? finishingTool.cutting.stepover).toFixed(3),
-      0.005, 0.5, 0.005, SBP_STATE.stepoverOverride ?? finishingTool.cutting.stepover),
+    buildRangeControl('sl_sbpSafeZ', 'val_sbpSafeZ', 'Safe Z (in)', 0.5, bounds.safeZMax, 0.1, SBP_STATE.safeZ, clearances.safeZ),
+    buildRangeControl('sl_sbpHomeZ', 'val_sbpHomeZ', 'Home Z (in)', bounds.homeZMin, 6, 0.1, SBP_STATE.homeZ, clearances.homeZ),
+    buildRangeControl('sl_sbpRasterAngle', 'val_sbpRasterAngle', 'Raster Angle (deg)', 0, 90, 5, SBP_STATE.finishRasterAngle, SBP_DEFAULTS.finishRasterAngle),
+    buildRangeControl('sl_sbpFeedRate', 'val_sbpFeedRate', 'Feed Rate (ips)', 0.1, 8, 0.1,
+      SBP_STATE.feedRateOverride ?? finishingTool.cutting.feedRate, finishingTool.cutting.feedRate),
+    buildRangeControl('sl_sbpPlungeRate', 'val_sbpPlungeRate', 'Plunge Rate (ips)', 0.05, 3, 0.05,
+      SBP_STATE.plungeRateOverride ?? finishingTool.cutting.plungeRate, finishingTool.cutting.plungeRate),
+    buildRangeControl('sl_sbpRpm', 'val_sbpRpm', 'Spindle RPM', 5000, 24000, 500,
+      SBP_STATE.rpmOverride ?? finishingTool.cutting.rpm, finishingTool.cutting.rpm),
+    buildRangeControl('sl_sbpStepdown', 'val_sbpStepdown', 'Stepdown (in)', 0.01, 1, 0.01,
+      SBP_STATE.stepdownOverride ?? roughingTool.cutting.stepdown, roughingTool.cutting.stepdown),
+    buildRangeControl('sl_sbpStepover', 'val_sbpStepover', 'Stepover (in)', 0.005, 0.5, 0.005,
+      SBP_STATE.stepoverOverride ?? finishingTool.cutting.stepover, finishingTool.cutting.stepover),
     uploadZone,
   );
 
@@ -563,9 +581,8 @@ export function wireSBPControls(): void {
   const stockEl = document.getElementById('sl_sbpLeaveStock') as HTMLInputElement | null;
   if (stockEl) {
     stockEl.addEventListener('input', () => {
-      SBP_STATE.leaveStock = parseFloat(stockEl.value);
-      const valEl = document.getElementById('val_sbpLeaveStock');
-      if (valEl) valEl.textContent = SBP_STATE.leaveStock.toFixed(3);
+      SBP_STATE.leaveStock = readRangeValue(stockEl);
+      syncRange(stockEl, SBP_STATE.leaveStock);
       invalidateSbpStats();
     });
   }
@@ -574,9 +591,8 @@ export function wireSBPControls(): void {
   const offsetXEl = document.getElementById('sl_sbpOffsetX') as HTMLInputElement | null;
   if (offsetXEl) {
     offsetXEl.addEventListener('input', () => {
-      SBP_STATE.offsetX = parseFloat(offsetXEl.value);
-      const valEl = document.getElementById('val_sbpOffsetX');
-      if (valEl) valEl.textContent = SBP_STATE.offsetX.toFixed(1);
+      SBP_STATE.offsetX = readRangeValue(offsetXEl);
+      syncRange(offsetXEl, SBP_STATE.offsetX);
       invalidateSbpStats();
     });
   }
@@ -584,9 +600,8 @@ export function wireSBPControls(): void {
   const offsetYEl = document.getElementById('sl_sbpOffsetY') as HTMLInputElement | null;
   if (offsetYEl) {
     offsetYEl.addEventListener('input', () => {
-      SBP_STATE.offsetY = parseFloat(offsetYEl.value);
-      const valEl = document.getElementById('val_sbpOffsetY');
-      if (valEl) valEl.textContent = SBP_STATE.offsetY.toFixed(1);
+      SBP_STATE.offsetY = readRangeValue(offsetYEl);
+      syncRange(offsetYEl, SBP_STATE.offsetY);
       invalidateSbpStats();
     });
   }
@@ -594,30 +609,23 @@ export function wireSBPControls(): void {
   const safeZEl = document.getElementById('sl_sbpSafeZ') as HTMLInputElement | null;
   const homeZEl = document.getElementById('sl_sbpHomeZ') as HTMLInputElement | null;
   if (safeZEl) safeZEl.addEventListener('input', () => {
-    let val = parseFloat(safeZEl.value);
-    if (val >= SBP_STATE.homeZ) val = SBP_STATE.homeZ - 0.1;
-    SBP_STATE.safeZ = Math.min(6, Math.max(0.5, parseFloat(val.toFixed(1))));
-    safeZEl.value = String(SBP_STATE.safeZ);
-    const v = document.getElementById('val_sbpSafeZ');
-    if (v) v.textContent = SBP_STATE.safeZ.toFixed(1);
+    const val = readRangeValue(safeZEl);
+    SBP_STATE.safeZ = Math.min(clearanceBounds().safeZMax, Math.max(0.5, val));
+    syncClearanceBounds();
     invalidateSbpStats();
   });
 
   if (homeZEl) homeZEl.addEventListener('input', () => {
-    let val = parseFloat(homeZEl.value);
-    if (val <= SBP_STATE.safeZ) val = SBP_STATE.safeZ + 0.1;
-    SBP_STATE.homeZ = Math.min(6, parseFloat(val.toFixed(1)));
-    homeZEl.value = String(SBP_STATE.homeZ);
-    const v = document.getElementById('val_sbpHomeZ');
-    if (v) v.textContent = SBP_STATE.homeZ.toFixed(1);
+    const val = readRangeValue(homeZEl);
+    SBP_STATE.homeZ = Math.max(clearanceBounds().homeZMin, Math.min(6, val));
+    syncClearanceBounds();
     invalidateSbpStats();
   });
 
   const rasterEl = document.getElementById('sl_sbpRasterAngle') as HTMLInputElement | null;
   if (rasterEl) rasterEl.addEventListener('input', () => {
-    SBP_STATE.finishRasterAngle = parseFloat(rasterEl.value);
-    const v = document.getElementById('val_sbpRasterAngle');
-    if (v) v.textContent = String(SBP_STATE.finishRasterAngle);
+    SBP_STATE.finishRasterAngle = readRangeValue(rasterEl);
+    syncRange(rasterEl, SBP_STATE.finishRasterAngle);
     invalidateSbpStats();
   });
 
@@ -626,43 +634,33 @@ export function wireSBPControls(): void {
   const roughingTool = getDefaultConfig(SBP_STATE.materialProfile).roughingTool;
 
   function wireOverrideSlider(
-    sliderId: string, valueId: string,
-    getDefault: () => number, format: (n: number) => string,
+    sliderId: string, getDefault: () => number,
     setOverride: (v: number | null) => void,
   ): void {
     const el = document.getElementById(sliderId) as HTMLInputElement | null;
     if (!el) return;
     el.addEventListener('input', () => {
-      const val = parseFloat(el.value);
+      const val = readRangeValue(el);
       setOverride(val);
-      const v = document.getElementById(valueId);
-      if (v) v.textContent = format(val);
+      syncRange(el, val);
       invalidateSbpStats();
     });
     el.addEventListener('dblclick', () => {
       setOverride(null);
-      const def = getDefault();
-      el.value = String(def);
-      const v = document.getElementById(valueId);
-      if (v) v.textContent = format(def);
+      syncRange(el, getDefault());
       invalidateSbpStats();
     });
   }
 
-  wireOverrideSlider('sl_sbpFeedRate', 'val_sbpFeedRate',
-    () => finishingTool.cutting.feedRate, n => n.toFixed(1),
+  wireOverrideSlider('sl_sbpFeedRate', () => finishingTool.cutting.feedRate,
     v => { SBP_STATE.feedRateOverride = v; });
-  wireOverrideSlider('sl_sbpPlungeRate', 'val_sbpPlungeRate',
-    () => finishingTool.cutting.plungeRate, n => n.toFixed(2),
+  wireOverrideSlider('sl_sbpPlungeRate', () => finishingTool.cutting.plungeRate,
     v => { SBP_STATE.plungeRateOverride = v; });
-  wireOverrideSlider('sl_sbpRpm', 'val_sbpRpm',
-    () => finishingTool.cutting.rpm, n => String(n),
+  wireOverrideSlider('sl_sbpRpm', () => finishingTool.cutting.rpm,
     v => { SBP_STATE.rpmOverride = v; });
-  wireOverrideSlider('sl_sbpStepdown', 'val_sbpStepdown',
-    () => roughingTool.cutting.stepdown, n => n.toFixed(3),
+  wireOverrideSlider('sl_sbpStepdown', () => roughingTool.cutting.stepdown,
     v => { SBP_STATE.stepdownOverride = v; });
-  wireOverrideSlider('sl_sbpStepover', 'val_sbpStepover',
-    () => finishingTool.cutting.stepover, n => n.toFixed(3),
+  wireOverrideSlider('sl_sbpStepover', () => finishingTool.cutting.stepover,
     v => { SBP_STATE.stepoverOverride = v; });
 
   // Click value label to type exact number (SBP sliders)
@@ -684,11 +682,14 @@ export function wireSBPControls(): void {
       sl.addEventListener('dblclick', () => {
         const def = sl.dataset.default;
         if (def === undefined) return;
-        sl.value = def;
+        syncRange(sl, Number(def));
         sl.dispatchEvent(new Event('input', { bubbles: true }));
       });
     });
   }
+
+  sbpSection?.querySelectorAll<HTMLInputElement>('input[data-default]').forEach(attachControlReset);
+  syncClearanceBounds();
 
   // STL upload
   const uploadZone = document.getElementById('sbpUploadZone');

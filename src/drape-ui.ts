@@ -12,7 +12,7 @@ import { syncSbpSafeZIfStockMoved, updateEffectiveOffsetDisplay } from './sbp-ex
 import { syncAspectLockButton } from './ui';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
-import { formatSliderValue } from './slider-utils';
+import { syncRange } from './slider-utils';
 import { triggerDownload } from './export';
 import { encodeReliefMaster, parseReliefMaster, type ReliefMaster } from './relief-master';
 import { encodeFigure, figureFromMesh, MAX_FIGURE_TRIANGLES, MAX_MCFIG_UPLOAD_TRIANGLES, parseFigure, poseFigure, MAX_DETAIL_BYTES, splitForDrape, type Figure, type FigurePose } from './drape-sim/figure';
@@ -118,16 +118,16 @@ export function drapeCarve(): DrapeCarve {
   return drapeCarveFor(STATE.drapeStock, STATE.drapeReliefDepth, STATE.drapeCarveWidth);
 }
 
-/** Point the size controls at the drape relief (its width, height and stock): the mesh preview reads them
- *  from the master, and the sliders must show the same numbers. */
+/** Publish completed master dimensions to preview/export state, and synchronize editable controls
+ *  from their independently owned exact carve requests. */
 function syncSizeControls(m: ReliefMaster): void {
   STATE.meshX = m.widthIn; STATE.meshY = m.heightIn; STATE.baseThickness = m.stockIn;
   STATE.depthMapAR = m.widthIn / m.heightIn; STATE.aspectLocked = true;
-  for (const [key, v] of [['meshX', m.widthIn], ['meshY', m.heightIn], ['baseThickness', m.stockIn]] as const) {
+  // These editable controls own carve requests; exported dimensions remain the master's above.
+  const carve = drapeCarve();
+  for (const [key, v] of [['meshX', carve.widthIn], ['meshY', carve.heightIn], ['baseThickness', carve.stockIn]] as const) {
     const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
-    if (sl) sl.value = String(v);
-    const val = document.getElementById(`val_${key}`);
-    if (val) val.textContent = formatSliderValue(v, sl ? Number(sl.dataset.step ?? sl.step) : key === 'baseThickness' ? 0.0001 : 1);
+    if (sl) syncRange(sl, v);
   }
   syncAspectLockButton();
   // Safe Z follows the stock top when it moves; a new drape on the same stock keeps the user's Safe Z.

@@ -1,3 +1,4 @@
+import { isFiniteNumeric, normalizeNumericValue, numericDomain } from './numeric-domain';
 import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN, type SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
@@ -298,11 +299,16 @@ export function reliefMasterActive(): boolean {
   return activeMaster() !== null;
 }
 
-/** Controls a relief master fixes: its size, stock and heights are the data, not settings. Grid
+/** Controls an imported Depth Map relief master fixes: its size, stock and heights are the data, not settings. Grid
  *  Resolution stays live because it only sets the preview density. */
 export const RELIEF_LOCKED_KEYS: ReadonlySet<string> = new Set([
   'meshX', 'meshY', 'baseThickness', 'dmHeightScale', 'dmOffset', 'dmBackgroundCutoff', 'dmSmoothRadiusIn',
 ]);
+
+/** Imported source data is immutable; live Drape controls remap their generated master. */
+export function controlIsReadOnly(key: string): boolean {
+  return STATE.mode === 'depthmap' && STATE.reliefMaster !== null && RELIEF_LOCKED_KEYS.has(key);
+}
 
 /** NOISE's own board, kept while another tab (DEPTH MAP, a relief master, DRAPE) takes over the size
  *  controls: it shares meshX, meshY, resolution and baseThickness with DEPTH MAP, so leaving NOISE
@@ -513,7 +519,9 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
 
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
-        (result as Record<string, unknown>)[key] = parsed[key];
+        const value: unknown = parsed[key];
+        if (typeof DEFAULTS[key] === 'number' && !isFiniteNumeric(value)) continue;
+        (result as Record<string, unknown>)[key] = value;
       }
     }
     // Clamp untrusted numeric ranges from URL payloads. Sliders enforce these in the UI,
@@ -522,22 +530,16 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     //   - reliefRelaxIterations: each pass scans every sample × every site (O(rows·cols·sites))
     //   - reliefDensityStrength: multiplies the site count itself, then both Pass 1+2 scan all sites
     //
-    // Values arrive as `unknown` from JSON.parse — accept anything coercible to a finite
-    // number (including numeric strings like "1000" that a crafted payload could use to
-    // bypass a strict `typeof === 'number'` check) but discard non-finite junk so it falls
-    // back to the field's default rather than poisoning STATE.
-    const toFiniteNumber = (v: unknown): number | null => {
-      const n = typeof v === 'number' ? v : Number(v);
-      return Number.isFinite(n) ? n : null;
-    };
+    // The allowlist boundary admits only actual finite numbers for numeric STATE fields.
     const clampField = (key: keyof MeshState, lo: number, hi: number, integer = false): void => {
-      const n = toFiniteNumber(result[key]);
-      if (n === null) {
+      const n = result[key];
+      if (!isFiniteNumeric(n)) {
         delete (result as Record<string, unknown>)[key];
         return;
       }
-      const v = integer ? Math.floor(n) : n;
-      (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
+      const domain = numericDomain(key);
+      const v = integer && !domain ? Math.floor(n) : n;
+      (result as Record<string, unknown>)[key] = normalizeNumericValue(v, lo, hi, domain);
     };
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
     // back to DEFAULTS instead of feeding a junk string into the sampler/UI.
@@ -619,7 +621,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // The board, to its sliders' ranges (a link with meshX 200 used to keep a 200 in board).
     if ('meshX' in result) clampField('meshX', 1, MACHINE_TRAVEL_IN.x);
     if ('meshY' in result) clampField('meshY', 1, MACHINE_TRAVEL_IN.y);
-    if ('resolution' in result) clampField('resolution', 16, 1024, true);
+    if ('resolution' in result) clampField('resolution', 16, 1024);
+    if ('octaves' in result) clampField('octaves', 1, 8);
     if ('baseThickness' in result) clampField('baseThickness', 0.25, MAX_STOCK_THICKNESS_IN);
     const stock = typeof result.baseThickness === 'number' ? result.baseThickness : DEFAULTS.baseThickness;
     // The shared stock belongs to the active mode. Keep other modes' requests when sharing a link.
@@ -632,8 +635,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
     // On the sliders' grid too, so the labels show the exact carve (an off-grid width drifted on a label click).
     if ('drapeCarveWidth' in result) {
-      const n = toFiniteNumber(result.drapeCarveWidth);
-      if (n === null) delete (result as Record<string, unknown>).drapeCarveWidth;
+      const n = result.drapeCarveWidth;
+      if (!isFiniteNumeric(n)) delete (result as Record<string, unknown>).drapeCarveWidth;
       else (result as Record<string, unknown>).drapeCarveWidth = snapCarveWidth(n);
     }
     // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same
@@ -655,7 +658,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // a crafted payload could pair a positive reliefRadialFociCount with NaN/Infinity in a
     // focus X/Y, which would propagate through sampleReliefParamsFromState → radialFoci →
     // the sampler's per-pixel metric and either zero the site count (flat render) or NaN-poison
-    // every output pixel. Clamping to [0, 1] (with non-finite values dropped by toFiniteNumber)
+    // every output pixel. Clamping to [0, 1] (with invalid numeric values dropped by the shared input boundary)
     // closes that path before the value reaches STATE.
     if ('reliefRadialFocus1X' in result) clampField('reliefRadialFocus1X', 0, 1);
     if ('reliefRadialFocus1Y' in result) clampField('reliefRadialFocus1Y', 0, 1);
