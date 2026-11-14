@@ -51,6 +51,7 @@
 import type {
   ReliefAttractorMode,
   ReliefBaseMode,
+  ReliefCrestClipStatus,
   ReliefGenerator,
   ReliefPolarity,
   ReliefProfile,
@@ -59,9 +60,9 @@ import type {
 } from '../types';
 import { SimplexNoiseGen } from './generators';
 import { SiteGrid } from './site-grid';
+import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 
 // Tuning constants — kept central so future work has one place to edit.
-const LLOYD_SAMPLE_BUDGET_MAX = 8192;
 const LLOYD_SAMPLES_PER_SITE = 64;
 const WAVE_GEN_SEED_OFFSET = 17;
 const ANISOTROPY_SCALE_MULTIPLIER = 1.5;
@@ -142,8 +143,9 @@ const EDGE_DISSOLVE_MAX = 0.7;
 // face). Also converts pyramid junctions into broad saddles and keeps the panel
 // silhouette clean (no fins above the top edge).
 // v21.1 slope budget (normalized depth per inch of wall extent): 1.0 at the default
-// 2.4\" cut depth is ~67 degrees peak wall slope — the steepest the wood references show.
-const SLOPE_DEPTH_BUDGET = 0.55;
+// 2.4\" reference depth anchors the budget. Crown, crest and junction additions share it.
+// The 0.4 gain keeps the shipped presets below the measured steep-facet area ceiling.
+const SLOPE_DEPTH_BUDGET = 0.4;
 const STOCK_CAP_START = 0.04;
 const STOCK_CAP_SPAN = 0.13;
 const SIZE_DEPTH_MIN = 0.8;
@@ -167,6 +169,28 @@ interface Site {
   /** Per-cell scale derived from average F1 inside the cell (set after Pass 1). Used as
    *  sample value for the Gaussian radius field (Pass 1.5); never read directly per-pixel. */
   radius: number;
+}
+
+export interface ReliefSampleResult {
+  grid: number[][];
+  /** Candidate count before capping, or zero when every candidate was retained. */
+  truncatedFrom: number;
+  crestClipStatus: ReliefCrestClipStatus;
+}
+
+/** Select once across the full candidate population, preserving required focal nuclei
+ * and original order. Cartesian candidates remain a prefix for Lloyd pinning. */
+function representativeIndices(length: number, limit: number, rand: () => number, retained: readonly number[] = []): number[] {
+  const required = new Set(retained);
+  const indices = Array.from({length}, (_, i) => i);
+  if (length <= limit) return indices;
+  const available = indices.filter(i => !required.has(i));
+  const count = limit - required.size;
+  for (let i = 0; i < count; i++) {
+    const chosen = i + Math.floor(rand() * (available.length - i));
+    [available[i], available[chosen]] = [available[chosen], available[i]];
+  }
+  return [...retained, ...available.slice(0, count)].sort((a, b) => a - b);
 }
 
 /** smoothstep(edge0, edge1, x) clamped — standard GLSL semantics. */
@@ -253,6 +277,35 @@ function makeWarpFn(
   ];
 }
 
+/** Bound both candidate loops before grid sizing or allocation, even without foci.
+ * Cartesian cells attempt at most LOCAL_DENSITY_MAX sites each. The polar estimate
+ * bounds every ring by its shortest gap and largest possible sector count. Required
+ * nuclei add at most three attempts. Refuse explicitly rather than biasing the cap. */
+function checkSiteWork(fociCount: number, zoneR: number, cellSize: number,
+  radialStrength: number, radialGrow: number, meshX: number, meshY: number): void {
+  const refuse = (): never => { throw new RangeError('Relief site enumeration exceeds supported work budget'); };
+  if (![zoneR, cellSize, meshX, meshY].every(Number.isFinite)
+    || meshX <= 0 || meshY <= 0 || cellSize <= 0) refuse();
+  const budget = 5_000_000;
+  const spacing = Math.max(0.2, cellSize);
+  const xCells = meshX / spacing, yCells = meshY / spacing;
+  if (![xCells, yCells].every(Number.isFinite) || xCells > budget || yCells > budget) refuse();
+  let work = Math.max(2, Math.ceil(xCells) + 1) * Math.max(2, Math.ceil(yCells) + 1) * LOCAL_DENSITY_MAX;
+  if (!Number.isFinite(work) || work > budget) refuse();
+  if (fociCount > 0) {
+    const pitch = Math.max(0.3, cellSize * POLAR_TANGENTIAL_PITCH_CELLS
+      * (1 + 0.5 * Math.max(0, Math.min(2, radialGrow > 1 ? 1 : radialGrow))));
+    const ringBound = zoneR / (pitch * 0.8);
+    if (!Number.isFinite(ringBound) || ringBound > budget) refuse();
+    const rings = Math.ceil(ringBound) + 1;
+    const maxGap = pitch * (1 + radialStrength) * (1 + 0.1 * rings);
+    const sectorBound = 2 * Math.PI * (zoneR + maxGap * 0.5) / pitch;
+    if (!Number.isFinite(sectorBound) || sectorBound > budget) refuse();
+    work += fociCount * (1 + rings * Math.max(4, Math.ceil(sectorBound)));
+  }
+  if (!Number.isFinite(work) || work > budget) refuse();
+}
+
 /** Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus jittered
  *  concentric rings whose RADIAL gap is `(1 + radialStrength)` × the tangential pitch —
  *  the Voronoi cells of that lattice are radially elongated petals fanning out of the
@@ -273,7 +326,8 @@ function generatePolarSites(
   meshX: number,
   meshY: number,
   sites: Site[],
-): void {
+): number[] {
+  const nuclei: number[] = [];
   // v20 fan regime (radialGrow > 1): the lattice pitch stops growing with grow (more
   // sectors survive), the sector COUNT locks across rings so sector boundaries align
   // into long radially-converging creases, angular jitter is damped, and dropout is
@@ -284,8 +338,8 @@ function generatePolarSites(
   const elong = 1 + Math.max(0, Math.min(4, radialStrength));
   const margin = Math.max(0.2, cellSize);
   for (let k = 0; k < fociPhys.length; k++) {
-    if (sites.length >= SITE_COUNT_MAX) break;
     const cp = fociPhys[k];
+    nuclei.push(sites.length);
     // Nucleus site — the small calm cell at the node the reference shows.
     sites.push({
       x: Math.max(0, Math.min(meshX, cp.x + (rand() - 0.5) * 0.2 * pitchT)),
@@ -296,7 +350,7 @@ function generatePolarSites(
     let r = pitchT * 0.75;
     let ring = 0;
     let sectorsLocked = 0;
-    while (r < zoneR && sites.length < SITE_COUNT_MAX) {
+    while (r < zoneR) {
       const gap = mode === 'rings'
         ? pitchT * 0.8
         : pitchT * elong * (1 + 0.1 * ring);
@@ -308,7 +362,6 @@ function generatePolarSites(
       if (fan && sectorsLocked === 0) sectorsLocked = sectors;
       const spiralOff = mode === 'spiral' ? ring * 0.381966 * 2 * Math.PI : 0;
       for (let s = 0; s < sectors; s++) {
-        if (sites.length >= SITE_COUNT_MAX) break;
         // v17 sector dropout — deletes random spokes so fans read as discovered, not
         // generated (critique: radial systems too visibly algorithmic).
         if (rand() < (fan ? 0.1 : 0.25) * jitterAmt) continue;
@@ -329,6 +382,7 @@ function generatePolarSites(
       ring++;
     }
   }
+  return nuclei;
 }
 
 /** Generate a roughly-uniform jittered grid of sites, density modulated by the attractor
@@ -366,7 +420,7 @@ function generateSites(
 
   const sites: Site[] = [];
   const separation = new SiteGrid(sites, baseSpacing, { minX: 0, minY: 0, maxX: meshX, maxY: meshY });
-  outer: for (let j = 0; j < ny; j++) {
+  for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const cx = (i + 0.5) * sx;
       const cy = (j + 0.5) * sy;
@@ -403,7 +457,6 @@ function generateSites(
       localDensity = Math.min(LOCAL_DENSITY_MAX, Math.max(0.1, localDensity));
       const reps = Math.floor(localDensity) + (rand() < (localDensity - Math.floor(localDensity)) ? 1 : 0);
       for (let k = 0; k < reps; k++) {
-        if (sites.length >= SITE_COUNT_MAX) break outer;
         const jx = (rand() - 0.5) * jitter * sx;
         const jy = (rand() - 0.5) * jitter * sy;
         const px = Math.max(0, Math.min(meshX, cx + jx));
@@ -597,12 +650,16 @@ export class VoronoiReliefGen implements ReliefGenerator {
   noise(): number { return 0; }
 
   sampleGrid(p: ReliefSampleParams): number[][] {
+    return this.sampleGridResult(p).grid;
+  }
+
+  sampleGridResult(p: ReliefSampleParams): ReliefSampleResult {
     return this.sample(p, false);
   }
 
   /** Kept for the independent full-scan regression oracle, never used by production. */
   static bruteForceForTest(p: ReliefSampleParams): number[][] {
-    return new VoronoiReliefGen(p.seed).sample(p, true);
+    return new VoronoiReliefGen(p.seed).sample(p, true).grid;
   }
 
   static sitesForTest(p: ReliefSampleParams, bruteForce: boolean): Array<{ x: number; y: number }> {
@@ -613,7 +670,21 @@ export class VoronoiReliefGen implements ReliefGenerator {
     return result;
   }
 
-  private sample(p: ReliefSampleParams, bruteForce: boolean, captureSites?: (sites: readonly Site[]) => void): number[][] {
+  /** Raw layout oracle for cap population tests; production always applies the shared cap. */
+  static candidatesForTest(p: ReliefSampleParams, bruteForce: boolean): {
+    sites: Array<{x: number; y: number}>; cartesianCount: number; nuclei: number[];
+  } {
+    const result = {sites: [] as Array<{x: number; y: number}>, cartesianCount: 0, nuclei: [] as number[]};
+    new VoronoiReliefGen(p.seed).sample(p, bruteForce, undefined, (sites, cartesianCount, nuclei) => {
+      result.sites = sites.map(s => ({x: s.x, y: s.y}));
+      result.cartesianCount = cartesianCount;
+      result.nuclei = [...nuclei];
+    });
+    return result;
+  }
+
+  private sample(p: ReliefSampleParams, bruteForce: boolean, captureSites?: (sites: readonly Site[]) => void,
+    captureCandidates?: (sites: readonly Site[], cartesianCount: number, nuclei: readonly number[]) => void): ReliefSampleResult {
     const seed = (p.seed ?? this.fallbackSeed) >>> 0;
     const rand = mulberry32(seed);
     // Base wave field (v16 superposition term). Re-seeded per call so same p.seed → same
@@ -681,39 +752,36 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const suppressGen = Number.isFinite(p.depthVariation) && p.depthVariation > 0
       ? new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 103)
       : null;
-    const sites = generateSites(
+    checkSiteWork(fociPhys.length, zoneR, p.cellSize,
+      radialStrength, radialGrow, p.meshX, p.meshY);
+    let sites = generateSites(
       p, rand, densityNoiseGen,
       starburstActive ? fociPhys : [],
       starburstActive ? zoneR * POLAR_EXCLUSION_FRACTION : 0,
       suppressGen, bruteForce,
     );
-    let cartesianCount = sites.length;
-    if (starburstActive) {
-      // Polar sites must survive the global cap — if Cartesian generation already
-      // consumed SITE_COUNT_MAX, the exclusion discs would otherwise become empty
-      // craters. Generate into a scratch array, then trim the Cartesian TAIL to
-      // reserve capacity (Cartesian-first ordering is what pinnedFrom relies on).
-      const polar: Site[] = [];
-      generatePolarSites(
-        fociPhys, zoneR, Math.max(0.2, p.cellSize), radialStrength, radialGrow,
-        radialWarpAmt, p.radialMode, rand, p.meshX, p.meshY, polar,
-      );
-      const budget = Math.max(0, SITE_COUNT_MAX - polar.length);
-      if (sites.length > budget) sites.length = budget;
-      cartesianCount = sites.length;
-      for (const s of polar) sites.push(s);
-    }
+    const originalCartesianCount = sites.length;
+    const nuclei = starburstActive ? generatePolarSites(
+      fociPhys, zoneR, Math.max(0.2, p.cellSize), radialStrength, radialGrow,
+      radialWarpAmt, p.radialMode, rand, p.meshX, p.meshY, sites,
+    ) : [];
+    captureCandidates?.(sites, originalCartesianCount, nuclei);
+    const candidateCount = sites.length;
+    const selected = representativeIndices(candidateCount, SITE_COUNT_MAX, rand, nuclei);
+    sites = selected.map(i => sites[i]);
+    const cartesianCount = selected.filter(i => i < originalCartesianCount).length;
+    const truncatedFrom = candidateCount > sites.length ? candidateCount : 0;
     if (sites.length === 0) {
       const empty: number[][] = [];
       for (let j = 0; j < p.rows; j++) empty.push(new Array(p.cols).fill(0));
-      return empty;
+      return { grid: empty, truncatedFrom, crestClipStatus: 'none' };
     }
 
     // Lloyd relaxation passes (default 1, max 2). Hard-cap defends against crafted links.
     // Polar lattice sites (index ≥ cartesianCount) are pinned — relaxation would erase
     // their deliberate radial elongation.
     const relaxIters = Math.max(0, Math.min(2, Math.floor(p.relaxIterations) || 0));
-    const lloydSamples = Math.min(LLOYD_SAMPLE_BUDGET_MAX, sites.length * LLOYD_SAMPLES_PER_SITE);
+    const lloydSamples = sites.length * LLOYD_SAMPLES_PER_SITE;
     for (let r = 0; r < relaxIters; r++) {
       lloydRelax(sites, p, lloydSamples, warpFn, cartesianCount, bruteForce);
     }
@@ -886,7 +954,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // per-cell depth multipliers are therefore precomputed per site and BLENDED across the
     // nearest edges per pixel (owner weight is exactly 0.5 on the boundary, so both sides
     // compute the identical average — C0 by construction).
+    const cutDepthIn = Number.isFinite(p.cutDepthIn) ? Math.max(0.05, Math.min(MAX_CUT_DEPTH_IN, p.cutDepthIn)) : 2.4;
     const staticMul = new Float64Array(sites.length);
+    const slopeMul = new Float64Array(sites.length);
     for (let k = 0; k < sites.length; k++) {
       const sMul = Math.max(SIZE_DEPTH_MIN, Math.min(SIZE_DEPTH_MAX,
         Math.sqrt(sites[k].radius / medianRadius)));
@@ -907,7 +977,8 @@ export class VoronoiReliefGen implements ReliefGenerator {
       // the documented ceiling honest while staying per-cell static (C0 requirement; a
       // pixel-level cap from final w would step across dissolved boundaries).
       const wTyp = Math.max(0.05, seamDepthBase * inradius[k] * 0.52);
-      staticMul[k] *= Math.min(1, SLOPE_DEPTH_BUDGET * wTyp);
+      slopeMul[k] = Math.min(1, SLOPE_DEPTH_BUDGET * (2.4 / cutDepthIn) * wTyp);
+      staticMul[k] *= slopeMul[k];
     }
     // Smooth floor saturation: replaces the hard min(bowlT, 1) clamp with a C1 fillet band
     // so floors meet walls through a rounded transition. Kept tight (spec: "tighter-radius
@@ -948,6 +1019,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const panelFieldGen = new SimplexNoiseGen(seed + WAVE_GEN_SEED_OFFSET + 61);
     const PANEL_FIELD_FREQ = 0.045;
     const out: number[][] = [];
+    let crestClipStatus: ReliefCrestClipStatus = 'none';
     // v23 membrane-cushion buffers (see MEMBRANE_SWEEPS above).
     const cushA = new Float64Array(rows * cols);
     const cushOwner = new Int32Array(rows * cols).fill(-1);
@@ -1045,6 +1117,8 @@ export class VoronoiReliefGen implements ReliefGenerator {
         const ownerMix = 0.5 + 0.5 * Math.min(1, db / Math.max(1e-6, 0.35 * inr));
         const nbMul = edgeMix * staticMul[nb2] + (1 - edgeMix) * staticMul[nb3];
         const staticMulBlended = ownerMix * staticMul[ownerIdx] + (1 - ownerMix) * nbMul;
+        const nbSlope = edgeMix * slopeMul[nb2] + (1 - edgeMix) * slopeMul[nb3];
+        const slopeBlended = ownerMix * slopeMul[ownerIdx] + (1 - ownerMix) * nbSlope;
         // Tilt must vanish at boundaries for the same reason (its direction is per-cell).
         const ownerFade = Math.max(0, 2 * ownerMix - 1);
         // Ridge crest band: a physical plateau on the shared boundary. The plateau width
@@ -1071,7 +1145,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
         }
         // The flare must never consume the cell (a crest wider than the inradius starves
         // w and renders a star-shaped tear), and must always leave a RESOLVABLE wall span.
+        const unclippedCrestW = crestW;
         crestW = Math.min(crestW, 0.6 * inr, Math.max(0, inr - wallMinPhys));
+        if (crestW < unclippedCrestW) {
+          if (crestW === 0) crestClipStatus = 'collapsed';
+          else if (crestClipStatus === 'none') crestClipStatus = 'narrowed';
+        }
         if (cellSizeGradient > 0) {
           wallScale *= 1 + cellSizeGradient * mask * 0.6;
         }
@@ -1227,7 +1306,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (crestVariation > 0 && crestGen) {
           const ridgeMask = Math.pow(1 - bowlH, 1.5);
           h += crestVariation * CREST_VARIATION_GAIN
-            * crestGen.noise(x * crestFreq, y * crestFreq) * ridgeMask * cellWeight;
+            * crestGen.noise(x * crestFreq, y * crestFreq) * ridgeMask * cellWeight * slopeBlended;
         }
         // v17 junction lift: tighter gate, lower gain — junctions read as tense nodes and
         // saddles, not swollen domes (critique: "junctions bulge; reference junctions pull,
@@ -1235,7 +1314,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // Both cell-derived additions are gated by cellWeight so relief cannot reappear
         // where the attractor has faded the cell system out.
         if (junctionLift > 0) {
-          h += junctionLift * JUNCTION_LIFT_GAIN * jnS * (1 - bowlH) * cellWeight;
+          h += junctionLift * JUNCTION_LIFT_GAIN * jnS * (1 - bowlH) * cellWeight * slopeBlended;
         }
         // v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
         // boundary, blending to the wall shoulder with zero slope at both ends. The bead
@@ -1247,7 +1326,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (wallFrac > 0 && crestW > 1e-6 && db < Math.max(crestW, crownMinPhys)) {
           const crown = 1 - smoothstep(0, Math.max(crestW, crownMinPhys), db);
           const crownMul = (0.35 + 0.65 * cellDepthMul) * (0.35 + 0.9 * edgeShared) * (1 - dissolve);
-          h -= polarity * RIDGE_CROWN_GAIN * crown * cellWeight * crownMul;
+          h -= polarity * RIDGE_CROWN_GAIN * crown * cellWeight * crownMul * slopeBlended;
         }
         // v21 stock-plane soft cap (pockets only — domes mode intentionally rises).
         // Broad crests flatten into plateaus just above the base wave; junction fins
@@ -1331,13 +1410,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
         }
       }
     }
-    return out;
+    return { grid: out, truncatedFrom, crestClipStatus };
   }
 }
 
 /** Test oracle retains the original nearest, placement and Lloyd scan loops. */
 export const __bruteForceForTest = VoronoiReliefGen.bruteForceForTest;
 export const __sitesForTest = VoronoiReliefGen.sitesForTest;
+export const __siteCandidatesForTest = VoronoiReliefGen.candidatesForTest;
 
 export function sampleReliefParamsFromState(
   cols: number,
@@ -1346,13 +1426,14 @@ export function sampleReliefParamsFromState(
   meshY: number,
   seed: number,
   s: {
+    amplitude: number;
+    baseThickness: number;
     reliefCellSize: number;
     reliefJitter: number;
     reliefRelaxIterations: number;
     reliefPolarity: ReliefPolarity;
     reliefProfile: ReliefProfile;
     reliefSeamDepth: number;
-    reliefSeamWidth: number;
     reliefAnisotropy: number;
     reliefAnisotropyAngle: number;
     reliefAttractorMode: ReliefAttractorMode;
@@ -1406,13 +1487,13 @@ export function sampleReliefParamsFromState(
   ].slice(0, fociCount);
   return {
     cols, rows, meshX, meshY, seed,
+    cutDepthIn: Math.min(s.amplitude, s.baseThickness, MAX_CUT_DEPTH_IN),
     cellSize: s.reliefCellSize,
     jitter: s.reliefJitter,
     relaxIterations: s.reliefRelaxIterations,
     polarity: s.reliefPolarity,
     profile: s.reliefProfile,
     seamDepth: s.reliefSeamDepth,
-    seamWidth: s.reliefSeamWidth,
     anisotropy: s.reliefAnisotropy,
     anisotropyAngle: s.reliefAnisotropyAngle,
     attractorMode: s.reliefAttractorMode,

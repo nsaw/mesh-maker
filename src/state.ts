@@ -2,7 +2,7 @@ import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN, type SbpSt
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, snapCarveWidth, type DrapeSettings, type DrapeWindMode } from './drape-controls';
-import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
+import type { ReliefAttractorMode, ReliefBaseMode, ReliefCrestClipStatus, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
 
 /** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
 export interface MeshState extends DrapeSettings {
@@ -39,7 +39,6 @@ export interface MeshState extends DrapeSettings {
   reliefPolarity: ReliefPolarity;
   reliefProfile: ReliefProfile;
   reliefSeamDepth: number;
-  reliefSeamWidth: number;
   reliefAnisotropy: number;
   reliefAnisotropyAngle: number;
   reliefAttractorMode: ReliefAttractorMode;
@@ -95,8 +94,7 @@ export interface MeshState extends DrapeSettings {
   meshX: number;
   meshY: number;
   resolution: number;
-  smoothIter: number;
-  smoothStr: number;
+  smoothRadiusIn: number;
   baseThickness: number;
   // Depth map
   depthMap: HTMLImageElement | null;
@@ -112,7 +110,7 @@ export interface MeshState extends DrapeSettings {
   reliefPreviewErrorIn: number;
   dmHeightScale: number;
   dmOffset: number;
-  dmSmoothing: number;
+  dmSmoothRadiusIn: number;
   /** Normalized height at or below which the depth map is flattened to the floor (both depth
    *  modes); the rest is stretched to the full cut. 0 = off. */
   dmBackgroundCutoff: number;
@@ -160,6 +158,8 @@ export interface MeshState extends DrapeSettings {
   cols: number;
   rows: number;
   genTime: number;
+  reliefTruncatedFrom: number;
+  reliefCrestClipStatus: ReliefCrestClipStatus;
   sbpStats: SbpStats | null;
 }
 
@@ -192,7 +192,6 @@ export const DEFAULTS: MeshState = {
   reliefPolarity: 'domes',
   reliefProfile: 'hemisphere',
   reliefSeamDepth: 0.6,
-  reliefSeamWidth: 0.15,
   reliefAnisotropy: 0,
   reliefAnisotropyAngle: 0,
   reliefAttractorMode: 'none',
@@ -235,8 +234,7 @@ export const DEFAULTS: MeshState = {
   meshX: 36,
   meshY: 24,
   resolution: 400,
-  smoothIter: 0,
-  smoothStr: 0.5,
+  smoothRadiusIn: 0,
   baseThickness: 0.75,
   depthMap: null,
   depthMapName: '',
@@ -245,7 +243,7 @@ export const DEFAULTS: MeshState = {
   reliefPreviewErrorIn: 0,
   dmHeightScale: 1.0,
   dmOffset: -0.08,
-  dmSmoothing: 7,
+  dmSmoothRadiusIn: 0.13074926387539343,
   dmBackgroundCutoff: 0,
   // The gathered silk of the 2026-10-21 Blender study (tilt 25 deg, as the proof accepted on 2026-10-20).
   ...DRAPE_PRESETS.gathered.settings,
@@ -274,7 +272,7 @@ export const DEFAULTS: MeshState = {
   vertices: null,
   cols: 400,
   rows: 267,
-  genTime: 0,
+  genTime: 0, reliefTruncatedFrom: 0, reliefCrestClipStatus: 'none',
   sbpStats: null,
 };
 
@@ -303,7 +301,7 @@ export function reliefMasterActive(): boolean {
 /** Controls a relief master fixes: its size, stock and heights are the data, not settings. Grid
  *  Resolution stays live because it only sets the preview density. */
 export const RELIEF_LOCKED_KEYS: ReadonlySet<string> = new Set([
-  'meshX', 'meshY', 'baseThickness', 'dmHeightScale', 'dmOffset', 'dmBackgroundCutoff', 'dmSmoothing',
+  'meshX', 'meshY', 'baseThickness', 'dmHeightScale', 'dmOffset', 'dmBackgroundCutoff', 'dmSmoothRadiusIn',
 ]);
 
 /** NOISE's own board, kept while another tab (DEPTH MAP, a relief master, DRAPE) takes over the size
@@ -376,7 +374,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
   'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth',
   'reliefCellSize', 'reliefJitter', 'reliefRelaxIterations', 'reliefPolarity', 'reliefProfile',
-  'reliefSeamDepth', 'reliefSeamWidth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
+  'reliefSeamDepth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
   'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
   'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
   'reliefTransitionSoftness', 'reliefBaseMode',
@@ -390,14 +388,14 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
   'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
   'reliefRadialMode',
-  'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
-  'baseThickness', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'dmBackgroundCutoff',
+  'meshX', 'meshY', 'resolution', 'smoothRadiusIn',
+  'baseThickness', 'dmHeightScale', 'dmOffset', 'dmSmoothRadiusIn', 'dmBackgroundCutoff',
   ...DRAPE_CONTROLS.map(c => c.key), 'drapeWindMode', 'drapeStock', 'drapeCarveWidth', 'watertight',
   'viewMode', 'viewMaterial', 'activePreset', 'activeProfile',
 ];
 
 // Generation and preset semantics changed. Incompatible links reset explicitly.
-export const CURRENT_PAYLOAD_VERSION = 17;
+export const CURRENT_PAYLOAD_VERSION = 18;
 let outdatedLinkReset = false;
 
 /** Read and clear the reset notice from the latest deserialize operation. */
@@ -615,6 +613,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefJunctionLift' in result) clampField('reliefJunctionLift', 0, 1);
     if ('reliefCrestVariation' in result) clampField('reliefCrestVariation', 0, 1);
     // Ranges match the sliders.
+    if ('smoothRadiusIn' in result) clampField('smoothRadiusIn', 0, 1);
+    if ('dmSmoothRadiusIn' in result) clampField('dmSmoothRadiusIn', 0, 1);
     if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
     // The board, to its sliders' ranges (a link with meshX 200 used to keep a 200 in board).
     if ('meshX' in result) clampField('meshX', 1, MACHINE_TRAVEL_IN.x);

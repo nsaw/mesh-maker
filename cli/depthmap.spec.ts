@@ -114,7 +114,7 @@ process.stdout.write('T15 share links\n');
   assert(keys.every(k => back[k] === STATE[k]), 'Drape and depth-map keys round-trip through a share link');
   Object.assign(STATE, saved);
   const enc = (o: unknown) => '?c=' + Buffer.from(JSON.stringify(o)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  for (const version of [undefined, 0, 12, 13, 14, 15, 16]) {
+  for (const version of [undefined, 0, 12, 13, 14, 15, 16, 17]) {
     const old = deserializeConfig(enc({ _v: version, mode: 'drape', amplitude: 2 }));
     assert(Object.keys(old).length === 0 && consumeOutdatedLinkReset(), `version ${String(version)} resets settings with a notice`);
     assert(!consumeOutdatedLinkReset(), 'reset notice is consumed once');
@@ -122,7 +122,7 @@ process.stdout.write('T15 share links\n');
   deserializeConfig(enc({ _v: 16 }));
   deserializeConfig('');
   assert(!consumeOutdatedLinkReset(), 'a later decode without a link clears the reset notice');
-  for (const payload of [null, [], 7, { _v: '17' }, { _v: 17.5 }, { _v: 18 }]) {
+  for (const payload of [null, [], 7, { _v: '18' }, { _v: 18.5 }, { _v: 19 }]) {
     assert(Object.keys(deserializeConfig(enc(payload))).length === 0, `invalid or unsupported payload ${JSON.stringify(payload)} is rejected`);
   }
   const crafted = deserializeConfig(enc({ _v: CURRENT_PAYLOAD_VERSION, drapeTilt: 1e9, dmBackgroundCutoff: 5, viewMaterial: 'chrome', mode: 'evil', viewMode: 'x' }));
@@ -297,7 +297,7 @@ process.stdout.write('T16 generated depth limits including negative offsets\n');
     assert(offsetNote.textContent.includes('X 0.04, Y 0.04'), 'offset readout preserves sub-tenth placement from decimal part dimensions', offsetNote.textContent);
     // Only dimensions are used from the image; the canvas supplies a known black-to-white ramp.
     Object.assign(STATE, DEFAULTS, { mode: 'depthmap', depthMap: { width: 2, height: 2 }, resolution: 16, meshX: 4, meshY: 4,
-      baseThickness: 2.6, dmHeightScale: 4, dmOffset: -1, dmSmoothing: 0 });
+      baseThickness: 2.6, dmHeightScale: 4, dmOffset: -1, dmSmoothRadiusIn: 0 });
     generateDepthMapMesh();
     assert(STATE.vertices !== null && STATE.vertices.every(row => row.every(z => z >= 0.01 && z <= 2.6)), 'depth-map heights respect stock and carving cap after a negative offset');
   } finally {

@@ -43,15 +43,12 @@ export function updateStats(): void {
   let statData: [string, string][];
 
   if (STATE.exportFormat === 'sbp') {
-    if (!STATE.sbpStats) {
-      return;
-    }
-    statData = [
+    statData = STATE.sbpStats ? [
       ['Grid', `${STATE.sbpStats.heightmapCols} x ${STATE.sbpStats.heightmapRows}`],
       ['Roughing', STATE.sbpStats.roughingMoves.toLocaleString()],
       ['Finishing', STATE.sbpStats.finishingMoves.toLocaleString()],
       ['SBP Lines', STATE.sbpStats.totalLines.toLocaleString()],
-    ];
+    ] : [];
   } else {
     // Exports read the relief master at full resolution when one is active, not the preview grid.
     const master = activeMaster();
@@ -71,6 +68,14 @@ export function updateStats(): void {
       ['Gen time', `${genTime.toFixed(0)}ms`],
       ['Est. size', formatBytes(estSize)],
     ];
+  }
+
+  if (STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief') {
+    const [minZ, maxZ] = gridMinMax(STATE.vertices, rows, cols);
+    statData.push(['Actual depth', `${(maxZ - minZ).toFixed(3)}"`]);
+    if (STATE.reliefTruncatedFrom > 0) {
+      statData.push(['Cells capped', `4,096 of ${STATE.reliefTruncatedFrom.toLocaleString()}; raise Cell Size`]);
+    }
   }
 
   for (const [label, value] of statData) {

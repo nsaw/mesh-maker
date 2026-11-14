@@ -4,8 +4,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DEFAULTS, STATE } from '../src/state';
 import { CNC_PRESETS, CUT_THROUGH_PRESETS, PRESET_OWNED_KEYS, presetState } from '../src/noise/presets';
+import { VoronoiReliefGen, sampleReliefParamsFromState } from '../src/noise/voronoi-relief';
 import { generateNoiseMesh } from '../src/mesh';
-import { gridMinMax, MIN_WATERTIGHT_THICKNESS } from '../src/geometry';
+import { gaussianSmooth, gridMinMax, MIN_WATERTIGHT_THICKNESS } from '../src/geometry';
 import { getExportSurface, surfaceHeightmap } from '../src/export-surface';
 import { getDefaultConfig } from '../src/sbp/tools';
 import { generateSBP } from '../src/sbp/generate';
@@ -89,9 +90,21 @@ if (args.length === 0) {
     const depth = Math.min(STATE.amplitude, STATE.baseThickness);
     assert(STATE.baseThickness <= MAX_STOCK_THICKNESS_IN, `${name} maximum stock thickness`);
     assert(STATE.meshX <= MACHINE_TRAVEL_IN.x && STATE.meshY <= MACHINE_TRAVEL_IN.y, `${name} bed fit`);
-    assert(Math.abs(maxZ - minZ - depth) <= depth * 0.02, `${name} actual relief ${maxZ - minZ}, requested ${depth}`);
-    // Normalized maxima deliberately touch stock top. A zero offset and full depth prove that the
-    // material clamp has not cropped the signal; equality at a designed extremum is not saturation.
+    if (STATE.noiseType === 'voronoi-relief') {
+      assert(maxZ - minZ <= depth + 1e-9, `${name} cut depth is an upper bound`);
+      const raw = new VoronoiReliefGen(STATE.seed).sampleGrid(sampleReliefParamsFromState(
+        STATE.cols, STATE.rows, STATE.meshX, STATE.meshY, STATE.seed, STATE));
+      const smoothed = gaussianSmooth(raw, STATE.rows, STATE.cols, STATE.meshX, STATE.meshY, STATE.smoothRadiusIn);
+      const [lo, hi] = gridMinMax(smoothed, STATE.rows, STATE.cols);
+      const gain = depth * Math.min(1, 1 / (hi - lo || 1));
+      for (let j = 0; j < STATE.rows; j++) for (let i = 0; i < STATE.cols; i++) {
+        const expected = Math.max(MIN_WATERTIGHT_THICKNESS, STATE.baseThickness + (smoothed[j][i] - hi) * gain);
+        assert(Math.abs(vertices[j][i] - expected) <= 1e-12, `${name} non-amplifying mapping at ${i},${j}`);
+      }
+    } else {
+      assert(Math.abs(maxZ - minZ - depth) <= depth * 0.02, `${name} actual relief ${maxZ - minZ}, requested ${depth}`);
+    }
+    // Designed maxima touch stock top; relief amplitudes remain upper bounds.
     assert.equal(STATE.offset, 0, `${name} has no clipping offset`);
     assert(Math.abs(maxZ - STATE.baseThickness) <= 1e-9, `${name} peak stays at stock top`);
     for (const row of vertices) for (const z of row) {

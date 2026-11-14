@@ -1,4 +1,5 @@
 import { STATE, activeMaster, stockTopIn } from './state';
+import { getReliefRidgeInfo } from './noise/relief-features';
 import { attachValueEdit } from './slider-utils';
 import { DRAPE_CARVE_PENDING, drapeCarvePending, getExportSurface, surfaceHeightmap } from './export-surface';
 import { getDefaultConfig, getEmbeddedTools } from './sbp/tools';
@@ -207,26 +208,19 @@ function exportFromMesh(): void {
   runSbpWorker({ kind: 'heightmap', heightmap, config }, [heightmap.z.buffer as ArrayBuffer], reliefWarning);
 }
 
-/** Voronoi-relief seams are narrow V-grooves; ball-nose stepover must be ≤ half the seam width
- *  or the cutter rolls over the seam instead of cutting it. Returns a warning string or null
- *  so runSbpWorker can fold it into the export toast: separate toasts in the same tick get
- *  collapsed to whichever ran last.
- *
- *  Physical seam width derivation: in voronoi-relief.ts, the seam smoothstep gate is
- *  `seamWidth * R` where R is the per-pixel radius field. For a Voronoi cell roughly
- *  disk-shaped with diameter ≈ cellSize, mean F1 ≈ cellSize / 4, and
- *  `site.radius = 2 × mean_F1 ≈ cellSize / 2`. So actual physical seam width is
- *  `seamWidth × cellSize / 2` — the `* 0.5` below corrects a prior 2× overestimate
- *  that prevented the warning from firing for stepovers in the
- *  (actual_seam / 2, actual_seam) range. */
-function buildReliefStepoverWarning(stepoverIn: number): string | undefined {
-  if (STATE.noiseType !== 'voronoi-relief') return undefined;
-  const seamWidthIn = STATE.reliefSeamWidth * STATE.reliefCellSize * 0.5;
-  if (seamWidthIn <= 0) return undefined;
-  const recommendedMax = seamWidthIn * 0.5;
-  if (stepoverIn <= recommendedMax) return undefined;
-  return `Finishing stepover ${stepoverIn.toFixed(3)}" rounds seams (${seamWidthIn.toFixed(3)}" wide). ` +
-    `Recommend ≤ ${recommendedMax.toFixed(3)}".`;
+/** The nominal guide never suppresses observed clipping, a disabled band or query deformation. */
+export function buildReliefStepoverWarning(stepoverIn: number): string | undefined {
+  const info = getReliefRidgeInfo(STATE);
+  if (!info) return undefined;
+  if (!info.crestBandDisabled && !info.queryDeformed && info.sampledCrestClipStatus === 'none'
+    && stepoverIn <= info.nominalRidgeWidthIn / 2) return undefined;
+  const parts = [`Finishing stepover ${stepoverIn.toFixed(3)}" may round ridges.`];
+  if (info.crestBandDisabled) parts.push('The crest band is disabled.');
+  else parts.push(`Nominal pre-clamp ridge-width estimate ${info.nominalRidgeWidthIn.toFixed(3)}"; local ridges may be narrower.`);
+  if (info.sampledCrestClipStatus === 'collapsed') parts.push('Some sampled crest bands collapse to zero under local clipping.');
+  else if (info.sampledCrestClipStatus === 'narrowed') parts.push('Local clipping narrows sampled crest bands.');
+  if (info.queryDeformed) parts.push('Warp or anisotropy means this estimate does not bound physical ridge width.');
+  return parts.join(' ');
 }
 
 /** Export using uploaded STL via Web Worker */

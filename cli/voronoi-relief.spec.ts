@@ -1,3 +1,5 @@
+import './gaussian-smoothing.spec';
+import './relief-correctness.spec';
 /**
  * Deterministic verification of the Voronoi Relief sampler.
  * Run: npm run test:relief  (or: npx tsx cli/voronoi-relief.spec.ts)
@@ -36,8 +38,7 @@ function baseParams(overrides: Partial<ReliefSampleParams> = {}): ReliefSamplePa
   return {
     cols: 60, rows: 40, meshX: 36, meshY: 24, seed: 7,
     cellSize: 1.5, jitter: 0.7, relaxIterations: 1,
-    polarity: 'domes', profile: 'hemisphere',
-    seamDepth: 0.6, seamWidth: 0.15,
+    polarity: 'domes', profile: 'hemisphere', seamDepth: 0.6, cutDepthIn: 2.4,
     anisotropy: 0, anisotropyAngle: 0,
     attractorMode: 'none', attractorX: 0.5, attractorY: 0.5,
     attractorRadius: 0.5, attractorFalloff: 1,
@@ -78,13 +79,13 @@ function starburstPresetParams(overrides: Partial<ReliefSampleParams> = {}): Rel
   // future mapping changes. The adapter below only types the raw preset values; all
   // semantic mapping happens in the production function.
   const stateLike: Parameters<typeof sampleReliefParamsFromState>[5] = {
+    amplitude: numberValue('amplitude'), baseThickness: numberValue('baseThickness'),
     reliefCellSize: numberValue('reliefCellSize'),
     reliefJitter: numberValue('reliefJitter'),
     reliefRelaxIterations: numberValue('reliefRelaxIterations'),
     reliefPolarity: stringValue('reliefPolarity') as ReliefSampleParams['polarity'],
     reliefProfile: stringValue('reliefProfile') as ReliefSampleParams['profile'],
     reliefSeamDepth: numberValue('reliefSeamDepth'),
-    reliefSeamWidth: numberValue('reliefSeamWidth'),
     reliefAnisotropy: numberValue('reliefAnisotropy'),
     reliefAnisotropyAngle: numberValue('reliefAnisotropyAngle'),
     reliefAttractorMode: stringValue('reliefAttractorMode') as ReliefSampleParams['attractorMode'],
@@ -188,6 +189,30 @@ function countLocalMinima(grid: number[][]): number {
     }
   }
   return minima;
+}
+
+/** Seven-sector wall rise relative to the fixture's raw height span, independent of amplitude. */
+function measureFocusEnclosure(
+  grid: number[][], foci: ReadonlyArray<{ x: number; y: number }>, radius: number,
+): { rawRise: number; span: number; normalizedRise: number } {
+  const rows = grid.length, cols = grid[0]?.length ?? 0;
+  if (!rows || !cols || !foci.length) return { rawRise: 0, span: 0, normalizedRise: 0 };
+  let lo = Infinity, hi = -Infinity, rawRise = Infinity;
+  for (const row of grid) for (const value of row) { lo = Math.min(lo, value); hi = Math.max(hi, value); }
+  for (const focus of foci) {
+    const ci = Math.round(focus.x * (cols - 1)), cj = Math.round(focus.y * (rows - 1));
+    const center = grid[cj][ci], sectorMax = new Array<number>(8).fill(-Infinity);
+    for (let dj = -radius; dj <= radius; dj++) for (let di = -radius; di <= radius; di++) {
+      if ((di === 0 && dj === 0) || Math.hypot(di, dj) > radius) continue;
+      const jj = Math.min(rows - 1, Math.max(0, cj + dj)), ii = Math.min(cols - 1, Math.max(0, ci + di));
+      const sector = Math.floor(((Math.atan2(dj, di) + Math.PI) / (2 * Math.PI)) * 8) % 8;
+      sectorMax[sector] = Math.max(sectorMax[sector], grid[jj][ii]);
+    }
+    const rises = sectorMax.map(value => value - center).sort((a, b) => a - b);
+    rawRise = Math.min(rawRise, rises[1]);
+  }
+  const span = hi - lo;
+  return { rawRise, span, normalizedRise: span > 1e-12 ? rawRise / span : 0 };
 }
 
 // 1. Determinism
@@ -296,7 +321,7 @@ function countLocalMinima(grid: number[][]): number {
     baseMode: 'wave', baseAmplitude: 0.5, baseFrequency: 0.1,
     attractorMode: 'vertical', attractorY: 1, attractorFalloff: 1.4,
     intensityStrength: 1, transitionSoftness: 1,
-    seamDepth: 0.85, seamWidth: 0.15, cellSize: 7, polarity: 'pockets',
+    seamDepth: 0.85, cellSize: 7, polarity: 'pockets',
     profile: 'parabolic',
   }));
   const flatTop = flatten(wave.slice(0, 32));   // top 20% — pure base zone (mask ≈ 0)
@@ -732,7 +757,7 @@ function countLocalMinima(grid: number[][]): number {
   process.stdout.write('15. F2-F1 output range guard (production seamDepth)\n');
   // v21.1: slope budget requires big cells + real wall extent for full depth.
   const grid = new VoronoiReliefGen(7).sampleGrid(baseParams({
-    polarity: 'pockets', seamDepth: 0.85, seamWidth: 0.12,
+    polarity: 'pockets', seamDepth: 0.85,
     cellSize: 8, cols: 200, rows: 240, meshX: 24, meshY: 48,
   }));
   let lo = Infinity, hi = -Infinity;
@@ -758,7 +783,7 @@ function countLocalMinima(grid: number[][]): number {
 {
   process.stdout.write('16. catastrophic-jump guard (no >1.5 pixel-pair jumps)\n');
   const grid = new VoronoiReliefGen(13).sampleGrid(baseParams({
-    polarity: 'pockets', seamDepth: 0.22, seamWidth: 0.12,
+    polarity: 'pockets', seamDepth: 0.22,
     cellSize: 4.5, cellSizeGradient: 1.3, attractorNoise: 0.6,
     attractorMode: 'vertical', attractorY: 0, attractorFalloff: 0.4,
     densityStrength: 1.4, intensityStrength: 0.4,
@@ -797,7 +822,7 @@ function countLocalMinima(grid: number[][]): number {
 {
   process.stdout.write('17. isolated-outlier guard (no spike-with-tail patterns)\n');
   const grid = new VoronoiReliefGen(17).sampleGrid(baseParams({
-    polarity: 'pockets', seamDepth: 0.22, seamWidth: 0.12,
+    polarity: 'pockets', seamDepth: 0.22,
     cellSize: 4.5, cellSizeGradient: 1.3, attractorNoise: 0.6,
     attractorMode: 'vertical', attractorY: 0, attractorFalloff: 0.4,
     densityStrength: 1.4, intensityStrength: 0.4,
@@ -976,35 +1001,28 @@ function countLocalMinima(grid: number[][]): number {
   // 8 angular sectors and require the wall rise in (nearly) every sector, so a malformed
   // pocket with a single adjacent ridge cannot pass. Disc radius 11 ≈ 3.3" — wide enough
   // to reach past the nucleus petal walls in every direction at this grid pitch
-  // (measured 7-of-8 rises 0.99–1.05; radius 8 leaves sectors inside the pocket).
+  // The measurement divides by the raw grid span so the depth budget cannot change
+  // this formation check through amplitude alone; the angular support and radius stay fixed.
   const fociPositions = [{ x: 0.7, y: 0.2 }, { x: 0.25, y: 0.55 }, { x: 0.75, y: 0.85 }];
-  let worstEnclosure = Infinity;
-  for (const f of fociPositions) {
-    const ci = Math.round(f.x * (120 - 1));
-    const cj = Math.round(f.y * (80 - 1));
-    const center = withFoci[cj][ci];
-    const sectorMax = new Array<number>(8).fill(-Infinity);
-    for (let dj = -11; dj <= 11; dj++) {
-      for (let di = -11; di <= 11; di++) {
-        if (di === 0 && dj === 0) continue;
-        // Disc, not square: a square box samples ~1.41R on diagonals vs R on axes,
-        // biasing diagonal sectors toward distant unrelated ridges. A THIN annulus would
-        // be wrong the other way — the enclosing wall sits at direction-dependent radii
-        // (petals), so each sector takes its max over ALL radii within the disc.
-        if (Math.hypot(di, dj) > 11) continue;
-        const jj = Math.min(79, Math.max(0, cj + dj));
-        const ii = Math.min(119, Math.max(0, ci + di));
-        const sector = Math.floor(((Math.atan2(dj, di) + Math.PI) / (2 * Math.PI)) * 8) % 8;
-        if (withFoci[jj][ii] > sectorMax[sector]) sectorMax[sector] = withFoci[jj][ii];
-      }
-    }
-    // 7th-of-8 sector rise (one sector may legitimately open into a neighboring pocket).
-    const rises = sectorMax.map((v) => v - center).sort((a, b) => a - b);
-    worstEnclosure = Math.min(worstEnclosure, rises[1]);
+  const enclosure = measureFocusEnclosure(withFoci, fociPositions, 11);
+  assert(enclosure.normalizedRise > 0.15,
+    'focus pockets are ENCLOSED (wall rises > 0.15 of raw grid span in >=7 of 8 sectors)',
+    `rawRise=${enclosure.rawRise.toFixed(6)} span=${enclosure.span.toFixed(6)} normalizedRise=${enclosure.normalizedRise.toFixed(6)}`);
+  const scaled = withFoci.map(row => row.map(value => value * 0.01 + 3));
+  const scaledEnclosure = measureFocusEnclosure(scaled, fociPositions, 11);
+  assert(scaledEnclosure.normalizedRise > 0.15
+    && Math.abs(scaledEnclosure.normalizedRise - enclosure.normalizedRise) < 1e-10,
+  'enclosure measurement is invariant to positive scaling and translation');
+  const flat = withFoci.map(row => row.map(() => 0));
+  assert(measureFocusEnclosure(flat, fociPositions, 11).normalizedRise <= 0.15,
+    'flat malformed focus fixture fails enclosure');
+  const singleWall = flat.map(row => row.slice());
+  for (const focus of fociPositions) {
+    const ci = Math.round(focus.x * (120 - 1)), cj = Math.round(focus.y * (80 - 1));
+    singleWall[cj][ci + 8] = 1;
   }
-  assert(worstEnclosure > 0.15,
-    'focus pockets are ENCLOSED (wall rises ≥ 0.15 in ≥7 of 8 sectors around each focus)',
-    `worstEnclosure=${worstEnclosure.toFixed(3)}`);
+  assert(measureFocusEnclosure(singleWall, fociPositions, 11).normalizedRise <= 0.15,
+    'single-adjacent-wall malformed fixture fails enclosure');
 
   // Single-focus fixture for the anti-mandala checks below.
   const singleFocus = new VoronoiReliefGen(7).sampleGrid(baseParams({

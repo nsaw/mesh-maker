@@ -76,11 +76,11 @@ Two consequences worth knowing before you commit:
 
 ## The Grasshopper parity invariant
 
-`grasshopper/builder/meshcraft_builder.py` embeds `NOISE_SCRIPT` and `PRESETS_SCRIPT` as
+`grasshopper/builder/meshcraft_builder.py` embeds `NOISE_SCRIPT`, `PRESETS_SCRIPT`, `SHAPE_SCRIPT` and `SMOOTH_SCRIPT` as
 triple-quoted Python literals. Those are hand-maintained mirrors of the canonical standalone
 components in `grasshopper/components/`. `npm run test:gh-parity` extracts the embedded
 literals and asserts they share an identical algorithmic core with the standalone files,
-after stripping shebang, header, footer and trailing whitespace.
+after right-trimming lines and dropping blank lines. Headers and comments remain part of the comparison.
 
 Per the spec's own header comment, drift between those two paths has already caused round-2
 through round-5 review findings. **Any change to a noise generator or to a preset has three
@@ -96,6 +96,9 @@ builder into `meshcraft_builder.gh` in that folder after input changes, then ope
 definition in Rhino 7 and confirm one preset generates. Passing text/value parity does not
 clear that runtime gate. The move preserves historical bytes and does not certify that the
 old artifacts embed the latest source. Keep the DLL branch separate.
+
+The builder uses `smooth_radius_in` for physical smoothing and supplies
+`relief_cut_depth_in` from the requested amplitude for relief slope calculations.
 
 ## Correctness rules specific to this tool
 

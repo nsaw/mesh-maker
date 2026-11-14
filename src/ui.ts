@@ -112,7 +112,7 @@ function buildSliderLabel(label: string, valueId: string, valueText: string, bad
 function slider(key: string, label: string, min: number, max: number, step: number, badgeText = ''): HTMLDivElement {
   const val = STATE[key as keyof typeof STATE] as number;
   const row = createElement('div', 'control-row');
-  const exactDepth = ['amplitude', 'dmHeightScale', 'baseThickness', 'drapeReliefDepth'].includes(key);
+  const exactDepth = ['amplitude', 'dmHeightScale', 'baseThickness', 'drapeReliefDepth', 'smoothRadiusIn', 'dmSmoothRadiusIn'].includes(key);
   const exactDimension = (key === 'meshX' || key === 'meshY') && (STATE.aspectLocked || !Number.isInteger(val));
   const displayStep = exactDepth ? 0.0001 : step;
   const valueText = typeof val === 'number' ? formatSliderValue(val, displayStep) : String(val);
@@ -366,12 +366,6 @@ function buildReliefSection(): HTMLElement {
     // measured response is aggressive (0.3 already floors ~88% of pixels), so presets
     // use small values (0.08–0.12).
     slider('reliefWallWidth', 'Wall Width', 0, 0.5, 0.01),
-    // NB: `reliefSeamWidth` does NOT affect the visual mesh under the F2-F1 relief algorithm
-    // (see `voronoi-relief.ts`'s "seamWidth is no longer used" comment). It only drives the
-    // SBP V-carve toolpath width via `sbp-export.ts:189` (`seamWidthIn = reliefSeamWidth ·
-    // reliefCellSize · 0.5`). Label clarifies the slider's actual function so users don't tune
-    // it expecting a mesh effect.
-    slider('reliefSeamWidth', 'SBP V-carve Seam Width', 0.02, 0.6, 0.01),
     // v15: 0/1 toggle. When 1, cell INTERIORS sit at the surface with a domed rise and the
     // cell BOUNDARIES are carved (matches the reference panel's "domed floors" signature).
     // When 0 (default), standard pocket carving (interior sunk, boundary at surface).
@@ -464,8 +458,7 @@ function buildAdvancedNoiseSection(): HTMLElement {
 
 function buildSmoothingSection(): HTMLElement {
   return buildSection('Smoothing', [
-    slider('smoothIter', 'Iterations', 0, 15, 1),
-    slider('smoothStr', 'Strength', 0, 1, 0.05),
+    slider('smoothRadiusIn', 'Smooth Radius (in)', 0, 1, 0.01),
   ], false, 'noise-only');
 }
 
@@ -503,7 +496,7 @@ function buildDepthMapSection(): HTMLElement {
     imageOnly(slider('dmHeightScale', 'Depth Map Height Scale', 0, Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness), 0.05)),
     imageOnly(slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)),
     imageOnly(slider('dmBackgroundCutoff', 'Background Cutoff (0=off)', 0, 0.9, 0.01)),
-    imageOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)),
+    imageOnly(slider('dmSmoothRadiusIn', 'Smooth Radius (in)', 0, 1, 0.01)),
   ], false, 'depth-map-only');
 }
 
