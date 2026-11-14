@@ -1,10 +1,11 @@
-import { STATE, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
+import { STATE, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
 import { buildSidebar, showDemoDepthMap } from './ui';
 import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
 import { setupInteraction } from './interaction';
 import { setupSponsorModal } from './sponsor';
 import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
+import { showToast } from './toast';
 import { ensureDrapeFigure } from './drape-ui';
 
 function preloadDemoDepthMap(): void {
@@ -35,6 +36,7 @@ function init(): void {
     (STATE as unknown as Record<string, unknown>)[key] = value;
   }
 
+  if (consumeOutdatedLinkReset()) showToast('This link was made with an older MeshCraft. Settings were reset.', 8000);
   rememberLinkBoard(urlConfig);
   // Sync body class with potentially URL-overridden mode
   document.body.className = 'mode-' + STATE.mode;

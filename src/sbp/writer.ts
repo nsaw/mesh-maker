@@ -11,12 +11,39 @@ function f(n: number): string {
   return n.toFixed(FMT);
 }
 
+/** Compact formatted lines as they arrive so large jobs do not retain a separate
+ * string and array slot for every move while allocating the final SBP string. */
+class SbpLines {
+  private pending: string[] = [];
+  private chunks: string[] = [];
+  lineCount = 0;
+
+  push(...lines: string[]): void {
+    for (const line of lines) {
+      this.pending.push(line);
+      this.lineCount++;
+      if (this.pending.length === 4096) this.flush();
+    }
+  }
+
+  private flush(): void {
+    if (this.pending.length === 0) return;
+    this.chunks.push(this.pending.join('\n') + '\n');
+    this.pending = [];
+  }
+
+  finish(): string {
+    this.flush();
+    return this.chunks.join('');
+  }
+}
+
 /**
  * Build an OpenSBP file string from toolpath sections and config.
  * Format verified line-by-line against Aspire reference output.
  */
 export function writeSBP(sections: ToolpathSection[], config: SbpConfig): WriteSbpResult {
-  const lines: string[] = [];
+  const lines = new SbpLines();
 
   // Header comments
   lines.push("'STL-TO-SBP CONVERTER");
@@ -83,12 +110,12 @@ export function writeSBP(sections: ToolpathSection[], config: SbpConfig): WriteS
   lines.push('END');
 
   return {
-    sbp: lines.join('\n') + '\n',
-    lineCount: lines.length,
+    sbp: lines.finish(),
+    lineCount: lines.lineCount,
   };
 }
 
-function writeMoves(lines: string[], moves: ToolpathMove[], config: SbpConfig): void {
+function writeMoves(lines: SbpLines, moves: ToolpathMove[], config: SbpConfig): void {
   let lastType: 'rapid' | 'cut' | null = null;
 
   for (const move of moves) {

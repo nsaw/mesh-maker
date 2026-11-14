@@ -592,6 +592,15 @@ export function updateDimsOverlay(): void {
   spanTotal.textContent = `Total: ${totalZ.toFixed(2)}"`;
   el.appendChild(spanTotal);
 
+  const requested = STATE.mode === 'noise' ? STATE.amplitude : STATE.mode === 'depthmap' && !STATE.reliefMaster ? STATE.dmHeightScale : null;
+  const actual = zMax - zMin;
+  if (requested !== null && requested > 0 && actual < requested * 0.98) {
+    const warning = document.createElement('span');
+    warning.className = 'cnc-warn';
+    warning.textContent = ` Cut ${actual.toFixed(2)}" of ${requested.toFixed(2)}" requested`;
+    el.appendChild(warning);
+  }
+
   if (totalZ > 6) {
     const spanWarn = document.createElement('span');
     spanWarn.className = 'cnc-warn';

@@ -8,7 +8,7 @@
  */
 import { DEFAULTS, STATE, noiseDims } from './state';
 import { generateMesh } from './mesh';
-import { syncSbpSafeZIfStockMoved } from './sbp-export';
+import { syncSbpSafeZIfStockMoved, updateEffectiveOffsetDisplay } from './sbp-export';
 import { syncAspectLockButton } from './ui';
 import { DRAPE_CARVE_PENDING, DRAPE_NO_RELIEF, drapeCarvePending, masterOffCarve } from './export-surface';
 import { showToast } from './toast';
@@ -127,11 +127,12 @@ function syncSizeControls(m: ReliefMaster): void {
     const sl = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
     if (sl) sl.value = String(v);
     const val = document.getElementById(`val_${key}`);
-    if (val) val.textContent = key === 'baseThickness' ? v.toFixed(2) : formatSliderValue(v, sl ? parseFloat(sl.step) : 1);
+    if (val) val.textContent = formatSliderValue(v, sl ? Number(sl.dataset.step ?? sl.step) : key === 'baseThickness' ? 0.0001 : 1);
   }
   syncAspectLockButton();
   // Safe Z follows the stock top when it moves; a new drape on the same stock keeps the user's Safe Z.
   syncSbpSafeZIfStockMoved();
+  updateEffectiveOffsetDisplay();
 }
 
 /** Show a drape relief (bare or draped) in DRAPE mode. */

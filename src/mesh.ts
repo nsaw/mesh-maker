@@ -1,3 +1,4 @@
+import { MAX_CUT_DEPTH_IN } from './sbp/types';
 import { STATE, activeMaster } from './state';
 import { previewErrorIn, reliefPreviewGrid } from './relief-master';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
@@ -9,7 +10,7 @@ import { updateStats } from './stats';
 import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, weightedSmooth } from './geometry';
 
 function surfaceFloor(): number {
-  return STATE.watertight ? MIN_WATERTIGHT_THICKNESS : 0;
+  return Math.max(STATE.watertight ? MIN_WATERTIGHT_THICKNESS : 0, STATE.baseThickness - MAX_CUT_DEPTH_IN);
 }
 
 /** Sample a raw noise grid with domain warping + FBM + post-processing.
@@ -123,7 +124,7 @@ export function generateNoiseMesh(): void {
   // Floor to 0.01" when watertight to prevent degenerate enclosure triangles: both the stock
   // and every surface vertex (a vertex at z=0 coincides with the bottom face the exporter adds).
   const bt = STATE.watertight ? Math.max(MIN_WATERTIGHT_THICKNESS, baseThickness) : baseThickness;
-  const cutDepth = Math.min(amplitude, bt);
+  const cutDepth = Math.min(amplitude, bt, MAX_CUT_DEPTH_IN);
   const floorZ = surfaceFloor();
   const [nMin, nMax] = gridMinMax(finalVerts, rows, cols);
   const range = nMax - nMin || 1;
@@ -157,7 +158,7 @@ export function generateDepthMapMesh(): void {
   const imgData = tmpCtx.getImageData(0, 0, depthMap.width, depthMap.height);
 
   const bt = STATE.watertight ? Math.max(MIN_WATERTIGHT_THICKNESS, baseThickness) : baseThickness;
-  const cutDepth = Math.min(dmHeightScale, bt);
+  const cutDepth = Math.min(dmHeightScale, bt, MAX_CUT_DEPTH_IN);
   const floorZ = surfaceFloor();
 
   // Luma, normalized, then the background cutoff (cutoff 0 is the identity).

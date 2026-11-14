@@ -6,6 +6,7 @@
  * 12.5 cm); positions on the carve are percentages of the panel, so they stay on the same spot of the
  * figure at every carve size.
  */
+import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN } from './sbp/types';
 import { SILK, SILK_GATHERED, type ClothParams } from './drape-sim/cloth';
 import type { FigurePose } from './drape-sim/figure';
 import { PANEL_ASPECT, PANEL_WINDOW, RELIEF_BACKING_IN, RELIEF_SPAN_IN } from './drape-sim/pipeline';
@@ -74,7 +75,7 @@ export const DRAPE_CONTROLS: readonly DrapeControl[] = [
   { key: 'drapeSubsteps', label: 'Solver Steps per Frame (accuracy)', min: 2, max: 32, step: 1, group: 'solver' },
   { key: 'drapeIterations', label: 'Solver Iterations per Step (accuracy)', min: 2, max: 32, step: 1, group: 'solver' },
   { key: 'drapeSubdivisions', label: 'Display Subdivision (smoothing levels)', min: 0, max: 3, step: 1, group: 'solver' },
-  { key: 'drapeReliefDepth', label: 'Relief Depth (in)', min: 0.05, max: 3.95, step: 0.005, group: 'carve' },
+  { key: 'drapeReliefDepth', label: 'Relief Depth (in)', min: 0.05, max: MAX_CUT_DEPTH_IN, step: 0.005, group: 'carve' },
 ];
 
 /** Most cloth quads the solver can hold: Jolt's fixed 128 MiB WASM heap ran 200 x 750 (150,000) and
@@ -83,9 +84,9 @@ export const DRAPE_CONTROLS: readonly DrapeControl[] = [
 export const MAX_CLOTH_QUADS = 150_000;
 
 /** Thinnest backing left under the deepest point of the drape relief, inches. */
-export const MIN_DRAPE_BACKING_IN = 0.05;
+export const MIN_DRAPE_BACKING_IN = 1 / 16;
 /** Material thickness range on the DRAPE tab, inches. */
-export const DRAPE_STOCK_RANGE: readonly [number, number] = [0.25, 4];
+export const DRAPE_STOCK_RANGE: readonly [number, number] = [0.25, MAX_STOCK_THICKNESS_IN];
 /** Carve width range on the DRAPE tab, inches; the height is 4/3 of it, so 18 in wide is 24 in tall, the
  *  ShopBot bed's Y. */
 export const DRAPE_WIDTH_RANGE: readonly [number, number] = [3, 18];
@@ -103,7 +104,7 @@ export interface DrapeCarve { stockIn: number; depthIn: number; backingIn: numbe
  *  DRAPE_WIDTH_RANGE at the panel's 3:4. */
 export function drapeCarveFor(stockIn: number, depthIn: number, widthIn: number): DrapeCarve {
   const stock = Math.min(DRAPE_STOCK_RANGE[1], Math.max(DRAPE_STOCK_RANGE[0], stockIn));
-  const depth = Math.min(stock - MIN_DRAPE_BACKING_IN, Math.max(0.01, depthIn));
+  const depth = Math.min(MAX_CUT_DEPTH_IN, stock - MIN_DRAPE_BACKING_IN, Math.max(0.01, depthIn));
   const width = Math.min(DRAPE_WIDTH_RANGE[1], Math.max(DRAPE_WIDTH_RANGE[0], widthIn));
   return { stockIn: stock, depthIn: depth, backingIn: stock - depth, widthIn: width, heightIn: width / PANEL_ASPECT };
 }

@@ -44,18 +44,22 @@ The algorithm's structural mechanisms (v16+):
 
 ## Presets
 
-`presets.ts` exports `PROFILES` (shape-only overrides: octaves/persistence/lacunarity/distortion/contrast/sharpness for smooth/rough/organic/geometric/crystalline/waves) and `CNC_PRESETS`, which bundle a full noise type plus mesh/smoothing parameters keyed by name (e.g. `gentle-waves`, `sharp-ridges`, `voronoi-cells`). Presets are merged as key-only overlays onto state — a preset that omits a field inherits whatever the previously active preset left behind, which is why several relief presets explicitly zero out fields like `reliefAttractorNoise` or `reliefFlowAnisotropy` that a sibling preset sets non-zero.
+`presets.ts` exports `PROFILES` (shape-only overrides: octaves/persistence/lacunarity/distortion/contrast/sharpness for smooth/rough/organic/geometric/crystalline/waves) and `CNC_PRESETS`, which bundle a full noise type plus mesh/smoothing parameters keyed by name (e.g. `gentle-waves`, `sharp-ridges`, `voronoi-cells`). `presetState()` first restores `PRESET_OWNED_KEYS` from `DEFAULTS`, then applies the selected preset. Owned fields cover noise, relief, board dimensions, stock and smoothing, so omitted values do not leak from the previous preset. Seed, resolution, camera, mode, export, depth-map and drape settings are retained. Profiles remain modifiers of the current texture.
 
 Three relief presets target a specific reference look (`lafabricatrun`-style wood carvings):
 - `relief-vertical`: smooth wave field at top fading to dense domed cells at the bottom (`attractorMode: 'vertical'`, `attractorY: 0`).
 - `relief-radial`: cell density radiating from a point, `baseMode: 'flat'`.
 - `relief-pockets`: inverted (`polarity: 'pockets'`) dramatic cell-size variation with deep seams; its comment block documents three artifact classes found and fixed across iterations (void-mode plateaus, anisotropy-driven F1 tearing, and per-cell radius mismatch from extreme `attractorNoise`), each traceable to a specific commit in the file's history.
 
+Relief presets fit the 24 in bed height: vertical and pockets use 12 x 24 in, radial 16 x 24 in and starburst 8 x 24 in. Cell sizes and cut depths scale with the panel, while spatial frequencies scale inversely. Pockets leaves 1/16 in backing. Vertical and radial are named cut-through presets; watertight geometry retains its separate 0.01 in floor.
+
+`npm run test:presets` checks order independence through production generation, then full-resolution preset geometry and SBP export.
+
 ## Change checklist
 
 When these files or sections are changed, remember to consider these:
 
-- If a new field is added to `ReliefSampleParams` (`src/types.ts`), update both `sampleReliefParamsFromState` in `voronoi-relief.ts` and every relevant `CNC_PRESETS` entry in `presets.ts` — presets merge by key, so a missing key silently falls back to whatever the prior preset left in `STATE`, not a documented default.
+- If a new field is added to `ReliefSampleParams` (`src/types.ts`), update both `sampleReliefParamsFromState` in `voronoi-relief.ts` and every relevant `CNC_PRESETS` entry in `presets.ts`. Add generation controls to `PRESET_OWNED_KEYS` so omitted preset values reset to their documented defaults.
 - If `createNoiseGen`'s switch in `generators.ts` gains a new `type` string, verify `sampleNoiseGrid` in `src/mesh.ts` still special-cases it correctly (grid-aware types must skip the per-pixel warp/FBM loop) and that `NoiseGridParams`/`ReliefGenerator` typing in `src/types.ts` covers the new generator's shape.
 - If any of the tuning constants at the top of `voronoi-relief.ts` (`SITE_COUNT_MAX`, `RADIUS_FIELD_SIGMA_CELLS`, `SEAM_MIN_PIXEL_WIDTH`, etc.) are changed, re-verify against production-resolution timing — several exist specifically to keep two O(rows·cols·sites) passes under ~1s.
 - If the global `distortion`/`warpFreq` sliders' semantics change in `mesh.ts`'s per-pixel warp path, check `sampleReliefParamsFromState` still maps them consistently into `warpDistortion`/`warpFrequency` for site-position warping.

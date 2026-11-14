@@ -39,6 +39,10 @@ npm run lint             # eslint src/ cli/
 npm run lint:fix
 npm run test:relief      # tsx cli/voronoi-relief.spec.ts
 npm run test:gh-parity   # tsx cli/grasshopper-parity.spec.ts
+npm run test:presets     # geometry, then each full default SBP export in a fresh process
+npm run test:presets:geometry  # preset ownership, ordering and production geometry
+npm run test:presets:export -- <preset>  # one full default SBP export
+npm run test:sbp-writer  # byte contract for SBP formatting and retract commands
 npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~20 s)
 npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drapes vs the Blender silk and gathered runs, ~2.5 min)
 npm run test:depthmap       # tsx cli/depthmap.spec.ts (luma sampling, orientation, cutoff, share links)
@@ -81,7 +85,9 @@ through round-5 review findings. **Any change to a noise generator or to a prese
 landing sites, not one:** the TypeScript in `src/noise/`, the standalone component in
 `grasshopper/components/`, and the embedded literal in the builder. Adding a preset to
 `src/noise/presets.ts` alone will pass typecheck, pass lint, ship to the web app, and be
-silently absent from Grasshopper. Run `npm run test:gh-parity` after any such change.
+silently absent from Grasshopper. Run `npm run test:gh-parity` after any such change. The suite also compares TypeScript preset values with the Python dictionary, excluding web-only stock thickness.
+
+Slice 1 changes the Presets component outputs to include `gabor_angle` and `gabor_bw`. Before merging it, run the builder in Rhino 7 and confirm a preset generates. Passing the text/value parity suite does not clear that runtime gate.
 
 ## Correctness rules specific to this tool
 
@@ -102,8 +108,10 @@ drives a physical machine, so these are not style preferences.
   and the error path.
 - No degenerate triangles in exports. Enforce the 0.01 inch minimum material thickness when
   watertight is on.
-- ShopBot Desktop MAX ATC limits are hardcoded: 36 x 24 inch bed, 6 inch Z. Do not raise
-  them without checking the machine.
+- ShopBot Desktop MAX ATC travel is hardcoded: 36 x 24 inch bed, 6 inch Z. Stock thickness
+  and carving depth below stock top are each capped at 2.6 in. Drape remapping leaves at least
+  1/16 in backing; imported relief masters retain their declared nonnegative backing. Do not
+  raise machine limits without checking the machine.
 - Grid row `j` is world `Y = j / (rows - 1) * meshY` in every export (STL/OBJ/3DM vertices, SBP
   toolpaths), and Y grows away from the machine front. Depth-map sampling therefore puts the
   image's bottom row at `j = 0` (`sampleLumaGrid` in `src/geometry.ts`), and the heightmap PNG
@@ -122,9 +130,11 @@ before you claim a change is good:
 npm run lint && npm run typecheck && npm run typecheck:cli
 npm run test:relief
 npm run test:gh-parity
+npm run test:presets
 npm run test:depthmap
 npm run test:drape
 npm run test:drape-parity
+npm run test:sbp-writer
 npm run test:cut
 npm run test:relief-master
 npm run stl-to-sbp -- <input.stl> --dry-run
@@ -132,7 +142,10 @@ npm run stl-to-sbp -- <input.stl> --dry-run
 
 `.github/workflows/ci.yml` runs the drape Python tests
 (`python3 -m unittest discover -s scripts/drape -p 'test_*.py'`), lint, both typechecks,
-`test:relief`, `test:gh-parity`, `test:depthmap`, `test:drape`, `test:drape-parity`, `test:cut`, `test:relief-master` and the build on every pull request.
+`test:relief`, `test:presets:geometry`,
+`test:gh-parity`, `test:depthmap`, `test:drape`, `test:drape-parity`, `test:sbp-writer`,
+`test:cut`, `test:relief-master` and the build on every pull request. Full default preset exports
+run in a separate per-preset matrix. Both `checks` and `Preset full export gate` must pass before merge.
 `test:drape-parity` runs two full cloth simulations of the bundled bust against the Blender references
 (`cli/fixtures/drape-silk-tilt25`, `cli/fixtures/drape-silk-gathered`); after any change under `src/drape-sim/`, paste its numbers in the PR.
 The references come from Blender (`scripts/drape/workflow.py`) and are never regenerated from the web solver.

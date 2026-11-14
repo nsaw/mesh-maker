@@ -1,5 +1,5 @@
 import type { Heightmap, SbpConfig, SbpStats, ToolpathSection } from './types';
-import { MACHINE_TRAVEL_IN, MACHINE_TRAVEL_TOLERANCE_IN, ToolType } from './types';
+import { MACHINE_TRAVEL_IN, MACHINE_TRAVEL_TOLERANCE_IN, MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, ToolType } from './types';
 import { compensateForTool } from './compensate';
 import { generateRoughing } from './roughing';
 import { generateFinishing } from './finishing';
@@ -36,10 +36,10 @@ function normalizeZ(
   }
 
   // Ensure materialZ covers the surface
-  let adjustedConfig = config;
-  if (config.materialZ < maxZ + 0.01) {
-    adjustedConfig = { ...config, materialZ: maxZ + 0.01 };
-  }
+  // Translating the surface must translate its stock top too, preserving depth below stock.
+  // A surface already at the stock top needs no additional stock allowance.
+  const materialZ = Math.max(config.materialZ + shifted, maxZ);
+  const adjustedConfig = materialZ === config.materialZ ? config : { ...config, materialZ };
 
   return {
     heightmap: shifted > 0 ? { ...heightmap, z: adjustedZ } : heightmap,
@@ -73,6 +73,16 @@ export function generateSBP(heightmap: Heightmap, config: SbpConfig): GenerateRe
   if (normConfig.offsetX < -T || normConfig.offsetY < -T || reachX > MACHINE_TRAVEL_IN.x + T || reachY > MACHINE_TRAVEL_IN.y + T)
     throw new Error(`Part plus offset reaches X ${reachX.toFixed(3)}, Y ${reachY.toFixed(3)} in; the machine travels ` +
       `${MACHINE_TRAVEL_IN.x} x ${MACHINE_TRAVEL_IN.y} in. Reduce Offset X/Y or the part size.`);
+  let minZ = Infinity;
+  for (const z of normHm.z) {
+    if (!Number.isFinite(z)) throw new Error('Surface contains a non-finite height; no SBP written');
+    minZ = Math.min(minZ, z);
+  }
+  const deepestCut = normConfig.materialZ - minZ;
+  if (!(Number.isFinite(deepestCut) && deepestCut <= MAX_CUT_DEPTH_IN + T))
+    throw new Error(`Deepest cut ${deepestCut.toFixed(3)} in exceeds the ${MAX_CUT_DEPTH_IN} in carving depth`);
+  if (!(Number.isFinite(normConfig.materialZ) && normConfig.materialZ <= MAX_STOCK_THICKNESS_IN + T))
+    throw new Error(`Stock thickness ${normConfig.materialZ.toFixed(3)} in exceeds the ${MAX_STOCK_THICKNESS_IN} in maximum`);
   // Z travel: the stock top, safe Z and home Z all sit above the table, inside the 6 in travel.
   for (const [label, z] of [['Stock top', normConfig.materialZ], ['Safe Z', normConfig.safeZ], ['Home Z', normConfig.homeZ]] as const)
     if (!(z <= MACHINE_TRAVEL_IN.z + T))
