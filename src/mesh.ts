@@ -4,7 +4,7 @@ import { previewErrorIn, reliefPreviewGrid } from './relief-master';
 import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
 import { sampleReliefParamsFromState } from './noise/voronoi-relief';
 import type { VoronoiReliefGen } from './noise/voronoi-relief';
-import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
+import type { FBMGenerator, NoiseConfig, NoiseGridParams, ReliefCrestClipStatus } from './types';
 import { renderViewport, setCameraFromState } from './render';
 import { updateStats } from './stats';
 import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, gaussianSmooth } from './geometry';
@@ -15,7 +15,7 @@ function surfaceFloor(): number {
 
 /** Sample a raw noise grid with domain warping + FBM + post-processing.
  *  Returns values in noise-native range (no CNC normalization, no smoothing). */
-function sampleNoiseGrid(p: NoiseGridParams): number[][] {
+function sampleNoiseGrid(p: NoiseGridParams, metadata: { truncatedFrom: number; crestClipStatus: ReliefCrestClipStatus }): number[][] {
   const { cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp,
           valleyFloor, contrast, sharpness, octaves, persistence, lacunarity,
           distortion, warpFreq, warpCurl, gen, warpGen } = p;
@@ -25,8 +25,8 @@ function sampleNoiseGrid(p: NoiseGridParams): number[][] {
   if (gen.kind === 'voronoi-relief') {
     const reliefParams = sampleReliefParamsFromState(cols, rows, meshX, meshY, STATE.seed, STATE);
     const result = (gen as VoronoiReliefGen).sampleGridResult(reliefParams);
-    STATE.reliefTruncatedFrom = result.truncatedFrom;
-    STATE.reliefCrestClipStatus = result.crestClipStatus;
+    metadata.truncatedFrom = result.truncatedFrom;
+    metadata.crestClipStatus = result.crestClipStatus;
     return result.grid;
   }
 
@@ -102,49 +102,51 @@ function sampleNoiseGrid(p: NoiseGridParams): number[][] {
 }
 
 export function generateNoiseMesh(): void {
-  const t0 = performance.now();
-  const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothRadiusIn, noiseType, baseThickness } = STATE;
+  try {
+    const t0 = performance.now();
+    const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
+            distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothRadiusIn, noiseType, baseThickness } = STATE;
 
-  const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
-  STATE.cols = cols; STATE.rows = rows;
+    const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
+    const metadata: { truncatedFrom: number; crestClipStatus: ReliefCrestClipStatus } = { truncatedFrom: 0, crestClipStatus: 'none' };
+    const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
+    const gen = createNoiseGen(noiseType, seed, noiseConfig);
+    const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
 
-  STATE.reliefTruncatedFrom = 0;
-  STATE.reliefCrestClipStatus = 'none';
-  const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
-  const gen = createNoiseGen(noiseType, seed, noiseConfig);
-  const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
+    const verts = sampleNoiseGrid({
+      cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp, valleyFloor,
+      contrast, sharpness, octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
+      gen, warpGen,
+    }, metadata);
 
-  const verts = sampleNoiseGrid({
-    cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp, valleyFloor,
-    contrast, sharpness, octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
-    gen, warpGen,
-  });
+    const finalVerts = gaussianSmooth(verts, rows, cols, meshX, meshY, smoothRadiusIn);
 
-  const finalVerts = gaussianSmooth(verts, rows, cols, meshX, meshY, smoothRadiusIn);
+    // CNC z-model: z=0 is machine bed, stock from 0 to baseThickness.
+    // amplitude = total cut depth (peak to valley), clamped to stock thickness.
+    // Peaks sit at z=baseThickness (stock top), valleys at z=baseThickness-cutDepth.
+    // Floor to 0.01" when watertight to prevent degenerate enclosure triangles: both the stock
+    // and every surface vertex (a vertex at z=0 coincides with the bottom face the exporter adds).
+    const bt = STATE.watertight ? Math.max(MIN_WATERTIGHT_THICKNESS, baseThickness) : baseThickness;
+    const cutDepth = Math.min(amplitude, bt, MAX_CUT_DEPTH_IN);
+    const floorZ = surfaceFloor();
+    const [nMin, nMax] = gridMinMax(finalVerts, rows, cols);
+    const range = nMax - nMin || 1;
+    for (let j = 0; j < rows; j++)
+      for (let i = 0; i < cols; i++) {
+        const t = (finalVerts[j][i] - nMin) / range;
+        // Clamp to material boundaries: hard crop at stock top and machine bed
+        const raw = noiseType === 'voronoi-relief'
+          ? bt + (finalVerts[j][i] - nMax) * cutDepth * Math.min(1, 1 / range) + offset
+          : (bt - cutDepth) + t * cutDepth + offset;
+        finalVerts[j][i] = Math.max(floorZ, Math.min(bt, raw));
+      }
 
-  // CNC z-model: z=0 is machine bed, stock from 0 to baseThickness.
-  // amplitude = total cut depth (peak to valley), clamped to stock thickness.
-  // Peaks sit at z=baseThickness (stock top), valleys at z=baseThickness-cutDepth.
-  // Floor to 0.01" when watertight to prevent degenerate enclosure triangles: both the stock
-  // and every surface vertex (a vertex at z=0 coincides with the bottom face the exporter adds).
-  const bt = STATE.watertight ? Math.max(MIN_WATERTIGHT_THICKNESS, baseThickness) : baseThickness;
-  const cutDepth = Math.min(amplitude, bt, MAX_CUT_DEPTH_IN);
-  const floorZ = surfaceFloor();
-  const [nMin, nMax] = gridMinMax(finalVerts, rows, cols);
-  const range = nMax - nMin || 1;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      const t = (finalVerts[j][i] - nMin) / range;
-      // Clamp to material boundaries: hard crop at stock top and machine bed
-      const raw = noiseType === 'voronoi-relief'
-        ? bt + (finalVerts[j][i] - nMax) * cutDepth * Math.min(1, 1 / range) + offset
-        : (bt - cutDepth) + t * cutDepth + offset;
-      finalVerts[j][i] = Math.max(floorZ, Math.min(bt, raw));
-    }
-
-  STATE.vertices = finalVerts;
-  STATE.genTime = performance.now() - t0;
+    Object.assign(STATE, { vertices: finalVerts, cols, rows, genTime: performance.now() - t0,
+      reliefTruncatedFrom: metadata.truncatedFrom, reliefCrestClipStatus: metadata.crestClipStatus, noiseGenerationError: null });
+  } catch (error: unknown) {
+    STATE.noiseGenerationError = `Noise generation failed: ${error instanceof Error ? error.message : String(error)}`;
+    throw error;
+  }
 }
 
 export function generateDepthMapMesh(): void {
@@ -215,20 +217,23 @@ export function generateMesh(): void {
 
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      if (STATE.mode === 'noise') {
-        generateNoiseMesh();
-      } else if (STATE.mode === 'depthmap') {
-        generateDepthMapMesh();
-      } else if (STATE.drapeMaster) {
-        // DRAPE: the figure (bare or draped) is a relief master built by src/drape-ui.ts.
-        generateReliefMasterPreview();
-      } else {
-        STATE.vertices = null;   // the figure is still loading
+      try {
+        if (STATE.mode === 'noise') {
+          generateNoiseMesh();
+        } else if (STATE.mode === 'depthmap') {
+          generateDepthMapMesh();
+        } else if (STATE.drapeMaster) {
+          // DRAPE: the figure (bare or draped) is a relief master built by src/drape-ui.ts.
+          generateReliefMasterPreview();
+        } else {
+          STATE.vertices = null;   // the figure is still loading
+        }
+        STATE.sbpStats = null;
+        renderViewport();
+        updateStats();
+      } finally {
+        overlay.classList.remove('visible');
       }
-      STATE.sbpStats = null;
-      renderViewport();
-      updateStats();
-      overlay.classList.remove('visible');
     });
   });
 }

@@ -154,6 +154,8 @@ export interface MeshState extends DrapeSettings {
   activePreset: string | null;
   activeProfile: string | null;
   // Internal
+  /** Last failed synchronous noise source, refused by the central export guard. */
+  noiseGenerationError: string | null;
   vertices: number[][] | null;
   cols: number;
   rows: number;
@@ -269,6 +271,7 @@ export const DEFAULTS: MeshState = {
   filename: 'meshcraft_export',
   activePreset: null,
   activeProfile: null,
+  noiseGenerationError: null,
   vertices: null,
   cols: 400,
   rows: 267,
@@ -395,7 +398,7 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
 ];
 
 // Generation and preset semantics changed. Incompatible links reset explicitly.
-export const CURRENT_PAYLOAD_VERSION = 18;
+export const CURRENT_PAYLOAD_VERSION = 19;
 let outdatedLinkReset = false;
 
 /** Read and clear the reset notice from the latest deserialize operation. */

@@ -1,3 +1,5 @@
+#! python 2
+# -*- coding: utf-8 -*-
 # GHPython component script: MeshCraft | Smooth
 # Runtime: IronPython 2.7 (Rhino 7)
 # Inputs: pts (list of Point3d), cols, rows, smooth_radius_in (Gaussian sigma, inches)

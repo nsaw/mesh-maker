@@ -38,12 +38,11 @@
  *      attractor mask and the density noise field. Sites are never displaced.
  *   2. Lloyd relaxation — 0–2 passes via low-discrepancy Halton sampling (samples warped
  *      through W so relaxation happens in the same space as the queries).
- *   3. Pass 1 — find F1 and owning site for every W(x, y); accumulate mean F1 per site.
- *   4. Per-cell radius — R ≈ 2 × mean F1. Pass 1.5 blends per-site radii into a continuous
- *      Gaussian radius field on a coarse grid (bilinear-upsampled) covering the warped
- *      domain, so per-pixel R reads are C0-continuous.
- *   5. Pass 2 — re-sample F1/F2 at W(x, y); wall-band remap; bowl profile; superpose onto
- *      the base wave; attractor/void/intensity shaping; clamp to ~[-1, 1].
+ *   3. Pass 1 accumulates mean F1 and maximum exact capped bisector distance per site.
+ *   4. Complete compact support interpolates static depth, slope, radius, seam and shared
+ *      strength fields. Ordered side variation fades to zero at every owner boundary.
+ *   5. Pass 2 uses a complete sparse bisector minimum for the wall/bowl remap, then
+ *      superposes base, crest, lift, attractor and void fields before output clamping.
  *
  * Output is in noise-native range; the standard CNC-z normalization in mesh.ts handles
  * the rest.
@@ -193,7 +192,44 @@ function representativeIndices(length: number, limit: number, rand: () => number
   return [...retained, ...available.slice(0, count)].sort((a, b) => a - b);
 }
 
-/** smoothstep(edge0, edge1, x) clamped — standard GLSL semantics. */
+const JUNCTION_SUPPORT_RATIO = 2.08;
+// jn >= 0.98 implies F3/F1 <= this ratio. Keep the incident-cell mean in that core.
+const JUNCTION_CORE_RATIO = 2 / 0.98 - 1;
+
+export function reliefJunctionFields(candidates: readonly {index: number; distance: number}[], nearest: number,
+  ...fields: (ArrayLike<number> | ((index: number) => number))[]): number[] {
+  if (!Number.isFinite(nearest) || nearest < 0) throw new RangeError('Junction nearest distance must be finite and nonnegative');
+  let weightSum = 0;
+  const sums = fields.map(() => 0);
+  for (const candidate of candidates) {
+    const ratio = candidate.distance / Math.max(nearest, 1e-9);
+    const weight = (1 - smoothstep(JUNCTION_CORE_RATIO, JUNCTION_SUPPORT_RATIO, ratio)) ** 2;
+    if (weight === 0) continue;
+    weightSum += weight;
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i];
+      sums[i] += weight * (typeof field === 'function' ? field(candidate.index) : field[candidate.index]);
+    }
+  }
+  if (!(weightSum > 0) || sums.some(value => !Number.isFinite(value))) {
+    throw new RangeError('Junction support must have positive finite weights and fields');
+  }
+  return sums.map(value => value / weightSum);
+}
+
+/** A collapsed band contributes zero crown, with continuous growth into a resolved bead. */
+export function reliefCrownWeight(width: number, distance: number, minimumSpan: number): number {
+  const span = Math.max(width, minimumSpan);
+  return smoothstep(0, minimumSpan, width) * (1 - smoothstep(0, span, distance));
+}
+
+/** Pairwise fields retain their mid-edge behavior and fade into a continuous junction field. */
+export function blendReliefJunction(pair: number, neighborhood: number, support: number): number {
+  if (support === 0) return pair;
+  return (1 - support) * pair + support * neighborhood;
+}
+
+/** smoothstep(edge0, edge1, x) clamped, with standard GLSL semantics. */
 function smoothstep(edge0: number, edge1: number, x: number): number {
   if (edge1 <= edge0) return x < edge0 ? 0 : 1;
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
@@ -683,8 +719,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
     return result;
   }
 
+  /** Fixed Pass 1, unwarped junction-limit probe; production never supplies a query override. */
+  static queryForTest(p: ReliefSampleParams, x: number, y: number): number {
+    return new VoronoiReliefGen(p.seed).sample(p, false, undefined, undefined, {x, y}).grid[0][0];
+  }
+
   private sample(p: ReliefSampleParams, bruteForce: boolean, captureSites?: (sites: readonly Site[]) => void,
-    captureCandidates?: (sites: readonly Site[], cartesianCount: number, nuclei: readonly number[]) => void): ReliefSampleResult {
+    captureCandidates?: (sites: readonly Site[], cartesianCount: number, nuclei: readonly number[]) => void,
+    query?: {x: number; y: number}): ReliefSampleResult {
     const seed = (p.seed ?? this.fallbackSeed) >>> 0;
     const rand = mulberry32(seed);
     // Base wave field (v16 superposition term). Re-seeded per call so same p.seed → same
@@ -804,6 +846,19 @@ export class VoronoiReliefGen implements ReliefGenerator {
       ? (x: number, y: number) => nearestThree(sites, x, y, cosA, sinA, metricScale)
       : (x: number, y: number) => grid.nearestFour(x, y, cosA, sinA, metricScale);
 
+    const withinRadius = bruteForce
+      ? (x: number, y: number, radius: number): Array<{index: number; distance: number}> => {
+        const result: Array<{index: number; distance: number}> = [];
+        for (let index = 0; index < sites.length; index++) {
+          const dx = x - sites[index].x, dy = y - sites[index].y;
+          const distance = metricScale <= 1.0001 ? Math.hypot(dx, dy)
+            : Math.hypot((dx * cosA + dy * sinA) * metricScale, -dx * sinA + dy * cosA);
+          if (distance < radius) result.push({index, distance});
+        }
+        return result;
+      }
+      : (x: number, y: number, radius: number) => grid.withinRadius(x, y, radius, cosA, sinA, metricScale);
+
     // Hoisted + clamped shaping params.
     const transitionSoftness = Math.max(0, Math.min(1, p.transitionSoftness));
     const transitionExponent = TRANSITION_EXPONENT_MIN
@@ -843,45 +898,27 @@ export class VoronoiReliefGen implements ReliefGenerator {
       }
     }
 
-    // Exact boundary distance. (F2−F1)/2 is exact only on the two-site axis — its level
-    // sets are hyperbolae that curve around the site. The true distance from a query to
-    // the shared Voronoi boundary is the bisector distance (Fk² − F1²)/(2·|sk − s1|),
-    // minimized over the two nearest competitors (the third catches corner regions where
-    // the constraining bisector is not the F2 site's). Its level sets are TRUE inset
-    // polygons of the cell — the critique's floor geometry. Measured in the same
-    // (an)isotropic metric as the F-distances; capped at the panel diagonal so degenerate
-    // one-site panels stay finite.
+    // The first competitors only seed an upper bound. A complete sparse radius
+    // search then minimizes all potentially constraining bisectors in this metric.
     const dbCap = p.meshX + p.meshY;
-    const siteDist = (a: number, b: number): number => {
-      const dx = sites[a].x - sites[b].x;
-      const dy = sites[a].y - sites[b].y;
-      if (metricScale <= 1.0001) return Math.hypot(dx, dy);
-      const xr = dx * cosA + dy * sinA;
-      const yr = -dx * sinA + dy * cosA;
-      return Math.hypot(xr * metricScale, yr);
+    const seedPlane = (distance: number, owner: number, index: number, x: number, y: number): number =>
+      index < 0 || !Number.isFinite(distance) ? dbCap : grid.bisectorDistance(x, y, owner, index, cosA, sinA, metricScale);
+    const boundarySeed = (f1: number, f2: number, f3: number, f4: number,
+      owner: number, i2: number, i3: number, i4: number, x: number, y: number): number => {
+      const plane = Math.min(seedPlane(f2, owner, i2, x, y), seedPlane(f3, owner, i3, x, y), seedPlane(f4, owner, i4, x, y));
+      // Inflate the search bound only. The complete traversal recomputes the actual minimum.
+      const roundoff = 64 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), f1, dbCap) * metricScale;
+      return Math.min(dbCap, plane + roundoff);
     };
-    // Minimized over the THREE nearest competitors: near-nearest ordering by Fk does not
-    // strictly order the bisector distances (the |sk − s1| denominator varies), so the
-    // third competitor covers cell-corner regions and ≥4-degree vertices; jittered site
-    // sets make deeper competitors constraining only on a measure-zero locus.
-    const boundaryDist = (
-      f1: number, f2: number, f3: number, f4: number,
-      owner: number, i2: number, i3: number, i4: number,
-    ): number => {
-      let db = dbCap;
-      if (i2 >= 0 && Number.isFinite(f2)) {
-        const d = (f2 * f2 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i2)));
-        if (d < db) db = d;
+    const boundaryDist = (f1: number, f2: number, f3: number, f4: number,
+      owner: number, i2: number, i3: number, i4: number, x: number, y: number): number => {
+      let bound = boundarySeed(f1, f2, f3, f4, owner, i2, i3, i4, x, y);
+      if (!bruteForce) return grid.boundaryDistance(x, y, owner, f1, bound, cosA, sinA, metricScale);
+      // Full-population path checks index completeness; independent plane arithmetic lives in the test oracle.
+      for (let index = 0; index < sites.length; index++) {
+        bound = Math.min(bound, grid.bisectorDistance(x, y, owner, index, cosA, sinA, metricScale));
       }
-      if (i3 >= 0 && Number.isFinite(f3)) {
-        const d = (f3 * f3 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i3)));
-        if (d < db) db = d;
-      }
-      if (i4 >= 0 && Number.isFinite(f4)) {
-        const d = (f4 * f4 - f1 * f1) / (2 * Math.max(1e-9, siteDist(owner, i4)));
-        if (d < db) db = d;
-      }
-      return db;
+      return bound;
     };
 
     // Pass 1: accumulate per-site mean F1 (in the warped metric — the same one Pass 2
@@ -896,7 +933,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
       const { f1, f2, f3, f4, idx: siteIdx, idx2, idx3, idx4 } = nearest(wxArr[idx], wyArr[idx]);
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
-      const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4);
+      const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4, wxArr[idx], wyArr[idx]);
       if (db > inradius[siteIdx]) inradius[siteIdx] = db;
     }
     for (let k = 0; k < sites.length; k++) {
@@ -957,6 +994,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const cutDepthIn = Number.isFinite(p.cutDepthIn) ? Math.max(0.05, Math.min(MAX_CUT_DEPTH_IN, p.cutDepthIn)) : 2.4;
     const staticMul = new Float64Array(sites.length);
     const slopeMul = new Float64Array(sites.length);
+    const geometryRadius = Float64Array.from(inradius, radius => Math.max(0.01, radius));
+    const seamScale = Float64Array.from(sites, (_, k) => 1 + (cellHash01(k, seed + 29) - 0.5) * 0.8 * depthVariation);
+    // Continuous site-supported strength replaces independent fixed-rank edge hashes.
+    const sharedStrength = Float64Array.from(sites, (_, k) => cellHash01(k, seed + 53));
     for (let k = 0; k < sites.length; k++) {
       const sMul = Math.max(SIZE_DEPTH_MIN, Math.min(SIZE_DEPTH_MAX,
         Math.sqrt(sites[k].radius / medianRadius)));
@@ -1027,13 +1068,13 @@ export class VoronoiReliefGen implements ReliefGenerator {
     for (let j = 0; j < rows; j++) {
       const row: number[] = new Array(cols);
       const v = j / Math.max(1, rows - 1);
-      const y = v * p.meshY;
+      const y = query?.y ?? v * p.meshY;
       for (let i = 0; i < cols; i++) {
         const u = i / Math.max(1, cols - 1);
-        const x = u * p.meshX;
+        const x = query?.x ?? u * p.meshX;
         const pixIdx = j * cols + i;
-        const qx = wxArr[pixIdx];
-        const qy = wyArr[pixIdx];
+        const qx = query?.x ?? wxArr[pixIdx];
+        const qy = query?.y ?? wyArr[pixIdx];
         const { f1, f2, f3, f4, idx: ownerIdx, idx2, idx3, idx4 } = nearest(qx, qy);
         // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
@@ -1064,63 +1105,25 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // no finite falloff radius, no abandoned neutral surface, and shrinking floors
         // WIDENS walls instead of retreating the cavity mouth. q = d_b/w: 0 at the
         // boundary, 1 at the floor edge.
-        // Per-competitor bisector distances (also feed the exact boundary distance).
-        const bis = (fk: number, ik: number): number => (ik >= 0 && Number.isFinite(fk))
-          ? (fk * fk - f1 * f1) / (2 * Math.max(1e-9, siteDist(ownerIdx, ik)))
-          : dbCap;
-        const db2 = bis(f2, idx2);
-        const db3 = bis(f3, idx3);
-        const db4 = bis(f4, idx4);
-        const db = Math.min(db2, db3, db4);
-        const inr = Math.max(0.01, inradius[ownerIdx]);
-        // Scale-free junction proximity: (F3−F1)/(F3+F1) → 0 exactly at three-way corners.
-        // With fewer than three sites there is no junction anywhere — jn stays 0.
+        const radius = JUNCTION_SUPPORT_RATIO * Math.max(f1, 1e-9);
+        const neighborhood = bruteForce
+          ? {distance: boundaryDist(f1, f2, f3, f4, ownerIdx, idx2, idx3, idx4, qx, qy), candidates: withinRadius(qx, qy, radius)}
+          : grid.boundaryNeighborhood(qx, qy, ownerIdx, f1, boundarySeed(f1, f2, f3, f4, ownerIdx, idx2, idx3, idx4, qx, qy), cosA, sinA, metricScale, radius);
+        const db = neighborhood.distance;
+        // F3 is a continuous order statistic even when third/fourth membership swaps.
         const jn = Number.isFinite(f3)
-          ? 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1))
-          : 0;
+          ? 1 - Math.min(1, (f3 - f1) / Math.max(1e-9, f3 + f1)) : 0;
         const jnS = smoothstep(0.65, 0.98, jn);
-        // v21 PER-EDGE FIELDS. The nearest competitor identifies which shared edge this
-        // pixel's wall belongs to, so every Voronoi edge carries its own parameters
-        // instead of one global rule (the references never render all edges equally):
-        //   edgeSide   (ORDERED a→b)  — this SIDE's wall width: asymmetric walls,
-        //               off-center floors, mouth/floor non-parallelism, pinch-outs.
-        //   edgeShared (unordered)    — crest strength both sides agree on: strong /
-        //               moderate / weak / DISSOLVED boundaries (weak edges melt toward
-        //               floor level and neighbors blend into a shared basin), and the
-        //               per-edge wall profile family.
-        // The fields of the TWO nearest edges are BLENDED by relative bisector distance:
-        // edge identity switches at the corner rays, and unblended per-edge values would
-        // jump there — a 3× wall-width step renders as a cliff along every cell corner.
-        const nb2 = idx2 >= 0 ? idx2 : ownerIdx;
-        const nb3 = idx3 >= 0 ? idx3 : nb2;
-        const e2Side = edgeHash01(ownerIdx, nb2, seed + 59);
-        const e2Shared = edgeHash01(Math.min(ownerIdx, nb2), Math.max(ownerIdx, nb2), seed + 53);
-        const e3Side = edgeHash01(ownerIdx, nb3, seed + 59);
-        const e3Shared = edgeHash01(Math.min(ownerIdx, nb3), Math.max(ownerIdx, nb3), seed + 53);
-        // Symmetric interpolation: bisector distances need not preserve the F2/F3 site
-        // ordering, so the signed ratio must map BOTH ways (a one-sided map left edge-3-
-        // constrained walls stuck at the 50/50 average instead of favoring edge 3).
-        const edgeRatio = (db3 - db2) / Math.max(1e-9, db3 + db2);
-        const edgeMix = edgeRatio >= 0
-          ? 0.5 + 0.5 * smoothstep(0, 0.3, edgeRatio)
-          : 0.5 - 0.5 * smoothstep(0, 0.3, -edgeRatio);
-        const edgeSide = edgeMix * e2Side + (1 - edgeMix) * e3Side;
-        const edgeShared = edgeMix * e2Shared + (1 - edgeMix) * e3Shared;
-        // Dissolution fades to zero near junction corners: the pairwise edge blend is
-        // ill-conditioned where three edges meet (both bisector distances → 0, so the
-        // blend flips between adjacent pixels → crest-to-floor steps), and physically
-        // the references dissolve boundaries MID-EDGE while junction nodes survive.
+        const [staticMulBlended, slopeBlended, inr, seam, edgeShared, localSide] = reliefJunctionFields(
+          neighborhood.candidates, f1, staticMul, slopeMul, geometryRadius, seamScale, sharedStrength,
+          index => edgeHash01(ownerIdx, index, seed + 59));
+        // Ordered side variation survives in interiors; every owner-dependent residual
+        // vanishes at a shared boundary. The positive self weight prevents empty support.
+        const ownerFade = Math.min(1, db / Math.max(1e-6, 0.35 * inr));
+        const edgeSide = edgeShared + ownerFade * (localSide - edgeShared);
+        const wallFieldNoise = wallNoiseGen?.noise(x * wallNoiseFreq, y * wallNoiseFreq) ?? 0;
         const dissolve = (1 - smoothstep(0.06, 0.3, edgeShared)) * EDGE_DISSOLVE_MAX
           * (1 - smoothstep(0.45, 0.75, jn));
-        // v21.1: hash-static depth multiplier blended across the nearest edges — owner
-        // weight hits exactly 0.5 on the boundary so both sides agree (see staticMul).
-        const ownerMix = 0.5 + 0.5 * Math.min(1, db / Math.max(1e-6, 0.35 * inr));
-        const nbMul = edgeMix * staticMul[nb2] + (1 - edgeMix) * staticMul[nb3];
-        const staticMulBlended = ownerMix * staticMul[ownerIdx] + (1 - ownerMix) * nbMul;
-        const nbSlope = edgeMix * slopeMul[nb2] + (1 - edgeMix) * slopeMul[nb3];
-        const slopeBlended = ownerMix * slopeMul[ownerIdx] + (1 - ownerMix) * nbSlope;
-        // Tilt must vanish at boundaries for the same reason (its direction is per-cell).
-        const ownerFade = Math.max(0, 2 * ownerMix - 1);
         // Ridge crest band: a physical plateau on the shared boundary. The plateau width
         // SWINGS along each edge with the wall-noise field (chunky-to-thin ridges — the
         // reference's most distinctive wall trait) and widens toward junctions.
@@ -1130,12 +1133,9 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // each edge (noise), and at junctions (widening). Capped so most cells keep a
         // floor; per-edge excursions may consume it entirely — the reference's pinch-outs.
         let wallScale = 0.7 + 0.7 * edgeSide;
-        if (depthVariation > 0) {
-          const hSeam = cellHash01(ownerIdx, seed + 29);
-          wallScale *= 1 + (hSeam - 0.5) * 0.8 * depthVariation;
-        }
+        wallScale *= seam;
         if (wallNoiseGen) {
-          const wn = wallNoiseGen.noise(x * wallNoiseFreq, y * wallNoiseFreq);
+          const wn = wallFieldNoise;
           wallScale *= Math.max(0.3, 1 + 0.6 * wn + 1.1 * jnS);
           // Junction DELTAS use a wider gate than the lift term: the plateau starts
           // flaring well before the corner, forming the bold triangular Y-masses.
@@ -1323,8 +1323,8 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // wall lines even where pockets have faded out. Gated by cellWeight. v21: also
         // scaled by the per-edge crest strength (variable crest heights along the graph;
         // dissolved edges lose their bead entirely).
-        if (wallFrac > 0 && crestW > 1e-6 && db < Math.max(crestW, crownMinPhys)) {
-          const crown = 1 - smoothstep(0, Math.max(crestW, crownMinPhys), db);
+        if (wallFrac > 0) {
+          const crown = reliefCrownWeight(crestW, db, crownMinPhys);
           const crownMul = (0.35 + 0.65 * cellDepthMul) * (0.35 + 0.9 * edgeShared) * (1 - dissolve);
           h -= polarity * RIDGE_CROWN_GAIN * crown * cellWeight * crownMul * slopeBlended;
         }

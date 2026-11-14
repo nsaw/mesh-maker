@@ -258,6 +258,51 @@ class _SiteGrid(object):
                         return True
         return False
 
+    def within_radius(self, x, y, radius, cos_a=1.0, sin_a=0.0, scale=1.0):
+        if radius != radius or radius < 0 or radius > self.MAX_COORDINATE:
+            raise ValueError('Site radius exceeds supported numeric range')
+        result = []
+        margin = 16 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y), radius)
+        isotropic = scale <= 1.0001
+        for j in range(self._row(y - radius - margin), self._row(y + radius + margin) + 1):
+            for i in range(self._column(x - radius - margin), self._column(x + radius + margin) + 1):
+                for index in self.buckets.get((i, j), ()):
+                    dx = x - self.sites[index][0]
+                    dy = y - self.sites[index][1]
+                    xr = dx * cos_a + dy * sin_a
+                    yr = -dx * sin_a + dy * cos_a
+                    d = math.sqrt(dx * dx + dy * dy) if isotropic else math.sqrt((xr * scale) ** 2 + yr * yr)
+                    if d < radius:
+                        result.append((index, d))
+        return sorted(result, key=lambda item: item[0])
+
+    def bisector_distance(self, x, y, owner, index, cos_a=1.0, sin_a=0.0, scale=1.0):
+        dx = self.sites[index][0] - self.sites[owner][0]
+        dy = self.sites[index][1] - self.sites[owner][1]
+        qx = x - self.sites[owner][0]; qy = y - self.sites[owner][1]
+        if scale > 1.0001:
+            sx = (dx * cos_a + dy * sin_a) * scale
+            dy = -dx * sin_a + dy * cos_a; dx = sx
+            tx = (qx * cos_a + qy * sin_a) * scale
+            qy = -qx * sin_a + qy * cos_a; qx = tx
+        separation = math.hypot(dx, dy)
+        if separation == 0.0:
+            return float('inf')  # Coincident IDs retain field weights, but define no plane.
+        return max(0.0, separation / 2.0 - qx * (dx / separation) - qy * (dy / separation))
+
+    def boundary_distance(self, x, y, owner, nearest, bound, cos_a=1.0, sin_a=0.0, scale=1.0):
+        return self.boundary_neighborhood(x, y, owner, nearest, bound, cos_a, sin_a, scale)[0]
+
+    def boundary_neighborhood(self, x, y, owner, nearest, bound, cos_a=1.0, sin_a=0.0, scale=1.0, support_radius=0.0):
+        margin = 64 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y), nearest, bound) * max(1.0, scale)
+        candidates = self.within_radius(x, y, max(support_radius, nearest + 2 * bound + margin), cos_a, sin_a, scale)
+        for index, distance in candidates:
+            if index == owner:
+                continue
+            plane = self.bisector_distance(x, y, owner, index, cos_a, sin_a, scale)
+            bound = min(bound, plane)
+        return bound, candidates
+
     def nearest(self, x, y, distance_limit=float('inf')):
         if x != x or y != y or abs(x) > self.MAX_COORDINATE or abs(y) > self.MAX_COORDINATE:
             raise ValueError('Site query coordinates exceed supported numeric range')
@@ -621,6 +666,27 @@ class VoronoiReliefNoise(object):
         if t < 0.0: t = 0.0
         elif t > 1.0: t = 1.0
         return t * t * (3.0 - 2.0 * t)
+    def _junction_blend(self, pair, neighborhood, support):
+        if support == 0.0: return pair
+        return (1.0 - support) * pair + support * neighborhood
+    def _junction_fields(self, candidates, nearest, *fields):
+        if nearest != nearest or nearest < 0 or nearest == float('inf'):
+            raise ValueError('Junction nearest distance must be finite and nonnegative')
+        weight_sum = 0.0; sums = [0.0 for field in fields]
+        for candidate, distance in candidates:
+            ratio = distance / max(nearest, 1e-9)
+            weight = (1.0 - self._smoothstep(2.0 / 0.98 - 1.0, 2.08, ratio)) ** 2
+            if weight == 0.0:
+                continue
+            weight_sum += weight
+            for i in range(len(fields)):
+                sums[i] += weight * (fields[i](candidate) if callable(fields[i]) else fields[i][candidate])
+        if not weight_sum > 0.0 or any(v != v or abs(v) == float('inf') for v in sums):
+            raise ValueError('Junction support must have positive finite weights and fields')
+        return tuple(value / weight_sum for value in sums)
+    def _crown_weight(self, width, distance, minimum_span):
+        span = max(width, minimum_span)
+        return self._smoothstep(0.0, minimum_span, width) * (1.0 - self._smoothstep(0.0, span, distance))
     def _edge_hash01(self, a, b, seed):
         # v21 per-EDGE hash. ORDERED (a, b) gives each SIDE of a shared ridge its own
         # value (wall asymmetry); pass (min, max) for a value both sides agree on.
@@ -1097,35 +1163,19 @@ class VoronoiReliefNoise(object):
                     wx_arr[idx0] = qx; wy_arr[idx0] = qy
                 else:
                     wx_arr[idx0] = x; wy_arr[idx0] = y
-        # Exact boundary distance (v18.1). (F2−F1)/2 is exact only on the two-site axis —
-        # the true distance to the shared Voronoi boundary is the bisector distance
-        # (Fk² − F1²)/(2·|sk − s1|), minimized over the two nearest competitors. Its level
-        # sets are TRUE inset polygons of the cell. Measured in the same (an)isotropic
-        # metric as the F-distances; capped at the panel diagonal so degenerate one-site
-        # panels stay finite.
+        # Competitor ranks seed a bound, never the final bisector support.
         db_cap = p['mesh_x'] + p['mesh_y']
-        def site_dist(a, b):
-            dx = sites[a][0] - sites[b][0]; dy = sites[a][1] - sites[b][1]
-            if aniso_scale <= 1.0001:
-                return math.sqrt(dx * dx + dy * dy)
-            xr = dx * cosA + dy * sinA
-            yr = -dx * sinA + dy * cosA
-            return math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-        # Minimized over the THREE nearest competitors: Fk ordering does not strictly
-        # order bisector distances (the |sk - s1| denominator varies); the third covers
-        # cell-corner regions and 4-degree vertices.
-        def boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4):
-            db = db_cap
-            if i2 >= 0 and f2 != float('inf'):
-                d = (f2 * f2 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i2)))
-                if d < db: db = d
-            if i3 >= 0 and f3 != float('inf'):
-                d = (f3 * f3 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i3)))
-                if d < db: db = d
-            if i4 >= 0 and f4 != float('inf'):
-                d = (f4 * f4 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i4)))
-                if d < db: db = d
-            return db
+        junction_grid = _SiteGrid.from_sites(sites)
+        def boundary_seed(f1, f2, f3, f4, owner, i2, i3, i4, x, y):
+            bound = db_cap
+            for distance, index in [(f2, i2), (f3, i3), (f4, i4)]:
+                if index >= 0 and distance != float('inf'):
+                    bound = min(bound, junction_grid.bisector_distance(x, y, owner, index, cosA, sinA, aniso_scale))
+            roundoff = 64 * _SiteGrid.EPSILON * max(1.0, abs(x), abs(y), f1, db_cap) * aniso_scale
+            return min(db_cap, bound + roundoff)
+        def boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4, x, y):
+            return junction_grid.boundary_distance(x, y, owner, f1,
+                boundary_seed(f1, f2, f3, f4, owner, i2, i3, i4, x, y), cosA, sinA, aniso_scale)
         # Pass 1: accumulate mean F1 per site to derive per-cell radius (in the warped
         # metric — the same one Pass 2 normalizes with).
         # v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell —
@@ -1137,7 +1187,7 @@ class VoronoiReliefNoise(object):
         for idx0 in range(rows * cols):
             f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
             radius_sum[idx] += f1; radius_n[idx] += 1
-            db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4)
+            db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4, wx_arr[idx0], wy_arr[idx0])
             if db > inradius[idx]: inradius[idx] = db
         for k in range(n_sites):
             sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
@@ -1194,6 +1244,9 @@ class VoronoiReliefNoise(object):
         pillow_amt = max(0.0, min(1.0, p.get('pillow', 0.0)))
         pillow_coverage = max(0.0, min(1.0, p.get('pillow_coverage', 0.6)))
         inv2s2_radial = 1.0 / (2.0 * sigma_radial * sigma_radial)
+        geometry_radius = [max(0.01, radius) for radius in inradius]
+        seam_scale = [1.0 + (self._cell_hash01(k, seed + 29) - 0.5) * 0.8 * depth_variation for k in range(n_sites)]
+        shared_strength = [self._cell_hash01(k, seed + 53) for k in range(n_sites)]
         out = [0.0] * (cols * rows)
         # v23 membrane-cushion buffers: the crown SHAPE comes from a per-cell membrane
         # solve after this pass (Poisson, u=0 clamped at the gutter ring, composed
@@ -1229,48 +1282,19 @@ class VoronoiReliefNoise(object):
                 # measured inradius, so the wall spans the FULL territory from the shared
                 # boundary to the inset floor: every interior point is crest, wall, or
                 # floor — no neutral gaps. q = d_b/w: 0 at the boundary, 1 at the floor edge.
-                # Per-competitor bisector distances (also feed the exact boundary distance).
-                db2 = ((f2 * f2 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx2)))) if (idx2 >= 0 and f2 != float('inf')) else db_cap
-                db3 = ((f3 * f3 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx3)))) if (idx3 >= 0 and f3 != float('inf')) else db_cap
-                db4 = ((f4 * f4 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx4)))) if (idx4 >= 0 and f4 != float('inf')) else db_cap
-                db = min(db2, db3, db4)
-                inr = max(0.01, inradius[idx])
-                # Scale-free junction proximity: (F3-F1)/(F3+F1) -> 0 at three-way corners.
-                # With fewer than three sites there is no junction anywhere — jn stays 0.
-                if f3 == float('inf'):
-                    jn = 0.0
-                else:
-                    jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1))
+                radius = 2.08 * max(f1, 1e-9)
+                db, candidates = junction_grid.boundary_neighborhood(qx, qy, idx, f1,
+                    boundary_seed(f1, f2, f3, f4, idx, idx2, idx3, idx4, qx, qy), cosA, sinA, aniso_scale, radius)
+                jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1)) if f3 != float('inf') else 0.0
                 jn_s = self._smoothstep(0.65, 0.98, jn)
-                # v21 PER-EDGE FIELDS, blended between the two nearest edges by relative
-                # bisector distance (edge identity switches at corner rays — unblended
-                # values would jump there and render cliffs along every cell corner).
-                nb2 = idx2 if idx2 >= 0 else idx
-                nb3 = idx3 if idx3 >= 0 else nb2
-                e2_side = self._edge_hash01(idx, nb2, seed + 59)
-                e2_shared = self._edge_hash01(min(idx, nb2), max(idx, nb2), seed + 53)
-                e3_side = self._edge_hash01(idx, nb3, seed + 59)
-                e3_shared = self._edge_hash01(min(idx, nb3), max(idx, nb3), seed + 53)
-                # Symmetric interpolation: bisector distances need not preserve the F2/F3
-                # ordering, so the signed ratio must map both ways.
-                edge_ratio = (db3 - db2) / max(1e-9, db3 + db2)
-                if edge_ratio >= 0.0:
-                    edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, edge_ratio)
-                else:
-                    edge_mix = 0.5 - 0.5 * self._smoothstep(0.0, 0.3, -edge_ratio)
-                edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
-                edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
-                # Dissolution fades near junction corners (pairwise blend is ill-conditioned
-                # there; physically, references dissolve boundaries MID-EDGE, nodes survive).
+                static_mul_blended, slope_blended, inr, seam, edge_shared, local_side = self._junction_fields(
+                    candidates, f1, static_mul, slope_mul, geometry_radius, seam_scale, shared_strength,
+                    lambda index: self._edge_hash01(idx, index, seed + 59))
+                owner_fade = min(1.0, db / max(1e-6, 0.35 * inr))
+                edge_side = edge_shared + owner_fade * (local_side - edge_shared)
+                wall_field_noise = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq) if wall_noise_gen is not None else 0.0
                 dissolve = ((1.0 - self._smoothstep(0.06, 0.3, edge_shared)) * self.EDGE_DISSOLVE_MAX
                             * (1.0 - self._smoothstep(0.45, 0.75, jn)))
-                # v21.1 blended static depth multiplier + boundary-fading tilt weight.
-                owner_mix = 0.5 + 0.5 * min(1.0, db / max(1e-6, 0.35 * inr))
-                nb_mul = edge_mix * static_mul[nb2] + (1.0 - edge_mix) * static_mul[nb3]
-                static_mul_blended = owner_mix * static_mul[idx] + (1.0 - owner_mix) * nb_mul
-                nb_slope = edge_mix * slope_mul[nb2] + (1.0 - edge_mix) * slope_mul[nb3]
-                slope_blended = owner_mix * slope_mul[idx] + (1.0 - owner_mix) * nb_slope
-                owner_fade = max(0.0, 2.0 * owner_mix - 1.0)
                 # Ridge crest band: a physical plateau on the shared boundary. The plateau
                 # width SWINGS along each edge with the wall-noise field (chunky-to-thin
                 # ridges) and widens toward junctions.
@@ -1278,11 +1302,9 @@ class VoronoiReliefNoise(object):
                 # Wall extent = seamDepth fraction of the remaining inradius, varied per cell
                 # (asymmetric neighbors), along each edge (noise), and at junctions (widening).
                 wall_scale = 0.7 + 0.7 * edge_side
-                if depth_variation > 0.0:
-                    h_seam = self._cell_hash01(idx, seed + 29)
-                    wall_scale *= 1.0 + (h_seam - 0.5) * 0.8 * depth_variation
+                wall_scale *= seam
                 if wall_noise_gen is not None:
-                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
+                    wn = wall_field_noise
                     wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
                     # Junction DELTAS use a wider gate than the lift term: the plateau
                     # flares well before the corner into bold triangular Y-masses.
@@ -1402,8 +1424,8 @@ class VoronoiReliefNoise(object):
                     h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw * slope_blended
                 # v20 ridge crown: rounded bead over the crest band — dome peaking on the
                 # shared boundary. Melted zones keep ghost creases (0.35 floor).
-                if wall_frac > 0.0 and crest_w > 1e-6 and db < max(crest_w, self.CROWN_MIN_PHYS):
-                    crown = 1.0 - self._smoothstep(0.0, max(crest_w, self.CROWN_MIN_PHYS), db)
+                if wall_frac > 0.0:
+                    crown = self._crown_weight(crest_w, db, self.CROWN_MIN_PHYS)
                     crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
                     h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul * slope_blended
                 # v21 stock-plane soft cap (pockets only): broad crests flatten into
@@ -1657,7 +1679,9 @@ cols = cols_i
 rows = rows_i
 """
 
-    SMOOTH_SCRIPT = """# GHPython component script: MeshCraft | Smooth
+    SMOOTH_SCRIPT = """#! python 2
+# -*- coding: utf-8 -*-
+# GHPython component script: MeshCraft | Smooth
 # Runtime: IronPython 2.7 (Rhino 7)
 # Inputs: pts (list of Point3d), cols, rows, smooth_radius_in (Gaussian sigma, inches)
 # Outputs: pts (list of Point3d)
@@ -1778,7 +1802,8 @@ if sigma > 0.0 and any(p.Z != pts[0].Z for p in pts):
                     total += w
                 out[j * cols_i + i] = weighted / total
         zv = out
-    pts = [rg.Point3d(xs[k], ys[k], zv[k]) for k in range(len(zv))]"""
+    pts = [rg.Point3d(xs[k], ys[k], zv[k]) for k in range(len(zv))]
+"""
 
     PRESETS_SCRIPT = """#! python 2
 # GHPython component script — MeshCraft | Presets

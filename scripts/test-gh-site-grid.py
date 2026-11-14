@@ -118,6 +118,86 @@ class SiteGridTests(unittest.TestCase):
         self.assertFalse(Grid([[0., 0.]], 1).has_within(1, 0, 1))
         self.assertTrue(Grid([[0., 0.]], 1).has_within(math.nextafter(1, 0), 0, 1))
 
+    def test_metric_radius_matches_independent_scan(self):
+        rng = random.Random(887)
+        sites = [[rng.uniform(-4, 4), rng.uniform(-4, 4)] for _ in range(100)]
+        grid = Grid.from_sites(sites)
+        for scale in [1., 1.00001, 2.7]:
+            for _ in range(100):
+                x = rng.uniform(-8, 8); y = rng.uniform(-8, 8); radius = rng.uniform(.01, 3.)
+                expected = []
+                for index, p in enumerate(sites):
+                    dx = x - p[0]; dy = y - p[1]
+                    xr = (dx + dy) / math.sqrt(2); yr = (-dx + dy) / math.sqrt(2)
+                    d = math.sqrt(dx*dx + dy*dy) if scale <= 1.0001 else math.sqrt((xr*scale)**2 + yr*yr)
+                    if d < radius:
+                        expected.append((index, d))
+                actual = grid.within_radius(x, y, radius, 1/math.sqrt(2), 1/math.sqrt(2), scale)
+                self.assertEqual([p[0] for p in actual], [p[0] for p in expected])
+                for a, b in zip(actual, expected):
+                    self.assertAlmostEqual(a[1], b[1], places=13)
+        self.assertEqual(Grid([[0., 0.]], 1).within_radius(1., 0., 1.), [])
+        with self.assertRaises(ValueError):
+            grid.within_radius(0., 0., math.inf)
+        lattice = [[float(i), float(j)] for j in range(64) for i in range(64)]
+        observed = CountingSites(lattice)
+        radius_grid = Grid(observed, 1., (0., 0., 64., 64.)); observed.reads = 0
+        for i in range(100):
+            radius_grid.within_radius(i * .371 % 64, i * .217 % 64, 1.2)
+        self.assertLess(observed.reads, 100 * 100)
+        for count in [3, 4, 5, 9]:
+            coincident = [[0., 0.]] * count
+            candidates = Grid.from_sites(coincident).within_radius(0., 0., 2.08e-9)
+            values = [float(i + 1)/(count + 1) for i in range(count)]
+            result = Noise(0)._junction_fields(candidates, 0., values, values)
+            self.assertEqual(result, (sum(values)/count, sum(values)/count))
+
+    def test_complete_bisector_planes(self):
+        rng = random.Random(3147)
+        sites = [[rng.uniform(-4, 4), rng.uniform(-4, 4)] for _ in range(100)]
+        grid = Grid.from_sites(sites)
+        for scale in [1., 1.7, 4.]:
+            c = math.cos(.73); s = math.sin(.73)
+            for _ in range(150):
+                x = rng.uniform(-4, 4); y = rng.uniform(-4, 4)
+                def transform(dx, dy):
+                    return [(dx*c+dy*s)*scale,-dx*s+dy*c]
+                distances = [math.hypot(*transform(p[0]-x,p[1]-y)) for p in sites]
+                owner_index = min(range(len(sites)), key=lambda i: (distances[i], i))
+                owner_point = sites[owner_index]; q = transform(x-owner_point[0],y-owner_point[1]); minimum = 8.
+                for point in sites:
+                    delta = transform(point[0]-owner_point[0],point[1]-owner_point[1])
+                    separation = math.hypot(*delta)
+                    if separation == 0.:
+                        continue
+                    plane = sum((delta[i]/2-q[i])*(delta[i]/separation) for i in [0,1])
+                    minimum = min(minimum,max(0.,plane))
+                actual = grid.boundary_distance(x, y, owner_index, distances[owner_index], 8., c, s, scale)
+                self.assertAlmostEqual(actual, minimum, places=12)
+        for points, expected in [([[0.,0.],[0.,0.],[2.,0.]],1.), ([[0.,0.]]*9,8.),
+                                 ([[0.,0.],[1e-12,0.],[2.,0.]],5e-13)]:
+            coincident = Grid.from_sites(points)
+            self.assertEqual(coincident.nearest(0.,0.),0)
+            self.assertEqual(coincident.boundary_distance(0.,0.,0,0.,8.),expected)
+        for gap in [1e-10,1e-12,1e-14,2.220446049250313e-16]:
+            points = [[1.,0.],[1.+gap,0.]]
+            for scale in [1.,4.]:
+                for angle in [0.,.713]:
+                    c=math.cos(angle); s=math.sin(angle)
+                    dx=(points[1][0]-1.)*c*scale; dy=-(points[1][0]-1.)*s; d=math.hypot(dx,dy)
+                    tx=-.2*dx/d-10*dy/d; ty=-.2*dy/d+10*dx/d
+                    x=1.+c*tx/scale-s*ty; y=s*tx/scale+c*ty
+                    qx=((x-1.)*c+y*s)*scale; qy=-(x-1.)*s+y*c
+                    expected=(dx/2-qx)*(dx/d)+(dy/2-qy)*(dy/d)
+                    self.assertGreater(expected,.19)
+                    actual=Grid.from_sites(points).boundary_distance(x,y,0,math.hypot(x-1.,y),20.,c,s,scale)
+                    self.assertAlmostEqual(actual,expected,places=13)
+        observed = CountingSites([[float(i),float(j)] for j in range(64) for i in range(64)])
+        sparse = Grid(observed,1.,(0.,0.,64.,64.)); observed.reads = 0
+        for i in range(100):
+            sparse.boundary_distance(float(i%60),float(i%60),i%60*65,0.,.5)
+        self.assertLess(observed.reads,100*100)
+
     def test_sequential_moves_and_ties(self):
         sites = [[0., 0.], [2., 0.], [1., 2.]]
         grid = Grid(sites, .3, (0., 0., 3., 3.))
