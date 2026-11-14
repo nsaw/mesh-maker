@@ -83,6 +83,11 @@ meshcraft/
 │   ├── export-surface.ts      # The one surface every export and toolpath reads (master or grid)
 │   ├── mesh-writer.ts         # Pure grid -> indexed mesh -> STL/OBJ writers (browser + CLI)
 │   ├── relief-project.ts      # Procedural relief project codec and revision-bound history
+│   ├── relief-editor.ts       # Cell document transitions, pending layout, gestures and file races
+│   ├── relief-editor-jobs.ts  # Detached project preflight, placement and one-pass relaxation Worker
+│   ├── relief-editor-ui.ts    # Procedural-only exact project files and selected cell controls
+│   ├── relief-editor-overlay.ts # Plan sites/handles and pointer/keyboard editing
+│   ├── relief-cell-graph.ts   # One completed-source graph shared by plan overlay and DXF
 │   ├── cell-graph/            # Producer-owned exact diagram, nonlinear certificates, inch DXF,
 │   │                          #   cancellable Worker/controller and source-revision binding
 │   ├── relief-master.ts       # .mcrelief data contract: parse/encode/verify, preview resample

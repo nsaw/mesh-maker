@@ -27,6 +27,7 @@ export function setupInteraction(): void {
   let dragStartPanX = 0, dragStartPanY = 0;
 
   wrap.addEventListener('mousedown', e => {
+    if (STATE.viewMode === 'plan' && e.button === 0 && !e.shiftKey) return;
     e.preventDefault();
     dragStartX = e.clientX; dragStartY = e.clientY;
     if (e.button === 2 || e.shiftKey || e.button === 1) {
@@ -107,7 +108,7 @@ export function setupInteraction(): void {
     e.preventDefault();
     const cur = [...e.touches];
 
-    if (cur.length === 1) {
+    if (cur.length === 1 && STATE.viewMode !== 'plan') {
       const dx = cur[0].clientX - dragStartX, dy = cur[0].clientY - dragStartY;
       STATE.orbit = ((touchStartOrbit - dx * 0.4) % 360 + 360) % 360;
       STATE.tilt = Math.max(-90, Math.min(90, touchStartTilt - dy * 0.3));
@@ -143,6 +144,8 @@ export function setupInteraction(): void {
       touchStartOrbit = STATE.orbit; touchStartTilt = STATE.tilt;
     }
   });
+
+  wrap.addEventListener('touchcancel', () => { touches = []; lastPinchDist = 0; });
 
   wrap.addEventListener('dblclick', zoomExtents);
 }

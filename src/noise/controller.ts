@@ -44,6 +44,8 @@ export class NoiseGeneration {
   private full: NoiseSurface | null = null;
   private source: NonNullable<NoiseSurface['reliefSource']> | null = null;
   private error: string | null = null;
+  private invalidationListeners = new Set<() => void>();
+  private reliefListeners = new Set<(source: NonNullable<NoiseSurface['reliefSource']>, revision: number) => void>();
   private tracked = false;
   private gesture = 0;
   private dragging = false;
@@ -74,6 +76,7 @@ export class NoiseGeneration {
     this.full = null;
     this.source = null;
     this.error = null;
+    for (const listener of this.invalidationListeners) listener();
     return this.revision;
   }
 
@@ -90,6 +93,19 @@ export class NoiseGeneration {
   }
 
   get displayPending(): boolean { return this.tracked && this.full === null; }
+  /** Only completed full-resolution producer metadata may initialize an editing document. */
+  completedReliefSource(): NonNullable<NoiseSurface['reliefSource']> | null {
+    return this.params ? this.completedSource(this.params)?.source ?? null : null;
+  }
+
+  subscribeInvalidation(listener: () => void): () => void {
+    this.invalidationListeners.add(listener); return () => { this.invalidationListeners.delete(listener); };
+  }
+  subscribeFullRelief(listener: (source: NonNullable<NoiseSurface['reliefSource']>, revision: number) => void): () => void {
+    this.reliefListeners.add(listener); return () => { this.reliefListeners.delete(listener); };
+  }
+  get sourceRevision(): number { return this.revision; }
+
   get failed(): boolean { return this.error !== null; }
   get completionToken(): string { return `${this.revision}:${this.gesture}`; }
   isRevisionCurrent(revision: number): boolean { return revision === this.revision; }
@@ -104,6 +120,7 @@ export class NoiseGeneration {
     this.source = null;
     this.error = null;
     this.tracked = false;
+    for (const listener of this.invalidationListeners) listener();
     this.onBusy(false);
   }
 
@@ -203,6 +220,13 @@ export class NoiseGeneration {
     finally {
       this.onBusy(false);
       request.settle({ surface, revision: request.revision });
+    }
+    if (request.quality === 'full' && this.source) {
+      const source = this.source;
+      queueMicrotask(() => {
+        if (this.revision !== request.revision || this.full !== surface) return;
+        for (const listener of this.reliefListeners) listener(publishReliefSource(source, source.params), request.revision);
+      });
     }
     // Coalesce continuously arriving input. Only the newest immutable request follows this frame.
     if (request.quality === 'preview' && this.dragging && request.gesture === this.gesture

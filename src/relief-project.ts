@@ -1,3 +1,4 @@
+import { clampCutDepth } from './carve-limits';
 import { CURRENT_PAYLOAD_VERSION, DEFAULTS } from './state';
 import type { ReliefQueryDescription, ReliefSiteSet } from './types';
 import { buildNoiseSurface, NOISE_SURFACE_KEYS, noiseSurfaceParams, type NoiseSurface, type NoiseSurfaceParams } from './noise/surface';
@@ -55,9 +56,13 @@ function params(value: unknown): ReliefProjectParams {
     }
   }
   const result = out as ReliefProjectParams;
+  if (!Object.is(clampCutDepth(result.amplitude, result.baseThickness), result.amplitude)) throw new Error('Project cut depth exceeds its stock');
   const rows = Math.max(4, Math.round(result.resolution * result.meshY / result.meshX));
   if (rows * result.resolution > MAX_PROJECT_GRID_NODES) throw new Error('Project exceeds the supported generation grid');
   return Object.freeze(result);
+}
+export function validateReliefProjectParams(state: NoiseSurfaceParams): ReliefProjectParams {
+  return params(Object.fromEntries(PARAM_KEYS.map(key => [key, state[key]])));
 }
 function query(value: unknown): ReliefQueryDescription {
   const q = record(value, ['implementation', 'ownerPolicy', 'meshX', 'meshY', 'seed', 'metric', 'warp']);
@@ -146,7 +151,9 @@ export function projectSurfaceParams(project: ReliefProject, revision: number): 
   return noiseSurfaceParams({...project.params, reliefSites: project.sites, reliefRevision: revision});
 }
 export function captureReliefProject(surface: NoiseSurface): ReliefProject {
-  const source = surface.reliefSource;
+  return captureReliefSourceProject(surface.reliefSource);
+}
+export function captureReliefSourceProject(source: NoiseSurface['reliefSource']): ReliefProject {
   if (!source || source.params.noiseType !== 'voronoi-relief') throw new Error('Project v1 only supports procedural Voronoi relief');
   const {reliefSites: _sites, reliefRevision: _revision, ...settings} = source.params;
   const copy = copyReliefSource(source);
@@ -160,11 +167,13 @@ export function preflightReliefProject(project: ReliefProject): void {
 
 export interface ProjectSave { revision: number; text: string }
 /** Private retained copies cannot be detached or mutated by workers, UI readers or past callers. */
+interface ProjectCheckpoint { document: ReliefProject; pending: Partial<ReliefProjectParams> }
 export class ReliefProjectHistory {
   private document: ReliefProject;
-  private past: ReliefProject[] = [];
-  private future: ReliefProject[] = [];
-  private gesture: {before: ReliefProject; redo: ReliefProject[]} | null = null;
+  private layout: Partial<ReliefProjectParams> = {};
+  private past: ProjectCheckpoint[] = [];
+  private future: ProjectCheckpoint[] = [];
+  private gesture: {before: ProjectCheckpoint; redo: ProjectCheckpoint[]} | null = null;
   private saved: string | null;
   private epoch = 0;
   private importSequence = 0;
@@ -174,28 +183,43 @@ export class ReliefProjectHistory {
   }
   get revision(): number { return this.epoch; }
   get current(): ReliefProject { return copyReliefProject(this.document); }
+  get pending(): Partial<ReliefProjectParams> { return {...this.layout}; }
   get dirty(): boolean { return this.saved !== encodeReliefProject(this.document); }
   get canUndo(): boolean { return this.past.length > 0; }
   get canRedo(): boolean { return this.future.length > 0; }
-  private checkpoint(before: ReliefProject): void { this.past.push(before); if (this.past.length > 50) this.past.shift(); this.future = []; }
-  replace(document: ReliefProject, expectedRevision = this.epoch): boolean {
+  private snapshot(): ProjectCheckpoint { return {document: this.document, pending: this.layout}; }
+  private restore(snapshot: ProjectCheckpoint): void { this.document = snapshot.document; this.layout = snapshot.pending; }
+  private key(snapshot = this.snapshot()): string { return encodeReliefProject(snapshot.document) + JSON.stringify(snapshot.pending); }
+  private checkpoint(before: ProjectCheckpoint): void { this.past.push(before); if (this.past.length > 50) this.past.shift(); this.future = []; }
+  replace(document: ReliefProject, expectedRevision = this.epoch, clearPending = false): boolean {
     const candidate = copyReliefProject(document);
     if (expectedRevision !== this.epoch) return false;
     if (this.gesture) throw new Error('Finish the current site gesture first');
-    this.checkpoint(this.document); this.document = candidate; this.epoch++;
-    return true;
+    this.checkpoint(this.snapshot()); this.document = candidate;
+    if (clearPending) this.layout = {};
+    this.epoch++; return true;
+  }
+  /** Pending controls and handle drags share the document's private immutable checkpoints. */
+  stage(patch: Partial<ReliefProjectParams>, replace = false): void {
+    const before = this.snapshot();
+    const next = replace ? patch : {...this.layout, ...patch};
+    this.layout = Object.freeze(Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b))
+      .filter(([key, value]) => !Object.is(value, this.document.params[key as keyof ReliefProjectParams]))));
+    if (this.key(before) === this.key()) { this.layout = before.pending; return; }
+    if (this.gesture) this.future = []; else this.checkpoint(before);
+    this.epoch++;
   }
   async open(text: string, preflight: (project: ReliefProject) => Promise<void>): Promise<boolean> {
     const sequence = ++this.importSequence, revision = this.epoch, candidate = parseReliefProject(text);
     await preflight(copyReliefProject(candidate));
     if (sequence !== this.importSequence) return false;
-    const accepted = this.replace(candidate, revision);
+    const accepted = this.replace(candidate, revision, true);
     if (accepted) this.markSaved(this.captureSave());
     return accepted;
   }
   beginGesture(): void {
     if (this.gesture) throw new Error('A site gesture is already active');
-    this.gesture = {before: this.document, redo: this.future};
+    this.gesture = {before: this.snapshot(), redo: this.future};
   }
   updateGesture(document: ReliefProject): void {
     if (!this.gesture) throw new Error('No site gesture is active');
@@ -206,26 +230,26 @@ export class ReliefProjectHistory {
   commitGesture(): void {
     if (!this.gesture) throw new Error('No site gesture is active');
     const {before, redo} = this.gesture; this.gesture = null;
-    if (encodeReliefProject(before) !== encodeReliefProject(this.document)) this.checkpoint(before);
+    if (this.key(before) !== this.key()) this.checkpoint(before);
     else this.future = redo;
   }
   cancelGesture(): void {
     if (!this.gesture) return;
     const {before, redo} = this.gesture; this.gesture = null;
-    if (encodeReliefProject(before) !== encodeReliefProject(this.document)) { this.document = before; this.epoch++; }
+    if (this.key(before) !== this.key()) { this.restore(before); this.epoch++; }
     this.future = redo;
   }
   undo(): boolean {
     if (this.gesture) throw new Error('Finish the current site gesture first');
     const previous = this.past.pop();
     if (!previous) return false;
-    this.future.push(this.document); this.document = previous; this.epoch++; return true;
+    this.future.push(this.snapshot()); this.restore(previous); this.epoch++; return true;
   }
   redo(): boolean {
     if (this.gesture) throw new Error('Finish the current site gesture first');
     const next = this.future.pop();
     if (!next) return false;
-    this.past.push(this.document); this.document = next; this.epoch++; return true;
+    this.past.push(this.snapshot()); this.restore(next); this.epoch++; return true;
   }
   captureSave(): ProjectSave { return {revision: this.epoch, text: encodeReliefProject(this.document)}; }
   markSaved(save: ProjectSave): boolean {

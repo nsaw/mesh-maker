@@ -361,6 +361,7 @@ canvas {
   pointer-events: none;
 }
 .stats-overlay .stat-row { display: flex; justify-content: space-between; gap: 16px; }
+.stats-overlay .stat-ridge .stat-val { max-width: 280px; white-space: normal; }
 .stats-overlay .stat-val { color: var(--accent); }
 .stats-overlay .stat-warn, .stats-overlay .stat-diagnostic .stat-val { color: var(--warn); }
 
@@ -783,3 +784,20 @@ body[data-mobile-layout="true"] .sidebar .val-edit,
 body[data-mobile-layout="true"] .export-bar .filename-input { font-size: 16px !important; }
 body[data-mobile-layout="true"] .control-reset { min-width: 44px; min-height: 44px; }
 body[data-mobile-layout="true"] .sponsor-img-wrap { min-height: 44px; }
+
+/* Relief cell authoring shares the generator pane and the orthographic plan camera. */
+.cell-editor-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+.cell-editor-actions .btn { min-height: 32px; white-space: normal; }
+.cell-editor-actions .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.cell-coordinates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cell-coordinates label { display: flex; flex-direction: column; gap: 4px; color: var(--text2); font-size: 11px; }
+.cell-coordinates input[type="number"] { width: 100%; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--bg4); border-radius: 4px; padding: 6px; font-family: var(--mono); }
+.cell-coordinates label:last-child { flex-direction: row; align-items: center; min-height: 32px; }
+.cell-overlay { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.cell-overlay[hidden] { display: none; }
+.cell-overlay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 900px) {
+  .cell-editor-actions .btn, .cell-coordinates input[type="number"], .cell-coordinates label:last-child { min-height: 44px; font-size: 13px; }
+  .cell-coordinates input[type="checkbox"] { width: 18px; height: 18px; }
+  .cell-coordinates label, .cell-editor .profile-note { font-size: 13px; }
+}

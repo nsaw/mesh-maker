@@ -67,6 +67,18 @@ import { mulberry32, cellHash01 } from './prng';
 import { SiteGrid, type GridSite } from './site-grid';
 import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 
+/** Every control that can alter generated site positions, count, pinning or order.
+ * Cartesian density and suppression, focal exclusion/polar candidates, seeded selection and
+ * warped Lloyd centroids share this producer-owned list. Radius/height shaping is excluded. */
+export const RELIEF_PLACEMENT_KEYS = Object.freeze([
+  'meshX', 'meshY', 'seed', 'reliefCellSize', 'reliefJitter', 'reliefRelaxIterations',
+  'reliefDensityStrength', 'reliefDensityNoise', 'reliefDensityNoiseFreq', 'reliefDepthVariation',
+  'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius', 'reliefAttractorFalloff',
+  'reliefRadialFociCount', 'reliefRadialFocus1X', 'reliefRadialFocus1Y', 'reliefRadialFocus2X', 'reliefRadialFocus2Y',
+  'reliefRadialFocus3X', 'reliefRadialFocus3Y', 'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp', 'reliefRadialMode',
+  'distortion', 'warpFreq',
+] as const);
+
 // Tuning constants — kept central so future work has one place to edit.
 const LLOYD_SAMPLES_PER_SITE = 64;
 const WALL_MIN_PHYS = 0.3;

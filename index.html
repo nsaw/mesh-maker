@@ -93,6 +93,7 @@
         <button type="button" class="view-btn active" data-view="solid" aria-label="Solid view">Solid</button>
         <button type="button" class="view-btn" data-view="wireframe" aria-label="Wireframe view">Wire</button>
         <button type="button" class="view-btn" data-view="both" aria-label="Solid and wireframe view">Both</button>
+        <button type="button" class="view-btn" data-view="plan" aria-label="Plan view">Plan</button>
         <button type="button" class="view-btn" data-view="points" aria-label="Points view">Points</button>
       </div>
       <div class="viewport-actions">
@@ -105,6 +106,7 @@
     </div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="viewport"></canvas>
+      <canvas id="cellOverlay" class="cell-overlay" tabindex="0" aria-label="Cell plan. Page Up and Page Down select cells. Arrow keys move, Delete erases, Escape cancels." hidden></canvas>
       <div class="dims-overlay" id="dimsOverlay"></div>
       <div class="stats-overlay" id="statsOverlay"></div>
       <div class="generating-overlay" id="genOverlay"><div class="generating-spinner"></div></div>
@@ -116,6 +118,7 @@
         <button type="button" class="format-btn" data-fmt="obj" aria-label="Export as OBJ">OBJ</button>
         <button type="button" class="format-btn" data-fmt="3dm" aria-label="Export as Rhino 3DM">3DM</button>
         <button type="button" class="format-btn" data-fmt="heightmap" aria-label="Export as heightmap PNG" title="Grayscale PNG for Vectric VCarve/Aspire">Heightmap</button>
+        <button type="button" class="format-btn" data-fmt="dxf" aria-label="Export cell edges as DXF">DXF</button>
         <button type="button" class="format-btn" data-fmt="sbp" aria-label="Export as ShopBot SBP" title="ShopBot cut file (.sbp)" data-sbp-enabled="true">SBP</button>
       </div>
       <div class="check-row" style="margin:0;">

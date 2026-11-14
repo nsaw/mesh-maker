@@ -1,3 +1,6 @@
+import { requestCellGraph } from './relief-cell-graph';
+import { cellGraphDxf } from './cell-graph/dxf';
+import { noiseGeneration } from './noise/controller';
 import { ensureFullNoiseSurface } from './mesh';
 import { STATE } from './state';
 import { showToast } from './toast';
@@ -187,6 +190,15 @@ async function _doExportInner(): Promise<void> {
   const blocked = await ensureFullNoiseSurface();
   const refusal = blocked ?? source();
   if (refusal) { showToast(refusal, 6000); return; }
+  if (fmt === 'dxf') {
+    const result = await requestCellGraph();
+    const stale = source();
+    if (stale) { showToast(stale, 6000); return; }
+    if (!result.ok) { showToast(result.reason, 8000); return; }
+    const text = cellGraphDxf(result.graph, noiseGeneration.sourceRevision);
+    downloadCurrentSource(new Blob([text], {type: 'application/dxf'}), `${filename}.dxf`, source);
+    return;
+  }
   const surface = getExportSurface();
   if (typeof surface === 'string') { showToast(surface, 6000); return; }
 

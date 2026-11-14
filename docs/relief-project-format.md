@@ -1,6 +1,6 @@
 # Procedural relief project format
 
-`.mcproject` version 1 contains procedural Voronoi relief only. It does not promise to reconstruct images, imported relief masters or Drape figures. Those source kinds are rejected explicitly. This core has no file controls or site editor yet.
+`.mcproject` version 1 contains procedural Voronoi relief only. It does not promise to reconstruct images, imported relief masters or Drape figures. Those source kinds are rejected explicitly. The Noise relief Plan view provides site editing and Save/Open project controls.
 
 The root object contains exactly `format`, `version`, `kind`, `generation`, `params`, `query` and `sites`. The identifiers are `meshcraft-project`, version `1` and kind `procedural-voronoi-relief`. `generation` must equal the application's current generation payload version. Unsupported versions fail rather than loading under changed noise semantics.
 
@@ -22,4 +22,4 @@ Frozen-site queries bound bucket allocation and empty-bucket searches by the ret
 
 Import parses and validates into detached data, awaits a supplied asynchronous geometry preflight, then checks the latest import intent and captured revision before replacing source settings/sites in one history operation. Invalid, failed or superseded imports leave the active source and history unchanged. An accepted import becomes the saved checkpoint. Browser callers must provide a worker preflight rather than run heavy generation on the main thread. `preflightReliefProject` is a synchronous Node helper for validation. Save captures both bytes and revision, and only a matching completion may clear dirty.
 
-No third-party persistence or geometry code was copied for this format. `npm run test:relief-project` checks its codec, producer identity, history, stale-import, buffer ownership and native class parity contracts. Full editor, link and graph/DXF acceptance remains part of later Slice 8 work.
+No third-party persistence or geometry code was copied for this format. `npm run test:relief-project` checks its codec, producer identity, history, stale-import, buffer ownership and native class parity contracts. The editor, approximate links and graph/DXF paths have separate tests and native acceptance gates; the project codec checks alone do not validate those paths.

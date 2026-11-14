@@ -1,3 +1,5 @@
+import { clampCutDepth } from './carve-limits';
+import { buildCellEditor, beginReliefControlGesture, endReliefControlGesture, changeReliefParams, reliefPreviewParams, reliefControlValue, restoreReliefDocument } from './relief-editor-ui';
 import { syncMobilePanes } from './mobile-layout';
 import { noiseGeneration } from './noise/controller';
 import { numericDomain } from './numeric-domain';
@@ -44,6 +46,7 @@ export function buildSidebar(): void {
   const view = document.getElementById('viewPane')!;
   shape.replaceChildren(buildPresetSection(), buildMeshDimensionsSection());
   generator.replaceChildren(
+    ...(isRelief ? [buildCellEditor()] : []),
     buildNoiseParametersSection(),
     ...(isRelief ? buildReliefSections() : [buildPeakValleySection(), buildAdvancedNoiseSection()]),
     buildSmoothingSection(), buildDepthMapSection(), ...buildDrapeSections(),
@@ -112,7 +115,7 @@ function buildSliderLabel(label: string, valueId: string, valueText: string, bad
 }
 
 function slider(key: string, label: string, min: number, max: number, step: number, badgeText = ''): HTMLDivElement {
-  const value = STATE.mode === 'drape' && key === 'baseThickness' ? STATE.drapeStock : STATE[key as keyof typeof STATE] as number;
+  const value = STATE.mode === 'drape' && key === 'baseThickness' ? STATE.drapeStock : (reliefControlValue(key) ?? STATE[key as keyof typeof STATE]) as number;
   const row = createElement('div', 'control-row');
   const controlLabel = buildSliderLabel(label, `val_${key}`, '', badgeText);
   const input = createElement('input');
@@ -131,7 +134,7 @@ function enumSelect(key: string, label: string, options: Array<[string, string]>
   const sel = createElement('select', 'select-input') as HTMLSelectElement;
   sel.id = `sl_${key}`;
   sel.dataset.key = key;
-  const current = String(STATE[key as keyof typeof STATE]);
+  const current = String(reliefControlValue(key) ?? STATE[key as keyof typeof STATE]);
   sel.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? current);
   for (const [value, text] of options) {
     const opt = createElement('option') as HTMLOptionElement;
@@ -411,32 +414,33 @@ function buildReliefSections(): HTMLElement[] {
 }
 
 /** Hide only controls whose values the sampler cannot currently use. Keep those values intact. */
-function syncReliefControls(): void {
+export function syncReliefControls(): void {
+  const settings = reliefPreviewParams() ?? STATE;
   const hide = (key: string, inert: boolean): void => {
     const input = document.getElementById(`sl_${key}`);
     const row = input?.closest<HTMLElement>('.control-row, .check-row');
     if (row) row.hidden = inert;
   };
-  hide('reliefDensityNoiseFreq', STATE.reliefDensityNoise === 0);
-  hide('reliefAnisotropyAngle', STATE.reliefAnisotropy === 0);
-  const mode = STATE.reliefAttractorMode;
+  hide('reliefDensityNoiseFreq', settings.reliefDensityNoise === 0);
+  hide('reliefAnisotropyAngle', settings.reliefAnisotropy === 0);
+  const mode = settings.reliefAttractorMode;
   hide('reliefAttractorX', mode === 'none' || mode === 'vertical');
   hide('reliefAttractorY', mode === 'none' || mode === 'horizontal');
   hide('reliefAttractorRadius', mode !== 'radial' && mode !== 'point');
   hide('reliefAttractorFalloff', mode === 'none');
-  const maskVaries = mode !== 'none' || STATE.reliefAttractorNoise > 0;
+  const maskVaries = mode !== 'none' || settings.reliefAttractorNoise > 0;
   hide('reliefTransitionSoftness', !maskVaries);
   hide('reliefIntensityStrength', !maskVaries);
-  hide('reliefAttractorNoiseFreq', STATE.reliefAttractorNoise === 0);
-  hide('reliefPillow', STATE.reliefInvertProfile > 0.5);
-  hide('reliefPillowCoverage', STATE.reliefPillow === 0 || STATE.reliefInvertProfile > 0.5);
+  hide('reliefAttractorNoiseFreq', settings.reliefAttractorNoise === 0);
+  hide('reliefPillow', settings.reliefInvertProfile > 0.5);
+  hide('reliefPillowCoverage', settings.reliefPillow === 0 || settings.reliefInvertProfile > 0.5);
   for (let index = 1; index <= 3; index++) {
-    hide(`reliefRadialFocus${index}X`, STATE.reliefRadialFociCount < index);
-    hide(`reliefRadialFocus${index}Y`, STATE.reliefRadialFociCount < index);
+    hide(`reliefRadialFocus${index}X`, settings.reliefRadialFociCount < index);
+    hide(`reliefRadialFocus${index}Y`, settings.reliefRadialFociCount < index);
   }
-  for (const key of ['reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp', 'reliefRadialMode']) hide(key, STATE.reliefRadialFociCount === 0);
-  hide('reliefBaseAmplitude', STATE.reliefBaseMode === 'flat');
-  hide('reliefBaseFrequency', STATE.reliefBaseMode === 'flat' || STATE.reliefBaseAmplitude === 0);
+  for (const key of ['reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp', 'reliefRadialMode']) hide(key, settings.reliefRadialFociCount === 0);
+  hide('reliefBaseAmplitude', settings.reliefBaseMode === 'flat');
+  hide('reliefBaseFrequency', settings.reliefBaseMode === 'flat' || settings.reliefBaseAmplitude === 0);
 }
 
 function buildPeakValleySection(): HTMLElement {
@@ -692,11 +696,14 @@ function buildViewControlsSection(): HTMLElement {
 /** Clamp the requested cut and keep the value, range and label in agreement. */
 export function syncDepthCaps(): void {
   const activeKey = STATE.mode === 'noise' ? 'amplitude' : STATE.mode === 'depthmap' && !STATE.reliefMaster ? 'dmHeightScale' : null;
+  const preview = reliefPreviewParams();
   for (const key of ['amplitude', 'dmHeightScale'] as const) {
-    const max = key === activeKey ? Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness) : MAX_CUT_DEPTH_IN;
-    if (key === activeKey) STATE[key] = Math.max(0, Math.min(max, STATE[key]));
+    if (key === activeKey) STATE[key] = clampCutDepth(STATE[key], STATE.baseThickness);
+    const stock = key === 'amplitude' && preview ? preview.baseThickness : STATE.baseThickness;
+    const max = key === activeKey ? Math.min(MAX_CUT_DEPTH_IN, stock) : MAX_CUT_DEPTH_IN;
+    const value = key === 'amplitude' && preview ? clampCutDepth(preview.amplitude, stock) : STATE[key];
     const input = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
-    if (input) syncRange(input, STATE[key], { max });
+    if (input) syncRange(input, value, { max });
   }
   refreshControlResets();
 }
@@ -723,15 +730,16 @@ function wireControls(): void {
     const finish = (): void => {
       pointerDown = false;
       endNoiseGesture(key);
+      endReliefControlGesture(key);
       clearCompletion();
       if (drapeControlEffect(key)) return;
       if (STATE.mode === 'drape' && ['baseThickness', 'meshX', 'meshY'].includes(key)) return;
       if (controlIsReadOnly(key)) return;
       debouncedGenerate(key, 'full');
     };
-    sl.addEventListener('pointerdown', () => { pointerDown = true; clearCompletion(); beginNoiseGesture(key); });
+    sl.addEventListener('pointerdown', () => { pointerDown = true; clearCompletion(); beginNoiseGesture(key); beginReliefControlGesture(key); });
     sl.addEventListener('pointerup', finish);
-    sl.addEventListener('pointercancel', finish);
+    sl.addEventListener('pointercancel', () => { endReliefControlGesture(key, true); finish(); });
     sl.addEventListener('lostpointercapture', () => { if (pointerDown) finish(); });
     sl.addEventListener('change', finish);
     sl.addEventListener('input', () => {
@@ -765,15 +773,15 @@ function wireControls(): void {
         return;
       }
       const v = readRangeValue(sl);
+      if (STATE.mode === 'noise' && changeReliefParams({[key]: v})) { syncRange(sl, v); return; }
       (STATE as unknown as Record<string, unknown>)[key] = v;
       syncRange(sl, v);
       if (key.startsWith('relief')) syncReliefControls();
 
       // Aspect ratio lock
-      if (STATE.aspectLocked && STATE.depthMapAR && (key === 'meshX' || key === 'meshY')) {
-        const fitted = fitAspectToBed(STATE.depthMapAR, key === 'meshX' ? v : v * STATE.depthMapAR);
+      if (key === 'meshX' || key === 'meshY') {
+        const fitted = lockedDimensionPatch(key, v);
         if (fitted) Object.assign(STATE, fitted);
-        else { STATE.aspectLocked = false; showToast('Aspect lock is unavailable for this image within the dimension limits.'); }
         syncAspectLockButton();
       }
 
@@ -840,6 +848,7 @@ function wireControls(): void {
 
   const domed = document.getElementById('sl_reliefInvertProfile') as HTMLInputElement | null;
   domed?.addEventListener('change', () => {
+    if (changeReliefParams({reliefInvertProfile: domed.checked ? 1 : 0})) return;
     STATE.reliefInvertProfile = domed.checked ? 1 : 0;
     STATE.activePreset = null;
     STATE.activeProfile = null;
@@ -864,6 +873,7 @@ function wireControls(): void {
   document.querySelectorAll<HTMLSelectElement>('select[data-key]').forEach(sel => {
     const key = sel.dataset.key!;
     sel.addEventListener('change', () => {
+      if (STATE.mode === 'noise' && changeReliefParams({[key]: sel.value})) return;
       (STATE as unknown as Record<string, unknown>)[key] = sel.value;
       if (key.startsWith('relief')) syncReliefControls();
       // Shading is view-only: swap the material, keep the mesh and the active preset.
@@ -942,7 +952,9 @@ function wireSectionCollapse(): void {
   if (sel) {
     sel.value = STATE.noiseType;
     sel.addEventListener('change', () => {
+      if (changeReliefParams({noiseType: sel.value as typeof STATE.noiseType})) return;
       STATE.noiseType = sel.value as typeof STATE.noiseType;
+      restoreReliefDocument();
       if (STATE.activePreset) {
         STATE.activePreset = null;
       }
@@ -958,7 +970,9 @@ function wireSectionCollapse(): void {
       if (!seedEl.value.trim()) { randomSeed(); return; }
       const value = seedEl.value.trim();
       const parsed = Number(value);
-      STATE.seed = Number.isFinite(parsed) ? Math.trunc(parsed) : hashString(value);
+      const nextSeed = Number.isFinite(parsed) ? Math.trunc(parsed) : hashString(value);
+      if (changeReliefParams({seed: nextSeed})) return;
+      STATE.seed = nextSeed;
       seedEl.value = String(STATE.seed);
       generateMesh();
     });
@@ -987,6 +1001,7 @@ function wireSectionCollapse(): void {
       const key = presetSel.value;
       if (!key) return;
       if (!CNC_PRESETS[key]) return;
+      if (changeReliefParams(presetState(key))) { buildSidebar(); return; }
       Object.assign(STATE, presetState(key));
       STATE.activePreset = key;
       STATE.activeProfile = null;
@@ -1000,6 +1015,7 @@ function wireSectionCollapse(): void {
     btn.addEventListener('click', () => {
       const p = PROFILES[(btn as HTMLElement).dataset.profile!];
       if (!p) return;
+      if (changeReliefParams(p)) { buildSidebar(); return; }
       Object.keys(p).forEach(k => { (STATE as unknown as Record<string, unknown>)[k] = p[k]; });
       STATE.activeProfile = (btn as HTMLElement).dataset.profile!;
       STATE.activePreset = null;
@@ -1066,6 +1082,17 @@ export function applyPendingFit(): boolean {
   pendingFit = null;
   fitSizes(w, h);
   return true;
+}
+
+/** Both the ordinary sliders and the manual document owner use this dimension coupling. */
+export function lockedDimensionPatch(key: string, value: number): {meshX: number; meshY: number} | null {
+  if (!STATE.aspectLocked || !STATE.depthMapAR || (key !== 'meshX' && key !== 'meshY')) return null;
+  const fitted = fitAspectToBed(STATE.depthMapAR, key === 'meshX' ? value : value * STATE.depthMapAR);
+  if (!fitted) {
+    STATE.aspectLocked = false; syncAspectLockButton();
+    showToast('Aspect lock is unavailable for this image within the dimension limits.');
+  }
+  return fitted;
 }
 
 /** Fit a locked image without changing its aspect, within both sliders' physical bounds. */
@@ -1239,7 +1266,9 @@ async function loadReliefMaster(file: File, revision: number): Promise<void> {
 }
 
 export function randomSeed(): void {
-  STATE.seed = Math.floor(Math.random() * 99999);
+  const seed = Math.floor(Math.random() * 99999);
+  if (changeReliefParams({seed})) { buildSidebar(); return; }
+  STATE.seed = seed;
   const el = document.getElementById('seedInput') as HTMLInputElement | null;
   if (el) el.value = String(STATE.seed);
   generateMesh();

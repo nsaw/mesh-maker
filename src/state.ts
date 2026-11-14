@@ -1,3 +1,4 @@
+import { validateReliefProjectParams } from './relief-project';
 import { isFiniteNumeric, normalizeNumericValue, numericDomain } from './numeric-domain';
 import { decodeReliefLink, encodeReliefLink, MAX_RELIEF_LINK_BYTES } from './relief-link';
 import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN, type SbpStats } from './sbp/types';
@@ -9,8 +10,8 @@ import type { ReliefAttractorMode, ReliefBaseMode, ReliefCrestClipStatus, Relief
 /** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
 export interface MeshState extends DrapeSettings {
   mode: 'noise' | 'depthmap' | 'drape';
-  viewMode: 'solid' | 'wireframe' | 'both' | 'points';
-  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp';
+  viewMode: 'solid' | 'wireframe' | 'both' | 'points' | 'plan';
+  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp' | 'dxf';
   // Noise params
   noiseType: 'simplex' | 'perlin' | 'ridged' | 'voronoi'
     | 'value' | 'opensimplex2' | 'worley' | 'billow'
@@ -371,7 +372,7 @@ const ENUM_VALUES: {
     worley: true, billow: true, hybrid: true, hetero: true, domainwarp: true,
     gabor: true, wavelet: true, 'voronoi-relief': true,
   },
-  viewMode: { solid: true, wireframe: true, both: true, points: true },
+  viewMode: { solid: true, wireframe: true, both: true, points: true, plan: true },
   viewMaterial: { elevation: true, neutral: true },
   drapeWindMode: { off: true, wind: true, pressure: true },
   cellMetric: { euclidean: true, manhattan: true, chebyshev: true },
@@ -426,18 +427,23 @@ export function consumeOutdatedLinkReset(): boolean {
 }
 
 export function serializeConfig(): string {
+  const frozen = STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null;
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
     if (STATE[key] !== DEFAULTS[key]) {
       diff[key] = STATE[key];
     }
   }
-  if (STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null) {
-    diff._sites = encodeReliefLink(STATE.reliefSites, STATE.meshX, STATE.meshY);
+  if (frozen) {
+    for (const [key, value] of Object.entries(validateReliefProjectParams(STATE))) {
+      if (!Object.is(value, DEFAULTS[key as keyof MeshState])) diff[key] = value;
+      else delete diff[key];
+    }
+    diff._sites = encodeReliefLink(STATE.reliefSites!, STATE.meshX, STATE.meshY);
   }
   // Only _v present means no diffs -- return empty (default config)
   if (Object.keys(diff).length === 1) return '';
-  return btoa(JSON.stringify(diff))
+  return btoa(JSON.stringify(diff, frozen ? (_key, value: unknown) => Object.is(value, -0) ? '-0' : value : undefined))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
@@ -542,6 +548,13 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
       return {};
     }
 
+    let frozenParams: ReturnType<typeof validateReliefProjectParams> | null = null;
+    if (Object.prototype.hasOwnProperty.call(parsed, '_sites')) {
+      try {
+        if (('mode' in parsed ? parsed.mode : DEFAULTS.mode) !== 'noise') throw new Error('Cell links require Noise mode');
+        frozenParams = validateReliefProjectParams({...DEFAULTS, ...parsed, reliefSites: null, reliefRevision: 0});
+      } catch { invalidCellLink = true; return {}; }
+    }
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
         const value: unknown = parsed[key];
@@ -693,7 +706,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefRadialFocus3Y' in result) clampField('reliefRadialFocus3Y', 0, 1);
     if (Object.prototype.hasOwnProperty.call(parsed, '_sites')) {
       try {
-        if ((result.mode ?? DEFAULTS.mode) !== 'noise' || result.noiseType !== 'voronoi-relief') throw new Error('Cell links require Voronoi relief');
+        Object.assign(result, frozenParams);
         result.reliefSites = decodeReliefLink(parsed._sites, result.meshX ?? DEFAULTS.meshX, result.meshY ?? DEFAULTS.meshY);
         result.reliefRevision = 1;
       } catch {

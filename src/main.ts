@@ -1,3 +1,5 @@
+import { setupCellEditor } from './relief-editor-ui';
+import { setupCellOverlay } from './relief-editor-overlay';
 import { setupMobileLayout } from './mobile-layout';
 import { STATE, consumeInvalidCellLink, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
 import { buildSidebar, showDemoDepthMap } from './ui';
@@ -51,7 +53,9 @@ function init(): void {
   document.querySelectorAll('.format-btn').forEach(btn =>
     btn.classList.toggle('active', (btn as HTMLElement).dataset.fmt === STATE.exportFormat));
 
+  setupCellEditor();
   buildSidebar();
+  setupCellOverlay();
   setupTabs();
   setupToolbar();
   updateExportControls();

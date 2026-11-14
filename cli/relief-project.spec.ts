@@ -302,4 +302,10 @@ const web = new VoronoiReliefGen(5).sampleGridResult({...parityParams,frozenSite
 assert(py.grid.every((z:number,i:number)=>Math.abs(z-web.grid[Math.floor(i/parityParams.cols)][i%parityParams.cols])<1e-12));
 const webRelaxed=relaxReliefSites(p,authored);assert(py.relaxed.xy.every((v:number,i:number)=>Math.abs(v-webRelaxed.xy[i])<1e-12));
 const edgeIndex=Number(((4294967295n*7919n)+4294967295n+1n)&0xffffffffn);assert.equal(py.hash,hash(edgeIndex,53));
+
+let finishOldHistory: (() => void) | undefined;
+const historyRace = new ReliefProjectHistory(document);
+const oldHistoryOpen = historyRace.open(encodeReliefProject(document), () => new Promise<void>(resolve => { finishOldHistory = resolve; }));
+await assert.rejects(historyRace.open('{', async () => undefined)); finishOldHistory!();
+assert.equal(await oldHistoryOpen, false, 'history admission also rejects an older preflight after a newer invalid selection');
 process.stdout.write('Relief project, frozen identity, query ownership, transport, history and native parity contracts passed.\n');

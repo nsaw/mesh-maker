@@ -1,3 +1,6 @@
+import { reliefRidgeReadout } from './noise/relief-features';
+import { SBP_STATE } from './sbp-export';
+import { getDefaultFinishingTool } from './sbp/tools';
 import { noiseGeneration } from './noise/controller';
 import { syncRange } from './slider-utils';
 import { STATE, activeMaster } from './state';
@@ -64,10 +67,14 @@ export function updateStats(): void {
     }
   }
 
+  const ridge = !noisePending ? reliefRidgeReadout(STATE, getDefaultFinishingTool(SBP_STATE.materialProfile).diameter) : null;
+  if (ridge) statData.push(['Narrowest ridge', ridge.text]);
+
   for (const [label, value] of statData) {
     const row = document.createElement('div');
     row.className = 'stat-row';
     if (label === 'Gen time' || label === 'Est. size') row.classList.add('stat-secondary');
+    if (label === 'Narrowest ridge') { row.classList.add('stat-diagnostic', 'stat-ridge'); if (ridge?.warn) row.classList.add('cnc-warn'); }
     if (label === 'Cells capped') { row.classList.add('stat-diagnostic'); row.setAttribute('role', 'status'); }
     const labelSpan = document.createElement('span');
     labelSpan.textContent = label;

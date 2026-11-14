@@ -1,3 +1,5 @@
+import { requestCellGraph } from './relief-cell-graph';
+import { applyCellLayout, changeReliefParams, reliefEditor, restoreReliefDocument } from './relief-editor-ui';
 import { revealSceneForFit } from './mobile-layout';
 import { showSidebarPane } from './sidebar-state';
 import { updateEffectiveOffsetDisplay } from './sbp-export';
@@ -14,6 +16,7 @@ export function setupTabs(): void {
   // Mode tabs
   document.querySelectorAll('.mode-tab').forEach(btn => {
     btn.addEventListener('click', () => {
+      reliefEditor.navigation();
       showSidebarPane('controls', false);
       let prevMode = STATE.mode;
       document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
@@ -29,7 +32,7 @@ export function setupTabs(): void {
 
       // NOISE's board (size and material thickness) is kept while another tab owns the controls.
       if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'drape')) saveNoiseDims();
-      if (STATE.mode === 'noise' && prevMode !== 'noise') { restoreNoiseDims(); buildSidebar(); }
+      if (STATE.mode === 'noise' && prevMode !== 'noise') { restoreNoiseDims(); restoreReliefDocument(); buildSidebar(); }
 
       // A loaded relief master owns DEPTH MAP mode: restore its label, size and stock, and never
       // let the demo image stand in for it there.
@@ -60,6 +63,7 @@ export function setupTabs(): void {
       // Restore the destination's stock before building its controls, which clamps its cut depth.
       if (leavingDrape) buildSidebar();
       syncDepthCaps();
+      updateExportControls();
       generateMesh();
     });
   });
@@ -67,10 +71,7 @@ export function setupTabs(): void {
   // View mode buttons
   document.querySelectorAll('.view-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      STATE.viewMode = (btn as HTMLElement).dataset.view as typeof STATE.viewMode;
-      renderViewport();
+      setViewMode((btn as HTMLElement).dataset.view as typeof STATE.viewMode);
     });
   });
 
@@ -86,16 +87,26 @@ export function setupTabs(): void {
   });
 }
 
+export function setViewMode(mode: typeof STATE.viewMode): void {
+  STATE.viewMode = mode;
+  document.querySelectorAll<HTMLElement>('.view-btn').forEach(button => button.classList.toggle('active', button.dataset.view === mode));
+  renderViewport();
+  if (mode === 'plan' && STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief') void requestCellGraph();
+}
+
 /** Show/hide export-bar controls and sidebar SBP section based on current format */
 export function updateExportControls(): void {
   const isSBP = STATE.exportFormat === 'sbp';
+  const isDXF = STATE.exportFormat === 'dxf';
+  const dxf = document.querySelector<HTMLButtonElement>('[data-fmt="dxf"]');
+  if (dxf) dxf.disabled = STATE.mode !== 'noise' || STATE.noiseType !== 'voronoi-relief';
   updateEffectiveOffsetDisplay();
 
   // Toggle mesh-export controls (irrelevant for SBP)
   const meshControls = ['chkWatertight', 'chkBinary', 'chk3dmPointCloud'];
   for (const id of meshControls) {
     const el = document.getElementById(id)?.closest('.check-row') as HTMLElement | null;
-    if (el) el.style.display = isSBP ? 'none' : '';
+    if (el) el.style.display = isSBP || isDXF ? 'none' : '';
   }
 
   // Toggle SBP sidebar section (override CSS .sbp-only { display: none })
@@ -105,7 +116,7 @@ export function updateExportControls(): void {
 }
 
 export function setupToolbar(): void {
-  document.getElementById('btnRegenerate')!.addEventListener('click', generateMesh);
+  document.getElementById('btnRegenerate')!.addEventListener('click', () => { void applyCellLayout(); });
   document.getElementById('btnRandomSeed')!.addEventListener('click', randomSeed);
   document.getElementById('btnZoomExtents')!.addEventListener('click', () => revealSceneForFit(zoomExtents));
   document.getElementById('btnResetCamera')!.addEventListener('click', () => {
@@ -123,7 +134,11 @@ export function setupToolbar(): void {
   });
   // Watertight feeds generation (stock floor and the 0.01 in surface floor), so regenerate:
   // re-rendering alone could export a watertight mesh built without its floor.
-  document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; generateMesh(); });
+  document.getElementById('chkWatertight')!.addEventListener('change', e => {
+    const watertight = (e.target as HTMLInputElement).checked;
+    if (changeReliefParams({watertight})) return;
+    STATE.watertight = watertight; generateMesh();
+  });
   document.getElementById('chkBinary')!.addEventListener('change', e => { STATE.binary = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chk3dmPointCloud')!.addEventListener('change', e => { STATE.export3dmAsPointCloud = (e.target as HTMLInputElement).checked; });
 

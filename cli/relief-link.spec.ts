@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {validateReliefProjectParams} from '../src/relief-project';
 import { DEFAULTS, STATE, CURRENT_PAYLOAD_VERSION, serializeConfig, deserializeConfig, consumeInvalidCellLink } from '../src/state';
 import { decodeReliefLink, encodeReliefLink, MAX_LINK_SITES, MAX_RELIEF_LINK_BYTES } from '../src/relief-link';
 import type { ReliefSiteSet } from '../src/types';
@@ -78,6 +80,8 @@ try {
   for (const malformed of [
     ...[CURRENT_PAYLOAD_VERSION + 1, -1, 'invalid', 1.5].map(_v => ({_v, noiseType: 'voronoi-relief', _sites: valid})),
     {_v: CURRENT_PAYLOAD_VERSION, noiseType: 'voronoi-relief', _sites: overlap},
+    {_v: CURRENT_PAYLOAD_VERSION, noiseType: 'voronoi-relief', frequency: -1, _sites: valid},
+    {_v: CURRENT_PAYLOAD_VERSION, noiseType: 'voronoi-relief', meshX: 1, meshY: 24, resolution: 1024, _sites: encodeReliefLink({xy: new Float64Array([0, 0, 1, 1]), ids: new Uint32Array([0, 1]), pinned: new Uint8Array(2), truncatedFrom: 0}, 1, 24)},
     {_v: CURRENT_PAYLOAD_VERSION, noiseType: 'simplex', _sites: valid},
     {_v: CURRENT_PAYLOAD_VERSION, mode: 'drape', noiseType: 'voronoi-relief', _sites: valid},
   ]) {
@@ -93,3 +97,59 @@ try {
   assert.equal(serializeConfig(), '', 'Default links remain unchanged');
 } finally { Object.assign(STATE, saved); }
 process.stdout.write('Approximate relief links retain identities and pins, bound coordinates and refuse precision collisions.\n');
+
+// Derive the sibling census from the actual project schema, then test the independent URL path.
+const schema = readFileSync(new URL('../src/relief-project.ts', import.meta.url), 'utf8');
+const ranges = Array.from(schema.slice(schema.indexOf('const RANGES:'), schema.indexOf('const ENUMS:')).matchAll(/(\w+): \[([^\]]+)\]/g), match => {
+  const values = match[2].split(',').map(value => value.trim());
+  const numeric = (text: string): number => text === '-Number.MAX_VALUE' ? -Number.MAX_VALUE : text === 'Number.MAX_VALUE' ? Number.MAX_VALUE : Number(text);
+  return {key: match[1], min: numeric(values[0]), max: numeric(values[1]), integer: values[2] === 'true'};
+});
+const baseParams = validateReliefProjectParams({...DEFAULTS, noiseType: 'voronoi-relief', resolution: 16, amplitude: 0.1, baseThickness: 0.1});
+assert.deepEqual(ranges.map(rule => rule.key).sort(), Object.keys(baseParams).filter(key => typeof baseParams[key as keyof typeof baseParams] === 'number').sort(), 'every numeric project domain enters the URL census');
+const smallSites = {xy: new Float64Array([0, 0, 1, 1]), ids: new Uint32Array([7, 0xffffffff]), pinned: new Uint8Array([0, 1]), truncatedFrom: 0};
+const beforeCensus = {...STATE};
+function exactLink(patch: Record<string, unknown>): void {
+  const expected = validateReliefProjectParams({...DEFAULTS, ...baseParams, ...patch});
+  Object.assign(STATE, DEFAULTS, expected, {reliefSites: smallSites});
+  const decoded = deserializeConfig(new URLSearchParams({c: serializeConfig()}));
+  assert.equal(consumeInvalidCellLink(), false);
+  assert.deepEqual(validateReliefProjectParams({...DEFAULTS, ...decoded}), expected, 'frozen links preserve every non-coordinate source value');
+  assert.deepEqual(decoded.reliefSites?.ids, smallSites.ids); assert.deepEqual(decoded.reliefSites?.pinned, smallSites.pinned);
+}
+function refused(patch: Record<string, unknown>): void {
+  assert.deepEqual(deserializeConfig(payload({_v: CURRENT_PAYLOAD_VERSION, ...baseParams, ...patch, _sites: encodeReliefLink(smallSites, 36, 24)})), {}, 'bad frozen metadata refuses the whole link');
+  assert.equal(consumeInvalidCellLink(), true);
+}
+try {
+  exactLink({});
+  for (const rule of ranges) {
+    for (const value of [rule.min, rule.max, ...(rule.min <= 0 && rule.max >= 0 ? [-0] : [])]) {
+      const patch: Record<string, unknown> = {[rule.key]: value};
+      if (rule.key === 'baseThickness') patch.amplitude = Math.min(0.1, value);
+      if (rule.key === 'amplitude') patch.baseThickness = Math.max(0.1, value);
+      exactLink(patch);
+    }
+    for (const value of [null, false, [], {}, '1', '', rule.min - Math.max(1, Math.abs(rule.min)), rule.max + Math.max(1, Math.abs(rule.max))]) refused({[rule.key]: value});
+    if (rule.integer) refused({[rule.key]: rule.min + 0.5});
+  }
+  for (const [key, value] of Object.entries(baseParams)) {
+    if (typeof value === 'boolean') {
+      exactLink({[key]: true}); exactLink({[key]: false});
+      for (const bad of [null, 0, 'false', []]) refused({[key]: bad});
+    } else if (typeof value === 'string') {
+      const line = schema.slice(schema.indexOf('const ENUMS:'), schema.indexOf('function record')).split('\n').find(text => text.includes(key + ':'))!;
+      const values = line.slice(line.indexOf(key + ':')).match(/\[([^\]]+)\]/)![1];
+      for (const match of values.matchAll(/'([^']+)'/g)) exactLink({[key]: match[1]});
+      for (const bad of [null, 'unsupported', [value], true]) refused({[key]: bad});
+    }
+  }
+  for (const seed of [-17.25, Number.MAX_VALUE, -Number.MAX_VALUE, Number.MAX_SAFE_INTEGER + 4]) exactLink({seed});
+  const overflowingSeed = JSON.stringify({_v: CURRENT_PAYLOAD_VERSION, ...baseParams, _sites: encodeReliefLink(smallSites, 36, 24)}).replace(/"seed":0/, '"seed":1e309');
+  assert.deepEqual(deserializeConfig(new URLSearchParams({c: Buffer.from(overflowingSeed).toString('base64url')})), {}); assert.equal(consumeInvalidCellLink(), true);
+  refused({baseThickness: 0.1, amplitude: 0.2}); refused({meshX: 1, meshY: 24, resolution: 1024}); refused({mode: null});
+  Object.assign(STATE, DEFAULTS, baseParams, {reliefSites: smallSites, baseThickness: 0.1, amplitude: 0.2}); assert.throws(serializeConfig, /stock/);
+  const ordinary = deserializeConfig(payload({_v: CURRENT_PAYLOAD_VERSION, baseThickness: 0.1, amplitude: 0.1, resolution: 2, reliefRadialStrength: 4, reliefRadialFalloff: 0.02}));
+  assert.equal(ordinary.baseThickness, 0.25); assert.equal(ordinary.resolution, 16); assert.equal(ordinary.reliefRadialStrength, 3); assert.equal(ordinary.reliefRadialFalloff, 0.05);
+} finally {Object.assign(STATE, beforeCensus);}
+process.stdout.write('Every project parameter domain, raw type, signed zero, stock/grid coupling and frozen URL roundtrip passed; ordinary URL domains retained.\n');

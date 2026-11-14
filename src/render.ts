@@ -10,6 +10,10 @@ import { buildSurfaceBuffers, buildWireBuffers, type SurfaceBuffers, type Surfac
 let _renderer: THREE.WebGLRenderer | null = null;
 let _scene: THREE.Scene;
 let _camera: THREE.PerspectiveCamera;
+let _planCamera: THREE.OrthographicCamera;
+export let onPlanProjectionChanged: () => void = () => undefined;
+export function setPlanProjectionListener(listener: () => void): void { onPlanProjectionChanged = listener; }
+function activeCamera(): THREE.Camera { return STATE.viewMode === 'plan' ? _planCamera : _camera; }
 let _surfaceMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhongMaterial> | null = null;
 let _wireLines: THREE.LineSegments | null = null;
 let _pointsObj: THREE.Points | null = null;
@@ -119,6 +123,8 @@ function ensureRenderer(): void {
   _scene = new THREE.Scene();
 
   _camera = new THREE.PerspectiveCamera(FOV, w / h, 0.01, 2000);
+  _planCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 2000);
+  _planCamera.up.set(0, 1, 0);
   _camera.up.set(0, 0, 1); // Z-up for CNC
 
   // Lighting: hemisphere for natural ambient fill + key + fill directional (see applyLighting)
@@ -175,7 +181,7 @@ function doRender(): void {
   _renderer.setScissorTest(true);
   _renderer.setClearColor(BG_COLOR);
   _renderer.clear();
-  _renderer.render(_scene, _camera);
+  _renderer.render(_scene, activeCamera());
 
   // Gizmo inset (top-left corner, 80x80 CSS pixels)
   const gs = 80;
@@ -191,7 +197,8 @@ function doRender(): void {
     3 * Math.sin(phi) * Math.sin(theta),
     3 * Math.cos(phi),
   );
-  _gizmoCamera.up.copy(_camera.up);
+  if (STATE.viewMode === 'plan') _gizmoCamera.position.set(0, 0, 3);
+  _gizmoCamera.up.copy(activeCamera().up);
   _gizmoCamera.lookAt(0, 0, 0);
 
   _renderer.setViewport(gx, gy, gs, gs);
@@ -265,7 +272,25 @@ export function setCameraFromState(): void {
   _camera.up.copy(up);
   _camera.lookAt(target);
 
+  const height = Math.max(STATE.meshY * 1.15, STATE.meshX * 1.15 * (_prevH || 1) / (_prevW || 1)) / STATE.zoom;
+  const width = height * (_prevW || 1) / (_prevH || 1);
+  const x = STATE.meshX / 2 - STATE.panX * width / (_prevW || 1), y = STATE.meshY / 2 + STATE.panY * height / (_prevH || 1);
+  _planCamera.left = -width / 2; _planCamera.right = width / 2;
+  _planCamera.top = height / 2; _planCamera.bottom = -height / 2;
+  _planCamera.position.set(x, y, 100); _planCamera.lookAt(x, y, 0);
+  _planCamera.updateProjectionMatrix(); _planCamera.updateMatrixWorld(true);
+  onPlanProjectionChanged();
   requestRender();
+}
+
+/** Plan overlay and pointer edits use the very same orthographic camera as WebGL. */
+export function planToScreen(x: number, y: number): {x: number; y: number} {
+  const point = new THREE.Vector3(x, y, 0).project(_planCamera);
+  return {x: (point.x + 1) * _prevW / 2, y: (1 - point.y) * _prevH / 2};
+}
+export function screenToPlan(x: number, y: number): {x: number; y: number} {
+  const point = new THREE.Vector3(x / _prevW * 2 - 1, 1 - y / _prevH * 2, 0).unproject(_planCamera);
+  return {x: point.x, y: point.y};
 }
 
 /** Schedule a render on the next animation frame (on-demand, no permanent loop). */
@@ -548,7 +573,7 @@ function buildEnclosure(
 
 function updateVisibility(): void {
   const mode = STATE.viewMode;
-  const showSolid = mode === 'solid' || mode === 'both';
+  const showSolid = mode === 'solid' || mode === 'both' || mode === 'plan';
   if (_surfaceMesh) _surfaceMesh.visible = showSolid;
   const showWire = mode === 'wireframe' || mode === 'both';
   if (showWire) ensureWireframe();
@@ -628,6 +653,14 @@ export function fitVisibleSource(): boolean {
   frame.y = top;
   frame.height = height - top - bottom;
   if (frame.height <= 0 || frame.width <= 0) return false;
+  if (STATE.viewMode === 'plan') {
+    const baseHeight = Math.max(STATE.meshY * 1.15, STATE.meshX * 1.15 * height / width);
+    const baseWidth = baseHeight * width / height;
+    STATE.zoom = Math.max(0.1, Math.min(10, frame.width * baseWidth / (STATE.meshX * width), frame.height * baseHeight / (STATE.meshY * height)));
+    STATE.panX = frame.x + frame.width / 2 - width / 2;
+    STATE.panY = frame.y + frame.height / 2 - height / 2;
+    setCameraFromState(); return true;
+  }
   const center = getMeshCenter();
   _camera.updateMatrixWorld(true);
   const right = new THREE.Vector3().setFromMatrixColumn(_camera.matrixWorld, 0);
