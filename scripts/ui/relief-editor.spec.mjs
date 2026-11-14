@@ -239,9 +239,29 @@ try {
     await phone.click('#btnFreezeCells'); await phone.waitForSelector('#cellOverlay', {state: 'visible'}); await idle(phone);
     const targets = await phone.locator('.cell-editor-actions button').evaluateAll(buttons => buttons.filter(button => !button.hidden).map(button => ({id: button.id, height: button.getBoundingClientRect().height, size: parseFloat(getComputedStyle(button).fontSize)})));
     for (const target of targets) {assert(target.height >= 44, target.id); assert(target.size >= 13, target.id);}
+    await phone.locator('#cellOverlay').press('Home');
     const pinTarget = await phone.locator('#cellPinned').evaluate(input => { const box = input.closest('label').getBoundingClientRect(); return {width: box.width, height: box.height}; });
     assert(pinTarget.width >= 44 && pinTarget.height >= 44, 'pin label remains a 44px touch target');
     await phone.locator('#sheetHandle').press('End'); await phone.locator('.cell-editor').scrollIntoViewIfNeeded();
+    const pinInput = phone.locator('#cellPinned');
+    await pinInput.scrollIntoViewIfNeeded();
+    const inputTarget = await pinInput.boundingBox();
+    assert(inputTarget.width >= 44 && inputTarget.height >= 44, 'the pin input itself is a 44px touch target');
+    const visual = await pinInput.evaluate(input => { const style = getComputedStyle(input, '::before'); return [style.width, style.height]; });
+    assert.deepEqual(visual, ['18px', '18px'], 'the pin keeps its compact visual inside the touch target');
+    for (const [index, [dx, dy]] of [[2, 2], [42, 2], [42, 42], [2, 42]].entries()) {
+      await pinInput.scrollIntoViewIfNeeded();
+      const box = await pinInput.boundingBox();
+      await phone.touchscreen.tap(box.x + dx, box.y + dy);
+      assert.equal(await pinInput.isChecked(), index % 2 === 0, 'touch outside the 18px visual toggles the actual input');
+      await idle(phone);
+    }
+    assert.equal((await save(phone)).sites.pinned[0], 0, 'four perimeter taps reach and persist the pin control');
+    await pinInput.focus(); await phone.keyboard.press('Space'); await idle(phone);
+    assert.equal(await pinInput.isChecked(), true, 'keyboard Space still toggles the pin');
+    assert.equal((await save(phone)).sites.pinned[0], 1, 'keyboard pin persists in the saved source');
+    await pinInput.scrollIntoViewIfNeeded();
+
     await phone.screenshot({path: `screenshots/playwright/relief-editor-controls-${width}.png`});
     await phone.locator('#sheetHandle').focus(); await phone.keyboard.press('Home');
     const stage = await phone.locator('#canvasWrap').boundingBox(); assert(stage.height >= 664 * 0.70, 'editor retains the mobile peek stage');
