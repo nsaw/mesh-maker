@@ -33,7 +33,9 @@ input. Plan from those.
   - What to verify after the change
 - Do not re-run the investigation. The findings are your input for WHAT is broken.
 - BUT: drive every SUSPECTED/UNKNOWN to closure before presenting (see Risk Closure below).
-  A plan whose Unknowns section still lists open questions is not finished.
+  A plan whose Unknowns section still lists a question you could close from code, config,
+  schema or docs is not finished. Only items Risk Closure admits (a device, a runtime or a
+  third party, each with its resolution step and gating phase) may remain.
 - Do not include self-review, confidence scores, or adversarial gates.
 - Do not include revision history. If the plan needs changes, rewrite the entire plan (don't patch sections).
 - Order fixes by dependency (what must be done first).
