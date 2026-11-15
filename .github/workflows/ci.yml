@@ -144,7 +144,9 @@ jobs:
     needs: preset_export_list
     runs-on: ubuntu-latest
     continue-on-error: true
-    timeout-minutes: 30
+    # organic-swirl's full export (12.4e6 SBP lines) takes about 20 min locally and 23 min on a
+    # hosted runner; a 30 min cap timed out on slower runners with no failing assertion.
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
