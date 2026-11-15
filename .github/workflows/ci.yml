@@ -65,6 +65,7 @@ jobs:
       - run: npm run test:relief-near-ties-mutants
       - run: npm run test:native-distance-consumers
       - run: npm run test:native-membrane
+      - run: npm run test:native-relief-dll
       - run: npm run test:relief-junction-mutants
       - run: npm run test:presets:geometry
       - run: npm run test:gh-parity

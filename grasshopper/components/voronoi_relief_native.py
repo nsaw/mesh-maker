@@ -731,13 +731,75 @@ sy = [s.Y for s in sites]
 site_positions = list(zip(sx, sy))
 site_coordinate_scale = max([1.0] + [abs(v) for p in site_positions for v in p])
 
+# Compiled height pass. MeshCraftRelief in MeshCraftNoise.dll (source:
+# grasshopper/components/MeshCraftRelief.cs) reproduces everything below, from the inradius
+# pass through renormalization, with the same operation order, so its output is bit-identical
+# (scripts/rhino-native-relief-dll-parity.py checks that in Rhino 7). It is used only when its
+# Version equals RELIEF_DLL_VERSION; a missing, stale or failing DLL falls back to the Python
+# pass. The version ends in the first 12 hex digits of the SHA-256 of this file's height pass
+# (from the inradius proxy through renormalization, as scripts/test-native-relief-dll.py
+# extracts it), so any edit there fails that test until the C# is ported, rebuilt and
+# re-verified and both strings carry the new hash. A second hash covers MeshCraftRelief.cs
+# itself (minus its Version line), so an edit to the C# alone fails the test too.
+RELIEF_DLL_VERSION = 'v24-lattice-membrane-07d522836b69-50f49e16b04a'
+
+def _relief_dll():
+    try:
+        import clr
+    except ImportError:
+        return None, 'Python (no CLR)'
+    try:
+        clr.AddReference('MeshCraftNoise')
+    except Exception:
+        _env = globals().get('ghenv')
+        _doc = _env.Component.OnPingDocument() if _env is not None else None
+        _path = _doc.FilePath if _doc is not None else None
+        if not _path:
+            return None, 'Python (MeshCraftNoise.dll not found)'
+        import os
+        _candidate = os.path.join(os.path.dirname(_path), 'MeshCraftNoise.dll')
+        if not os.path.isfile(_candidate):
+            return None, 'Python (MeshCraftNoise.dll not found)'
+        try:
+            clr.AddReferenceToFileAndPath(_candidate)
+        except Exception:
+            return None, 'Python (MeshCraftNoise.dll failed to load)'
+    try:
+        import MeshCraftRelief
+    except ImportError:
+        return None, 'Python (DLL has no MeshCraftRelief)'
+    if getattr(MeshCraftRelief, 'Version', None) != RELIEF_DLL_VERSION:
+        return None, 'Python (DLL height pass is stale)'
+    return MeshCraftRelief, 'DLL'
+
+_dll_heights = None
+_relief_impl, height_pass = _relief_dll()
+# The DLL's 64-bit seed hashes and value-noise lattice indices equal Python's only in this range.
+if _relief_impl is not None and (abs(seed) >= 2 ** 62 or max(abs(mesh_x), abs(mesh_y), site_coordinate_scale) >= 2.0 ** 52):
+    _relief_impl, height_pass = None, 'Python (inputs outside the DLL range)'
+if _relief_impl is not None:
+    import System
+    try:
+        _dll_heights = list(_relief_impl.VoronoiReliefHeights(
+            System.Array[float](sx), System.Array[float](sy), mesh_x, mesh_y, g_cols, g_rows,
+            cell_size, seed, profile, polarity, seam_sharpness, seam_depth, base_amp, base_freq,
+            wall_width, pillow, pillow_coverage, depth_variation, junction_lift, crest_variation))
+    except Exception as _error:
+        _dll_heights, height_pass = None, 'Python (DLL call failed: %s)' % type(_error).__name__
+    if _dll_heights is not None and len(_dll_heights) != g_cols * g_rows:
+        _dll_heights, height_pass = None, 'Python (DLL returned %d heights)' % len(_dll_heights)
+_env = globals().get('ghenv')
+if _env is not None:
+    _env.Component.Message = height_pass
+
 # v18 per-cell INRADIUS proxy: half the distance from the site to its nearest
 # neighboring site — the exact boundary distance evaluated AT the site. The true
 # cell maximum (at the incenter) can slightly exceed this when the incenter is
 # off-site; the small underestimate only makes floors marginally larger. O(n^2)
 # on a few hundred sites is negligible next to the pixel loop.
 inradius = [cell_size * 0.5] * n_sites
-for k in xrange(n_sites):
+# Only the Python pass reads inradius and size_mul_cell; the DLL computes its own.
+for k in xrange(n_sites if _dll_heights is None else 0):
     best = float('inf')
     for m in xrange(n_sites):
         if m == k: continue
@@ -753,7 +815,7 @@ for k in xrange(n_sites):
 sorted_inr = sorted(inradius)
 median_inr = max(0.05, sorted_inr[n_sites // 2])
 size_mul_cell = [0.0] * n_sites
-for k in xrange(n_sites):
+for k in xrange(n_sites if _dll_heights is None else 0):
     sm = math.sqrt(inradius[k] / median_inr)
     if sm < 0.8: sm = 0.8
     elif sm > 1.2: sm = 1.2
@@ -992,7 +1054,7 @@ def _relief_node(px, py):
     # v17 crest variation (ridge-local envelope fragmentation) + tamed junction lift.
     crest = 0.0
     if crest_variation > 0.0:
-        crest = crest_variation * 0.4 * vnoise(px * crest_freq, py * crest_freq, seed + 97) * pow(1.0 - v, 1.5)
+        crest = crest_variation * 0.4 * vnoise(px * crest_freq, py * crest_freq, seed + 97) * pow(max(0.0, 1.0 - v), 1.5)
     lift = junction_lift * 0.1 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
     lift += crest
     # v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
@@ -1015,16 +1077,18 @@ def _relief_node(px, py):
         zc = base + 1.0 + 0.04 + 0.13 * math.tanh((hp - 0.04) / 0.13)
     return zc, cushion, owner
 
-for j in xrange(g_rows):
-    py = j * dy_pix
-    row_off = j * g_cols
-    for i in xrange(g_cols):
-        px = i * dx_pix
-        z_value, cushion, owner = _relief_node(px, py)
-        z_arr[row_off + i] = z_value
-        if cushion > 0.0:
-            cush_a[row_off + i] = cushion
-            cush_owner[row_off + i] = owner
+# The pixel pass runs only without the DLL; cush_a then stays empty and the membrane is skipped.
+if _dll_heights is None:
+    for j in xrange(g_rows):
+        py = j * dy_pix
+        row_off = j * g_cols
+        for i in xrange(g_cols):
+            px = i * dx_pix
+            z_value, cushion, owner = _relief_node(px, py)
+            z_arr[row_off + i] = z_value
+            if cushion > 0.0:
+                cush_a[row_off + i] = cushion
+                cush_owner[row_off + i] = owner
 
 # v24 membrane cushion pass. The cushion region is evaluated on a fixed physical lattice
 # (0.2 in pitch, coarsened to about 10,000 nodes: IronPython runs this whole pass in
@@ -1164,13 +1228,16 @@ if _any_cush:
 
 # Renormalize to [0,1] -- Shape expects a normalized field; the base wave
 # pushes values outside the raw [0,1] band.
-z_min = min(z_arr)
-z_max = max(z_arr)
-z_span = z_max - z_min
-if z_span > 1e-12:
-    inv_span = 1.0 / z_span
-    for idx in xrange(total):
-        z_arr[idx] = (z_arr[idx] - z_min) * inv_span
+if _dll_heights is not None:
+    z_arr = _dll_heights  # already renormalized by the DLL
+else:
+    z_min = min(z_arr)
+    z_max = max(z_arr)
+    z_span = z_max - z_min
+    if z_span > 1e-12:
+        inv_span = 1.0 / z_span
+        for idx in xrange(total):
+            z_arr[idx] = (z_arr[idx] - z_min) * inv_span
 
 # Outputs ------------------------------------------------------------------
 # DataTree[float] is the only output type that survives GhPython serialization

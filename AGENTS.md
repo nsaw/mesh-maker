@@ -133,7 +133,7 @@ meshcraft/
 │   ├── relief-roundtrip.ts    # npm run relief-roundtrip (master -> STL [-> SBP -> cut report])
 │   └── png.ts                 # Minimal PNG writer for CLI diagnostics
 ├── grasshopper/               # Git-tracked Python components, native alternative and builder
-│   ├── components/            # Canonical GhPython source
+│   ├── components/            # Canonical GhPython source; MeshCraftRelief.cs is the native relief's compiled height pass
 │   └── builder/               # Builder source and source-marshaling probe, no native .gh files
 ├── docs/images/               # README Grasshopper previews
 ├── public/
@@ -168,6 +168,15 @@ The two native `.gh` artifacts live in
 Current Python sources and parity tests stay here. Read that folder's README before
 regenerating artifacts in Rhino 7. The separate DLL work-in-progress branch remains in
 the parent Grasshopper library.
+
+`voronoi_relief_native.py` hands its height pass to `MeshCraftRelief` in `MeshCraftNoise.dll`
+when the DLL's `Version` equals the component's `RELIEF_DLL_VERSION`, and otherwise runs its
+Python pass. `grasshopper/components/MeshCraftRelief.cs` is that class's only source, a
+line-for-line port. A change to the native height pass has two landing sites: the Python and the C#.
+Bump both version strings, rebuild with the command in `grasshopper/VORONOI_RELIEF_NATIVE.md`,
+and confirm bit parity with `scripts/rhino-native-relief-dll-parity.py` in Rhino 7 before
+deploying. `npm run test:native-relief-dll` checks the wiring and fails when the ported source
+changes without a version bump. It cannot check the C# arithmetic.
 
 ## Deployment
 
