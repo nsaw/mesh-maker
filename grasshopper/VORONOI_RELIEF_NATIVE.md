@@ -154,15 +154,16 @@ Lloyd relaxation (node-in-code Voronoi) stay in Python.
 
 `scripts/rhino-native-relief-dll-parity.py` is the parity gate. It runs the component in
 Rhino 7 twice per layout, once on the Python pass and once on the DLL, and requires identical
-heights. On 2026-11-14 (Rhino 7.38, M3) it passed on all seven layouts, 106,585 nodes: both
+heights bit for bit. On 2026-11-14 (Rhino 7.38, M3) it passed on all seven layouts, 106,585
+nodes (`grasshopper/rhino-native-relief-dll-parity.json`): both
 polarities, pillow on and off, four profiles, and cells deep enough that `v > 1`. Whole
 component recomputes:
 
 | layout | Python | DLL |
 |---|---|---|
 | pillow, walls, depth variation, crest, domes, 24 x 24 in, res 97 | 4.1 s | 0.09 s |
-| same, pockets, res 256 | 14.5 s | 0.26 s |
-| defaults, 24 x 36 in, res 128 | 3.6 s | 0.11 s |
+| same, pockets, res 256 | 14.3 s | 0.26 s |
+| defaults, 24 x 36 in, res 128 | 3.7 s | 0.11 s |
 
 The component's `Message` shows which pass ran: `DLL`, or `Python (...)` with the reason.
 The Python pass runs in each of these cases:
@@ -174,8 +175,8 @@ The Python pass runs in each of these cases:
 - the DLL call throws or returns the wrong number of heights.
 
 A stale DLL therefore never changes the output. Both version strings end in a hash of the
-ported Python source, and `npm run test:native-relief-dll` fails whenever that source changes
-without them. After such a change:
+ported Python source and a hash of `MeshCraftRelief.cs`. `npm run test:native-relief-dll`
+fails whenever either changes without them. After such a change:
 1. Port it to the C#.
 2. Rebuild.
 3. Run the parity gate.

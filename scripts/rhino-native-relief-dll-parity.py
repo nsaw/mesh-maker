@@ -13,6 +13,7 @@ DLL and before deploying it:
 MESHCRAFT_DLL defaults to the library copy beside MeshCraftNoise.cs. The result JSON lists each
 layout's node count, identity, worst difference and both timings, and 'passed'."""
 import json, os, sys, time, traceback, clr
+import System
 import Rhino
 import ghpythonlib.components  # imported now: it needs clr, which run() hides for the Python pass
 OUT = os.environ.get('RHINO_PROBE_OUT', '/tmp/meshcraft-relief-dll-parity.json')
@@ -39,6 +40,12 @@ LAYOUTS = [
 result = {'dll': DLL, 'layouts': [], 'passed': False}
 try:
     clr.AddReferenceToFileAndPath(DLL)
+    import MeshCraftRelief
+    # The component loads by name; make sure that name resolves to the build under test.
+    result['loaded'] = clr.GetClrType(MeshCraftRelief).Assembly.Location
+    if os.path.realpath(result['loaded']) != os.path.realpath(DLL):
+        raise RuntimeError('MeshCraftRelief came from %s, not %s' % (result['loaded'], DLL))
+    result['version'] = MeshCraftRelief.Version
     code = compile(open(COMPONENT).read(), COMPONENT, 'exec')
     def run(extra, hide_clr):
         scope = dict((n, None) for n in NAMES)
@@ -59,7 +66,9 @@ try:
         a = list(python['z_values'].AllData())
         b = list(dll['z_values'].AllData())
         worst = max(abs(x - y) for x, y in zip(a, b)) if len(a) == len(b) else None
-        same = a == b and python['height_pass'] == 'Python (no CLR)' and dll['height_pass'] == 'DLL'
+        bits = System.BitConverter.DoubleToInt64Bits
+        same = (len(a) == len(b) and all(bits(x) == bits(y) for x, y in zip(a, b))
+                and python['height_pass'] == 'Python (no CLR)' and dll['height_pass'] == 'DLL')
         passed = passed and same
         result['layouts'].append({'label': label, 'nodes': len(a), 'identical': same, 'worst': worst,
                                   'paths': [python['height_pass'], dll['height_pass']],

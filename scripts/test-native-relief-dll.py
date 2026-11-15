@@ -41,11 +41,18 @@ def height_pass_hash(source):
 python_version = re.search(r"^RELIEF_DLL_VERSION = '([^']+)'$", SOURCE, re.M).group(1)
 csharp_version = re.search(r'public const string Version = "([^"]+)";', CSHARP).group(1)
 assert python_version == csharp_version, 'version drift: component %r, C# %r' % (python_version, csharp_version)
-current_hash = height_pass_hash(SOURCE)
+def csharp_hash(source):
+    # The C# port with its own Version line removed, so stamping the version leaves it unchanged.
+    lines = [line for line in source.splitlines(True) if 'public const string Version' not in line]
+    assert len(lines) == len(source.splitlines(True)) - 1
+    return hashlib.sha256(''.join(lines).encode('utf-8')).hexdigest()[:12]
+
+
+current_hash = height_pass_hash(SOURCE) + '-' + csharp_hash(CSHARP)
 assert python_version.endswith('-' + current_hash), (
-    'the native height pass changed (hash %s) but RELIEF_DLL_VERSION is %r: port the change to '
-    'MeshCraftRelief.cs, rebuild, rerun scripts/rhino-native-relief-dll-parity.py, then put the new '
-    'hash in both version strings' % (current_hash, python_version))
+    'the native height pass or its C# port changed (hashes %s) but the version is %r: port the change '
+    'to the other side, rebuild, rerun scripts/rhino-native-relief-dll-parity.py, then put the new '
+    'hashes in both version strings' % (current_hash, python_version))
 
 
 class _Array(object):

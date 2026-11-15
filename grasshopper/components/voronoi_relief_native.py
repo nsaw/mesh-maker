@@ -739,8 +739,9 @@ site_coordinate_scale = max([1.0] + [abs(v) for p in site_positions for v in p])
 # pass. The version ends in the first 12 hex digits of the SHA-256 of this file's height pass
 # (from the inradius proxy through renormalization, as scripts/test-native-relief-dll.py
 # extracts it), so any edit there fails that test until the C# is ported, rebuilt and
-# re-verified and both strings carry the new hash.
-RELIEF_DLL_VERSION = 'v24-lattice-membrane-07d522836b69'
+# re-verified and both strings carry the new hash. A second hash covers MeshCraftRelief.cs
+# itself (minus its Version line), so an edit to the C# alone fails the test too.
+RELIEF_DLL_VERSION = 'v24-lattice-membrane-07d522836b69-a532819c090c'
 
 def _relief_dll():
     try:
@@ -774,7 +775,7 @@ def _relief_dll():
 _dll_heights = None
 _relief_impl, height_pass = _relief_dll()
 # The DLL's 64-bit seed hashes and value-noise lattice indices equal Python's only in this range.
-if _relief_impl is not None and (abs(seed) >= 2 ** 62 or max(mesh_x, mesh_y, site_coordinate_scale) >= 2.0 ** 52):
+if _relief_impl is not None and (abs(seed) >= 2 ** 62 or max(abs(mesh_x), abs(mesh_y), site_coordinate_scale) >= 2.0 ** 52):
     _relief_impl, height_pass = None, 'Python (inputs outside the DLL range)'
 if _relief_impl is not None:
     import System

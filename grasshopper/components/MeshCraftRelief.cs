@@ -15,7 +15,7 @@ public static class MeshCraftRelief
 
     /// <summary>The height-pass revision this build reproduces. voronoi_relief_native.py uses the
     /// DLL only when this equals its own RELIEF_DLL_VERSION, so a stale DLL falls back to Python.</summary>
-    public const string Version = "v24-lattice-membrane-07d522836b69";
+    public const string Version = "v24-lattice-membrane-07d522836b69-a532819c090c";
 
     // ---- exact metric ordering (isotropic, squared distances) ----
     struct Dyadic { public BigInteger M; public int E; public Dyadic(BigInteger m, int e) { M = m; E = e; } }
