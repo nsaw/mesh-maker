@@ -17,11 +17,11 @@ exec(compile(module, '<canonical definitions>', 'exec'), scope)
 Grid = scope['_SiteGrid']
 noise = scope['VoronoiReliefNoise'](7)
 native = (root / 'grasshopper/components/voronoi_relief_native.py').read_text()
-start = native.index('        best1 =', native.index('for j in xrange(g_rows):'))
-end = native.index('        # v18 BOUNDARY-DISTANCE CONSTRUCTION.', start)
+start = native.index('\n    best1 =', native.index('def _relief_node(px, py):')) + 1
+end = native.index('\n    # v18 BOUNDARY-DISTANCE CONSTRUCTION.', start) + 1
 native_loop = compile(textwrap.dedent(native[start:end]), '<native nearest loop>', 'exec')
-junction_start = native.index('        # Scale-free junction proximity:')
-junction_end = native.index('        jn_s =', junction_start)
+junction_start = native.index('\n    # Scale-free junction proximity:') + 1
+junction_end = native.index('\n    jn_s =', junction_start) + 1
 junction_consumer = compile(textwrap.dedent(native[junction_start:junction_end]), '<native junction consumer>', 'exec')
 results = []
 for case in json.load(sys.stdin):
