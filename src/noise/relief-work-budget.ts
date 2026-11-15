@@ -98,28 +98,45 @@ export function frozenReliefSupportVisits(p: WorkShape, sites: ReliefSiteSet, ad
   };
   const siteDistance = (site: number, x: number, y: number): number =>
     Math.hypot(sites.xy[site * 2] - x, sites.xy[site * 2 + 1] - y);
-  // Ring search while it is cheaper than the occupied-bucket list, then the list.
-  const nearest = (x: number, y: number): number => {
+  // The two nearest sites (distance, index), by ring search while it is cheaper than the
+  // occupied-bucket list, then the list.
+  const nearestTwo = (x: number, y: number): [number, number, number, number] => {
     const ci = column(x), cj = row(y);
-    let best = Infinity, visited = 0;
+    let d1 = Infinity, i1 = -1, d2 = Infinity, i2 = -1, visited = 0;
+    const consider = (site: number): void => {
+      const d = siteDistance(site, x, y);
+      if (d < d1) { d2 = d1; i2 = i1; d1 = d; i1 = site; } else if (d < d2) { d2 = d; i2 = site; }
+    };
     for (let ring = 0; visited <= occupied.length; ring++) {
-      const i0 = ci - ring, i1 = ci + ring, j0 = cj - ring, j1 = cj + ring;
+      const i0 = ci - ring, i1r = ci + ring, j0 = cj - ring, j1 = cj + ring;
       for (let j = Math.max(0, j0); j <= Math.min(br - 1, j1); j++) {
         const edge = j === j0 || j === j1;
-        for (let i = Math.max(0, i0); i <= Math.min(bc - 1, i1); i += edge || i >= i1 ? 1 : i1 - i) {
+        for (let i = Math.max(0, i0); i <= Math.min(bc - 1, i1r); i += edge || i >= i1r ? 1 : i1r - i) {
           visited++;
-          for (let k = start[j * bc + i]; k < start[j * bc + i + 1]; k++) best = Math.min(best, siteDistance(order[k], x, y));
+          for (let k = start[j * bc + i]; k < start[j * bc + i + 1]; k++) consider(order[k]);
         }
       }
       // Unvisited buckets lie at least `ring` whole buckets away in some axis.
-      if (best <= ring * Math.min(bucketWidth, bucketHeight)
-        || (i0 <= 0 && j0 <= 0 && i1 >= bc - 1 && j1 >= br - 1)) return best;
+      if (d2 <= ring * Math.min(bucketWidth, bucketHeight)
+        || (i0 <= 0 && j0 <= 0 && i1r >= bc - 1 && j1 >= br - 1)) return [d1, i1, d2, i2];
     }
+    d1 = Infinity; i1 = -1; d2 = Infinity; i2 = -1;
     for (const k of occupied) {
-      if (near(k, x, y) >= best) continue;
-      for (let m = start[k]; m < start[k + 1]; m++) best = Math.min(best, siteDistance(order[m], x, y));
+      if (near(k, x, y) >= d2) continue;
+      for (let m = start[k]; m < start[k + 1]; m++) consider(order[m]);
     }
-    return best;
+    return [d1, i1, d2, i2];
+  };
+  // The producer scans max(support, f1 + 2B) around each query, where B, the boundary seed,
+  // is at most the bisector distance to the second-nearest site, (f2^2 - f1^2) / (2 d12).
+  const searchRadius = (x: number, y: number): number => {
+    const [f1, s1, f2, s2] = nearestTwo(x, y);
+    let radius = RELIEF_SUPPORT_RATIO * Math.max(f1, 1e-9);
+    if (s2 >= 0 && Number.isFinite(f2)) {
+      const d12 = siteDistance(s2, sites.xy[s1 * 2], sites.xy[s1 * 2 + 1]);
+      if (d12 > 0) radius = Math.max(radius, f1 + (f2 * f2 - f1 * f1) / d12);
+    }
+    return radius;
   };
   const supportCount = (x: number, y: number, radius: number): number => {
     let count = 0;
@@ -138,7 +155,7 @@ export function frozenReliefSupportVisits(p: WorkShape, sites: ReliefSiteSet, ad
   let visits = 0;
   for (let j = 0; j < sr; j++) for (let i = 0; i < sc; i++) {
     const x = (i + 0.5) / sc * p.meshX, y = (j + 0.5) / sr * p.meshY;
-    visits += supportCount(x, y, RELIEF_SUPPORT_RATIO * Math.max(nearest(x, y), 1e-9));
+    visits += supportCount(x, y, searchRadius(x, y));
   }
   const estimate = Math.ceil(queries * (visits / (sc * sr)));
   if (!Number.isSafeInteger(estimate)) throw new Error('Invalid frozen relief query work');

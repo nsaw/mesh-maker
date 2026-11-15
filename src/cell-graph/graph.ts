@@ -187,6 +187,7 @@ function certifyEmission(edges: readonly ExactEdge[], budget: GraphBudget): void
       y = (key - x) / columns;
     for (let p = 0; p < list.length; p++)
       for (let q = p + 1; q < list.length; q++) {
+        budget.step();
         const i = Math.min(list[p], list[q]),
           j = Math.max(list[p], list[q]);
         if (Math.max(ranges[i][0], ranges[j][0]) === x && Math.max(ranges[i][2], ranges[j][2]) === y)

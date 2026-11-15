@@ -183,8 +183,8 @@ const lattice=(count:number,step:number,ox:number,oy:number):ReliefSiteSet=>{
 const supportShape=(resolution:number,meshX:number,meshY:number)=>({...noiseGridShape(resolution,meshX,meshY),meshX,meshY});
 const packedCluster=lattice(64,0.01,6,12), linkCluster=lattice(31,0.01,6,12);
 assert.equal(frozenReliefQueryWork(supportShape(100,12,24),packedCluster),79873,'distinct packed sites pass coincidence counting');
-assert.equal(frozenReliefSupportVisits(supportShape(100,12,24),packedCluster),325020909);
-assert.equal(frozenReliefSupportVisits(supportShape(400,12,24),linkCluster),358526683);
+assert.equal(frozenReliefSupportVisits(supportShape(100,12,24),packedCluster),325074099);
+assert.equal(frozenReliefSupportVisits(supportShape(400,12,24),linkCluster),358538360);
 let packedEntries=0;
 SiteGrid.fromSites=()=>{packedEntries++;throw new Error('Packed admission reached heavy index');};
 try {
@@ -204,6 +204,14 @@ const scatter=(count:number,height:number):ReliefSiteSet=>({xy:Float64Array.from
 assert(frozenReliefSupportVisits(supportShape(1024,12,24),scatter(4096,24))<=MAX_FROZEN_RELIEF_SUPPORT_VISITS/16);
 assert(frozenReliefSupportVisits(supportShape(400,12,24),scatter(2048,12))<=MAX_FROZEN_RELIEF_SUPPORT_VISITS*0.8);
 assert(frozenReliefSupportVisits(supportShape(1024,cappedProject.params.meshX,cappedProject.params.meshY),cappedProject.sites)<=MAX_FROZEN_RELIEF_SUPPORT_VISITS/4);
+// The boundary search also reaches f1 + 2B, B up to the bisector distance to the second site:
+// one isolated site beside a far packed cluster makes every query it owns visit the cluster.
+{
+  let draw=5;const near=()=>(draw=(Math.imul(draw,1103515245)+12345)>>>0)/4294967296;
+  const xy=[6,12];for(let k=0;k<4095;k++)xy.push(11.99+near()*0.0064,23.99+near()*0.0064);
+  const lone:ReliefSiteSet={xy:Float64Array.from(xy),ids:Uint32Array.from({length:4096},(_,i)=>i),pinned:new Uint8Array(4096),truncatedFrom:0};
+  assert.throws(()=>assertFrozenReliefWork(supportShape(400,12,24),lone),/coincident-site query work/);
+}
 
 // A far query from a packed cluster stops at the true distance to the unvisited buckets
 // clipped to the site extent, in the stretched metric too, instead of scanning the cluster.

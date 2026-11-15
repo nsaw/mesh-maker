@@ -186,11 +186,14 @@ export function exactDiagram(
     const maxRing = Math.max(ci, columns - 1 - ci, ri, rows - 1 - ri);
     for (let ring = 0; ring <= maxRing + 1; ring++) {
       if (ring <= maxRing) {
-        for (let r = ri - ring; r <= ri + ring; r++) {
-          if (r < 0 || r >= rows) continue;
+        budget.step();
+        // Only rows and columns inside the grid; a ring's interior rows read just its two
+        // side columns.
+        for (let r = Math.max(0, ri - ring); r <= Math.min(rows - 1, ri + ring); r++) {
           const edge = r === ri - ring || r === ri + ring;
-          for (let c = ci - ring; c <= ci + ring; c += edge || c === ci + ring ? 1 : 2 * ring) {
-            if (c < 0 || c >= columns) continue;
+          const sides = edge ? [] : [ci - ring, ci + ring].filter((c) => c >= 0 && c < columns);
+          const from = Math.max(0, ci - ring), to = Math.min(columns - 1, ci + ring);
+          for (const c of edge ? Array.from({ length: Math.max(0, to - from + 1) }, (_, k) => from + k) : sides) {
             for (const j of buckets[r * columns + c]) {
               if (j === i) continue;
               const dx = sites.xy[2 * j] - xi, dy = sites.xy[2 * j + 1] - yi;
