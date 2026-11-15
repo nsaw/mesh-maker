@@ -87,8 +87,8 @@ for coordinates in radius_cases:
 
 # These are deliberate API/physical contracts, not missing-neighbor sentinels.
 assert Grid.from_sites([[1e16, 0.0], [5e15, 0.0]]).nearest(0.0, 0.0, 1.0e30) == 0
-pixel_start = SOURCE.index('        db_cap = mesh_x + mesh_y')
-pixel_end = SOURCE.index('        # v21 per-edge fields', pixel_start)
+pixel_start = SOURCE.index('\n    db_cap = mesh_x + mesh_y') + 1
+pixel_end = SOURCE.index('\n    # v21 per-edge fields', pixel_start) + 1
 plane_code = compile(textwrap.dedent(SOURCE[pixel_start:pixel_end]), '<native physical plane cap>', 'exec')
 plane_environment = dict(scope, mesh_x=4.0, mesh_y=3.0, owner2=-1, owner3=-1, owner4=-1)
 exec(plane_code, plane_environment)

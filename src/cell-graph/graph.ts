@@ -1,5 +1,7 @@
 import { validateCellGraphQuery } from './query';
-import { inflateI, interval, subI } from './interval';
+import { addI, divI, inflateI, interval, mulI, nextUp, squareI, subI } from './interval';
+import type { Interval } from './interval';
+import { rationalInterval } from './warp-clipping';
 import { buildWarpCellGraph } from './warp-graph';
 import type { ReliefSourceSnapshot } from '../types';
 import { copyReliefSource, validateReliefSites } from '../noise/relief-sites';
@@ -83,9 +85,66 @@ export class CellGraphWork implements GraphBudget {
 }
 const EMISSION_ERROR_IN = 2e-10;
 
+type Box = readonly [Interval, Interval];
+const enclosures = new WeakMap<ExactPoint, Box>();
+const enclose = (p: ExactPoint): Box => {
+  let box = enclosures.get(p);
+  if (!box) { box = [rationalInterval(p[0]), rationalInterval(p[1])]; enclosures.set(p, box); }
+  return box;
+};
+const signOf = (v: Interval): number | undefined => v[0] > 0 ? 1 : v[1] < 0 ? -1 : v[0] === 0 && v[1] === 0 ? 0 : undefined;
+/** compareDirections(endA - shared, endB - shared) when intervals decide that the rays are
+ * not collinear, clear the 2e-10 orientation budget, and lie in decided half-planes. */
+function junctionByIntervals(endA: Box, endB: Box, shared: Box): number | undefined {
+  const va = [subI(endA[0], shared[0]), subI(endA[1], shared[1])] as const,
+    vb = [subI(endB[0], shared[0]), subI(endB[1], shared[1])] as const;
+  const determinant = subI(mulI(va[0], vb[1]), mulI(va[1], vb[0])),
+    sign = signOf(determinant);
+  if (!sign) return undefined;
+  const absolute = (v: Interval): number => Math.max(Math.abs(v[0]), Math.abs(v[1]));
+  const lengthSum = [va[0], va[1], vb[0], vb[1]].reduce((sum, v) => nextUp(sum + absolute(v)), 0);
+  const bound = nextUp(nextUp(2e-10 * lengthSum) + nextUp(2 * nextUp(2e-10 * 2e-10)));
+  if (Math.min(Math.abs(determinant[0]), Math.abs(determinant[1])) <= bound) return undefined;
+  const half = (v: readonly [Interval, Interval]): number | undefined => {
+    const y = signOf(v[1]), x = signOf(v[0]);
+    if (y === undefined) return undefined;
+    if (y !== 0) return y > 0 ? 0 : 1;
+    return x === undefined ? undefined : x >= 0 ? 0 : 1;
+  };
+  const ha = half(va), hb = half(vb);
+  if (ha === undefined || hb === undefined) return undefined;
+  return ha !== hb ? ha - hb : -sign;
+}
+/** True when intervals prove the segments disjoint and every endpoint farther than the
+ * threshold from the other segment, the outcome the exact checks would also reach. */
+function separatedByIntervals(a: Box, b: Box, c: Box, d: Box, thresholdUpper: number): boolean {
+  const orient = (p: Box, q: Box, r: Box): number | undefined => signOf(subI(
+    mulI(subI(q[0], p[0]), subI(r[1], p[1])), mulI(subI(q[1], p[1]), subI(r[0], p[0]))));
+  const o1 = orient(a, b, c), o2 = orient(a, b, d), o3 = orient(c, d, a), o4 = orient(c, d, b);
+  const disjoint = (o1 !== undefined && o1 !== 0 && o1 === o2) || (o3 !== undefined && o3 !== 0 && o3 === o4);
+  if (!disjoint) return false;
+  const gap = (p: Box, s: Box, t: Box): number => {
+    const dir = [subI(t[0], s[0]), subI(t[1], s[1])] as const,
+      ps = [subI(p[0], s[0]), subI(p[1], s[1])] as const;
+    const length2 = addI(squareI(dir[0]), squareI(dir[1]));
+    let lower = 0;
+    if (length2[0] > 0) lower = divI(squareI(subI(mulI(ps[0], dir[1]), mulI(ps[1], dir[0]))), length2)[0];
+    const projection = addI(mulI(ps[0], dir[0]), mulI(ps[1], dir[1]));
+    if (projection[1] <= 0) lower = Math.max(lower, addI(squareI(ps[0]), squareI(ps[1]))[0]);
+    else if (projection[0] >= length2[1]) {
+      const pt = [subI(p[0], t[0]), subI(p[1], t[1])] as const;
+      lower = Math.max(lower, addI(squareI(pt[0]), squareI(pt[1]))[0]);
+    }
+    return lower;
+  };
+  return gap(a, c, d) > thresholdUpper && gap(b, c, d) > thresholdUpper
+    && gap(c, a, b) > thresholdUpper && gap(d, a, b) > thresholdUpper;
+}
+
 /** Certify the straight embedding throughout endpoint conversion, rather than only scanning its result. */
 function certifyEmission(edges: readonly ExactEdge[], budget: GraphBudget): void {
-  const threshold = square(exact(4 * EMISSION_ERROR_IN));
+  const threshold = square(exact(4 * EMISSION_ERROR_IN)),
+    thresholdUpper = nextUp(nextUp(4 * EMISSION_ERROR_IN) * nextUp(4 * EMISSION_ERROR_IN));
   const boxes = edges.map((edge) => {
     const xs = [emitCoordinate(edge.a[0]), emitCoordinate(edge.b[0])],
       ys = [emitCoordinate(edge.a[1]), emitCoordinate(edge.b[1])];
@@ -94,8 +153,49 @@ function certifyEmission(edges: readonly ExactEdge[], budget: GraphBudget): void
       y: inflateI([Math.min(...ys), Math.max(...ys)], 1e-10),
     };
   });
-  for (let i = 0; i < edges.length; i++)
-    for (let j = i + 1; j < edges.length; j++) {
+  // Only pairs whose boxes come within 4e-10 can fail a check below (the box test skips
+  // every other pair), so a grid over boxes padded by that much finds every pair that
+  // matters. Each pair is checked once, in the first cell its padded boxes share.
+  const pad = nextUp(4 * EMISSION_ERROR_IN);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const box of boxes) {
+    minX = Math.min(minX, box.x[0]); maxX = Math.max(maxX, box.x[1]);
+    minY = Math.min(minY, box.y[0]); maxY = Math.max(maxY, box.y[1]);
+  }
+  const size = Math.max(Math.sqrt(((maxX - minX) * (maxY - minY)) / Math.max(1, edges.length)) * 2,
+    (maxX - minX) / 2048, (maxY - minY) / 2048) || 1;
+  const columns = Math.max(1, Math.floor((maxX - minX + 2 * pad) / size) + 1);
+  const cellOf = (value: number, origin: number): number => Math.max(0, Math.floor((value - origin + pad) / size));
+  // Rounding can put a padded edge one past the last column; clamp so keys never alias rows.
+  const columnOf = (value: number): number => Math.min(columns - 1, cellOf(value, minX));
+  const ranges = boxes.map((box) => [columnOf(box.x[0] - pad), columnOf(box.x[1] + pad),
+    cellOf(box.y[0] - pad, minY), cellOf(box.y[1] + pad, minY)] as const);
+  const cells = new Map<number, number[]>();
+  ranges.forEach(([x0, x1, y0, y1], index) => {
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        budget.step();
+        const key = y * columns + x,
+          list = cells.get(key);
+        if (list) list.push(index);
+        else cells.set(key, [index]);
+      }
+  });
+  const pairs: [number, number][] = [];
+  for (const [key, list] of cells) {
+    const x = key % columns,
+      y = (key - x) / columns;
+    for (let p = 0; p < list.length; p++)
+      for (let q = p + 1; q < list.length; q++) {
+        budget.step();
+        const i = Math.min(list[p], list[q]),
+          j = Math.max(list[p], list[q]);
+        if (Math.max(ranges[i][0], ranges[j][0]) === x && Math.max(ranges[i][2], ranges[j][2]) === y)
+          pairs.push([i, j]);
+      }
+  }
+  pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  for (const [i, j] of pairs) {
       budget.step();
       const a = edges[i],
         b = edges[j];
@@ -105,11 +205,19 @@ function certifyEmission(edges: readonly ExactEdge[], budget: GraphBudget): void
           endB = samePoint(shared, b.a) ? b.b : b.a;
         const rounded = (p: ExactPoint): ExactPoint =>
           point(emitCoordinate(p[0]), emitCoordinate(p[1]));
+        const ra = delta(rounded(endA), rounded(shared)),
+          rb = delta(rounded(endB), rounded(shared));
+        // Interval filter for the exact checks below: when it decides every predicate the
+        // exact path would reach the same outcome, so it passes or throws the same error.
+        const quick = junctionByIntervals(enclose(endA), enclose(endB), enclose(shared));
+        if (quick !== undefined) {
+          if (quick !== compareDirections(ra, rb))
+            throw new Error('Graph junction cyclic order cannot survive numeric emission');
+          continue;
+        }
         // The two rays retain their half-plane and exact cross-product sign during linear rounding.
         const va = delta(endA, shared),
           vb = delta(endB, shared);
-        const ra = delta(rounded(endA), rounded(shared)),
-          rb = delta(rounded(endB), rounded(shared));
         const determinant = cross(va, vb);
         const absolute = (v: typeof determinant): typeof determinant =>
           rational(v.n < 0n ? -v.n : v.n, v.d);
@@ -139,6 +247,7 @@ function certifyEmission(edges: readonly ExactEdge[], budget: GraphBudget): void
         subI(interval(boxB.y[0]), interval(boxA.y[1]))[0] > 4 * EMISSION_ERROR_IN
       )
         continue;
+      if (separatedByIntervals(enclose(a.a), enclose(a.b), enclose(b.a), enclose(b.b), thresholdUpper)) continue;
       if (segmentsIntersect(a.a, a.b, b.a, b.b))
         throw new Error('Exact graph nonincident edges intersect');
       for (const distance of [

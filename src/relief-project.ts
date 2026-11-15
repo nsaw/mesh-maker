@@ -5,7 +5,7 @@ import { DEFAULTS } from './state';
 
 /** Bump only when relief generation changes so a saved layout would carve differently. It is
  * independent of the share-link version, which changes for unrelated controls. */
-export const PROJECT_GENERATION = 24;
+export const PROJECT_GENERATION = 25;
 import type { ReliefQueryDescription, ReliefSiteSet } from './types';
 import { buildNoiseSurface, NOISE_SURFACE_KEYS, noiseSurfaceParams, type NoiseSurface, type NoiseSurfaceParams } from './noise/surface';
 import { describeReliefQuery, sampleReliefParamsFromState } from './noise/voronoi-relief';
@@ -156,7 +156,8 @@ export function copyReliefProject(project: ReliefProject): ReliefProject { retur
 export function assertReliefProjectGenerationWork(project: ReliefProject): void {
   const p = project.params;
   const {cols, rows} = noiseGridShape(p.resolution, p.meshX, p.meshY);
-  assertFrozenReliefWork({cols, rows, meshX: p.meshX, meshY: p.meshY}, project.sites);
+  assertFrozenReliefWork({cols, rows, meshX: p.meshX, meshY: p.meshY,
+    pillow: p.reliefPillow, pillowCoverage: p.reliefPillowCoverage, invertProfile: p.reliefInvertProfile}, project.sites);
 }
 export function projectSurfaceParams(project: ReliefProject, revision: number): NoiseSurfaceParams {
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid project source revision');

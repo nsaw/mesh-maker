@@ -79,7 +79,12 @@ for i,p in enumerate(P):
 def key(p):return ','.join(str(z.numerator)+'/'+str(z.denominator) for z in p)
 print(json.dumps(sorted([{'ends':sorted([key(a),key(b)]),'owners':ids} for (a,b),ids in E.items() if len(ids)==2],key=lambda e:str(e))))
 `;
+// 40 scattered sites exercise the nearest-first bucket enumeration and the 2R competitor
+// cutoff (#80): every exact vertex and owner pair still matches the full Fraction clipper.
+let lcg=91;const scatter=Array.from({length:80},()=>((lcg=(Math.imul(lcg,1103515245)+12345)>>>0)/4294967296)*4);
 for (const [metric, xy] of [
+  [{cosA:1,sinA:0,scale:1},scatter],
+  [{cosA:Math.cos(0.4),sinA:Math.sin(0.4),scale:1.6},scatter],
   [{cosA:1,sinA:0,scale:2},[0.25,0.5,3.5,0.75,3,3.2,0.5,3.5,2,2]],
   [{cosA:Math.cos(0.7),sinA:Math.sin(0.7),scale:2.3},[0.25,0.5,3.5,0.75,3,3.2,0.5,3.5,2,2]],
   [{cosA:Math.cos(0.713),sinA:Math.sin(0.713),scale:1.7},[1,2,1+1e-14,2]],

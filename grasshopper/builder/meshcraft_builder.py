@@ -934,9 +934,9 @@ class VoronoiReliefNoise(object):
     CELL_MEASUREMENT_PITCH_IN = WALL_MIN_PHYS / 4.0
     CELL_MEASUREMENT_MAX = 320000
     CROWN_MIN_PHYS = 0.25
-    # v23 membrane cushions: fixed SOR sweep count for determinism.
-    MEMBRANE_SWEEPS = 80
-    MEMBRANE_OMEGA = 1.8
+    # v24 membrane cushions: solved on the physical measurement lattice by conjugate
+    # gradients to this relative residual, so the cushion is independent of output density.
+    MEMBRANE_TOLERANCE = 1e-10
     SIZE_DEPTH_MIN = 0.8
     SIZE_DEPTH_MAX = 1.2
     DENSITY_NOISE_GAIN = 1.6
@@ -1384,14 +1384,24 @@ class VoronoiReliefNoise(object):
             scale = math.sqrt(float(self.CELL_MEASUREMENT_MAX) / (measure_cols * measure_rows))
             measure_cols = min(self.CELL_MEASUREMENT_MAX // 4, max(2, int(math.floor(measure_cols * scale))))
             measure_rows = min(self.CELL_MEASUREMENT_MAX // measure_cols, max(4, int(math.floor(measure_rows * scale))))
+        # Boundary distance and nearest ranks per quadrature node, kept for the membrane
+        # lattice, which queries the same nodes again (see the v24 membrane pass).
+        measure_boundary = [0.0] * (measure_cols * measure_rows)
+        keep_ranks = (max(0.0, min(1.0, p.get('pillow', 0.0))) > 0.0 and p.get('invert_profile', 0.0) <= 0.5
+                      and max(0.0, min(1.0, p.get('pillow_coverage', 0.6))) > 0.0)
+        measure_nearest = [None] * (measure_cols * measure_rows) if keep_ranks else None
         for j in range(measure_rows):
             for i in range(measure_cols):
                 x = i / float(measure_cols - 1) * p['mesh_x']
                 y = j / float(measure_rows - 1) * p['mesh_y']
                 qx, qy = warp_fn(x, y) if warp_fn is not None else (x, y)
-                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale, junction_grid)
+                ranks = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale, junction_grid)
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = ranks
                 radius_sum[idx] += f1; radius_n[idx] += 1
                 db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4, qx, qy)
+                measure_boundary[j * measure_cols + i] = db
+                if measure_nearest is not None:
+                    measure_nearest[j * measure_cols + i] = ranks
                 if db > inradius[idx]: inradius[idx] = db
         geometric_owner = [0] * n_sites
         for k in range(n_sites):
@@ -1468,244 +1478,296 @@ class VoronoiReliefNoise(object):
         # through the quintic) — the medial axis cannot appear.
         cush_a = [0.0] * (cols * rows)
         cush_owner = [-1] * (cols * rows)
+        # One pass-2 node at physical (x, y), queried at (qx, qy), with normalized (u, v).
+        # Every input is a function of physical position, so a node's height is independent
+        # of the grid it belongs to. Returns (height, cushion chain, owner).
+        def evaluate_node(x, y, qx, qy, u, v, known=None):
+            cushion = 0.0
+            if known is None:
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale, junction_grid)
+            else:
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = known
+            mask = self._attractor_mask(p['attractor_mode'], u, v,
+                p['attractor_x'], p['attractor_y'],
+                p['attractor_radius'], p['attractor_falloff'])
+            if attractor_noise_gen and attractor_noise_amt > 0.0:
+                n = attractor_noise_gen.noise(x * attractor_noise_freq, y * attractor_noise_freq)
+                modulator = (n + 1.0) * 0.5
+                mask = mask * ((1.0 - attractor_noise_amt) + attractor_noise_amt * modulator * 1.5)
+                if mask > 1.0: mask = 1.0
+                if mask < 0.0: mask = 0.0
+            # Focal proximity (real-space) — drives focal expansion and intensity deepening.
+            g_max = 0.0
+            for k in range(len(foci_phys)):
+                dx = x - foci_phys[k][0]; dy = y - foci_phys[k][1]
+                g = math.exp(-(dx * dx + dy * dy) * inv2s2_radial)
+                if g > g_max: g_max = g
+            # v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
+            # d_b is the exact distance to the SHARED Voronoi boundary (boundary_dist) —
+            # its level sets are true inset polygons of the cell, so the floor keeps
+            # polygonal ancestry. The wall extent w is normalized per cell against the
+            # measured inradius, so the wall spans the FULL territory from the shared
+            # boundary to the inset floor: every interior point is crest, wall, or
+            # floor — no neutral gaps. q = d_b/w: 0 at the boundary, 1 at the floor edge.
+            radius = 2.08 * max(f1, 1e-9)
+            db, candidates = junction_grid.boundary_neighborhood(qx, qy, idx, f1,
+                boundary_seed(f1, f2, f3, f4, idx, idx2, idx3, idx4, qx, qy), cosA, sinA, aniso_scale, radius)
+            jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1)) if f3 != float('inf') else 0.0
+            jn_s = self._smoothstep(0.65, 0.98, jn)
+            static_mul_blended, slope_blended, inr, seam, edge_shared, local_side = self._junction_fields(
+                candidates, f1, static_mul, slope_mul, geometry_radius, seam_scale, shared_strength,
+                lambda index: self._edge_hash01(ids[idx], ids[index], seed + 59))
+            owner_fade = min(1.0, db / max(1e-6, 0.35 * inr))
+            edge_side = edge_shared + owner_fade * (local_side - edge_shared)
+            wall_field_noise = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq) if wall_noise_gen is not None else 0.0
+            dissolve = ((1.0 - self._smoothstep(0.06, 0.3, edge_shared)) * self.EDGE_DISSOLVE_MAX
+                        * (1.0 - self._smoothstep(0.45, 0.75, jn)))
+            # Ridge crest band: a physical plateau on the shared boundary. The plateau
+            # width SWINGS along each edge with the wall-noise field (chunky-to-thin
+            # ridges) and widens toward junctions.
+            crest_w = wall_frac * max(0.2, p['cell_size']) * 0.5
+            # Wall extent = seamDepth fraction of the remaining inradius, varied per cell
+            # (asymmetric neighbors), along each edge (noise), and at junctions (widening).
+            wall_scale = 0.7 + 0.7 * edge_side
+            wall_scale *= seam
+            if wall_noise_gen is not None:
+                wn = wall_field_noise
+                wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
+                # Junction DELTAS use a wider gate than the lift term: the plateau
+                # flares well before the corner into bold triangular Y-masses.
+                jn_w = self._smoothstep(0.55, 0.95, jn)
+                crest_w *= max(0.15, 1.0 + self.RIDGE_WIDTH_SWING * wn + self.JUNCTION_DELTA_GAIN * junction_lift * jn_w)
+            if cell_size_grad > 0.0:
+                wall_scale *= 1.0 + cell_size_grad * mask * 0.6
+            if radial_grow > 0.0 and g_max > 0.0:
+                wall_scale /= min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
+            # v21.1: crest must leave a resolvable wall span; wall extent floors at the
+            # physical minimum feature size.
+            crest_w = min(crest_w, 0.6 * inr, max(0.0, inr - self.WALL_MIN_PHYS))
+            w = max(self.WALL_MIN_PHYS, seam_depth_base * max(0.02, inr - crest_w) * wall_scale)
+            bowl_t_raw = max(0.0, (db - crest_w) / w)
+            # Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp.
+            if bowl_t_raw >= 1.0 + FILLET_BAND:
+                bowl_t = 1.0
+            elif bowl_t_raw <= 1.0 - FILLET_BAND:
+                bowl_t = bowl_t_raw
+            else:
+                e = 1.0 + FILLET_BAND - bowl_t_raw
+                bowl_t = 1.0 - (e * e) / (4.0 * FILLET_BAND)
+            # All profiles MUST have dh/dt = 0 at t=0 (boundary). Otherwise the height
+            # drops from 0 with non-zero slope and mesh triangulation produces knife-edge
+            # spikes along ridges. Mirrors src/noise/voronoi-relief.ts.
+            if p['profile'] == 'hemisphere':
+                bowl_h = 1.0 - math.sqrt(max(0.0, 1.0 - bowl_t * bowl_t))
+            elif p['profile'] == 'cosine':
+                # v21: per-edge profile FAMILY — each edge blends toward a late-power
+                # curve (shallow shoulder, broad descent, steeper lower third).
+                cos_h = 0.5 - 0.5 * math.cos(bowl_t * math.pi)
+                # Tempered so the blended profile's PEAK slope stays <= ~1.9x mean.
+                late_h = pow(bowl_t, 1.5 + 0.6 * edge_shared)
+                prof_mix = 0.15 + 0.45 * edge_side
+                bowl_h = (1.0 - prof_mix) * cos_h + prof_mix * late_h
+            else:  # parabolic
+                bowl_h = bowl_t * bowl_t
+            # Seam sharpness — blend toward a linear ramp for V-groove gutters.
+            if seam_sharp > 0.0:
+                bowl_h = (1.0 - seam_sharp) * bowl_h + seam_sharp * bowl_t
+            # v16.1 pillowed floors: past saturation the floor rises back toward the
+            # cell center (double-curvature pockets). Per-cell hash gates coverage and
+            # varies mound height. Capped at 65% of depth so mounds stay inside pockets.
+            # v21 edge dissolution: weak edges melt toward floor level — adjacent
+            # cells blend into one shared basin (boundary hierarchy, never all-equal).
+            if dissolve > 0.0:
+                bowl_h += (1.0 - bowl_h) * dissolve
+            # v21 perimeter-clamped CUSHION floors: gutter at the floor edge, broad
+            # convex crown following the inset-polygon footprint. SCALE-DEPENDENT —
+            # pronounced in the largest cells, absent in small ones.
+            # v22 unified profile: wall bottoms out (fillet), HOLDS through a real
+            # gutter (to 1.25), then the crown rises via a G2 smootherstep and ends
+            # flat by 1.9 — a transition REGION, not a line. Amplitude <= ~25% of
+            # depth; coverage is a smooth field threshold (no binary per-cell gate).
+            cushion_amp = 0.0
+            if pillow_amt > 0.0 and bowl_t_raw > 1.25 and invert_profile <= 0.5:
+                size_t = self._smoothstep(0.9, 1.8, inr / max(0.05, median_radius * 0.5))
+                if size_t > 0.0:
+                    field_v = (panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ,
+                                                     sites[idx][1] * PANEL_FIELD_FREQ) + 1.0) * 0.5
+                    # Coverage 0 must fully disable cushions.
+                    if pillow_coverage <= 0.0:
+                        cov_gate = 0.0
+                    else:
+                        cov_gate = self._smoothstep(0.8 - pillow_coverage, 1.2 - pillow_coverage, field_v)
+                    if cov_gate > 0.0:
+                        amt_var = 0.55 + 0.45 * field_v
+                        cushion_amp = pillow_amt * amt_var * 0.28 * size_t * cov_gate
+            # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's
+            # deepest point off-center — steep wall on one flank, long ramp on the
+            # other. Purely reductive (shallow flank ramps up) so the output clamp is
+            # never involved; factor is 1 at the boundary so shared walls stay put.
+            if depth_variation > 0.0 and bowl_h > 0.0:
+                # v22: tilt direction from the shared panel field (adjacent pockets
+                # lean in related directions), not a per-cell hash.
+                tilt_ang = panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ + 37.1,
+                                                 sites[idx][1] * PANEL_FIELD_FREQ + 11.7) * math.pi * 2.0
+                rad = max(0.2, sites[idx][2])
+                tilt = (math.cos(tilt_ang) * (qx - sites[idx][0])
+                        + math.sin(tilt_ang) * (qy - sites[idx][1])) / rad
+                tilt_t = (max(-0.9, min(0.9, tilt)) + 0.9) / 1.8
+                bowl_h *= 1.0 - self.FLOOR_TILT_GAIN * depth_variation * tilt_t * bowl_h * owner_fade
+            # invertProfile: carve the boundary instead of the interior (domed floors).
+            if invert_profile > 0.5:
+                bowl_h = 1.0 - bowl_h
+            # Intensity scales bowl depth by the attractor mask OR focal proximity
+            # (whichever is stronger); cellWeight gates cells spatially.
+            intensity = (1.0 - intensity_strength) + intensity_strength * max(mask, g_max)
+            cw = pow(mask, transition_exponent)
+            # v17 depth composition: size coupling + iid tier + SPATIAL suppression
+            # (clusters of neighboring cells melt into calm masses).
+            # v21.1: hash-static parts (size + depth class + slope budget) come
+            # pre-blended across the nearest edges — C0 at dissolved boundaries.
+            cell_depth_mul = static_mul_blended
+            if depth_variation > 0.0:
+                if suppress_gen is not None:
+                    sn = (suppress_gen.noise(x * suppress_freq, y * suppress_freq) + 1.0) * 0.5
+                    cell_depth_mul *= 1.0 - self.SUPPRESSION_STRENGTH * depth_variation * self._smoothstep(0.62, 0.82, sn)
+            # v20 stretched fans: above grow = 1 the focal zone shallows toward the
+            # pinch point while its lattice keeps converging walls.
+            if radial_grow > 1.0 and g_max > 0.0:
+                cell_depth_mul *= 1.0 - self.FOCAL_CALM_GAIN * (radial_grow - 1.0) * g_max
+            base = base_amp * self.wave.noise(x * base_freq, y * base_freq) if base_amp > 0.0 else 0.0
+            h = base + polarity * bowl_h * cw * intensity * cell_depth_mul
+            if cushion_amp > 0.0:
+                cushion = cushion_amp * cw * intensity * cell_depth_mul
+            # v17 crest variation: ridge-LOCAL height noise (fragments the envelope).
+            # Both cell-derived additions are gated by cw so relief cannot reappear
+            # where the attractor has faded the cell system out.
+            if crest_variation > 0.0 and crest_gen is not None:
+                ridge_mask = pow(1.0 - bowl_h, 1.5)
+                h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw * slope_blended
+            # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
+            if junction_lift > 0.0:
+                h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw * slope_blended
+            # v20 ridge crown: rounded bead over the crest band — dome peaking on the
+            # shared boundary. Melted zones keep ghost creases (0.35 floor).
+            if wall_frac > 0.0:
+                crown = self._crown_weight(crest_w, db, self.CROWN_MIN_PHYS)
+                crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
+                h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul * slope_blended
+            # v21 stock-plane soft cap (pockets only): broad crests flatten into
+            # plateaus just above the base wave; junction fins become saddles.
+            if polarity < 0.0:
+                hp = h - base
+                if hp > self.STOCK_CAP_START:
+                    h = base + self.STOCK_CAP_START + self.STOCK_CAP_SPAN * math.tanh((hp - self.STOCK_CAP_START) / self.STOCK_CAP_SPAN)
+            # Void mode pushes h toward the negative clamp where mask + bowl depth are
+            # high. Uses bowl_h as the carve-depth proxy (was 'seam' in the old algorithm).
+            if void_strength > 0.0:
+                void_gate = mask * bowl_h
+                void_edge0 = 1.0 - void_strength
+                void_edge1 = 1.0 - void_strength * 0.5
+                void_t = self._smoothstep(void_edge0, void_edge1, void_gate)
+                h = h * (1.0 - void_t) - self.OUTPUT_HEIGHT_CLAMP * void_t
+            if h != h or h == float('inf') or h == float('-inf'):  # NaN/Inf guard
+                h = 0.0
+            if h < -self.OUTPUT_HEIGHT_CLAMP: h = -self.OUTPUT_HEIGHT_CLAMP
+            elif h > self.OUTPUT_HEIGHT_CLAMP: h = self.OUTPUT_HEIGHT_CLAMP
+            return h, cushion, idx
         for j in range(rows):
             v = j / float(max(1, rows - 1)); y = v * p['mesh_y']
             for i in range(cols):
                 u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
                 pix = j * cols + i
-                qx = wx_arr[pix]; qy = wy_arr[pix]
-                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale, junction_grid)
-                mask = self._attractor_mask(p['attractor_mode'], u, v,
-                    p['attractor_x'], p['attractor_y'],
-                    p['attractor_radius'], p['attractor_falloff'])
-                if attractor_noise_gen and attractor_noise_amt > 0.0:
-                    n = attractor_noise_gen.noise(x * attractor_noise_freq, y * attractor_noise_freq)
-                    modulator = (n + 1.0) * 0.5
-                    mask = mask * ((1.0 - attractor_noise_amt) + attractor_noise_amt * modulator * 1.5)
-                    if mask > 1.0: mask = 1.0
-                    if mask < 0.0: mask = 0.0
-                # Focal proximity (real-space) — drives focal expansion and intensity deepening.
-                g_max = 0.0
-                for k in range(len(foci_phys)):
-                    dx = x - foci_phys[k][0]; dy = y - foci_phys[k][1]
-                    g = math.exp(-(dx * dx + dy * dy) * inv2s2_radial)
-                    if g > g_max: g_max = g
-                # v18 BOUNDARY-DISTANCE CONSTRUCTION (the critique's prescribed q-coordinate).
-                # d_b is the exact distance to the SHARED Voronoi boundary (boundary_dist) —
-                # its level sets are true inset polygons of the cell, so the floor keeps
-                # polygonal ancestry. The wall extent w is normalized per cell against the
-                # measured inradius, so the wall spans the FULL territory from the shared
-                # boundary to the inset floor: every interior point is crest, wall, or
-                # floor — no neutral gaps. q = d_b/w: 0 at the boundary, 1 at the floor edge.
-                radius = 2.08 * max(f1, 1e-9)
-                db, candidates = junction_grid.boundary_neighborhood(qx, qy, idx, f1,
-                    boundary_seed(f1, f2, f3, f4, idx, idx2, idx3, idx4, qx, qy), cosA, sinA, aniso_scale, radius)
-                jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1)) if f3 != float('inf') else 0.0
-                jn_s = self._smoothstep(0.65, 0.98, jn)
-                static_mul_blended, slope_blended, inr, seam, edge_shared, local_side = self._junction_fields(
-                    candidates, f1, static_mul, slope_mul, geometry_radius, seam_scale, shared_strength,
-                    lambda index: self._edge_hash01(ids[idx], ids[index], seed + 59))
-                owner_fade = min(1.0, db / max(1e-6, 0.35 * inr))
-                edge_side = edge_shared + owner_fade * (local_side - edge_shared)
-                wall_field_noise = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq) if wall_noise_gen is not None else 0.0
-                dissolve = ((1.0 - self._smoothstep(0.06, 0.3, edge_shared)) * self.EDGE_DISSOLVE_MAX
-                            * (1.0 - self._smoothstep(0.45, 0.75, jn)))
-                # Ridge crest band: a physical plateau on the shared boundary. The plateau
-                # width SWINGS along each edge with the wall-noise field (chunky-to-thin
-                # ridges) and widens toward junctions.
-                crest_w = wall_frac * max(0.2, p['cell_size']) * 0.5
-                # Wall extent = seamDepth fraction of the remaining inradius, varied per cell
-                # (asymmetric neighbors), along each edge (noise), and at junctions (widening).
-                wall_scale = 0.7 + 0.7 * edge_side
-                wall_scale *= seam
-                if wall_noise_gen is not None:
-                    wn = wall_field_noise
-                    wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
-                    # Junction DELTAS use a wider gate than the lift term: the plateau
-                    # flares well before the corner into bold triangular Y-masses.
-                    jn_w = self._smoothstep(0.55, 0.95, jn)
-                    crest_w *= max(0.15, 1.0 + self.RIDGE_WIDTH_SWING * wn + self.JUNCTION_DELTA_GAIN * junction_lift * jn_w)
-                if cell_size_grad > 0.0:
-                    wall_scale *= 1.0 + cell_size_grad * mask * 0.6
-                if radial_grow > 0.0 and g_max > 0.0:
-                    wall_scale /= min(self.FOCAL_EXPAND_CAP, 1.0 + radial_grow * g_max * self.FOCAL_EXPAND_GAIN)
-                # v21.1: crest must leave a resolvable wall span; wall extent floors at the
-                # physical minimum feature size.
-                crest_w = min(crest_w, 0.6 * inr, max(0.0, inr - self.WALL_MIN_PHYS))
-                w = max(self.WALL_MIN_PHYS, seam_depth_base * max(0.02, inr - crest_w) * wall_scale)
-                bowl_t_raw = max(0.0, (db - crest_w) / w)
-                # Smooth floor saturation (C1 fillet into the floor) instead of a hard clamp.
-                if bowl_t_raw >= 1.0 + FILLET_BAND:
-                    bowl_t = 1.0
-                elif bowl_t_raw <= 1.0 - FILLET_BAND:
-                    bowl_t = bowl_t_raw
-                else:
-                    e = 1.0 + FILLET_BAND - bowl_t_raw
-                    bowl_t = 1.0 - (e * e) / (4.0 * FILLET_BAND)
-                # All profiles MUST have dh/dt = 0 at t=0 (boundary). Otherwise the height
-                # drops from 0 with non-zero slope and mesh triangulation produces knife-edge
-                # spikes along ridges. Mirrors src/noise/voronoi-relief.ts.
-                if p['profile'] == 'hemisphere':
-                    bowl_h = 1.0 - math.sqrt(max(0.0, 1.0 - bowl_t * bowl_t))
-                elif p['profile'] == 'cosine':
-                    # v21: per-edge profile FAMILY — each edge blends toward a late-power
-                    # curve (shallow shoulder, broad descent, steeper lower third).
-                    cos_h = 0.5 - 0.5 * math.cos(bowl_t * math.pi)
-                    # Tempered so the blended profile's PEAK slope stays <= ~1.9x mean.
-                    late_h = pow(bowl_t, 1.5 + 0.6 * edge_shared)
-                    prof_mix = 0.15 + 0.45 * edge_side
-                    bowl_h = (1.0 - prof_mix) * cos_h + prof_mix * late_h
-                else:  # parabolic
-                    bowl_h = bowl_t * bowl_t
-                # Seam sharpness — blend toward a linear ramp for V-groove gutters.
-                if seam_sharp > 0.0:
-                    bowl_h = (1.0 - seam_sharp) * bowl_h + seam_sharp * bowl_t
-                # v16.1 pillowed floors: past saturation the floor rises back toward the
-                # cell center (double-curvature pockets). Per-cell hash gates coverage and
-                # varies mound height. Capped at 65% of depth so mounds stay inside pockets.
-                # v21 edge dissolution: weak edges melt toward floor level — adjacent
-                # cells blend into one shared basin (boundary hierarchy, never all-equal).
-                if dissolve > 0.0:
-                    bowl_h += (1.0 - bowl_h) * dissolve
-                # v21 perimeter-clamped CUSHION floors: gutter at the floor edge, broad
-                # convex crown following the inset-polygon footprint. SCALE-DEPENDENT —
-                # pronounced in the largest cells, absent in small ones.
-                # v22 unified profile: wall bottoms out (fillet), HOLDS through a real
-                # gutter (to 1.25), then the crown rises via a G2 smootherstep and ends
-                # flat by 1.9 — a transition REGION, not a line. Amplitude <= ~25% of
-                # depth; coverage is a smooth field threshold (no binary per-cell gate).
-                cushion_amp = 0.0
-                if pillow_amt > 0.0 and bowl_t_raw > 1.25 and invert_profile <= 0.5:
-                    size_t = self._smoothstep(0.9, 1.8, inr / max(0.05, median_radius * 0.5))
-                    if size_t > 0.0:
-                        field_v = (panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ,
-                                                         sites[idx][1] * PANEL_FIELD_FREQ) + 1.0) * 0.5
-                        # Coverage 0 must fully disable cushions.
-                        if pillow_coverage <= 0.0:
-                            cov_gate = 0.0
-                        else:
-                            cov_gate = self._smoothstep(0.8 - pillow_coverage, 1.2 - pillow_coverage, field_v)
-                        if cov_gate > 0.0:
-                            amt_var = 0.55 + 0.45 * field_v
-                            cushion_amp = pillow_amt * amt_var * 0.28 * size_t * cov_gate
-                # v19 scooped floors: per-cell hash-direction tilt shifts each pocket's
-                # deepest point off-center — steep wall on one flank, long ramp on the
-                # other. Purely reductive (shallow flank ramps up) so the output clamp is
-                # never involved; factor is 1 at the boundary so shared walls stay put.
-                if depth_variation > 0.0 and bowl_h > 0.0:
-                    # v22: tilt direction from the shared panel field (adjacent pockets
-                    # lean in related directions), not a per-cell hash.
-                    tilt_ang = panel_field_gen.noise(sites[idx][0] * PANEL_FIELD_FREQ + 37.1,
-                                                     sites[idx][1] * PANEL_FIELD_FREQ + 11.7) * math.pi * 2.0
-                    rad = max(0.2, sites[idx][2])
-                    tilt = (math.cos(tilt_ang) * (qx - sites[idx][0])
-                            + math.sin(tilt_ang) * (qy - sites[idx][1])) / rad
-                    tilt_t = (max(-0.9, min(0.9, tilt)) + 0.9) / 1.8
-                    bowl_h *= 1.0 - self.FLOOR_TILT_GAIN * depth_variation * tilt_t * bowl_h * owner_fade
-                # invertProfile: carve the boundary instead of the interior (domed floors).
-                if invert_profile > 0.5:
-                    bowl_h = 1.0 - bowl_h
-                # Intensity scales bowl depth by the attractor mask OR focal proximity
-                # (whichever is stronger); cellWeight gates cells spatially.
-                intensity = (1.0 - intensity_strength) + intensity_strength * max(mask, g_max)
-                cw = pow(mask, transition_exponent)
-                # v17 depth composition: size coupling + iid tier + SPATIAL suppression
-                # (clusters of neighboring cells melt into calm masses).
-                # v21.1: hash-static parts (size + depth class + slope budget) come
-                # pre-blended across the nearest edges — C0 at dissolved boundaries.
-                cell_depth_mul = static_mul_blended
-                if depth_variation > 0.0:
-                    if suppress_gen is not None:
-                        sn = (suppress_gen.noise(x * suppress_freq, y * suppress_freq) + 1.0) * 0.5
-                        cell_depth_mul *= 1.0 - self.SUPPRESSION_STRENGTH * depth_variation * self._smoothstep(0.62, 0.82, sn)
-                # v20 stretched fans: above grow = 1 the focal zone shallows toward the
-                # pinch point while its lattice keeps converging walls.
-                if radial_grow > 1.0 and g_max > 0.0:
-                    cell_depth_mul *= 1.0 - self.FOCAL_CALM_GAIN * (radial_grow - 1.0) * g_max
-                base = base_amp * self.wave.noise(x * base_freq, y * base_freq) if base_amp > 0.0 else 0.0
-                h = base + polarity * bowl_h * cw * intensity * cell_depth_mul
-                if cushion_amp > 0.0:
-                    pix0 = j * cols + i
-                    cush_a[pix0] = cushion_amp * cw * intensity * cell_depth_mul
-                    cush_owner[pix0] = idx
-                # v17 crest variation: ridge-LOCAL height noise (fragments the envelope).
-                # Both cell-derived additions are gated by cw so relief cannot reappear
-                # where the attractor has faded the cell system out.
-                if crest_variation > 0.0 and crest_gen is not None:
-                    ridge_mask = pow(1.0 - bowl_h, 1.5)
-                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw * slope_blended
-                # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
-                if junction_lift > 0.0:
-                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw * slope_blended
-                # v20 ridge crown: rounded bead over the crest band — dome peaking on the
-                # shared boundary. Melted zones keep ghost creases (0.35 floor).
-                if wall_frac > 0.0:
-                    crown = self._crown_weight(crest_w, db, self.CROWN_MIN_PHYS)
-                    crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
-                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul * slope_blended
-                # v21 stock-plane soft cap (pockets only): broad crests flatten into
-                # plateaus just above the base wave; junction fins become saddles.
-                if polarity < 0.0:
-                    hp = h - base
-                    if hp > self.STOCK_CAP_START:
-                        h = base + self.STOCK_CAP_START + self.STOCK_CAP_SPAN * math.tanh((hp - self.STOCK_CAP_START) / self.STOCK_CAP_SPAN)
-                # Void mode pushes h toward the negative clamp where mask + bowl depth are
-                # high. Uses bowl_h as the carve-depth proxy (was 'seam' in the old algorithm).
-                if void_strength > 0.0:
-                    void_gate = mask * bowl_h
-                    void_edge0 = 1.0 - void_strength
-                    void_edge1 = 1.0 - void_strength * 0.5
-                    void_t = self._smoothstep(void_edge0, void_edge1, void_gate)
-                    h = h * (1.0 - void_t) - self.OUTPUT_HEIGHT_CLAMP * void_t
-                if h != h or h == float('inf') or h == float('-inf'):  # NaN/Inf guard
-                    h = 0.0
-                if h < -self.OUTPUT_HEIGHT_CLAMP: h = -self.OUTPUT_HEIGHT_CLAMP
-                elif h > self.OUTPUT_HEIGHT_CLAMP: h = self.OUTPUT_HEIGHT_CLAMP
-                out[j * cols + i] = h
-        # v23 membrane cushion pass (mirrors the TS sampler): SOR-relaxed Poisson over
-        # cushion pixels, per-cell normalization, quintic composition, polarity-signed
-        # application, output re-clamped.
+                h, cushion, owner_idx = evaluate_node(x, y, wx_arr[pix], wy_arr[pix], u, v)
+                if cushion > 0.0:
+                    cush_a[pix] = cushion
+                    cush_owner[pix] = owner_idx
+                out[pix] = h
+        # v24 membrane cushion pass (mirrors the TS sampler). The cushion region and its
+        # owners are evaluated on the physical measurement lattice; one Poisson solve,
+        # 4u - sum(neighbors) = 4 with u = 0 outside each cell's region, runs by conjugate
+        # gradients to MEMBRANE_TOLERANCE, with neighbors owned by another cell held at
+        # zero. Each cushion node reads its own cell's membrane bilinearly at its physical
+        # position, normalized by that cell's lattice maximum.
         any_cush = False
         for v0 in cush_a:
             if v0 > 0.0:
                 any_cush = True
                 break
-        if any_cush:
-            u = [0.0] * (cols * rows)
-            # Symmetric SOR: alternate forward/reverse sweeps (forward-only would bias
-            # partially converged cushions toward the sweep origin). Deterministic.
-            for _sweep in range(self.MEMBRANE_SWEEPS):
-                if _sweep % 2 == 0:
-                    row_iter = range(1, rows - 1)
-                    col_iter = range(1, cols - 1)
-                else:
-                    row_iter = range(rows - 2, 0, -1)
-                    col_iter = range(cols - 2, 0, -1)
-                for j in row_iter:
-                    off = j * cols
-                    for i in col_iter:
-                        idx0 = off + i
-                        if cush_a[idx0] <= 0.0:
-                            continue
-                        target = 0.25 * (u[idx0 - 1] + u[idx0 + 1] + u[idx0 - cols] + u[idx0 + cols]) + 1.0
-                        u[idx0] = u[idx0] + self.MEMBRANE_OMEGA * (target - u[idx0])
+        if any_cush and measure_cols >= 5 and measure_rows >= 5:
+            # Every second quadrature node in each axis: the same exact nearest ranks and
+            # boundary distances, a quarter of the node work.
+            mc = (measure_cols - 1) // 2 + 1; mr = (measure_rows - 1) // 2 + 1; lattice = mc * mr
+            owner = [-1] * lattice
+            # bowl_t_raw = (db - crest_w) / w > 1.25 needs db > 1.25 * WALL_MIN_PHYS.
+            reach = 1.25 * self.WALL_MIN_PHYS * (1.0 - 1e-9)
+            for j in range(1, mr - 1):
+                lv = (2 * j) / float(measure_rows - 1); y = lv * p['mesh_y']
+                for i in range(1, mc - 1):
+                    node = 2 * j * measure_cols + 2 * i
+                    if measure_boundary[node] <= reach:
+                        continue
+                    lu = (2 * i) / float(measure_cols - 1); x = lu * p['mesh_x']
+                    qx, qy = warp_fn(x, y) if warp_fn is not None else (x, y)
+                    known = measure_nearest[node] if measure_nearest is not None else None
+                    _h, cushion, owner_idx = evaluate_node(x, y, qx, qy, lu, lv, known)
+                    if cushion > 0.0:
+                        owner[j * mc + i] = owner_idx
+            nodes = [k for k in range(lattice) if owner[k] >= 0]
+            u = [0.0] * lattice; r = [0.0] * lattice
+            direction = [0.0] * lattice; applied = [0.0] * lattice
+            rr = 0.0
+            for k in nodes:
+                r[k] = 4.0; direction[k] = 4.0; rr += 16.0
+            target = rr * self.MEMBRANE_TOLERANCE * self.MEMBRANE_TOLERANCE
+            iteration = 0
+            while iteration < 4 * (mc + mr) + 100 and rr > target:
+                curvature = 0.0
+                for k in nodes:
+                    o = owner[k]
+                    value = 4.0 * direction[k]
+                    for n in (k - 1, k + 1, k - mc, k + mc):
+                        if owner[n] == o:
+                            value -= direction[n]
+                    applied[k] = value
+                    curvature += direction[k] * value
+                alpha = rr / curvature
+                nxt = 0.0
+                for k in nodes:
+                    u[k] += alpha * direction[k]
+                    r[k] -= alpha * applied[k]
+                    nxt += r[k] * r[k]
+                beta = nxt / rr
+                rr = nxt
+                for k in nodes:
+                    direction[k] = r[k] + beta * direction[k]
+                iteration += 1
             u_max = [0.0] * n_sites
-            for idx0 in range(cols * rows):
-                o = cush_owner[idx0]
-                if o >= 0 and u[idx0] > u_max[o]:
-                    u_max[o] = u[idx0]
+            for k in nodes:
+                if u[k] > u_max[owner[k]]:
+                    u_max[owner[k]] = u[k]
             pol = -1.0 if p['polarity'] == 'pockets' else 1.0
-            for idx0 in range(cols * rows):
-                if cush_a[idx0] <= 0.0:
-                    continue
-                o = cush_owner[idx0]
-                if o < 0 or u_max[o] <= 1e-9:
-                    continue
-                wv = self._smootherstep(0.0, 1.0, u[idx0] / u_max[o])
-                lifted = out[idx0] - pol * cush_a[idx0] * wv
-                if lifted < -self.OUTPUT_HEIGHT_CLAMP: lifted = -self.OUTPUT_HEIGHT_CLAMP
-                elif lifted > self.OUTPUT_HEIGHT_CLAMP: lifted = self.OUTPUT_HEIGHT_CLAMP
-                out[idx0] = lifted
+            for j in range(rows):
+                gy = min(mr - 1.0, max(0.0, j / float(max(1, rows - 1)) * ((measure_rows - 1) / 2.0)))
+                j0 = min(mr - 2, int(math.floor(gy))); fy = gy - j0
+                for i in range(cols):
+                    idx0 = j * cols + i
+                    if cush_a[idx0] <= 0.0:
+                        continue
+                    o = cush_owner[idx0]
+                    if o < 0 or u_max[o] <= 1e-9:
+                        continue
+                    gx = min(mc - 1.0, max(0.0, i / float(max(1, cols - 1)) * ((measure_cols - 1) / 2.0)))
+                    i0 = min(mc - 2, int(math.floor(gx))); fx = gx - i0; k = j0 * mc + i0
+                    c00 = u[k] if owner[k] == o else 0.0
+                    c10 = u[k + 1] if owner[k + 1] == o else 0.0
+                    c01 = u[k + mc] if owner[k + mc] == o else 0.0
+                    c11 = u[k + mc + 1] if owner[k + mc + 1] == o else 0.0
+                    membrane = (1.0 - fy) * ((1.0 - fx) * c00 + fx * c10) + fy * ((1.0 - fx) * c01 + fx * c11)
+                    wv = self._smootherstep(0.0, 1.0, membrane / u_max[o])
+                    lifted = out[idx0] - pol * cush_a[idx0] * wv
+                    if lifted < -self.OUTPUT_HEIGHT_CLAMP: lifted = -self.OUTPUT_HEIGHT_CLAMP
+                    elif lifted > self.OUTPUT_HEIGHT_CLAMP: lifted = self.OUTPUT_HEIGHT_CLAMP
+                    out[idx0] = lifted
         return out
 
 

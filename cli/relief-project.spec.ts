@@ -9,7 +9,7 @@ import { presetState } from '../src/noise/presets';
 import { SimplexNoiseGen } from '../src/noise/generators';
 import { SiteGrid } from '../src/noise/site-grid';
 import { noiseGridShape } from '../src/noise/grid-shape';
-import { assertFrozenReliefWork, frozenReliefQueryWork, MAX_FROZEN_RELIEF_QUERY_WORK, reliefMeasurementShape } from '../src/noise/relief-work-budget';
+import { assertFrozenReliefWork, frozenReliefQueryWork, frozenReliefSupportVisits, MAX_FROZEN_RELIEF_QUERY_WORK, MAX_FROZEN_RELIEF_SUPPORT_VISITS, reliefMeasurementShape } from '../src/noise/relief-work-budget';
 import { buildNoiseSurface, noiseSurfaceParams } from '../src/noise/surface';
 import { packNoiseSurface, unpackNoiseSurface } from '../src/noise/messages';
 import { copyReliefSites, editReliefSite, validateReliefSites } from '../src/noise/relief-sites';
@@ -171,6 +171,100 @@ try {
 } finally {SiteGrid.fromSites=originalFromSites;}
 const smallBoundary=buildNoiseSurface(noiseSurfaceParams({...boundaryParams,reliefSites:pair,reliefRevision:0}));
 assert.equal(smallBoundary.cols,boundaryShape.cols);assert.equal(smallBoundary.rows,boundaryShape.rows);
+
+// Distinct but packed sites (#82): far from a cluster every query's support holds the whole
+// cluster, so coincidence counting alone admitted layouts that ran for tens of seconds.
+// Measured on the producer before this guard: 4,096 sites in 0.64 in at resolution 100 took
+// 22-28 s and 961 sites at link precision at resolution 400 took 45 s.
+const lattice=(count:number,step:number,ox:number,oy:number):ReliefSiteSet=>{
+  const xy:number[]=[];for(let j=0;j<count;j++)for(let i=0;i<count;i++)xy.push(ox+i*step,oy+j*step);
+  return {xy:Float64Array.from(xy),ids:Uint32Array.from({length:count*count},(_,i)=>i),pinned:new Uint8Array(count*count),truncatedFrom:0};
+};
+const supportShape=(resolution:number,meshX:number,meshY:number)=>({...noiseGridShape(resolution,meshX,meshY),meshX,meshY});
+const packedCluster=lattice(64,0.01,6,12), linkCluster=lattice(31,0.01,6,12);
+assert.equal(frozenReliefQueryWork(supportShape(100,12,24),packedCluster),79873,'distinct packed sites pass coincidence counting');
+assert.equal(frozenReliefSupportVisits(supportShape(100,12,24),packedCluster),325074099);
+assert.equal(frozenReliefSupportVisits(supportShape(400,12,24),linkCluster),358538360);
+let packedEntries=0;
+SiteGrid.fromSites=()=>{packedEntries++;throw new Error('Packed admission reached heavy index');};
+try {
+  for (const [sites,resolution] of [[packedCluster,100],[linkCluster,400]] as const) {
+    assert.throws(()=>assertFrozenReliefWork(supportShape(resolution,12,24),sites),/coincident-site query work/);
+    const params=noiseSurfaceParams({...clusterBase.params,meshX:12,meshY:24,resolution,reliefSites:sites,reliefRevision:0});
+    assert.throws(()=>buildNoiseSurface(params),/coincident-site query work/,'generation refuses packed sites before indexing them');
+  }
+  assert.equal(packedEntries,0);
+} finally {SiteGrid.fromSites=originalFromSites;}
+// The same cluster stays usable at the 120-column drag preview, and ordinary layouts keep
+// wide headroom: uniform 4,096 sites at width 1,024, and a board with half its cells deleted.
+assert(frozenReliefSupportVisits(supportShape(120,12,24),linkCluster)<=MAX_FROZEN_RELIEF_SUPPORT_VISITS/2);
+let lcg=12345;const random=()=>(lcg=(Math.imul(lcg,1103515245)+12345)>>>0)/4294967296;
+const scatter=(count:number,height:number):ReliefSiteSet=>({xy:Float64Array.from({length:count*2},(_,i)=>i%2===0?random()*12:random()*height),
+  ids:Uint32Array.from({length:count},(_,i)=>i),pinned:new Uint8Array(count),truncatedFrom:0});
+assert(frozenReliefSupportVisits(supportShape(1024,12,24),scatter(4096,24))<=MAX_FROZEN_RELIEF_SUPPORT_VISITS/16);
+assert(frozenReliefSupportVisits(supportShape(400,12,24),scatter(2048,12))<=MAX_FROZEN_RELIEF_SUPPORT_VISITS*0.8);
+assert(frozenReliefSupportVisits(supportShape(1024,cappedProject.params.meshX,cappedProject.params.meshY),cappedProject.sites)<=MAX_FROZEN_RELIEF_SUPPORT_VISITS/4);
+// The boundary search also reaches f1 + 2B, with B the least bisector distance to the second
+// through fourth nearest sites: one isolated site beside a far packed cluster makes every query
+// it owns visit the cluster (the 2.08 f1 support alone admitted width 200 at 83%). When the
+// two nearest coincide, the next noncoincident site seeds B, as in the producer.
+{
+  let draw=5;const near=()=>(draw=(Math.imul(draw,1103515245)+12345)>>>0)/4294967296;
+  const packedBeside=(head:number[],count:number):ReliefSiteSet=>{
+    const xy=[...head];for(let k=0;k<count;k++)xy.push(11.99+near()*0.0064,23.99+near()*0.0064);
+    return {xy:Float64Array.from(xy),ids:Uint32Array.from({length:xy.length/2},(_,i)=>i),pinned:new Uint8Array(xy.length/2),truncatedFrom:0};
+  };
+  const lone=packedBeside([6,12],4095);draw=5;
+  const pairHead=packedBeside([6,12,6,12],4094);
+  assert.throws(()=>assertFrozenReliefWork(supportShape(200,12,24),lone),/coincident-site query work/);
+  assert.throws(()=>assertFrozenReliefWork(supportShape(115,12,24),pairHead),/coincident-site query work/);
+  // A pillowed layout queries the measurement lattice a second time for its membrane.
+  const flat=frozenReliefSupportVisits(supportShape(120,12,24),linkCluster);
+  assert(frozenReliefSupportVisits({...supportShape(120,12,24),pillow:1},linkCluster)>flat);
+  assert.equal(frozenReliefSupportVisits({...supportShape(120,12,24),pillow:1,invertProfile:1},linkCluster),flat);
+}
+
+// A far query from a packed cluster stops at the true distance to the unvisited buckets
+// clipped to the site extent, in the stretched metric too, instead of scanning the cluster.
+{
+  let reads=0;
+  const counted=Array.from({length:linkCluster.ids.length},(_,i)=>{const x=linkCluster.xy[i*2],y=linkCluster.xy[i*2+1];
+    return {get x(){reads++;return x;},get y(){return y;}};});
+  const index=SiteGrid.fromSites(counted);
+  const plain=Array.from({length:linkCluster.ids.length},(_,i)=>({x:linkCluster.xy[i*2],y:linkCluster.xy[i*2+1]}));
+  for (const [angle,scale] of [[0,1],[35,1.3],[90,3]]) {
+    const cosA=Math.cos(angle*Math.PI/180),sinA=Math.sin(angle*Math.PI/180);
+    for (const [x,y] of [[0,0],[6.15,0],[12,24],[6.15,23],[0,12.15],[11,6]]) {
+      reads=0;
+      const actual=index.nearestFour(x,y,cosA,sinA,scale);
+      // A full scan reads every site; the ring order alone can still reach half the cluster
+      // when the metric's nearest corner lies away from the query's clamped bucket.
+      assert(reads<(scale===1?plain.length/16:plain.length*0.6),`far query at ${x},${y} (${angle}, ${scale}) read ${reads} of ${plain.length} sites`);
+      const ordered=rankSitesExactly(plain,x,y,cosA,sinA,scale);
+      assert.deepEqual([actual.idx,actual.idx2,actual.idx3,actual.idx4],ordered.slice(0,4));
+      const radius=2.08*actual.f1;
+      const expected=plain.flatMap((site,i)=>{const dx=x-site.x,dy=y-site.y;
+        const d=scale===1?Math.hypot(dx,dy):Math.hypot((dx*cosA+dy*sinA)*scale,-dx*sinA+dy*cosA);return d<radius?[{index:i,distance:d}]:[];});
+      assert.deepEqual(index.withinRadius(x,y,radius,cosA,sinA,scale),expected);
+    }
+  }
+}
+
+// Sparse layouts put their extreme site on a capped bucket boundary, where floor-based
+// bucketing and the boundary sum disagree by an ulp. The clipped stopping bound must still
+// visit that site: without its rounding allowance these seeded layouts (found by
+// differential fuzzing against the unclipped bound) lost f2/f3 ranks on the query lattice.
+for (const layoutSeed of [68, 79, 118]) {
+  let seed=layoutSeed;
+  const step=()=>(seed=(Math.imul(seed,1103515245)+12345)>>>0),next=()=>(step()+step()/4294967296)/4294967296;
+  const sites=Array.from({length:6+Math.floor(next()*40)},()=>({x:next()*12,y:next()*24}));
+  const index=SiteGrid.fromSites(sites.map(site=>({...site})));
+  for (let j=0;j<=60;j++) for (let i=0;i<=30;i++) {
+    const x=i/30*12,y=j/60*24,actual=index.nearestFour(x,y);
+    assert.deepEqual([actual.idx,actual.idx2,actual.idx3,actual.idx4],rankSitesExactly(sites,x,y).slice(0,4).concat(-1,-1,-1).slice(0,4),
+      `sparse layout ${layoutSeed} at ${i},${j}`);
+  }
+}
 
 // Independent distance ordering covers clustered, sparse, collinear and coincident
 // authored populations. Bucket sizing must change only work, not arithmetic or ties.

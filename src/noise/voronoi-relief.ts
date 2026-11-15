@@ -1,5 +1,5 @@
 import { metricOrdering } from './metric-order';
-import { assertFrozenReliefWork, reliefMeasurementShape, RELIEF_WALL_MIN_PHYS as WALL_MIN_PHYS } from './relief-work-budget';
+import { assertFrozenReliefWork, reliefMeasurementShape, RELIEF_SUPPORT_RATIO as JUNCTION_SUPPORT_RATIO, RELIEF_WALL_MIN_PHYS as WALL_MIN_PHYS } from './relief-work-budget';
 /**
  * VoronoiReliefGen — grid-aware 3D Voronoi cell relief sampler (v16).
  *
@@ -65,7 +65,7 @@ import type {
 import { SimplexNoiseGen } from './generators';
 import { copyReliefSites, copyReliefSource, sameReliefKernel, validateReliefSites } from './relief-sites';
 import { mulberry32, cellHash01 } from './prng';
-import { SiteGrid, type GridSite } from './site-grid';
+import { SiteGrid, type GridSite, type NearestFour } from './site-grid';
 import { MAX_CUT_DEPTH_IN } from '../sbp/types';
 
 /** Every control that can alter generated site positions, count, pinning or order.
@@ -201,7 +201,6 @@ function representativeIndices(length: number, limit: number, rand: () => number
   return [...retained, ...available.slice(0, count)].sort((a, b) => a - b);
 }
 
-const JUNCTION_SUPPORT_RATIO = 2.08;
 // jn >= 0.98 implies F3/F1 <= this ratio. Keep the incident-cell mean in that core.
 const JUNCTION_CORE_RATIO = 2 / 0.98 - 1;
 
@@ -1009,6 +1008,13 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // Physical quadrature, independent of display/export resolution. Large panels
     // coarsen under an explicit work cap; every retained cell also gets a center query.
     const {cols: measureCols, rows: measureRows} = reliefMeasurementShape(p.meshX, p.meshY);
+    // Boundary distance and nearest ranks per quadrature node, kept for the membrane lattice,
+    // which queries the same nodes again (see the v24 membrane pass).
+    const measureBoundary = new Float64Array(measureCols * measureRows);
+    const keepRanks = Number.isFinite(p.pillow) && p.pillow > 0 && p.invertProfile <= 0.5
+      && !(Number.isFinite(p.pillowCoverage) && p.pillowCoverage <= 0);
+    const measureNearest = keepRanks ? new Float64Array(measureCols * measureRows * 4) : null;
+    const measureRanks = keepRanks ? new Int32Array(measureCols * measureRows * 4) : null;
     for (let j = 0; j < measureRows; j++) for (let i = 0; i < measureCols; i++) {
       const x = i / (measureCols - 1) * p.meshX, y = j / (measureRows - 1) * p.meshY;
       const [qx, qy] = warpFn ? warpFn(x, y) : [x, y];
@@ -1016,6 +1022,12 @@ export class VoronoiReliefGen implements ReliefGenerator {
       radiusSum[siteIdx] += f1;
       radiusN[siteIdx]++;
       const db = boundaryDist(f1, f2, f3, f4, siteIdx, idx2, idx3, idx4, qx, qy);
+      const node = j * measureCols + i;
+      measureBoundary[node] = db;
+      if (measureNearest && measureRanks) {
+        measureNearest.set([f1, f2, f3, f4], node * 4);
+        measureRanks.set([siteIdx, idx2, idx3, idx4], node * 4);
+      }
       if (db > inradius[siteIdx]) inradius[siteIdx] = db;
     }
     const anchorRadius = new Float64Array(sites.length);
@@ -1143,12 +1155,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
     // v23 MEMBRANE CUSHIONS: the crown is no longer a function of the boundary distance
     // (whose level sets kink at the medial axis) — it is a per-cell MEMBRANE solve
     // (Poisson, unit inflation source, Dirichlet u = 0 clamped at the gutter ring),
-    // relaxed with a fixed number of SOR sweeps for determinism, normalized per cell,
-    // and composed through the quintic smootherstep so the boundary departs with zero
-    // slope and the crown finishes broad and flat. The membrane is smooth everywhere
-    // inside the region: the medial axis cannot appear.
-    const MEMBRANE_SWEEPS = 80;
-    const MEMBRANE_OMEGA = 1.8;
+    // normalized per cell, and composed through the quintic smootherstep so the boundary
+    // departs with zero slope and the crown finishes broad and flat. The membrane is
+    // smooth everywhere inside the region: the medial axis cannot appear.
+    // v24: the membrane lives on the physical measurement lattice, not the output grid,
+    // and is solved to a residual tolerance. Its shape depended on pixel count before
+    // (a fixed 80 sweeps over the output grid), so the 120-column drag preview showed a
+    // different cushion than the full-resolution export (#81).
+    const MEMBRANE_TOLERANCE = 1e-10;
     // Crown rise ≤ ~25% of ridge-to-gutter depth — perceived through curvature, not
     // elevation; the crown stays visibly trapped inside the cavity.
     const PILLOW_AMP = 0.28;
@@ -1160,21 +1174,18 @@ export class VoronoiReliefGen implements ReliefGenerator {
     const PANEL_FIELD_FREQ = 0.045;
     const out: number[][] = [];
     let crestClipStatus: ReliefCrestClipStatus = 'none';
-    // v23 membrane-cushion buffers (see MEMBRANE_SWEEPS above).
+    // v23 membrane-cushion buffers (see MEMBRANE_TOLERANCE above).
     const cushA = new Float64Array(rows * cols);
     const cushOwner = new Int32Array(rows * cols).fill(-1);
     const polarity: number = p.polarity === 'pockets' ? -1 : 1;
-    for (let j = 0; j < rows; j++) {
-      const row: number[] = new Array(cols);
-      const v = j / Math.max(1, rows - 1);
-      const y = queryOverride?.y ?? v * p.meshY;
-      for (let i = 0; i < cols; i++) {
-        const u = i / Math.max(1, cols - 1);
-        const x = queryOverride?.x ?? u * p.meshX;
-        const pixIdx = j * cols + i;
-        const qx = queryOverride?.x ?? wxArr[pixIdx];
-        const qy = queryOverride?.y ?? wyArr[pixIdx];
-        const { f1, f2, f3, f4, idx: ownerIdx, idx2, idx3, idx4 } = nearest(qx, qy);
+    // One pass-2 node at physical (x, y), queried at (qx, qy), with normalized (u, v). Every
+    // input is a function of physical position, so a node's height is independent of the
+    // grid it belongs to. The cushion chain is reported through nodeCushion/nodeOwner.
+    let nodeCushion = 0, nodeOwner = -1;
+    const evaluateNode = (x: number, y: number, qx: number, qy: number, u: number, v: number, recordClip: boolean,
+      known?: NearestFour): number => {
+        nodeCushion = 0; nodeOwner = -1;
+        const { f1, f2, f3, f4, idx: ownerIdx, idx2, idx3, idx4 } = known ?? nearest(qx, qy);
         // Spatial attractor on intensity — relief amplitude varies with mask (real-space).
         let mask = attractorMask(
           p.attractorMode, u, v, p.attractorX, p.attractorY,
@@ -1246,7 +1257,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
         // w and renders a star-shaped tear), and must always leave a RESOLVABLE wall span.
         const unclippedCrestW = crestW;
         crestW = Math.min(crestW, 0.6 * inr, Math.max(0, inr - wallMinPhys));
-        if (crestW < unclippedCrestW) {
+        if (recordClip && crestW < unclippedCrestW) {
           if (crestW === 0) crestClipStatus = 'collapsed';
           else if (crestClipStatus === 'none') crestClipStatus = 'narrowed';
         }
@@ -1395,8 +1406,8 @@ export class VoronoiReliefGen implements ReliefGenerator {
         if (cushionAmp > 0) {
           // Full h-space amplitude: the membrane delta rides the same multiplier chain
           // the bowl does (raising a pocket floor = reducing |bowlH| through the chain).
-          cushA[pixIdx] = cushionAmp * cellWeight * intensityFactor * cellDepthMul;
-          cushOwner[pixIdx] = ownerIdx;
+          nodeCushion = cushionAmp * cellWeight * intensityFactor * cellDepthMul;
+          nodeOwner = ownerIdx;
         }
         // v17 crest variation: ridge-LOCAL height noise (scaled by (1 − bowlH)^1.5 so it
         // lives on crests/shoulders only). Fragments the upper envelope into mesas, saddles
@@ -1448,61 +1459,97 @@ export class VoronoiReliefGen implements ReliefGenerator {
         }
 
         if (!Number.isFinite(h)) h = 0;
-        row[i] = Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, h));
+        return Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, h));
+    };
+    for (let j = 0; j < rows; j++) {
+      const row: number[] = new Array(cols);
+      const v = j / Math.max(1, rows - 1);
+      const y = queryOverride?.y ?? v * p.meshY;
+      for (let i = 0; i < cols; i++) {
+        const u = i / Math.max(1, cols - 1);
+        const x = queryOverride?.x ?? u * p.meshX;
+        const pixIdx = j * cols + i;
+        row[i] = evaluateNode(x, y, queryOverride?.x ?? wxArr[pixIdx], queryOverride?.y ?? wyArr[pixIdx], u, v, true);
+        if (nodeCushion > 0) { cushA[pixIdx] = nodeCushion; cushOwner[pixIdx] = nodeOwner; }
       }
       out.push(row);
     }
 
-    // v23 membrane cushion pass. Solve one Poisson relaxation over all cushion-region
-    // pixels (u = 0 outside — Dirichlet-clamped at every gutter ring; regions of
-    // different cells are separated by wall corridors, so per-cell normalization is
-    // safe), then lift each floor by amp × smootherstep(u/uMaxCell): zero slope where
-    // the cushion meets the gutter, broad flat crown, no medial-axis trace.
+    // v24 membrane cushion pass. The cushion region and its owners are evaluated on the
+    // physical measurement lattice (every second pass-1 quadrature node, independent of output density).
+    // One Poisson solve, 4u - sum(neighbors) = 4 with u = 0 outside each cell's region,
+    // runs by conjugate gradients to a relative residual of MEMBRANE_TOLERANCE; neighbors
+    // owned by another cell are Dirichlet zero, so cells never share a membrane. Each
+    // output node in a cushion then reads its own cell's membrane bilinearly at its
+    // physical position, normalized by that cell's lattice maximum, and lifts its floor by
+    // amp x smootherstep(u/uMaxCell): zero slope where the cushion meets the gutter, broad
+    // flat crown, no medial-axis trace, and the same lift at a point on every grid.
     let anyCushion = false;
     for (let i = 0; i < cushA.length; i++) {
       if (cushA[i] > 0) { anyCushion = true; break; }
     }
-    if (anyCushion) {
-      const u = new Float64Array(rows * cols);
-      // Symmetric SOR: sweeps alternate forward/reverse traversal — a forward-only
-      // Gauss-Seidel at a fixed sweep count leaves partially converged large cushions
-      // with a bias toward the sweep origin. Still fully deterministic.
-      for (let sweep = 0; sweep < MEMBRANE_SWEEPS; sweep++) {
-        if ((sweep & 1) === 0) {
-          for (let j = 1; j < rows - 1; j++) {
-            const off = j * cols;
-            for (let i = 1; i < cols - 1; i++) {
-              const idx = off + i;
-              if (cushA[idx] <= 0) continue;
-              const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
-              u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
-            }
-          }
-        } else {
-          for (let j = rows - 2; j >= 1; j--) {
-            const off = j * cols;
-            for (let i = cols - 2; i >= 1; i--) {
-              const idx = off + i;
-              if (cushA[idx] <= 0) continue;
-              const target = 0.25 * (u[idx - 1] + u[idx + 1] + u[idx - cols] + u[idx + cols]) + 1;
-              u[idx] = u[idx] + MEMBRANE_OMEGA * (target - u[idx]);
-            }
-          }
+    if (anyCushion && measureCols >= 5 && measureRows >= 5) {
+      // Every second quadrature node in each axis (0.15 in at the full measurement pitch): the
+      // same exact nearest ranks and boundary distances, a quarter of the node work.
+      const mc = Math.floor((measureCols - 1) / 2) + 1, mr = Math.floor((measureRows - 1) / 2) + 1, lattice = mc * mr;
+      const owner = new Int32Array(lattice).fill(-1);
+      // A cushion needs bowlTRaw = (db - crestW) / w > PILLOW_GUTTER_END with crestW >= 0 and
+      // w >= wallMinPhys, so a lattice node nearer its cell boundary than the product cannot
+      // hold one. The quadrature recorded the same exact boundary distance at the same
+      // query; the small margin only keeps rounding from deciding the skip.
+      const cushionReach = PILLOW_GUTTER_END * wallMinPhys * (1 - 1e-9);
+      for (let j = 1; j < mr - 1; j++) {
+        const lv = (2 * j) / (measureRows - 1), y = lv * p.meshY;
+        for (let i = 1; i < mc - 1; i++) {
+          const node = 2 * j * measureCols + 2 * i;
+          if (measureBoundary[node] <= cushionReach) continue;
+          const lu = (2 * i) / (measureCols - 1), x = lu * p.meshX;
+          const [qx, qy] = warpFn ? warpFn(x, y) : [x, y];
+          const known = measureNearest && measureRanks ? {
+            f1: measureNearest[node * 4], f2: measureNearest[node * 4 + 1], f3: measureNearest[node * 4 + 2], f4: measureNearest[node * 4 + 3],
+            idx: measureRanks[node * 4], idx2: measureRanks[node * 4 + 1], idx3: measureRanks[node * 4 + 2], idx4: measureRanks[node * 4 + 3],
+          } : undefined;
+          evaluateNode(x, y, qx, qy, lu, lv, false, known);
+          if (nodeCushion > 0) owner[j * mc + i] = nodeOwner;
         }
       }
-      const uMax = new Float64Array(sites.length);
-      for (let i = 0; i < u.length; i++) {
-        const o = cushOwner[i];
-        if (o >= 0 && u[i] > uMax[o]) uMax[o] = u[i];
+      const nodes: number[] = [];
+      for (let k = 0; k < lattice; k++) if (owner[k] >= 0) nodes.push(k);
+      const u = new Float64Array(lattice), r = new Float64Array(lattice);
+      const dir = new Float64Array(lattice), applied = new Float64Array(lattice);
+      const neighbor = (k: number, n: number, values: Float64Array): number => owner[n] === owner[k] ? values[n] : 0;
+      let rr = 0;
+      for (const k of nodes) { r[k] = 4; dir[k] = 4; rr += 16; }
+      const target = rr * MEMBRANE_TOLERANCE * MEMBRANE_TOLERANCE;
+      for (let iteration = 0; iteration < 4 * (mc + mr) + 100 && rr > target; iteration++) {
+        let curvature = 0;
+        for (const k of nodes) {
+          applied[k] = 4 * dir[k] - neighbor(k, k - 1, dir) - neighbor(k, k + 1, dir) - neighbor(k, k - mc, dir) - neighbor(k, k + mc, dir);
+          curvature += dir[k] * applied[k];
+        }
+        const alpha = rr / curvature;
+        let next = 0;
+        for (const k of nodes) { u[k] += alpha * dir[k]; r[k] -= alpha * applied[k]; next += r[k] * r[k]; }
+        const beta = next / rr;
+        rr = next;
+        for (const k of nodes) dir[k] = r[k] + beta * dir[k];
       }
+      const uMax = new Float64Array(sites.length);
+      for (const k of nodes) if (u[k] > uMax[owner[k]]) uMax[owner[k]] = u[k];
       for (let j = 0; j < rows; j++) {
         const off = j * cols;
+        const gy = Math.min(mr - 1, Math.max(0, (queryOverride ? queryOverride.y / p.meshY : j / Math.max(1, rows - 1)) * ((measureRows - 1) / 2)));
+        const j0 = Math.min(mr - 2, Math.floor(gy)), fy = gy - j0;
         for (let i = 0; i < cols; i++) {
           const idx = off + i;
           if (cushA[idx] <= 0) continue;
           const o = cushOwner[idx];
           if (o < 0 || uMax[o] <= 1e-9) continue;
-          const w = smootherstep(0, 1, u[idx] / uMax[o]);
+          const gx = Math.min(mc - 1, Math.max(0, (queryOverride ? queryOverride.x / p.meshX : i / Math.max(1, cols - 1)) * ((measureCols - 1) / 2)));
+          const i0 = Math.min(mc - 2, Math.floor(gx)), fx = gx - i0, k = j0 * mc + i0;
+          const at = (n: number): number => owner[n] === o ? u[n] : 0;
+          const membrane = (1 - fy) * ((1 - fx) * at(k) + fx * at(k + 1)) + fy * ((1 - fx) * at(k + mc) + fx * at(k + mc + 1));
+          const w = smootherstep(0, 1, membrane / uMax[o]);
           // Pockets (polarity −1): the floor rises toward the surface; domes: recedes.
           const lifted = out[j][i] - polarity * cushA[idx] * w;
           out[j][i] = Math.max(-OUTPUT_HEIGHT_CLAMP, Math.min(OUTPUT_HEIGHT_CLAMP, lifted));

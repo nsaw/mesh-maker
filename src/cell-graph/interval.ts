@@ -1,15 +1,20 @@
 /** Binary64 interval arithmetic. Each primitive expands by one representable value.
  * Infinities are allowed in intermediate intervals and cause bounded proof refusal. */
 export type Interval = readonly [number, number];
-const buffer = new DataView(new ArrayBuffer(8));
+// Adjacent binary64 values by stepping the bit pattern, through two 32-bit words rather
+// than a BigInt, which allocated on every primitive. Same increments as a 64-bit step.
+const float = new Float64Array(1),
+  words = new Uint32Array(float.buffer);
+const LOW = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1 ? 0 : 1,
+  HIGH = 1 - LOW;
 export function nextUp(value: number): number {
   if (Number.isNaN(value) || value === Infinity) return value;
   if (value === 0) return Number.MIN_VALUE;
-  buffer.setFloat64(0, value);
-  let bits = buffer.getBigUint64(0);
-  bits += value > 0 ? 1n : -1n;
-  buffer.setBigUint64(0, bits);
-  return buffer.getFloat64(0);
+  float[0] = value;
+  if (value > 0) {
+    if (words[LOW] === 0xffffffff) { words[LOW] = 0; words[HIGH] += 1; } else words[LOW] += 1;
+  } else if (words[LOW] === 0) { words[LOW] = 0xffffffff; words[HIGH] -= 1; } else words[LOW] -= 1;
+  return float[0];
 }
 export const nextDown = (value: number): number => -nextUp(-value);
 export const interval = (value: number): Interval => [value, value];
@@ -20,8 +25,8 @@ export const addI = (a: Interval, b: Interval): Interval => [
 export const negI = (a: Interval): Interval => [-a[1], -a[0]];
 export const subI = (a: Interval, b: Interval): Interval => addI(a, negI(b));
 export function mulI(a: Interval, b: Interval): Interval {
-  const products = [a[0] * b[0], a[0] * b[1], a[1] * b[0], a[1] * b[1]];
-  return [nextDown(Math.min(...products)), nextUp(Math.max(...products))];
+  const p = a[0] * b[0], q = a[0] * b[1], r = a[1] * b[0], t = a[1] * b[1];
+  return [nextDown(Math.min(p, q, r, t)), nextUp(Math.max(p, q, r, t))];
 }
 export const scaleI = (a: Interval, value: number): Interval => mulI(a, interval(value));
 export function squareI(a: Interval): Interval {

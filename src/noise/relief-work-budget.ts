@@ -20,7 +20,11 @@ export function reliefMeasurementShape(meshX: number, meshY: number): {cols: num
 // time or total query operations. The budget is four times the project output-node cap:
 // distributed populations remain admitted while coincidence cannot expand work without limit.
 export const MAX_FROZEN_RELIEF_QUERY_WORK = 16_777_216;
-interface WorkShape { cols: number; rows: number; meshX: number; meshY: number }
+interface WorkShape {
+  cols: number; rows: number; meshX: number; meshY: number;
+  /** Pillowed generation queries the measurement lattice a second time (the membrane pass). */
+  pillow?: number; pillowCoverage?: number; invertProfile?: number;
+}
 
 /** A separate resource policy. Validation/serialization keep every coordinate and identity. */
 export function frozenReliefQueryWork(p: WorkShape, sites: ReliefSiteSet, additionalQueries = 0): number {
@@ -46,9 +50,138 @@ export function frozenReliefQueryWork(p: WorkShape, sites: ReliefSiteSet, additi
   return work;
 }
 
+// Every relief query averages its fields over the sites within RELIEF_SUPPORT_RATIO times
+// its nearest distance (voronoi-relief.ts), and its boundary search scans out to f1 + 2B,
+// B the least bisector distance to the second through fourth nearest sites, which can reach
+// far beyond the support (an isolated site beside a distant cluster). The estimate counts
+// the larger of the two radii. Far from a packed cluster either one holds the whole
+// cluster, so work grows with queries x cluster size even when no two sites coincide. Measured on the producer at
+// 70-125 ns per support visit, the budget is about 20-35 s of worker time. It refuses the
+// #82 probes (4,096 sites in 0.64 in at resolution 100, about 3.3e8 visits; 961 sites at
+// link precision at resolution 400, about 3.6e8) and keeps a board with half its cells
+// deleted at resolution 400 (about 1.8e8) and 4,096 distributed sites at the maximum
+// output grid (about 1e7) admitted.
+export const RELIEF_SUPPORT_RATIO = 2.08;
+const SUPPORT_SAMPLE_TARGET = 4096;
+export const MAX_FROZEN_RELIEF_SUPPORT_VISITS = 268_435_456;
+
+/** Estimated support visits of every query. Exact nearest and support counts at a fixed
+ * board lattice of sample points stand for the evenly spread quadrature and output
+ * queries. A deterministic resource estimate, not a bound on elapsed time. */
+export function frozenReliefSupportVisits(p: WorkShape, sites: ReliefSiteSet, additionalQueries = 0): number {
+  // Shares validation and the query count with coincidence admission.
+  frozenReliefQueryWork(p, sites, additionalQueries);
+  const n = sites.ids.length;
+  if (n === 0) return 0;
+  const measurement = reliefMeasurementShape(p.meshX, p.meshY);
+  const cushions = (p.pillow ?? 0) > 0 && (p.invertProfile ?? 0) <= 0.5 && !((p.pillowCoverage ?? 0.6) <= 0);
+  const lattice = measurement.cols * measurement.rows;
+  const queries = (cushions ? 2 : 1) * lattice + p.cols * p.rows + 2 * n + additionalQueries;
+  // Buckets at the even-layout spacing hold about one site each in distributed layouts.
+  const spacing = Math.sqrt(p.meshX * p.meshY / n);
+  const bc = Math.max(1, Math.min(4 * n, Math.ceil(p.meshX / spacing)));
+  const br = Math.max(1, Math.min(4 * n, Math.ceil(p.meshY / spacing)));
+  const cx = bc / p.meshX, cy = br / p.meshY;
+  const column = (x: number): number => Math.max(0, Math.min(bc - 1, Math.floor(x * cx)));
+  const row = (y: number): number => Math.max(0, Math.min(br - 1, Math.floor(y * cy)));
+  const start = new Int32Array(bc * br + 1), order = new Int32Array(n);
+  for (let i = 0; i < n; i++) start[row(sites.xy[i * 2 + 1]) * bc + column(sites.xy[i * 2]) + 1]++;
+  for (let k = 0; k < bc * br; k++) start[k + 1] += start[k];
+  const fill = start.slice(0, bc * br);
+  for (let i = 0; i < n; i++) order[fill[row(sites.xy[i * 2 + 1]) * bc + column(sites.xy[i * 2])]++] = i;
+  const bucketWidth = p.meshX / bc, bucketHeight = p.meshY / br;
+  const occupied: number[] = [];
+  for (let k = 0; k < bc * br; k++) if (start[k + 1] > start[k]) occupied.push(k);
+  // Distance from (x, y) to bucket k's rectangle, and to its farthest corner.
+  const near = (k: number, x: number, y: number): number => {
+    const i = k % bc, j = (k - i) / bc;
+    const gx = Math.max(0, i * bucketWidth - x, x - (i + 1) * bucketWidth);
+    const gy = Math.max(0, j * bucketHeight - y, y - (j + 1) * bucketHeight);
+    return Math.hypot(gx, gy);
+  };
+  const far = (k: number, x: number, y: number): number => {
+    const i = k % bc, j = (k - i) / bc;
+    return Math.hypot(Math.max(Math.abs(x - i * bucketWidth), Math.abs(x - (i + 1) * bucketWidth)),
+      Math.max(Math.abs(y - j * bucketHeight), Math.abs(y - (j + 1) * bucketHeight)));
+  };
+  const siteDistance = (site: number, x: number, y: number): number =>
+    Math.hypot(sites.xy[site * 2] - x, sites.xy[site * 2 + 1] - y);
+  // The four nearest sites (distances, indices), by ring search while it is cheaper than
+  // the occupied-bucket list, then the list.
+  const nearestFour = (x: number, y: number): {d: number[]; k: number[]} => {
+    const ci = column(x), cj = row(y);
+    let d = [Infinity, Infinity, Infinity, Infinity], k = [-1, -1, -1, -1], visited = 0;
+    const consider = (site: number): void => {
+      const value = siteDistance(site, x, y);
+      for (let slot = 0; slot < 4; slot++) {
+        if (value < d[slot]) {
+          d.splice(slot, 0, value); k.splice(slot, 0, site); d.length = 4; k.length = 4;
+          return;
+        }
+      }
+    };
+    for (let ring = 0; visited <= occupied.length; ring++) {
+      const i0 = ci - ring, i1 = ci + ring, j0 = cj - ring, j1 = cj + ring;
+      for (let j = Math.max(0, j0); j <= Math.min(br - 1, j1); j++) {
+        const edge = j === j0 || j === j1;
+        for (let i = Math.max(0, i0); i <= Math.min(bc - 1, i1); i += edge || i >= i1 ? 1 : i1 - i) {
+          visited++;
+          for (let m = start[j * bc + i]; m < start[j * bc + i + 1]; m++) consider(order[m]);
+        }
+      }
+      // Unvisited buckets lie at least `ring` whole buckets away in some axis.
+      if (d[3] <= ring * Math.min(bucketWidth, bucketHeight)
+        || (i0 <= 0 && j0 <= 0 && i1 >= bc - 1 && j1 >= br - 1)) return {d, k};
+    }
+    d = [Infinity, Infinity, Infinity, Infinity]; k = [-1, -1, -1, -1];
+    for (const bucket of occupied) {
+      if (near(bucket, x, y) >= d[3]) continue;
+      for (let m = start[bucket]; m < start[bucket + 1]; m++) consider(order[m]);
+    }
+    return {d, k};
+  };
+  // The producer scans max(support, f1 + 2B). Its boundary seed B is the least bisector
+  // distance to the second through fourth nearest sites, (fj^2 - f1^2) / (2 d1j); a site
+  // coincident with the owner has no bisector, and with none left B is the board cap.
+  const boardCap = p.meshX + p.meshY;
+  const searchRadius = (x: number, y: number): number => {
+    const {d, k} = nearestFour(x, y), f1 = d[0];
+    let bound = boardCap;
+    for (let rank = 1; rank < 4; rank++) {
+      if (k[rank] < 0 || !Number.isFinite(d[rank])) continue;
+      const separation = siteDistance(k[rank], sites.xy[k[0] * 2], sites.xy[k[0] * 2 + 1]);
+      if (separation > 0) bound = Math.min(bound, (d[rank] * d[rank] - f1 * f1) / (2 * separation));
+    }
+    return Math.max(RELIEF_SUPPORT_RATIO * Math.max(f1, 1e-9), f1 + 2 * bound);
+  };
+  const supportCount = (x: number, y: number, radius: number): number => {
+    let count = 0;
+    const visit = (k: number): void => {
+      if (start[k + 1] === start[k] || near(k, x, y) >= radius) return;
+      if (far(k, x, y) < radius) { count += start[k + 1] - start[k]; return; }
+      for (let m = start[k]; m < start[k + 1]; m++) if (siteDistance(order[m], x, y) < radius) count++;
+    };
+    const i0 = column(x - radius), i1 = column(x + radius), j0 = row(y - radius), j1 = row(y + radius);
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) > occupied.length) for (const k of occupied) visit(k);
+    else for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) visit(j * bc + i);
+    return Math.max(1, count);
+  };
+  const sc = Math.max(2, Math.min(SUPPORT_SAMPLE_TARGET, Math.round(Math.sqrt(SUPPORT_SAMPLE_TARGET * p.meshX / p.meshY))));
+  const sr = Math.max(2, Math.round(SUPPORT_SAMPLE_TARGET / sc));
+  let visits = 0;
+  for (let j = 0; j < sr; j++) for (let i = 0; i < sc; i++) {
+    const x = (i + 0.5) / sc * p.meshX, y = (j + 0.5) / sr * p.meshY;
+    visits += supportCount(x, y, searchRadius(x, y));
+  }
+  const estimate = Math.ceil(queries * (visits / (sc * sr)));
+  if (!Number.isSafeInteger(estimate)) throw new Error('Invalid frozen relief query work');
+  return estimate;
+}
+
 /** Run before constructing SiteGrid, whose spacing seed queries also expand coincidence. */
 export function assertFrozenReliefWork(p: WorkShape, sites: ReliefSiteSet, additionalQueries = 0): void {
-  if (frozenReliefQueryWork(p, sites, additionalQueries) > MAX_FROZEN_RELIEF_QUERY_WORK) {
-    throw new Error('Frozen relief exceeds the supported coincident-site query work. Reduce coincident sites or output grid density.');
+  if (frozenReliefQueryWork(p, sites, additionalQueries) > MAX_FROZEN_RELIEF_QUERY_WORK
+    || frozenReliefSupportVisits(p, sites, additionalQueries) > MAX_FROZEN_RELIEF_SUPPORT_VISITS) {
+    throw new Error('Frozen relief exceeds the supported coincident-site query work. Reduce coincident or tightly clustered sites, or output grid density.');
   }
 }
