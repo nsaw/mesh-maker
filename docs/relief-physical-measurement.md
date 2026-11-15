@@ -117,3 +117,25 @@ payload 24. The kernel parent uses payload 23. No mandatory-CI-red parent is an
 accepted publication boundary. Historical source/log paths above retain their
 actual checkpoint identities rather than being relabeled as the repartitioned
 source. Fresh receipts bind the new parent stack.
+
+## Membrane lattice (#81, #57)
+
+The pillow membrane kept the output-grid dependence that the measurements lost:
+80 SOR sweeps over output pixels left large cushions under-converged, so a pillowed
+preset carved a different cushion at the 120-column drag preview than at export.
+The membrane now lives on this same physical measurement lattice. Each lattice node
+evaluates the pass-2 cushion test (reusing its pass-1 nearest ranks, and skipped
+where its boundary distance cannot reach the gutter ratio), one Poisson system
+over every cell's region is solved by conjugate gradients to a relative residual
+of 1e-10 with other cells' nodes held at zero, and each output node reads its own
+cell's membrane bilinearly. Raw relief is now identical at every coincident node
+of resolutions 121, 401 and 961 (`cli/relief-resolution.spec.ts`).
+
+Pockets seed 139 (#57) measured max 0.0365 of the requested depth at the
+pre-slice-3 checkpoint and 0.0346 at the slice-3 candidate. Physical measurement
+brought it to 0.0096 and the lattice membrane to 0.0038, the same as with the
+pillow off; the remainder is Gaussian smoothing and depth mapping sampled per grid.
+`npm run test:relief-measurement-mutants` now installs output-grid quadrature, which
+also makes the output grid the membrane lattice, and rejects it at membrane
+tolerances 1e-10 and 1e-4.
+

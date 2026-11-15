@@ -5,7 +5,7 @@ import { DEFAULTS } from './state';
 
 /** Bump only when relief generation changes so a saved layout would carve differently. It is
  * independent of the share-link version, which changes for unrelated controls. */
-export const PROJECT_GENERATION = 24;
+export const PROJECT_GENERATION = 25;
 import type { ReliefQueryDescription, ReliefSiteSet } from './types';
 import { buildNoiseSurface, NOISE_SURFACE_KEYS, noiseSurfaceParams, type NoiseSurface, type NoiseSurfaceParams } from './noise/surface';
 import { describeReliefQuery, sampleReliefParamsFromState } from './noise/voronoi-relief';

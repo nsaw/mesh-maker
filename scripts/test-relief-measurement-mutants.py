@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Owned controls: output-grid geometry fails at both 80 and 1280 membrane sweeps."""
+"""Owned controls: output-grid geometry fails with a converged and a loose membrane."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -41,26 +41,29 @@ assert.equal(result.crestClipStatus,'narrowed','physical crest diagnostic');
     if checked.returncode:
         raise AssertionError(checked.stdout + checked.stderr)
     print('Physical diagnostic positive:', checked.stdout.strip())
-    for sweeps in [80, 1280]:
+    for tolerance in ['1e-10', '1e-4']:
         start = original.index('    // Physical quadrature')
         end = original.index('    if (captureMeasurements)', start)
+        # The output grid doubles as the membrane lattice here, as the membrane once was.
         old_grid = """    const measureCols=cols,measureRows=rows;
+    const measureBoundary=new Float64Array(rows*cols),measureNearest=null as Float64Array|null,measureRanks=null as Int32Array|null;
     for(let idx=0;idx<rows*cols;idx++){
       const {f1,f2,f3,f4,idx:owner,idx2,idx3,idx4}=nearest(wxArr[idx],wyArr[idx]);
       radiusSum[owner]+=f1;radiusN[owner]++;
-      inradius[owner]=Math.max(inradius[owner],boundaryDist(f1,f2,f3,f4,owner,idx2,idx3,idx4,wxArr[idx],wyArr[idx]));
+      measureBoundary[idx]=boundaryDist(f1,f2,f3,f4,owner,idx2,idx3,idx4,wxArr[idx],wyArr[idx]);
+      inradius[owner]=Math.max(inradius[owner],measureBoundary[idx]);
     }
     for(let k=0;k<sites.length;k++)sites[k].radius=radiusN[k]>0?(radiusSum[k]/radiusN[k])*2:p.cellSize;
 """
         mutated = original[:start] + old_grid + original[end:]
-        mutated = mutated.replace('const MEMBRANE_SWEEPS = 80;', 'const MEMBRANE_SWEEPS = %d;' % sweeps)
+        mutated = mutated.replace('const MEMBRANE_TOLERANCE = 1e-10;', 'const MEMBRANE_TOLERANCE = %s;' % tolerance)
         if mutated == original:
             raise AssertionError('Output-grid mutant was not installed')
         source.write_text(mutated)
         result = subprocess.run(command, cwd=target, capture_output=True, text=True, timeout=120)
         if not result.returncode or 'AssertionError' not in result.stderr or 'production Pockets retained coincidence bounds' not in result.stderr:
             raise AssertionError('Output-grid mutation did not fail its intended gate\n' + result.stdout + result.stderr)
-        print('Output-grid geometry with %d sweeps rejected:' % sweeps, result.stdout.strip())
+        print('Output-grid geometry with membrane tolerance %s rejected:' % tolerance, result.stdout.strip())
         result = subprocess.run(command[:-1] + ['diagnostic.mts'], cwd=target, capture_output=True, text=True, timeout=120)
         if not result.returncode or 'physical crest diagnostic' not in result.stderr or result.stdout.strip() != 'collapsed':
             raise AssertionError('Old coarse-grid diagnostic alias not reproduced\n' + result.stdout + result.stderr)
