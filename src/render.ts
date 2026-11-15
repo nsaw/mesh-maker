@@ -1,19 +1,33 @@
+import { fitDistance, type Frame } from './fit-frame';
+import { noiseGeneration } from './noise/controller';
+import type { WireWorkerOutput } from './render-wire-worker';
+import { showToast } from './toast';
 import * as THREE from 'three';
 import { STATE, activeMaster } from './state';
-import { preferZ00Z11Diagonal, cellTriangleOffsets, gridMinMax } from './geometry';
+import { buildSurfaceBuffers, buildWireBuffers, type SurfaceBuffers, type SurfaceBounds, type WireBuffers } from './render-geometry';
 
 // --- Module state ---
 let _renderer: THREE.WebGLRenderer | null = null;
 let _scene: THREE.Scene;
 let _camera: THREE.PerspectiveCamera;
-let _surfaceMesh: THREE.Mesh | null = null;
+let _planCamera: THREE.OrthographicCamera;
+export let onPlanProjectionChanged: () => void = () => undefined;
+export function setPlanProjectionListener(listener: () => void): void { onPlanProjectionChanged = listener; }
+function activeCamera(): THREE.Camera { return STATE.viewMode === 'plan' ? _planCamera : _camera; }
+let _surfaceMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhongMaterial> | null = null;
 let _wireLines: THREE.LineSegments | null = null;
 let _pointsObj: THREE.Points | null = null;
+let _wireMaterial: THREE.LineBasicMaterial | null = null;
+let _pointMaterial: THREE.PointsMaterial | null = null;
 /** Inputs for the lazily built wireframe and points of the current surface. */
 let _overlaySource: {
-  positions: Float32Array; vertices: number[][]; cols: number; rows: number; zMin: number; zRange: number;
+  positions: Float32Array; vertices: number[][]; cols: number; rows: number; zMin: number; zRange: number; bounds: SurfaceBounds; wire?: WireBuffers;
 } | null = null;
+let _wireWorker: Worker | null = null;
+let _wireTimer: ReturnType<typeof setTimeout> | null = null;
 let _encGroup: THREE.Group | null = null;
+let _enclosureSideMaterial: THREE.MeshPhongMaterial | null = null;
+let _enclosureBottomMaterial: THREE.MeshPhongMaterial | null = null;
 let _hemi: THREE.HemisphereLight | null = null;
 let _keyLight: THREE.DirectionalLight | null = null;
 let _fillLight: THREE.DirectionalLight | null = null;
@@ -23,6 +37,7 @@ let _needsRender = false;
 let _rafPending = false;
 let _prevW = 0;
 let _prevH = 0;
+let _initialPortraitScale = 0;
 let _lastVerticesRef: number[][] | null = null;
 let _lastMeshX = 0;
 let _lastMeshY = 0;
@@ -82,23 +97,36 @@ function getColorRampTexture(): THREE.DataTexture {
 
 // --- Initialization ---
 
+/** Capture the initial stage before an early Export can cover it while generation is pending. */
+export function captureInitialViewportFrame(): void {
+  if (_initialPortraitScale) return;
+  const wrap = document.getElementById('canvasWrap');
+  if (wrap?.clientWidth && wrap.clientHeight) _initialPortraitScale = Math.max(1, wrap.clientHeight / wrap.clientWidth);
+}
+
 function ensureRenderer(): void {
   if (_renderer) return;
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const wrap = document.getElementById('canvasWrap')!;
-  const w = wrap.clientWidth;
-  const h = wrap.clientHeight;
+  const w = Math.max(1, wrap.clientWidth);
+  const h = Math.max(1, wrap.clientHeight);
+  captureInitialViewportFrame();
+  if (!_initialPortraitScale) _initialPortraitScale = 1;
 
   _renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   _renderer.setPixelRatio(window.devicePixelRatio);
   _renderer.setSize(w, h);
   _renderer.setClearColor(BG_COLOR);
   _renderer.autoClear = false;
+  // three.js rebuilds GL state on restore, but nothing redraws until the next input (iOS backgrounding).
+  canvas.addEventListener('webglcontextrestored', () => requestRender());
 
   _scene = new THREE.Scene();
 
   _camera = new THREE.PerspectiveCamera(FOV, w / h, 0.01, 2000);
+  _planCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 2000);
+  _planCamera.up.set(0, 1, 0);
   _camera.up.set(0, 0, 1); // Z-up for CNC
 
   // Lighting: hemisphere for natural ambient fill + key + fill directional (see applyLighting)
@@ -143,7 +171,7 @@ function ensureRenderer(): void {
 }
 
 function doRender(): void {
-  if (!_renderer) return;
+  if (!_renderer || !document.getElementById('canvasWrap')?.clientHeight) return;
   // Three.js setViewport/setScissor apply DPR internally (set via setPixelRatio).
   // Pass CSS pixel dimensions, NOT buffer pixels, to avoid double-multiplication.
   const w = _prevW;
@@ -155,7 +183,7 @@ function doRender(): void {
   _renderer.setScissorTest(true);
   _renderer.setClearColor(BG_COLOR);
   _renderer.clear();
-  _renderer.render(_scene, _camera);
+  _renderer.render(_scene, activeCamera());
 
   // Gizmo inset (top-left corner, 80x80 CSS pixels)
   const gs = 80;
@@ -171,7 +199,8 @@ function doRender(): void {
     3 * Math.sin(phi) * Math.sin(theta),
     3 * Math.cos(phi),
   );
-  _gizmoCamera.up.copy(_camera.up);
+  if (STATE.viewMode === 'plan') _gizmoCamera.position.set(0, 0, 3);
+  _gizmoCamera.up.copy(activeCamera().up);
   _gizmoCamera.lookAt(0, 0, 0);
 
   _renderer.setViewport(gx, gy, gs, gs);
@@ -198,7 +227,7 @@ export function setCameraFromState(): void {
 
   const target = getMeshCenter();
   const meshMax = Math.max(STATE.meshX || 36, STATE.meshY || 24);
-  const radius = meshMax * 1.2 / Math.max(STATE.zoom, 0.01);
+  const radius = meshMax * 1.2 * _initialPortraitScale / Math.max(STATE.zoom, 0.01);
 
   const phi = Math.PI * (90 + STATE.tilt) / 180;   // polar from Z-axis
   const theta = STATE.orbit * Math.PI / 180;        // azimuthal around Z
@@ -245,7 +274,25 @@ export function setCameraFromState(): void {
   _camera.up.copy(up);
   _camera.lookAt(target);
 
+  const height = Math.max(STATE.meshY * 1.15, STATE.meshX * 1.15 * (_prevH || 1) / (_prevW || 1)) / STATE.zoom;
+  const width = height * (_prevW || 1) / (_prevH || 1);
+  const x = STATE.meshX / 2 - STATE.panX * width / (_prevW || 1), y = STATE.meshY / 2 + STATE.panY * height / (_prevH || 1);
+  _planCamera.left = -width / 2; _planCamera.right = width / 2;
+  _planCamera.top = height / 2; _planCamera.bottom = -height / 2;
+  _planCamera.position.set(x, y, 100); _planCamera.lookAt(x, y, 0);
+  _planCamera.updateProjectionMatrix(); _planCamera.updateMatrixWorld(true);
+  onPlanProjectionChanged();
   requestRender();
+}
+
+/** Plan overlay and pointer edits use the very same orthographic camera as WebGL. */
+export function planToScreen(x: number, y: number): {x: number; y: number} {
+  const point = new THREE.Vector3(x, y, 0).project(_planCamera);
+  return {x: (point.x + 1) * _prevW / 2, y: (1 - point.y) * _prevH / 2};
+}
+export function screenToPlan(x: number, y: number): {x: number; y: number} {
+  const point = new THREE.Vector3(x / _prevW * 2 - 1, 1 - y / _prevH * 2, 0).unproject(_planCamera);
+  return {x: point.x, y: point.y};
 }
 
 /** Schedule a render on the next animation frame (on-demand, no permanent loop). */
@@ -265,13 +312,13 @@ export function requestRender(): void {
 
 // --- Geometry ---
 
-function disposeGroup(obj: THREE.Object3D | null): void {
+function disposeGroup(obj: THREE.Object3D | null, keepMaterial = false): void {
   if (!obj || !_scene) return;
   _scene.remove(obj);
   obj.traverse(child => {
     if ('geometry' in child && child.geometry)
       (child.geometry as THREE.BufferGeometry).dispose();
-    if ('material' in child && child.material) {
+    if (!keepMaterial && 'material' in child && child.material) {
       const mat = child.material;
       if (Array.isArray(mat)) mat.forEach(m => m.dispose());
       else (mat as THREE.Material).dispose();
@@ -325,109 +372,110 @@ export function applySurfaceMaterial(): void {
 
 function buildSurface(
   vertices: number[][], cols: number, rows: number,
-  meshX: number, meshY: number,
+  meshX: number, meshY: number, prepared?: SurfaceBuffers,
 ): void {
-  disposeGroup(_surfaceMesh); _surfaceMesh = null;
-  disposeGroup(_wireLines); _wireLines = null;
-  disposeGroup(_pointsObj); _pointsObj = null;
+  retireWireWorker();
+  // Geometry changes do not change shading. Keep the material's cached GPU program alive.
+  const material = _surfaceMesh?.material;
+  if (_surfaceMesh) { _scene.remove(_surfaceMesh); _surfaceMesh.geometry.dispose(); _surfaceMesh = null; }
+  disposeGroup(_wireLines, true); _wireLines = null;
+  disposeGroup(_pointsObj, true); _pointsObj = null;
 
-  const positions = new Float32Array(rows * cols * 3);
-  const uvs = new Float32Array(rows * cols * 2);
-
-  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
-  const zRange = zMax - zMin || 1;
-  _cachedZMin = zMin;
-  _cachedZMax = zMax;
-  _cachedZMid = (zMin + zMax) / 2;
-
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const idx = j * cols + i;
-      positions[idx * 3] = (i / (cols - 1)) * meshX;
-      positions[idx * 3 + 1] = (j / (rows - 1)) * meshY;
-      positions[idx * 3 + 2] = vertices[j][i];
-
-      // UV: normalized Z maps to color ramp texture (per-pixel sampling = no banding)
-      const t = Math.max(0, Math.min(1, (vertices[j][i] - zMin) / zRange));
-      uvs[idx * 2] = t;
-      uvs[idx * 2 + 1] = 0.5;
-
-    }
-  }
-
-  // Indexed triangles (2 per quad, shortest-diagonal split)
-  // A relief master declares its triangulation; draw the preview with it, as the export does.
   const master = activeMaster();
-  const fixedDiagonal = master ? master.diagonalZ00Z11 : null;
-  const indices = new Uint32Array((rows - 1) * (cols - 1) * 6);
-  let ti = 0;
-  for (let j = 0; j < rows - 1; j++)
-    for (let i = 0; i < cols - 1; i++) {
-      const a = j * cols + i;
-      const [t1, t2] = cellTriangleOffsets(fixedDiagonal ?? preferZ00Z11Diagonal(vertices[j][i], vertices[j][i+1], vertices[j+1][i], vertices[j+1][i+1]), cols);
-      indices[ti++] = a + t1[0]; indices[ti++] = a + t1[1]; indices[ti++] = a + t1[2];
-      indices[ti++] = a + t2[0]; indices[ti++] = a + t2[1]; indices[ti++] = a + t2[2];
-    }
-
-  // Analytical heightfield normals from central differences -- much smoother than
-  // computeVertexNormals() which averages discrete face normals and creates visible
-  // faceting seams on steep terrain.
-  const normals = new Float32Array(rows * cols * 3);
-  const sx = meshX / (cols - 1);
-  const sy = meshY / (rows - 1);
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const il = i > 0 ? i - 1 : i, ir = i < cols - 1 ? i + 1 : i;
-      const jd = j > 0 ? j - 1 : j, ju = j < rows - 1 ? j + 1 : j;
-      const dzdx = (vertices[j][ir] - vertices[j][il]) / ((ir - il) * sx);
-      const dzdy = (vertices[ju][i] - vertices[jd][i]) / ((ju - jd) * sy);
-      const len = Math.sqrt(dzdx * dzdx + dzdy * dzdy + 1);
-      const idx = j * cols + i;
-      normals[idx * 3] = -dzdx / len;
-      normals[idx * 3 + 1] = -dzdy / len;
-      normals[idx * 3 + 2] = 1 / len;
-    }
-  }
+  const ready = prepared && prepared.cols === cols && prepared.rows === rows
+    && prepared.meshX === meshX && prepared.meshY === meshY;
+  const { positions, normals, uvs, indices, zMin, zMax, zRange, bounds, wire } = ready ? prepared
+    : buildSurfaceBuffers(vertices, cols, rows, meshX, meshY, master ? master.diagonalZ00Z11 : null);
+  _cachedZMin = zMin; _cachedZMax = zMax; _cachedZMid = (zMin + zMax) / 2;
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  setPreparedBounds(geo, bounds);
 
-  _surfaceMesh = new THREE.Mesh(geo, makeSurfaceMaterial());
+  _surfaceMesh = new THREE.Mesh(geo, material ?? makeSurfaceMaterial());
   _scene.add(_surfaceMesh);
 
   // Wireframe and points are built on first use (updateVisibility): at 400 columns they add about
   // 4 MB of line vertices that most sessions never display.
-  _overlaySource = { positions, vertices, cols, rows, zMin, zRange };
+  _overlaySource = { positions, vertices, cols, rows, zMin, zRange, bounds, wire };
+}
+
+function setPreparedBounds(geometry: THREE.BufferGeometry, bounds: SurfaceBounds): void {
+  geometry.boundingBox = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max));
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(...bounds.center), bounds.radius);
+}
+
+function retireWireWorker(): void {
+  _wireWorker?.terminate(); _wireWorker = null;
+  if (_wireTimer !== null) { clearTimeout(_wireTimer); _wireTimer = null; }
+}
+
+/** View-only first use prepares lines without regenerating noise. Surface replacement retires it. */
+function prepareLazyWire(source: NonNullable<typeof _overlaySource>): void {
+  if (_wireWorker) return;
+  const { positions, vertices, cols, rows, zMin, zRange } = source;
+  const mode = STATE.mode;
+  const current = (): boolean => _overlaySource === source && STATE.vertices === vertices && STATE.mode === mode;
+  const heights = new Float64Array(cols * rows);
+  for (let j = 0; j < rows; j++) heights.set(vertices[j], j * cols);
+  const apply = (buffers: WireBuffers): void => {
+    if (!current()) return;
+    source.wire = buffers;
+    if (STATE.viewMode === 'wireframe' || STATE.viewMode === 'both') ensureWireframe();
+    requestRender();
+  };
+  const inline = (): void => {
+    const z = heights.byteLength ? heights : new Float64Array(cols * rows);
+    if (!heights.byteLength) for (let j = 0; j < rows; j++) z.set(vertices[j], j * cols);
+    apply(buildWireBuffers(positions, z, cols, rows, zMin, zRange));
+  };
+  let worker: Worker;
+  try { worker = new Worker(new URL('./render-wire-worker.ts', import.meta.url), { type: 'module' }); }
+  catch { inline(); return; } // A blocked Worker constructor retains the exact inline path.
+  _wireWorker = worker;
+  const failed = (message: string): void => {
+    if (_wireWorker !== worker) return;
+    const active = current(); retireWireWorker();
+    if (!active) return;
+    inline();
+    showToast(`Wire preview used the inline fallback: ${message}`, 6000);
+  };
+  _wireTimer = setTimeout(() => {
+    if (_wireWorker !== worker) return;
+    const active = current(); retireWireWorker();
+    if (active) showToast('Wire preview timed out. Select the view again to retry.', 6000);
+  }, 30_000);
+  worker.onmessage = (event: MessageEvent<WireWorkerOutput>) => {
+    if (_wireWorker !== worker) return;
+    if (!current()) { retireWireWorker(); return; }
+    if ('error' in event.data) { failed(event.data.error); return; }
+    const expected = (rows * (cols - 1) + cols * (rows - 1)) * 6;
+    if (event.data.buffers.positions.length !== expected || event.data.buffers.colors.length !== expected) {
+      failed('incomplete wire buffers'); return;
+    }
+    retireWireWorker(); apply(event.data.buffers);
+  };
+  worker.onerror = event => { event.preventDefault(); failed(event.message || 'worker load failed'); };
+  worker.onmessageerror = () => failed('unreadable worker result');
+  const copy = positions.slice();
+  try { worker.postMessage({ positions: copy, heights, cols, rows, zMin, zRange }, [copy.buffer, heights.buffer]); }
+  catch (error: unknown) { failed(error instanceof Error ? error.message : String(error)); }
 }
 
 function ensureWireframe(): void {
   if (_wireLines || !_overlaySource) return;
-  const { positions, vertices, cols, rows, zMin, zRange } = _overlaySource;
-  // Grid lines (horizontal + vertical, no triangle diagonals)
-  const nSeg = rows * (cols - 1) + cols * (rows - 1);
-  const wPos = new Float32Array(nSeg * 6);
-  const wCol = new Float32Array(nSeg * 6);
-  let w = 0;
-  function pushWireVtx(wj: number, wi: number): void {
-    const widx = wj * cols + wi;
-    wPos[w] = positions[widx * 3]; wPos[w + 1] = positions[widx * 3 + 1]; wPos[w + 2] = positions[widx * 3 + 2];
-    const vt = Math.max(0, Math.min(1, (vertices[wj][wi] - zMin) / zRange));
-    const g = (40 + vt * 120) / 255;
-    wCol[w] = g; wCol[w + 1] = g + 15 / 255; wCol[w + 2] = g + 30 / 255;
-    w += 3;
-  }
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols - 1; i++) { pushWireVtx(j, i); pushWireVtx(j, i + 1); }
-  for (let i = 0; i < cols; i++)
-    for (let j = 0; j < rows - 1; j++) { pushWireVtx(j, i); pushWireVtx(j + 1, i); }
+  const source = _overlaySource;
+  if (!source.wire) { prepareLazyWire(source); return; }
+  const { positions: wPos, colors: wCol } = source.wire;
 
   const wGeo = new THREE.BufferGeometry();
   wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
   wGeo.setAttribute('color', new THREE.BufferAttribute(wCol, 3));
-  _wireLines = new THREE.LineSegments(wGeo, new THREE.LineBasicMaterial({
+  setPreparedBounds(wGeo, _overlaySource.bounds);
+  _wireLines = new THREE.LineSegments(wGeo, _wireMaterial ??= new THREE.LineBasicMaterial({
     vertexColors: true, transparent: true, opacity: 0.7,
   }));
   _scene.add(_wireLines);
@@ -437,20 +485,37 @@ function ensurePoints(): void {
   if (_pointsObj || !_overlaySource) return;
   const pGeo = new THREE.BufferGeometry();
   pGeo.setAttribute('position', new THREE.BufferAttribute(_overlaySource.positions.slice(), 3));
-  _pointsObj = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  setPreparedBounds(pGeo, _overlaySource.bounds);
+  _pointsObj = new THREE.Points(pGeo, _pointMaterial ??= new THREE.PointsMaterial({
     size: 2, sizeAttenuation: false, color: 0x4eaaff, transparent: true, opacity: 0.8,
   }));
   _scene.add(_pointsObj);
+}
+
+/** Enclosure geometry is replaced on generation; its two bounded materials stay shared and alive. */
+function disposeEnclosure(keepMaterials = false): void {
+  if (_encGroup) {
+    _scene.remove(_encGroup);
+    _encGroup.traverse(child => {
+      if (child instanceof THREE.Mesh) child.geometry.dispose();
+    });
+    _encGroup = null;
+  }
+  if (!keepMaterials) {
+    _enclosureSideMaterial?.dispose(); _enclosureSideMaterial = null;
+    _enclosureBottomMaterial?.dispose(); _enclosureBottomMaterial = null;
+  }
 }
 
 function buildEnclosure(
   vertices: number[][], cols: number, rows: number,
   meshX: number, meshY: number,
 ): void {
-  disposeGroup(_encGroup);
+  disposeEnclosure(true);
   _encGroup = new THREE.Group();
   const zBase = 0;
-  const sideMat = new THREE.MeshPhongMaterial({ color: 0xe8e8e8, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+  const sideMat = _enclosureSideMaterial ??= new THREE.MeshPhongMaterial({ color: 0xe8e8e8, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+  const bottomMat = _enclosureBottomMaterial ??= new THREE.MeshPhongMaterial({ color: 0xe0e0e0, transparent: true, opacity: 0.7 });
 
   // Bottom face
   const botGeo = new THREE.PlaneGeometry(meshX, meshY);
@@ -465,7 +530,7 @@ function buildEnclosure(
     botGeo.setIndex(arr);
   }
   botGeo.computeVertexNormals();
-  _encGroup.add(new THREE.Mesh(botGeo, new THREE.MeshPhongMaterial({ color: 0xe0e0e0, transparent: true, opacity: 0.7 })));
+  _encGroup.add(new THREE.Mesh(botGeo, bottomMat));
 
   // Side walls (4 edge strips connecting top surface to z=0)
   function buildWall(edge: { x: number; y: number; z: number }[]): THREE.BufferGeometry {
@@ -510,7 +575,7 @@ function buildEnclosure(
 
 function updateVisibility(): void {
   const mode = STATE.viewMode;
-  const showSolid = mode === 'solid' || mode === 'both';
+  const showSolid = mode === 'solid' || mode === 'both' || mode === 'plan';
   if (_surfaceMesh) _surfaceMesh.visible = showSolid;
   const showWire = mode === 'wireframe' || mode === 'both';
   if (showWire) ensureWireframe();
@@ -522,7 +587,7 @@ function updateVisibility(): void {
 
 // --- Public API ---
 
-export function renderViewport(): void {
+export function renderViewport(prepared?: SurfaceBuffers): void {
   ensureRenderer();
 
   const verticesChanged = STATE.vertices !== _lastVerticesRef
@@ -536,13 +601,16 @@ export function renderViewport(): void {
     _lastRows = STATE.rows;
     _lastCols = STATE.cols;
     if (STATE.vertices) {
-      buildSurface(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
+      buildSurface(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY, prepared);
       buildEnclosure(STATE.vertices, STATE.cols, STATE.rows, STATE.meshX, STATE.meshY);
     } else {
+      retireWireWorker();
       disposeGroup(_surfaceMesh); _surfaceMesh = null;
-      disposeGroup(_wireLines); _wireLines = null;
-      disposeGroup(_pointsObj); _pointsObj = null;
-      disposeGroup(_encGroup); _encGroup = null;
+      disposeGroup(_wireLines, true); _wireLines = null;
+      disposeGroup(_pointsObj, true); _pointsObj = null;
+      _wireMaterial?.dispose(); _wireMaterial = null;
+      _pointMaterial?.dispose(); _pointMaterial = null;
+      disposeEnclosure();
       _overlaySource = null;
     }
   }
@@ -555,8 +623,8 @@ export function renderViewport(): void {
 export function resizeCanvas(): void {
   if (!_renderer) return;
   const wrap = document.getElementById('canvasWrap')!;
-  const w = wrap.clientWidth;
-  const h = wrap.clientHeight;
+  const w = Math.max(1, wrap.clientWidth);
+  const h = Math.max(1, wrap.clientHeight);
   if (w !== _prevW || h !== _prevH) {
     _renderer.setSize(w, h);
     _camera.aspect = w / h;
@@ -568,9 +636,62 @@ export function resizeCanvas(): void {
 }
 
 
+/** The scene is fitted only on request. Resizing changes projection without rewriting STATE. */
+export function fitVisibleSource(): boolean {
+  if (!STATE.vertices) return false;
+  ensureRenderer();
+  resizeCanvas();
+  setCameraFromState();
+  const wrap = document.getElementById('canvasWrap')!;
+  const width = wrap.clientWidth, height = wrap.clientHeight;
+  if (!width || !height) return false;
+  const bounds = wrap.getBoundingClientRect();
+  const frame: Frame = { x: 16, y: 16, width: width - 32, height: height - 32 };
+  // Reserve the overlays' measured bands, including the renderer's 80 px axis inset.
+  const dims = document.getElementById('dimsOverlay')!.getBoundingClientRect();
+  const stats = document.getElementById('statsOverlay')!.getBoundingClientRect();
+  const top = Math.max(96, dims.bottom - bounds.top + 8);
+  const bottom = stats.height ? bounds.bottom - stats.top + 8 : 16;
+  frame.y = top;
+  frame.height = height - top - bottom;
+  if (frame.height <= 0 || frame.width <= 0) return false;
+  if (STATE.viewMode === 'plan') {
+    const baseHeight = Math.max(STATE.meshY * 1.15, STATE.meshX * 1.15 * height / width);
+    const baseWidth = baseHeight * width / height;
+    STATE.zoom = Math.max(0.1, Math.min(10, frame.width * baseWidth / (STATE.meshX * width), frame.height * baseHeight / (STATE.meshY * height)));
+    STATE.panX = frame.x + frame.width / 2 - width / 2;
+    STATE.panY = frame.y + frame.height / 2 - height / 2;
+    setCameraFromState(); return true;
+  }
+  const center = getMeshCenter();
+  _camera.updateMatrixWorld(true);
+  const right = new THREE.Vector3().setFromMatrixColumn(_camera.matrixWorld, 0);
+  const up = new THREE.Vector3().setFromMatrixColumn(_camera.matrixWorld, 1);
+  const back = new THREE.Vector3().setFromMatrixColumn(_camera.matrixWorld, 2);
+  const points = [];
+  const low = STATE.watertight ? Math.min(0, _cachedZMin) : _cachedZMin;
+  for (const x of [0, STATE.meshX]) for (const y of [0, STATE.meshY]) for (const z of [low, _cachedZMax]) {
+    const point = new THREE.Vector3(x, y, z).sub(center);
+    points.push({ x: point.dot(right), y: point.dot(up), z: point.dot(back) });
+  }
+  const distance = fitDistance(points, frame, width, height, FOV * Math.PI / 180);
+  if (distance === null) return false;
+  const zoom = Math.max(STATE.meshX, STATE.meshY) * 1.2 * _initialPortraitScale / distance;
+  if (zoom < 0.1) return false;
+  STATE.zoom = Math.min(10, zoom);
+  STATE.panX = frame.x + frame.width / 2 - width / 2;
+  STATE.panY = frame.y + frame.height / 2 - height / 2;
+  setCameraFromState();
+  return true;
+}
+
 export function updateDimsOverlay(): void {
   const el = document.getElementById('dimsOverlay')!;
   if (!STATE.vertices) { el.textContent = ''; return; }
+  if (STATE.mode === 'noise' && noiseGeneration.displayPending) {
+    el.textContent = noiseGeneration.failed ? 'Display approximation; generation failed' : 'Display approximation; full-resolution surface pending';
+    return;
+  }
   const zMin = _cachedZMin;
   const zMax = _cachedZMax;
   const totalZ = STATE.watertight ? Math.max(zMax, 0) : zMax - zMin;

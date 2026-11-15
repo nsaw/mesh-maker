@@ -46,13 +46,19 @@ meshcraft/
 │   ├── state.ts               # MeshState interface, STATE singleton, URL serialize/deserialize
 │   ├── types.ts               # NoiseGenerator, FBMGenerator, relief and noise-grid parameter types
 │   ├── noise/
+│   │   ├── surface.ts         # Pure immutable noise/relief builder, shared by Node and Worker
+│   │   ├── controller.ts      # Revision ownership, cancellation, full-export waiters and fallback
+│   │   ├── messages.ts        # Float64 worker transport and generation quality
+│   │   ├── worker.ts          # Noise worker entry
 │   │   ├── generators.ts      # 14+ noise classes + createNoiseGen() factory
+│   │   ├── relief-sites.ts    # Lossless stable IDs, pin flags and detached site edits
 │   │   ├── site-grid.ts       # Exact bucket lookup and incremental minimum separation
+│   │   ├── metric-order.ts    # Guarded nearest-rank comparison and exact dyadic tie resolution
 │   │   ├── voronoi-relief.ts  # Voronoi Relief sampler (cellular relief, attractors, starburst)
 │   │   └── presets.ts         # CNC_PRESETS, PROFILES
 │   ├── mesh.ts                # generateMesh (noise / depthmap / drape dispatch), debouncedGenerate
 │   ├── geometry.ts            # Pure grid helpers: luma sampling, normalize, background cutoff,
-│   │                          #   weightedSmooth, triangle split + watertight enclosure emitters
+│   │                          #   gaussianSmooth, triangle split + watertight enclosure emitters
 │   ├── drape-ui.ts            # Drape tab: figure (bundled bust or upload), bare preview, Worker
 │   │                          #   runs, result as an in-memory relief master (activeMaster())
 │   ├── drape-controls.ts      # Drape controls table, presets (gathered, silk, quartering wind),
@@ -67,12 +73,23 @@ meshcraft/
 │   │   ├── pipeline.ts        #   figure -> drape -> 3:4 relief heights (12 x 16 in by default)
 │   │   └── worker.ts          #   Worker entry (messages.ts)
 │   ├── depth-estimate.ts      # Optional in-browser monocular depth (Depth-Anything-V2-small)
-│   ├── slider-utils.ts        # Click-to-edit slider values, step-aware value formatting
+│   ├── slider-utils.ts        # Shared exact ranges, nominal keyboard steps, numeric edits and resets
+│   ├── numeric-domain.ts      # Finite numeric input boundary and semantic count domains
 │   ├── render.ts              # Three.js WebGL viewport: surface, wireframe, points, enclosure,
 │   │                          #   elevation or neutral surface material
+│   ├── render-geometry.ts     # Pure exact display buffers, wire lines and conservative bounds
+│   ├── render-wire-worker.ts  # Cancellable lazy wire preparation for view-only first use
 │   ├── export.ts              # Export dispatcher: STL (binary/ASCII), OBJ, 3DM, heightmap PNG
 │   ├── export-surface.ts      # The one surface every export and toolpath reads (master or grid)
 │   ├── mesh-writer.ts         # Pure grid -> indexed mesh -> STL/OBJ writers (browser + CLI)
+│   ├── relief-project.ts      # Procedural relief project codec and revision-bound history
+│   ├── relief-editor.ts       # Cell document transitions, pending layout, gestures and file races
+│   ├── relief-editor-jobs.ts  # Detached project preflight, placement and one-pass relaxation Worker
+│   ├── relief-editor-ui.ts    # Procedural-only exact project files and selected cell controls
+│   ├── relief-editor-overlay.ts # Plan sites/handles and pointer/keyboard editing
+│   ├── relief-cell-graph.ts   # One completed-source graph shared by plan overlay and DXF
+│   ├── cell-graph/            # Producer-owned exact diagram, nonlinear certificates, inch DXF,
+│   │                          #   cancellable Worker/controller and source-revision binding
 │   ├── relief-master.ts       # .mcrelief data contract: parse/encode/verify, preview resample
 │   ├── sbp-export.ts          # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 │   ├── ui.ts                  # Sidebar builder, sliders, depth map upload, presets, SBP section
@@ -80,7 +97,10 @@ meshcraft/
 │   ├── toolbar.ts             # Mode tabs, toolbar buttons, Copy Link, format-aware controls
 │   ├── stats.ts               # zoomExtents, updateStats, format-aware overlay
 │   ├── toast.ts               # Toast notifications
-│   ├── sponsor.ts             # Sponsor modal + scroll-to-export
+│   ├── sidebar-state.ts       # Pane scroll/focus and persistent section state
+│   ├── mobile-layout.ts       # Persistent phone task panes, handle snaps, measured stage
+│   ├── fit-frame.ts           # Perspective fit inequalities for the unobscured frame
+│   ├── sponsor.ts             # Explicit Sponsors pane and carousel
 │   └── sbp/                   # Shared STL-to-SBP pipeline (web + CLI, zero Node deps)
 │       ├── types.ts           # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
 │       ├── tools.ts           # Embedded ATC tool database + default tool config
@@ -93,8 +113,11 @@ meshcraft/
 │       ├── generate.ts        # SBP pipeline orchestrator
 │       └── worker.ts          # Web Worker entry for uploaded STL processing
 ├── cli/
+│   ├── noise-worker.spec.ts   # npm run test:noise-worker (exact extraction, request lifecycle)
+│   ├── render-geometry.spec.ts # npm run test:render-geometry (original-buffer oracle, bounds, transfer)
 │   ├── stl-to-sbp.ts          # CLI entry point (tsx/Node)
 │   ├── vtdb-reader.ts         # SQLite .vtdb reader (better-sqlite3)
+│   ├── relief-measurement.spec.ts # physical cell quadrature, narrow-cell anchors and coincidence oracles
 │   ├── voronoi-relief.spec.ts # npm run test:relief
 │   ├── grasshopper-parity.spec.ts # npm run test:gh-parity
 │   ├── presets.spec.ts        # npm run test:presets (owned state, production geometry, SBP)
@@ -125,6 +148,8 @@ meshcraft/
 
 ### Key Design Decisions
 
+- **Noise worker** (`src/noise/surface.ts`, `controller.ts`, `worker.ts`): a complete immutable snapshot owns each generation. Authoritative settings revisions settle superseded full-resolution waiters. Within one pointer gesture a running coarse request may finish as a labeled display approximation while newer input is queued; its successor samples only the newest queued settings. Release, a new gesture, mode/preset/reset changes and errors retire that preview epoch. Slider drags request at most 120 columns, release requests the selected resolution, and numeric/programmatic-only inputs also finish at full resolution. Every generated-surface export waits for its captured revision at full resolution; edits or mode changes refuse that export. Direct surface reads refuse coarse, pending, failed or stale noise grids. Worker construction failure uses the same builder inline; load failures retain the existing update message without reloading.
+- **Prepared display geometry** (`src/render-geometry.ts`, `src/render-wire-worker.ts`): noise requests prepare full-density Float32 attributes, Uint32 triangle indices and conservative bounds in their owning worker, then transfer them with Float64 heights. Other sources and blocked Worker constructors use the same arithmetic inline. Wire lines are prepared only when requested; view-only first use owns a separate worker retired on surface replacement. Prepared bounds avoid first-draw vertex scans.
 - **Three.js WebGL renderer** (`src/render.ts`): Phong surface with analytical heightfield normals, an on-demand render loop (renders only when state changes), and an elevation-ramp or neutral surface material. Grids up to 400 columns (~250k cells) render interactively. (An earlier Canvas 2D painter's-algorithm renderer was replaced.)
 - **Typed STATE singleton**: `MeshState` interface with 40+ typed keys. Direct mutation — no reactive/observer pattern. The call graph is explicit (slider → debounce → generate → render).
 - **URL state sharing**: `serializeConfig()` encodes only keys differing from defaults as base64url JSON. "Copy Link" button in toolbar. Incompatible older payloads reset to defaults with a toast.
@@ -133,6 +158,7 @@ meshcraft/
 - **Drape** (`src/drape-sim/`, `src/drape-ui.ts`): a silk veil simulated over a complete 3D figure with Jolt Physics in a Worker, then seen from the front as a 3:4 relief (3 x 4 to 18 x 24 in, set with the X / Y sliders; SBP export refuses a carve that does not fit the bed with its X / Y offset; Material Thickness up to 2.6 in, Relief Depth above at least 1/16 in of backing) that becomes the active relief master. It reproduces the Blender drapes in `scripts/drape/` (the local workflow: `python3 scripts/drape/workflow.py FIGURE --preset silk-gathered|silk-tilt25|silk-tilt35|silk-tilt25-cling --out DIR`); the gathered silk (surface attraction) is the default. Every variable the Blender study varied has a control (`src/drape-controls.ts`) except the air-damping ramp, the separate object and self-collision gaps (Jolt has one cloth radius and no self-collision), the measured wind panels (the web targets a circle) and the 0.05 to 0.0025 bending change (calibrated silk already has no bending resistance); solver internals calibrated against Blender (friction, edge compliance, fps) have no control. Figures are `.mcfig` (written by `scripts/drape/export_figure.py`) or STL/OBJ/PLY/glTF/USD(Z) meshes turned with an up axis and turn, centred across the panel and fitted to 90% of it (`figureFromMesh`, so their units do not matter); an upload hangs from the middle of its top (header `anchor: 'top-centre'`, `figureAnchor`) while the bundled and Blender figures hang from their highest point, bit for bit as before; a mesh (or a `.mcfig`, header kept) over 300,000 triangles (`MAX_FIGURE_TRIANGLES`, Jolt's 128 MiB heap measured with the largest cloth) is split (`splitForDrape`): the cloth collides with a copy simplified by vertex clustering (`simplify.ts`), while the bare relief and the drape's extraction read every triangle of the original, posed by the same rigid motion (`poseWithDetail`, the original's anchor), so the carve keeps detail finer than the copy. A triangle soup (binary STL) is welded first (`weldVertices`); an 8.8 M-triangle STL welds in under a second and its front view rasterizes in about 0.1 s in Node. `drape-run` splits a dense `.mcfig` the same way. An uploaded mesh that winds inward is turned outward (`windsInward`: on a nearly closed mesh, openness at most 0.4, the area-weighted agreement of normals with their direction from the centroid is below -0.05), since Jolt collides the cloth with a triangle's front only and a flipped export lets the cloth fall through; open surfaces (plaques, trays, front-only scans) are never turned, since a front-wound bowl and an inward dome cannot be told apart. A full mesh over 256 MiB (`MAX_DETAIL_BYTES`) is carved from the simplified copy, with a toast. Figure Size then scales any figure about its crown. A lazily loaded chunk or Worker that fails to load is checked against the live index (`src/stale-build.ts`): after a deploy the user is told to reload, nothing reloads by itself. Parity with Blender is gated by `npm run test:drape-parity`; the browser and Node runs produce identical heights.
 - **Tool compensation** (`src/sbp/compensate.ts`): tip = max over the cutter footprint of (surface - cutter profile), side angles from the tool axis. Finishing drops the cutter at every emitted point onto the exported triangles (vertex, edge and facet contact) instead of interpolating node tips; roughing carries segment and between-node margins. `npm run test:cut` replays the emitted SBP text through `cli/cut-sim.ts`, which shares no code with `src/sbp/`, on a grid finer than the target, against the triangulated surface.
 - **Carve limits**: stock thickness and depth below stock top are each capped at 2.6 in. Machine travel remains 36 x 24 in with 6 in Z travel. Browser work offsets retain the preferred 2 in where possible and clamp each axis to the room left by the actual source, including the uploaded STL raster.
+- **Relief depth and smoothing**: cellular relief treats Cut Depth as an upper bound and never amplifies its raw range. Scalar noise and depth maps retain full-depth normalization. Gaussian smoothing uses a radius in inches (sigma), with preset radii converted from the previous 400-column settings. Capped cell layouts retain representative Cartesian sites and report the candidate count.
 - **Preset ownership**: `presetState()` resets all noise, relief, dimensions, stock and smoothing fields from defaults before applying a preset. Seed, resolution, camera, mode and export settings are retained; texture profiles remain modifiers.
 
 ---

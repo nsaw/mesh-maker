@@ -1,3 +1,4 @@
+import { syncRange } from './slider-utils';
 import { STATE } from './state';
 import { setCameraFromState } from './render';
 import { zoomExtents } from './stats';
@@ -16,11 +17,8 @@ export function setupInteraction(): void {
 
   function syncSlider(key: string): void {
     const sl = document.getElementById('sl_' + key) as HTMLInputElement | null;
-    const val = document.getElementById('val_' + key);
-    const v = STATE[key as keyof typeof STATE] as number;
-    if (sl) sl.value = String(v);
-    if (val) val.textContent = typeof v === 'number' ?
-      (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
+    const value = STATE[key as keyof typeof STATE] as number;
+    if (sl) syncRange(sl, value);
   }
 
   // --- Mouse ---
@@ -29,6 +27,7 @@ export function setupInteraction(): void {
   let dragStartPanX = 0, dragStartPanY = 0;
 
   wrap.addEventListener('mousedown', e => {
+    if (STATE.viewMode === 'plan' && e.button === 0 && !e.shiftKey) return;
     e.preventDefault();
     dragStartX = e.clientX; dragStartY = e.clientY;
     if (e.button === 2 || e.shiftKey || e.button === 1) {
@@ -109,7 +108,7 @@ export function setupInteraction(): void {
     e.preventDefault();
     const cur = [...e.touches];
 
-    if (cur.length === 1) {
+    if (cur.length === 1 && STATE.viewMode !== 'plan') {
       const dx = cur[0].clientX - dragStartX, dy = cur[0].clientY - dragStartY;
       STATE.orbit = ((touchStartOrbit - dx * 0.4) % 360 + 360) % 360;
       STATE.tilt = Math.max(-90, Math.min(90, touchStartTilt - dy * 0.3));
@@ -145,6 +144,8 @@ export function setupInteraction(): void {
       touchStartOrbit = STATE.orbit; touchStartTilt = STATE.tilt;
     }
   });
+
+  wrap.addEventListener('touchcancel', () => { touches = []; lastPinchDist = 0; });
 
   wrap.addEventListener('dblclick', zoomExtents);
 }

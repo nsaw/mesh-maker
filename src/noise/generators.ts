@@ -1,7 +1,15 @@
 import type { NoiseGenerator, FBMGenerator, NoiseConfig } from '../types';
+import { mulberry32 } from './prng';
 import { VoronoiReliefGen } from './voronoi-relief';
 
 // ── Base noise generators ────────────────────────────────────────────
+
+export const SIMPLEX_KERNEL_IMPLEMENTATION = 'meshcraft-simplex2-fisher-yates-mulberry32-v1';
+export interface SimplexKernelDescription {
+  readonly implementation: typeof SIMPLEX_KERNEL_IMPLEMENTATION;
+  readonly perm: readonly number[];
+  readonly grad2: readonly (readonly [number, number])[];
+}
 
 export class SimplexNoiseGen implements NoiseGenerator {
   private grad3: number[][];
@@ -9,13 +17,25 @@ export class SimplexNoiseGen implements NoiseGenerator {
 
   constructor(seed = 0) {
     this.grad3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
-    const p: number[] = [];
-    for (let i = 0; i < 256; i++) p[i] = Math.floor(this._sr(seed + i) * 256);
+    const p = Array.from({ length: 256 }, (_, i) => i);
+    const rand = mulberry32(seed);
+    for (let i = 255; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [p[i], p[j]] = [p[j], p[i]];
+    }
     this.perm = [];
     for (let i = 0; i < 512; i++) this.perm[i] = p[i & 255];
   }
 
-  private _sr(s: number): number { const x = Math.sin(s) * 10000; return x - Math.floor(x); }
+  /** Copied immutable runtime coefficients for independent warp certification. */
+  describeKernel(): SimplexKernelDescription {
+    return Object.freeze({
+      implementation: SIMPLEX_KERNEL_IMPLEMENTATION,
+      perm: Object.freeze([...this.perm]),
+      grad2: Object.freeze(this.grad3.map(g => Object.freeze([g[0], g[1]] as const))),
+    });
+  }
+
   private _dot(g: number[], x: number, y: number): number { return g[0] * x + g[1] * y; }
 
   noise(xin: number, yin: number): number {
@@ -140,13 +160,13 @@ export class OpenSimplex2NoiseGen implements NoiseGenerator {
     const gi1 = this.perm[ii + i1 + this.perm[jj + j1]] % 24;
     const gi2 = this.perm[ii + 1 + this.perm[jj + 1]] % 24;
     let value = 0;
-    let a0 = 2.0 / 3.0 - x0 * x0 - y0 * y0;
+    let a0 = 0.5 - x0 * x0 - y0 * y0;
     if (a0 > 0) { a0 *= a0; value += a0 * a0 * (this.grad2[gi0][0] * x0 + this.grad2[gi0][1] * y0); }
-    let a1 = 2.0 / 3.0 - x1 * x1 - y1 * y1;
+    let a1 = 0.5 - x1 * x1 - y1 * y1;
     if (a1 > 0) { a1 *= a1; value += a1 * a1 * (this.grad2[gi1][0] * x1 + this.grad2[gi1][1] * y1); }
-    let a2 = 2.0 / 3.0 - x2 * x2 - y2 * y2;
+    let a2 = 0.5 - x2 * x2 - y2 * y2;
     if (a2 > 0) { a2 *= a2; value += a2 * a2 * (this.grad2[gi2][0] * x2 + this.grad2[gi2][1] * y2); }
-    return value * 18;
+    return value * 99.20453188556945;
   }
 }
 
@@ -162,26 +182,6 @@ export class BillowNoiseGen implements NoiseGenerator {
   private base: SimplexNoiseGen;
   constructor(seed: number) { this.base = new SimplexNoiseGen(seed); }
   noise(x: number, y: number): number { return Math.abs(this.base.noise(x, y)) * 2 - 1; }
-}
-
-export class FBMNoiseGen implements FBMGenerator {
-  private base: SimplexNoiseGen;
-  constructor(seed: number) { this.base = new SimplexNoiseGen(seed); }
-  noise(x: number, y: number): number { return this.base.noise(x, y); }
-  fbm(x: number, y: number, octaves: number, persistence: number, lacunarity: number): number {
-    let val = 0, amp = 1, freq = 1, max = 0;
-    for (let i = 0; i < octaves; i++) {
-      val += this.noise(x * freq, y * freq) * amp;
-      max += amp; amp *= persistence; freq *= lacunarity;
-    }
-    return val / max;
-  }
-}
-
-export class TurbulenceNoiseGen implements FBMGenerator {
-  private base: SimplexNoiseGen;
-  constructor(seed: number) { this.base = new SimplexNoiseGen(seed); }
-  noise(x: number, y: number): number { return this.base.noise(x, y); }
   fbm(x: number, y: number, octaves: number, persistence: number, lacunarity: number): number {
     let val = 0, amp = 1, freq = 1, max = 0;
     for (let i = 0; i < octaves; i++) {
@@ -260,40 +260,67 @@ export class DomainWarpNoiseGen implements FBMGenerator {
 
 // ── Cellular noise generators ────────────────────────────────────────
 
-export class VoronoiNoiseGen implements NoiseGenerator {
-  private seed: number;
-  constructor(seed: number) { this.seed = seed; }
-  private _sr(s: number): number { const x = Math.sin(s) * 10000; return x - Math.floor(x); }
-  private _hash(x: number, y: number): number { return Math.floor(this._sr(x * 374761393 + y * 668265263 + this.seed) * 1000); }
-  noise(x: number, y: number): number {
-    const cx = Math.floor(x), cy = Math.floor(y);
-    let min = Infinity;
-    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-      const nx = cx + i, ny = cy + j, h = this._hash(nx, ny);
-      const px = nx + this._sr(h), py = ny + this._sr(h + 1);
-      const d = Math.hypot(x - px, y - py);
-      if (d < min) min = d;
+export type CellMetric = 'euclidean' | 'manhattan' | 'chebyshev';
+
+function cellularAvalanche(value: number): number {
+  let h = Math.imul(value ^ (value >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** Ordered coordinate words avoid the mirrored-sign aliases of a coordinate XOR. */
+function cellularHash01(x: number, y: number, seed: number): number {
+  let h = cellularAvalanche((seed >>> 0) ^ 0x9e3779b9);
+  h = cellularAvalanche(h + Math.imul(x, 0x85ebca6b));
+  h = cellularAvalanche(h + Math.imul(Math.floor(x / 4294967296), 0x9e3779b1));
+  h = cellularAvalanche(h + Math.imul(y, 0xc2b2ae35));
+  h = cellularAvalanche(h + Math.imul(Math.floor(y / 4294967296), 0x27d4eb2d));
+  return h / 4294967296;
+}
+
+/** A jitter of zero places each site at its unit-cell centre. Relief hashes are separate. */
+export function cellularSite(x: number, y: number, seed: number, jitter = 1): [number, number] {
+  const seed32 = seed >>> 0;
+  return [x + .5 + (cellularHash01(x, y, seed32) - .5) * jitter,
+    y + .5 + (cellularHash01(x, y, (seed32 + 1013) >>> 0) - .5) * jitter];
+}
+
+export function cellularDistances(x: number, y: number, seed: number, jitter: number, metric: CellMetric): [number, number] {
+  if (![x, y, seed, jitter].every(Number.isFinite) || jitter < 0 || jitter > 1
+    || Math.abs(x) > Number.MAX_SAFE_INTEGER - 4 || Math.abs(y) > Number.MAX_SAFE_INTEGER - 4) {
+    throw new RangeError('Cellular samples require finite coordinates and jitter in [0, 1]');
+  }
+  const cx = Math.floor(x), cy = Math.floor(y);
+  let f1 = Infinity, f2 = Infinity;
+  for (let radius = 0; ; radius++) {
+    for (let i = -radius; i <= radius; i++) for (let j = -radius; j <= radius; j++) {
+      if (radius && Math.abs(i) !== radius && Math.abs(j) !== radius) continue;
+      const [px, py] = cellularSite(cx + i, cy + j, seed, jitter);
+      const dx = Math.abs(x - px), dy = Math.abs(y - py);
+      const d = metric === 'manhattan' ? dx + dy : metric === 'chebyshev' ? Math.max(dx, dy) : Math.hypot(dx, dy);
+      if (d < f1) { f2 = f1; f1 = d; }
+      else if (d < f2) f2 = d;
     }
-    return 1 - min * 2;
+    // Every unsearched unit cell is outside this rectangle. Each supported metric is at
+    // least its nearest axis distance, including sites on a cell edge at full jitter.
+    const outside = Math.min(x - (cx - radius), cx + radius + 1 - x,
+      y - (cy - radius), cy + radius + 1 - y);
+    if (outside >= f2) return [f1, f2];
+  }
+}
+
+export class VoronoiNoiseGen implements NoiseGenerator {
+  constructor(private seed: number, private config: NoiseConfig = {}) {}
+  noise(x: number, y: number): number {
+    return 1 - cellularDistances(x, y, this.seed, this.config.cellJitter ?? 1, this.config.cellMetric ?? 'euclidean')[0] * 2;
   }
 }
 
 export class WorleyNoiseGen implements NoiseGenerator {
-  private seed: number;
-  constructor(seed: number) { this.seed = seed; }
-  private _sr(s: number): number { const x = Math.sin(s) * 10000; return x - Math.floor(x); }
-  private _hash(x: number, y: number): number { return Math.floor(this._sr(x * 374761393 + y * 668265263 + this.seed) * 1000); }
+  constructor(private seed: number, private config: NoiseConfig = {}) {}
   noise(x: number, y: number): number {
-    const cx = Math.floor(x), cy = Math.floor(y);
-    let f1 = Infinity, f2 = Infinity;
-    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-      const nx = cx + i, ny = cy + j, h = this._hash(nx, ny);
-      const px = nx + this._sr(h), py = ny + this._sr(h + 1);
-      const d = Math.hypot(x - px, y - py);
-      if (d < f1) { f2 = f1; f1 = d; }
-      else if (d < f2) { f2 = d; }
-    }
-    return Math.min((f2 - f1) * 1.5, 1.0) * 2 - 1;
+    const [f1, f2] = cellularDistances(x, y, this.seed, this.config.cellJitter ?? 1, this.config.cellMetric ?? 'euclidean');
+    return Math.min((f2 - f1) * 1.5, 1) * 2 - 1;
   }
 }
 
@@ -350,6 +377,8 @@ export class GaborNoiseGen implements NoiseGenerator {
   }
 }
 
+const TILE_TEXELS_PER_UNIT = 8;
+
 export class WaveletNoiseGen implements NoiseGenerator {
   private tile: Float32Array;
   private readonly SIZE = 128;
@@ -374,8 +403,8 @@ export class WaveletNoiseGen implements NoiseGenerator {
 
   noise(x: number, y: number): number {
     const n = this.SIZE;
-    const tx = ((x % n) + n) % n;
-    const ty = ((y % n) + n) % n;
+    const tx = (((x * TILE_TEXELS_PER_UNIT) % n) + n) % n;
+    const ty = (((y * TILE_TEXELS_PER_UNIT) % n) + n) % n;
     const ix = Math.floor(tx) & (n - 1);
     const iy = Math.floor(ty) & (n - 1);
     const fx = tx - Math.floor(tx);
@@ -399,13 +428,11 @@ export function createNoiseGen(type: string, seed: number, config?: NoiseConfig)
     case 'opensimplex2': return new OpenSimplex2NoiseGen(seed);
     case 'ridged': return new RidgedNoiseGen(seed);
     case 'billow': return new BillowNoiseGen(seed);
-    case 'fbm': return new FBMNoiseGen(seed);
-    case 'turbulence': return new TurbulenceNoiseGen(seed);
     case 'hybrid': return new HybridMultifractalGen(seed);
     case 'hetero': return new HeteroTerrainGen(seed);
     case 'domainwarp': return new DomainWarpNoiseGen(seed);
-    case 'voronoi': return new VoronoiNoiseGen(seed);
-    case 'worley': return new WorleyNoiseGen(seed);
+    case 'voronoi': return new VoronoiNoiseGen(seed, config);
+    case 'worley': return new WorleyNoiseGen(seed, config);
     case 'gabor': return new GaborNoiseGen(seed, config);
     case 'wavelet': return new WaveletNoiseGen(seed);
     case 'voronoi-relief': return new VoronoiReliefGen(seed);

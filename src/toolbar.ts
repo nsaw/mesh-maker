@@ -1,5 +1,9 @@
+import { requestCellGraph } from './relief-cell-graph';
+import { applyCellLayout, changeReliefParams, reliefEditor, restoreReliefDocument } from './relief-editor-ui';
+import { revealSceneForFit } from './mobile-layout';
+import { showSidebarPane } from './sidebar-state';
 import { updateEffectiveOffsetDisplay } from './sbp-export';
-import { STATE, demoDepthMap, restoreNoiseDims, saveNoiseDims, serializeConfig } from './state';
+import { DEFAULTS, STATE, demoDepthMap, restoreNoiseDims, saveNoiseDims, serializeConfig } from './state';
 import { generateMesh } from './mesh';
 import { renderViewport, setCameraFromState, resizeCanvas } from './render';
 import { doExport } from './export';
@@ -12,6 +16,8 @@ export function setupTabs(): void {
   // Mode tabs
   document.querySelectorAll('.mode-tab').forEach(btn => {
     btn.addEventListener('click', () => {
+      reliefEditor.navigation();
+      showSidebarPane('controls', false);
       let prevMode = STATE.mode;
       document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
@@ -26,7 +32,7 @@ export function setupTabs(): void {
 
       // NOISE's board (size and material thickness) is kept while another tab owns the controls.
       if (prevMode === 'noise' && (STATE.mode === 'depthmap' || STATE.mode === 'drape')) saveNoiseDims();
-      if (STATE.mode === 'noise' && prevMode !== 'noise') { restoreNoiseDims(); buildSidebar(); }
+      if (STATE.mode === 'noise' && prevMode !== 'noise') { restoreNoiseDims(); restoreReliefDocument(); buildSidebar(); }
 
       // A loaded relief master owns DEPTH MAP mode: restore its label, size and stock, and never
       // let the demo image stand in for it there.
@@ -57,6 +63,7 @@ export function setupTabs(): void {
       // Restore the destination's stock before building its controls, which clamps its cut depth.
       if (leavingDrape) buildSidebar();
       syncDepthCaps();
+      updateExportControls();
       generateMesh();
     });
   });
@@ -64,10 +71,7 @@ export function setupTabs(): void {
   // View mode buttons
   document.querySelectorAll('.view-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      STATE.viewMode = (btn as HTMLElement).dataset.view as typeof STATE.viewMode;
-      renderViewport();
+      setViewMode((btn as HTMLElement).dataset.view as typeof STATE.viewMode);
     });
   });
 
@@ -83,16 +87,26 @@ export function setupTabs(): void {
   });
 }
 
+export function setViewMode(mode: typeof STATE.viewMode): void {
+  STATE.viewMode = mode;
+  document.querySelectorAll<HTMLElement>('.view-btn').forEach(button => button.classList.toggle('active', button.dataset.view === mode));
+  renderViewport();
+  if (mode === 'plan' && STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief') void requestCellGraph();
+}
+
 /** Show/hide export-bar controls and sidebar SBP section based on current format */
 export function updateExportControls(): void {
   const isSBP = STATE.exportFormat === 'sbp';
+  const isDXF = STATE.exportFormat === 'dxf';
+  const dxf = document.querySelector<HTMLButtonElement>('[data-fmt="dxf"]');
+  if (dxf) dxf.disabled = STATE.mode !== 'noise' || STATE.noiseType !== 'voronoi-relief';
   updateEffectiveOffsetDisplay();
 
   // Toggle mesh-export controls (irrelevant for SBP)
   const meshControls = ['chkWatertight', 'chkBinary', 'chk3dmPointCloud'];
   for (const id of meshControls) {
     const el = document.getElementById(id)?.closest('.check-row') as HTMLElement | null;
-    if (el) el.style.display = isSBP ? 'none' : '';
+    if (el) el.style.display = isSBP || isDXF ? 'none' : '';
   }
 
   // Toggle SBP sidebar section (override CSS .sbp-only { display: none })
@@ -102,12 +116,12 @@ export function updateExportControls(): void {
 }
 
 export function setupToolbar(): void {
-  document.getElementById('btnRegenerate')!.addEventListener('click', generateMesh);
+  document.getElementById('btnRegenerate')!.addEventListener('click', () => { void applyCellLayout(); });
   document.getElementById('btnRandomSeed')!.addEventListener('click', randomSeed);
-  document.getElementById('btnZoomExtents')!.addEventListener('click', zoomExtents);
+  document.getElementById('btnZoomExtents')!.addEventListener('click', () => revealSceneForFit(zoomExtents));
   document.getElementById('btnResetCamera')!.addEventListener('click', () => {
     if (STATE.mode === 'drape') setDrapeFrontView();
-    else { STATE.orbit = 55; STATE.tilt = -25; STATE.roll = 0; STATE.zoom = 1; STATE.panX = 0; STATE.panY = 0; }
+    else for (const key of ['orbit', 'tilt', 'roll', 'zoom', 'panX', 'panY'] as const) STATE[key] = DEFAULTS[key];
     buildSidebar();
     setCameraFromState();
   });
@@ -121,7 +135,11 @@ export function setupToolbar(): void {
   });
   // Watertight feeds generation (stock floor and the 0.01 in surface floor), so regenerate:
   // re-rendering alone could export a watertight mesh built without its floor.
-  document.getElementById('chkWatertight')!.addEventListener('change', e => { STATE.watertight = (e.target as HTMLInputElement).checked; generateMesh(); });
+  document.getElementById('chkWatertight')!.addEventListener('change', e => {
+    const watertight = (e.target as HTMLInputElement).checked;
+    if (changeReliefParams({watertight})) return;
+    STATE.watertight = watertight; generateMesh();
+  });
   document.getElementById('chkBinary')!.addEventListener('change', e => { STATE.binary = (e.target as HTMLInputElement).checked; updateStats(); });
   document.getElementById('chk3dmPointCloud')!.addEventListener('change', e => { STATE.export3dmAsPointCloud = (e.target as HTMLInputElement).checked; });
 
@@ -133,7 +151,14 @@ export function setupToolbar(): void {
   const copyLinkBtn = document.getElementById('btnCopyLink');
   if (copyLinkBtn) {
     copyLinkBtn.addEventListener('click', () => {
-      const config = serializeConfig();
+      let config: string;
+      try { config = serializeConfig(); }
+      catch (error: unknown) {
+        showToast(error instanceof Error ? error.message : 'Could not create this link. Use Save project.', 8000);
+        return;
+      }
+      const copiedMessage = STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null
+        ? 'Link copied. Cell positions use 0.01 in precision.' : 'Link copied!';
       const u = new URL(window.location.href);
       u.search = '';
       u.hash = '';
@@ -142,16 +167,20 @@ export function setupToolbar(): void {
       // here. Without this reset, copying a link from a defaults-only config would
       // preserve the inherited payload in the pathname rather than producing a clean URL.
       u.pathname = '/';
-      if (config) u.searchParams.set('c', config);
+      if (config) {
+        // Cell coordinates stay in the fragment so they do not enlarge the HTTP request target.
+        if (STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null) u.hash = `c=${config}`;
+        else u.searchParams.set('c', config);
+      }
       const url = u.toString();
       if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         navigator.clipboard.writeText(url).then(() => {
-          showToast('Link copied!');
+          showToast(copiedMessage);
         }).catch(() => {
-          copyFallback(url);
+          copyFallback(url, copiedMessage);
         });
       } else {
-        copyFallback(url);
+        copyFallback(url, copiedMessage);
       }
     });
   }
@@ -159,7 +188,7 @@ export function setupToolbar(): void {
 
 // Fallback for insecure contexts (HTTP) where navigator.clipboard is unavailable.
 // execCommand('copy') is deprecated but still the only option without HTTPS.
-function copyFallback(text: string): void {
+function copyFallback(text: string, copiedMessage: string): void {
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.style.position = 'fixed';
@@ -174,7 +203,7 @@ function copyFallback(text: string): void {
   } finally {
     document.body.removeChild(ta);
   }
-  showToast(ok ? 'Link copied!' : 'Copy failed: this browser blocked the clipboard');
+  showToast(ok ? copiedMessage : 'Copy failed: this browser blocked the clipboard');
 }
 
 

@@ -1,35 +1,21 @@
+import { reliefRidgeReadout } from './noise/relief-features';
+import { SBP_STATE } from './sbp-export';
+import { getDefaultFinishingTool } from './sbp/tools';
+import { noiseGeneration } from './noise/controller';
+import { syncRange } from './slider-utils';
 import { STATE, activeMaster } from './state';
-import { setCameraFromState } from './render';
-import { setDrapeFrontView } from './drape-ui';
+import { fitVisibleSource } from './render';
 import { gridMinMax } from './geometry';
 
 export function zoomExtents(): void {
-  if (!STATE.vertices) return;
-  const { meshX, meshY, vertices, rows, cols } = STATE;
-  const [zMin, zMax] = gridMinMax(vertices, rows, cols);
-  const halfW = meshX / 2, halfH = meshY / 2, halfZ = (zMax - zMin) / 2;
-  const radius = Math.sqrt(halfW * halfW + halfH * halfH + halfZ * halfZ);
-
-  const fov = Math.PI / 3;
-  const fitDist = radius / Math.tan(fov / 2);
-  const targetZoom = Math.max(meshX, meshY) * 1.2 / fitDist;
-
-  STATE.zoom = Math.max(0.1, Math.min(10, targetZoom * 0.85));
-  STATE.panX = 0; STATE.panY = 0;
-  STATE.orbit = 45; STATE.tilt = -30; STATE.roll = 0;
-  // DRAPE looks straight at the carve; its default zoom frames the panel at any carve size.
-  if (STATE.mode === 'drape') setDrapeFrontView();
+  if (!fitVisibleSource()) return;
 
   ['orbit','tilt','roll','zoom'].forEach(k => {
     const sl = document.getElementById('sl_' + k) as HTMLInputElement | null;
-    const val = document.getElementById('val_' + k);
-    const v = STATE[k as keyof typeof STATE] as number;
-    if (sl) sl.value = String(v);
-    if (val) val.textContent = typeof v === 'number' ?
-      (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
+    const value = STATE[k as keyof typeof STATE] as number;
+    if (sl) syncRange(sl, value);
   });
 
-  setCameraFromState();
 }
 
 export function updateStats(): void {
@@ -42,16 +28,16 @@ export function updateStats(): void {
 
   let statData: [string, string][];
 
-  if (STATE.exportFormat === 'sbp') {
-    if (!STATE.sbpStats) {
-      return;
-    }
-    statData = [
+  const noisePending = STATE.mode === 'noise' && noiseGeneration.displayPending;
+  if (noisePending) {
+    statData = [['Preview', `${cols} x ${rows}; display approximation`], ['Export', noiseGeneration.failed ? 'Generation failed; generate again' : 'Waiting for full resolution']];
+  } else if (STATE.exportFormat === 'sbp') {
+    statData = STATE.sbpStats ? [
       ['Grid', `${STATE.sbpStats.heightmapCols} x ${STATE.sbpStats.heightmapRows}`],
       ['Roughing', STATE.sbpStats.roughingMoves.toLocaleString()],
       ['Finishing', STATE.sbpStats.finishingMoves.toLocaleString()],
       ['SBP Lines', STATE.sbpStats.totalLines.toLocaleString()],
-    ];
+    ] : [];
   } else {
     // Exports read the relief master at full resolution when one is active, not the preview grid.
     const master = activeMaster();
@@ -73,9 +59,23 @@ export function updateStats(): void {
     ];
   }
 
+  if (!noisePending && STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief') {
+    const [minZ, maxZ] = gridMinMax(STATE.vertices, rows, cols);
+    statData.push(['Actual depth', `${(maxZ - minZ).toFixed(3)}"`]);
+    if (STATE.reliefTruncatedFrom > 0) {
+      statData.push(['Cells capped', `4,096 of ${STATE.reliefTruncatedFrom.toLocaleString()}; raise Cell Size`]);
+    }
+  }
+
+  const ridge = !noisePending ? reliefRidgeReadout(STATE, getDefaultFinishingTool(SBP_STATE.materialProfile).diameter) : null;
+  if (ridge) statData.push(['Narrowest ridge', ridge.text]);
+
   for (const [label, value] of statData) {
     const row = document.createElement('div');
     row.className = 'stat-row';
+    if (label === 'Gen time' || label === 'Est. size') row.classList.add('stat-secondary');
+    if (label === 'Narrowest ridge') { row.classList.add('stat-diagnostic', 'stat-ridge'); if (ridge?.warn) row.classList.add('cnc-warn'); }
+    if (label === 'Cells capped') { row.classList.add('stat-diagnostic'); row.setAttribute('role', 'status'); }
     const labelSpan = document.createElement('span');
     labelSpan.textContent = label;
     const valSpan = document.createElement('span');
@@ -88,7 +88,7 @@ export function updateStats(): void {
 
   if (STATE.resolution > 600) {
     const warnRow = document.createElement('div');
-    warnRow.className = 'stat-row';
+    warnRow.className = 'stat-row stat-diagnostic';
     const warnLabel = document.createElement('span');
     warnLabel.textContent = 'Note';
     const warnVal = document.createElement('span');

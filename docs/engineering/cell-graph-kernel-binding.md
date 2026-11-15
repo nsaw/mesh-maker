@@ -1,0 +1,11 @@
+# Cell graph kernel binding
+
+Graph input uses `meshcraft-relief-query/2` and owner policy `exact-represented-metric-stable-id-v1`. The producer captures the actual warp instance's copied permutation and gradient table. Inactive warps have a null kernel. `validateCellGraphQuery` compares every represented coefficient with the current runtime descriptor, including signed zero, before any graph is accepted. Query `/1`, the former sine-table tag, altered permutations, altered gradients and a kernel attached to an inactive warp refuse.
+
+The exact diagram expands the represented cos, sin and scale algebraically with rational arithmetic. It never substitutes rounded quadratic matrix coefficients. This matches the producer's exact represented-input nearest-order polynomial. The producer canonicalizes its isotropic gate to cos=1, sin=0, scale=1; noncanonical descriptions inside that gate refuse. The Fraction clipper includes a near-coincident rotated anisotropic pair, independently of the producer owner query.
+
+The supported nonlinear implementation is `meshcraft-simplex2-fisher-yates-mulberry32-v1`. The continuous lattice sum, derivatives and arithmetic residue use the actual copied coefficients. Fisher-Yates changes those coefficients without changing the compact support polynomial, skew constants, gradient bounds, source operation sequence or branch-support argument. Therefore the existing outward residue, contraction, inverse-domain and curve bounds apply to this runtime after recertification with its actual coefficients. No tolerance or work limit is widened for this binding.
+
+The bounds suite independently constructs Fisher-Yates permutations in Python with integer mulberry32 arithmetic, including the warp seed above uint32 range. Its separate Decimal lattice model encloses values, gradients and Hessians using the actual table. Source-rounding and derivative-shrink negative controls remain active, along with outside-domain, tiny-warp and outward-rounding inverse regressions.
+
+A supported kernel identity does not guarantee a certificate. Unresolved derivatives, tangencies, separation, inverse residuals, coordinate scope and work limits still return explicit refusals. Root integration owns the later generator correction, current-head review, full application gates and native Aspire unit/layer interpretation.

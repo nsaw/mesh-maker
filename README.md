@@ -45,7 +45,7 @@ Generate 3D meshes from procedural noise or depth map images, tuned for CNC mach
 
 ### Features
 
-- **16+ noise algorithms** — Simplex, Perlin, OpenSimplex2, Value, FBM, Ridged, Billow, Turbulence, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet, Voronoi Relief (3D cellular relief with attractor masks)
+- **Noise algorithms**: Simplex, Perlin, OpenSimplex2, Value, Ridged, Billow, Hybrid, Hetero, Domain Warp, Voronoi, Worley, Gabor, Wavelet, Voronoi Relief (3D cellular relief with attractor masks)
 - **Depth map import**: Upload any image as a relief, or a `.mcrelief` master at full resolution
 - **Drape**: Hang a silk veil over a 3D figure (the bundled Venus de Milo bust or your STL, OBJ, PLY, glTF or USDZ, scaled to fit) and carve the front view as a relief from 3 x 4 to 18 x 24 in in up to 2.6 in of material, simulated in the browser. Presets for the gathered and plain silk drapes, and controls for the pose, figure size, cloth size, resolution, thickness, bending, clearance, crown attachment, damping, attraction to the figure (overall and on the face), wind or pressure on a target area, their timing, a post-solve surface fit, solver accuracy and display smoothing
 - **CNC presets** — Presets tuned for the ShopBot Desktop Max ATC (36" x 24", 6" Z)
@@ -94,11 +94,13 @@ src/
 ├── state.ts             # Typed STATE singleton, URL serialize/deserialize
 ├── types.ts             # Shared interfaces (Vertex3D, Triangle, MeshData)
 ├── noise/
-│   ├── generators.ts        # 16+ noise classes + factory
+│   ├── generators.ts        # Noise classes + factory
 │   ├── voronoi-relief.ts    # 3D Voronoi cell relief sampler (grid-aware)
 │   └── presets.ts           # 18 CNC presets, 6 texture profiles
 ├── mesh.ts              # Mesh generation + smoothing
 ├── render.ts            # Three.js WebGL rendering (Phong shading, custom camera)
+├── render-geometry.ts   # Exact display attributes, wire lines and prepared bounds
+├── render-wire-worker.ts # Lazy view-only wire preparation
 ├── export.ts            # STL, OBJ, heightmap PNG, SBP export dispatcher
 ├── sbp-export.ts        # Web UI bridge: MeshCraft STATE -> SBP pipeline -> download
 ├── ui.ts                # Sidebar, sliders, depth map upload, SBP config panel
@@ -106,7 +108,10 @@ src/
 ├── toolbar.ts           # Mode tabs, toolbar, Copy Link, format-aware controls
 ├── stats.ts             # Stats overlay (format-aware: triangles or SBP moves)
 ├── toast.ts             # Toast notifications
-├── sponsor.ts           # Sponsor modal
+├── sidebar-state.ts     # Pane scroll/focus and persistent section state
+├── mobile-layout.ts     # Phone task panes, handle snaps and measured stage
+├── fit-frame.ts         # Perspective fitting within the visible scene
+├── sponsor.ts           # Explicit Sponsors pane
 └── sbp/                 # STL-to-SBP pipeline (shared between web + CLI, zero Node deps)
     ├── types.ts         # ToolDef, SbpConfig, ToolpathMove, ToolpathSection
     ├── tools.ts         # Embedded ATC tool database (18 tools, 3 material profiles)
@@ -173,9 +178,9 @@ The CLI reads Vectric `.vtdb` tool databases (SQLite) via `--vtdb` for cutting p
 
 ### Web
 
-Select **SBP** as the export format in the toolbar. The SBP config panel appears in the sidebar with tool selection, material profile, and roughing/finishing toggles. Two modes:
+Select **SBP** as the export format. On a phone, file actions and the SBP settings are in the Export tab. On desktop, the SBP config panel appears in the sidebar with tool selection, material profile, and roughing/finishing toggles. Two modes:
 
-1. **From mesh**: Exports the current MeshCraft mesh directly (instant)
+1. **From mesh**: Exports the current full-resolution source after any pending generation completes
 2. **From STL upload**: Upload any binary STL file -- runs the full pipeline in a Web Worker to keep the UI responsive
 
 ### Tool library
@@ -199,7 +204,7 @@ Each tool has cutting data for all three material profiles (General, MDF, Hardwo
 - **Heightfield meshes only** -- one Z per XY cell. No overhangs or undercuts.
 - **Raster roughing** -- ~20-40% more air-cutting than Aspire's contour spiral. Same material removal.
 - **Uniform point density** -- 0.005" between M3 points (vs Aspire's adaptive 0.012-0.024"). Larger files, same stepover, negligible cycle time difference.
-- **Web SBP is gated** -- button hidden in production until physical carve validation passes.
+- **Web SBP** is available from the export formats. On a phone, open the Export tab for its settings.
 
 ---
 
@@ -234,9 +239,9 @@ These preserved definitions belong to the repository branch. The separate `mesh-
 4. Inspect the log, open the saved definition and wire a preset's outputs to the matching component inputs.
 5. Confirm one preset generates before using the result in a project. Preserve known-good native artifacts before deliberately replacing them.
 
-The saved `.gh` files contain embedded scripts. Updating Python source does not update an existing definition. Run `npm run test:gh-parity` from this repository to compare the builder's Noise and Presets scripts with their canonical sources and its preset values with the web table. The suite does not compare Shape or Smooth scripts; verify changes to those scripts separately. Input changes also require a native Rhino 7 regeneration and reopen check.
+The saved `.gh` files contain embedded scripts. Updating Python source does not update an existing definition. Run `npm run test:gh-parity` from this repository to compare the builder's Noise, Presets, Shape and Smooth scripts with their canonical sources and its preset values with the web table. It also compares the physical Gaussian kernels using a Python host stub. These checks do not execute Rhino or certify the native Shape component against the web stock/backing model. Input changes also require a native Rhino 7 regeneration and reopen check.
 
-The historical definitions and previews moved unchanged. They are not evidence that the latest sources are embedded or that a generated relief meets the web app's stock/backing contract. Native hosts and baked project geometry belong to the consuming Sawyer Design project. Nick's integrated Rhino master remains owner-controlled.
+The migration preserved the historical definitions and previews unchanged. Slice 3 deliberately regenerates the builder definition, preserving its historical preimage and recording the current source and native checks in the library regeneration receipt. The separate historical `mesh-maker.gh` stays unchanged. Native Shape output does not implement the web stock/backing contract. Native hosts and baked project geometry belong to the consuming Sawyer Design project. Nick's integrated Rhino master remains owner-controlled.
 
 The DLL branch's `MeshCraftNoise.cs` implementation is retained separately in `/Users/sawyer/Code/sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/ghpy/`, with its compiled library in the parent `grasshopper/` folder. Read that branch's instructions before changing it. No DLL installation is required by the current repository builder.
 

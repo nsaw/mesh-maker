@@ -1,3 +1,4 @@
+import { metricOrdering, metricOrderError } from './metric-order';
 /** Exact bucket queries over ordered sites. Distances and index ties match a full scan. */
 export interface GridSite { x: number; y: number }
 
@@ -13,11 +14,15 @@ export class SiteGrid {
   private readonly minX: number;
   private readonly minY: number;
   private readonly spacing: number;
+  private coordinateScale = 1;
+  private planes: Float64Array | undefined;
+  private planeFrame: readonly [number, number, number] = [1, 0, 1];
 
   constructor(
     private readonly sites: readonly GridSite[],
     spacing: number,
     bounds?: { minX: number; minY: number; maxX: number; maxY: number },
+    maxAxisIntervals = 4096,
   ) {
     let minX = bounds?.minX ?? Infinity, minY = bounds?.minY ?? Infinity;
     let maxX = bounds?.maxX ?? -Infinity, maxY = bounds?.maxY ?? -Infinity;
@@ -29,14 +34,14 @@ export class SiteGrid {
     this.minY = Number.isFinite(minY) ? minY : 0;
     const width = Math.max(0, maxX - this.minX), height = Math.max(0, maxY - this.minY);
     this.spacing = Math.max(Number.isFinite(spacing) && spacing > 0 ? spacing : 1,
-      width / 4096, height / 4096);
+      width / maxAxisIntervals, height / maxAxisIntervals);
     this.columns = Math.max(1, Math.floor(width / this.spacing) + 1);
     this.rows = Math.max(1, Math.floor(height / this.spacing) + 1);
     this.buckets = new Array(this.columns * this.rows);
     for (let i = 0; i < sites.length; i++) this.add(i);
   }
 
-  /** Median nearest-neighbour spacing, measured through a provisional bucket grid. */
+  /** Median nearest-neighbour spacing with fixed-population bucket work bounded by count. */
   static fromSites(sites: readonly GridSite[]): SiteGrid {
     if (sites.length < 2) return new SiteGrid(sites, 1);
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -45,11 +50,15 @@ export class SiteGrid {
       maxX = Math.max(maxX, site.x); maxY = Math.max(maxY, site.y);
     }
     const width = maxX - minX, height = maxY - minY;
+    // Authored sites may cluster arbitrarily closely. Bound both grids by the retained
+    // count so sparse queries cannot scan millions of empty buckets. Dynamic placement
+    // uses the constructor's original extent bound while its population grows.
+    const maxAxisIntervals = Math.ceil(Math.sqrt(sites.length));
     const guess = Math.sqrt(width * height / sites.length) || Math.max(width, height) / sites.length || 1;
-    const provisional = new SiteGrid(sites, guess);
+    const provisional = new SiteGrid(sites, guess, undefined, maxAxisIntervals);
     const distances = sites.map(site => provisional.nearestFour(site.x, site.y).f2)
       .filter(distance => Number.isFinite(distance) && distance > 0).sort((a, b) => a - b);
-    return new SiteGrid(sites, distances[Math.floor(distances.length / 2)] ?? guess);
+    return new SiteGrid(sites, distances[Math.floor(distances.length / 2)] ?? guess, undefined, maxAxisIntervals);
   }
 
   private column(x: number): number {
@@ -61,7 +70,9 @@ export class SiteGrid {
   }
 
   add(index: number): void {
+    this.planes = undefined;
     const site = this.sites[index];
+    this.coordinateScale = Math.max(this.coordinateScale,Math.abs(site.x),Math.abs(site.y));
     const key = this.row(site.y) * this.columns + this.column(site.x);
     (this.buckets[key] ??= []).push(index);
   }
@@ -91,6 +102,89 @@ export class SiteGrid {
     return false;
   }
 
+  /** Complete compact support, in stable site order. Metric inflation bounds the search
+   * by the world-space radius; the final distance predicate owns membership. */
+  withinRadius(x: number, y: number, radius: number, cosA = 1, sinA = 0, scale = 1): Array<{index: number; distance: number}> {
+    if (!Number.isFinite(radius) || radius < 0) throw new RangeError('Site radius must be finite and nonnegative');
+    const result: Array<{index: number; distance: number}> = [];
+    const margin = 16 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), radius);
+    const x0 = this.column(x - radius - margin), x1 = this.column(x + radius + margin);
+    const y0 = this.row(y - radius - margin), y1 = this.row(y + radius + margin);
+    const isotropic = scale <= 1.0001;
+    const componentBound = radius + margin;
+    for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) {
+      for (const index of this.buckets[j * this.columns + i] ?? []) {
+        const dx = x - this.sites[index].x, dy = y - this.sites[index].y;
+        const tx = isotropic ? dx : (dx * cosA + dy * sinA) * scale;
+        const ty = isotropic ? dy : -dx * sinA + dy * cosA;
+        // The radial distance cannot be smaller than either transformed component.
+        // Retain a roundoff margin and leave strict membership to the original hypot.
+        if (Math.abs(tx) > componentBound || Math.abs(ty) > componentBound) continue;
+        const distance = Math.hypot(tx, ty);
+        if (distance < radius) result.push({index, distance});
+      }
+    }
+    return result.sort((a, b) => a.index - b.index);
+  }
+
+  /** Relative coordinates avoid cancellation between rounded radial distances. */
+  bisectorDistance(x: number, y: number, owner: number, index: number, cosA = 1, sinA = 0, scale = 1): number {
+    // Small layouts repeatedly query the same planes. Bound the cache independently
+    // of the maximum site budget and invalidate it when sites or the metric move.
+    let planes = this.planes;
+    if (this.sites.length <= 128) {
+      if (!planes || this.planeFrame[0] !== cosA || this.planeFrame[1] !== sinA || this.planeFrame[2] !== scale) {
+        planes = new Float64Array(this.sites.length * this.sites.length * 3).fill(NaN);
+        this.planes = planes;
+        this.planeFrame = [cosA, sinA, scale];
+      }
+    }
+    const offset = (owner * this.sites.length + index) * 3;
+    let separation = planes?.[offset] ?? NaN;
+    let nx: number, ny: number;
+    if (Number.isNaN(separation)) {
+      let dx = this.sites[index].x - this.sites[owner].x;
+      let dy = this.sites[index].y - this.sites[owner].y;
+      if (scale > 1.0001) {
+        const sx = (dx * cosA + dy * sinA) * scale;
+        dy = -dx * sinA + dy * cosA; dx = sx;
+      }
+      separation = Math.hypot(dx, dy);
+      nx = dx / separation; ny = dy / separation;
+      if (planes) { planes[offset] = separation; planes[offset + 1] = nx; planes[offset + 2] = ny; }
+    } else {
+      nx = planes![offset + 1]; ny = planes![offset + 2];
+    }
+    // Only identical positions have no separating plane. Their IDs still own field weights.
+    if (separation === 0) return Infinity;
+    let qx = x - this.sites[owner].x, qy = y - this.sites[owner].y;
+    if (scale > 1.0001) {
+      const tx = (qx * cosA + qy * sinA) * scale;
+      qy = -qx * sinA + qy * cosA; qx = tx;
+    }
+    return Math.max(0, separation / 2 - qx * nx - qy * ny);
+  }
+
+  /** Exact capped bisector minimum. In the stretched Euclidean metric,
+   * bij >= (Fj-F1)/2, so the radius F1+2B contains every possible improvement. */
+  boundaryDistance(x: number, y: number, owner: number, nearest: number, bound: number,
+    cosA = 1, sinA = 0, scale = 1): number {
+    return this.boundaryNeighborhood(x, y, owner, nearest, bound, cosA, sinA, scale).distance;
+  }
+
+  /** One complete traversal can also supply the compact field support. */
+  boundaryNeighborhood(x: number, y: number, owner: number, nearest: number, bound: number,
+    cosA = 1, sinA = 0, scale = 1, supportRadius = 0): {distance: number; candidates: Array<{index: number; distance: number}>} {
+    const margin = 64 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), nearest, bound) * Math.max(1, scale);
+    const candidates = this.withinRadius(x, y, Math.max(supportRadius, nearest + 2 * bound + margin), cosA, sinA, scale);
+    for (const candidate of candidates) {
+      if (candidate.index === owner) continue;
+      const distance = this.bisectorDistance(x, y, owner, candidate.index, cosA, sinA, scale);
+      bound = Math.min(bound, distance);
+    }
+    return {distance: bound, candidates};
+  }
+
   nearestOwner(x: number, y: number): number {
     return this.query(x, y, 1, 0, 1, true).idx;
   }
@@ -104,18 +198,26 @@ export class SiteGrid {
     let idx = 0, idx2 = -1, idx3 = -1, idx4 = -1;
     const isotropic = scale <= 1.0001;
     const cx = this.column(x), cy = this.row(y);
+    const precedes=metricOrdering(this.sites,x,y,this.coordinateScale,cosA,sinA,scale,squared);
+    const orderingError=metricOrderError(this.coordinateScale,x,y,cosA,sinA,scale);
     const visit = (column: number, row: number): void => {
       for (const index of this.buckets[row * this.columns + column] ?? []) {
         const dx = x - this.sites[index].x, dy = y - this.sites[index].y;
-        const distance = squared ? dx * dx + dy * dy : isotropic ? Math.hypot(dx, dy)
-          : Math.hypot((dx * cosA + dy * sinA) * scale, -dx * sinA + dy * cosA);
-        if (distance < f1 || (distance === f1 && index < idx)) {
+        const tx = isotropic ? dx : (dx * cosA + dy * sinA) * scale;
+        const ty = isotropic ? dy : -dx * sinA + dy * cosA;
+        if (!squared && Math.max(Math.abs(tx), Math.abs(ty)) > f4 + 2 * orderingError) continue;
+        const distance = squared ? dx * dx + dy * dy : Math.hypot(tx, ty);
+        if (squared) {
+          if (precedes(index, idx, distance, f1)) { f1 = distance; idx = index; }
+          continue;
+        }
+        if (precedes(index,idx,distance,f1)) {
           f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = distance; idx = index;
-        } else if (distance < f2 || (distance === f2 && index < idx2)) {
+        } else if (precedes(index,idx2,distance,f2)) {
           f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = distance; idx2 = index;
-        } else if (distance < f3 || (distance === f3 && index < idx3)) {
+        } else if (precedes(index,idx3,distance,f3)) {
           f4 = f3; idx4 = idx3; f3 = distance; idx3 = index;
-        } else if (distance < f4 || (distance === f4 && index < idx4)) {
+        } else if (precedes(index,idx4,distance,f4)) {
           f4 = distance; idx4 = index;
         }
       }
@@ -140,7 +242,9 @@ export class SiteGrid {
       if (bottom > 0) outside = Math.min(outside, y - (this.minY + bottom * this.spacing));
       if (top < this.rows - 1) outside = Math.min(outside, this.minY + (top + 1) * this.spacing - y);
       const bound = squared && outside >= 0 ? outside * outside : outside;
-      if (bound > f4 + 16 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), f4)) break;
+      const furthest = squared ? f1 : f4;
+      const orderingMargin=squared?orderingError*(2*Math.max(1,furthest)+orderingError):orderingError;
+      if (bound > furthest + orderingMargin + 16 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), furthest)) break;
     }
     if (!Number.isFinite(f2)) idx2 = -1;
     if (!Number.isFinite(f3)) idx3 = -1;

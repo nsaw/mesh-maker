@@ -1,13 +1,20 @@
+import { clampCutDepth } from './carve-limits';
+import { buildCellEditor, beginReliefControlGesture, endReliefControlGesture, changeReliefParams, reliefPreviewParams, reliefControlValue, restoreReliefDocument } from './relief-editor-ui';
+import { syncMobilePanes } from './mobile-layout';
+import { noiseGeneration } from './noise/controller';
+import { numericDomain } from './numeric-domain';
+import { captureSidebarView, restoreSections, restoreSidebarView, wireSectionAccordion } from './sidebar-state';
+export { wireSectionAccordion } from './sidebar-state';
 import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN } from './sbp/types';
-import { STATE, DEFAULTS, RELIEF_LOCKED_KEYS, boardIsLinkBoard, reliefMasterActive, saveNoiseDims } from './state';
+import { STATE, DEFAULTS, controlIsReadOnly, boardIsLinkBoard, reliefMasterActive, saveNoiseDims } from './state';
 import { cancelDrape, downloadDrapeRelief, drapeCarve, drapeControls, drapeStatusText, FIGURE_EXTENSIONS, generateDrape, loadFigureFile, onDrapeCarveChanged, onDrapeClothChanged, onDrapePoseChanged, restoreSizeAfterDrape } from './drape-ui';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, DRAPE_WIDTH_RANGE, DRAPE_WIDTH_STEP, drapeControlEffect, snapCarveWidth, MIN_DRAPE_BACKING_IN, type DrapeGroup } from './drape-controls';
 import { PANEL_ASPECT } from './drape-sim/pipeline';
 import { RELIEF_EXTENSION, parseReliefMaster } from './relief-master';
 import type { ReliefMaster } from './relief-master';
-import { attachValueEdit, formatSliderValue } from './slider-utils';
+import { attachControlReset, attachValueEdit, configureRange, readRangeValue, refreshControlResets, syncRange } from './slider-utils';
 import { CNC_PRESETS, PROFILES, presetState } from './noise/presets';
-import { generateMesh, debouncedGenerate } from './mesh';
+import { generateMesh, debouncedGenerate, beginNoiseGesture, endNoiseGesture } from './mesh';
 import { buildSBPSection, wireSBPControls, syncSbpSafeZ, syncSbpSafeZIfStockMoved, updateEffectiveOffsetDisplay } from './sbp-export';
 import { updateExportControls } from './toolbar';
 import { estimateDepth } from './depth-estimate';
@@ -30,29 +37,23 @@ function formatPresetName(key: string): string {
 }
 
 export function buildSidebar(): void {
+  const restoreFocus = captureSidebarView();
   syncDepthCaps();
-  const sb = document.getElementById('sidebar')!;
-  const fragment = document.createDocumentFragment();
+  const sb = document.getElementById('controlsPane') ?? document.getElementById('sidebar')!;
   const isRelief = STATE.noiseType === 'voronoi-relief';
-  const sections: Node[] = [
-    buildPresetSection(),
-    buildMeshDimensionsSection(),
+  const shape = document.getElementById('shapePane')!;
+  const generator = document.getElementById('generatorPane')!;
+  const view = document.getElementById('viewPane')!;
+  shape.replaceChildren(buildPresetSection(), buildMeshDimensionsSection());
+  generator.replaceChildren(
+    ...(isRelief ? [buildCellEditor()] : []),
     buildNoiseParametersSection(),
-  ];
-  if (isRelief) {
-    sections.push(buildReliefSection());
-  } else {
-    sections.push(buildPeakValleySection(), buildAdvancedNoiseSection());
-  }
-  sections.push(
-    buildSmoothingSection(),
-    buildDepthMapSection(),
-    ...buildDrapeSections(),
-    buildViewControlsSection(),
-    buildSBPSection(),
+    ...(isRelief ? buildReliefSections() : [buildPeakValleySection(), buildAdvancedNoiseSection()]),
+    buildSmoothingSection(), buildDepthMapSection(), ...buildDrapeSections(),
   );
-  fragment.append(...sections);
-  sb.replaceChildren(fragment);
+  view.replaceChildren(buildViewControlsSection());
+  document.getElementById('sbpHost')!.replaceChildren(buildSBPSection());
+  syncMobilePanes();
 
   wireControls();
   // Sync cut-depth slider maxes and SBP safe Z to initial material thickness
@@ -60,6 +61,10 @@ export function buildSidebar(): void {
   syncSbpSafeZIfStockMoved();
   wireSBPControls();
   updateExportControls();
+  restoreSections(sb);
+  refreshControlResets();
+  syncReliefControls();
+  restoreSidebarView(restoreFocus);
 }
 
 function createElement<K extends keyof HTMLElementTagNameMap>(
@@ -110,23 +115,15 @@ function buildSliderLabel(label: string, valueId: string, valueText: string, bad
 }
 
 function slider(key: string, label: string, min: number, max: number, step: number, badgeText = ''): HTMLDivElement {
-  const val = STATE[key as keyof typeof STATE] as number;
+  const value = STATE.mode === 'drape' && key === 'baseThickness' ? STATE.drapeStock : (reliefControlValue(key) ?? STATE[key as keyof typeof STATE]) as number;
   const row = createElement('div', 'control-row');
-  const exactDepth = ['amplitude', 'dmHeightScale', 'baseThickness', 'drapeReliefDepth'].includes(key);
-  const exactDimension = (key === 'meshX' || key === 'meshY') && (STATE.aspectLocked || !Number.isInteger(val));
-  const displayStep = exactDepth ? 0.0001 : step;
-  const valueText = typeof val === 'number' ? formatSliderValue(val, displayStep) : String(val);
-  const input = createElement('input') as HTMLInputElement;
-  input.type = 'range';
+  const controlLabel = buildSliderLabel(label, `val_${key}`, '', badgeText);
+  const input = createElement('input');
   input.id = `sl_${key}`;
-  input.min = String(min);
-  input.max = String(max);
-  input.step = exactDepth || exactDimension ? 'any' : String(step);
-  input.dataset.step = String(displayStep);
-  input.value = String(val);
   input.dataset.key = key;
-  input.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? val);
-  row.append(buildSliderLabel(label, `val_${key}`, valueText, badgeText), input);
+  const defaultValue = STATE.mode === 'drape' && key === 'baseThickness' ? DEFAULTS.drapeStock : DEFAULTS[key as keyof typeof DEFAULTS] ?? value;
+  configureRange(input, controlLabel.querySelector<HTMLElement>('.val')!, { min, max, step, value, domain: numericDomain(key), defaultValue: Number(defaultValue), readOnly: controlIsReadOnly(key) });
+  row.append(controlLabel, input);
   return row;
 }
 
@@ -137,7 +134,7 @@ function enumSelect(key: string, label: string, options: Array<[string, string]>
   const sel = createElement('select', 'select-input') as HTMLSelectElement;
   sel.id = `sl_${key}`;
   sel.dataset.key = key;
-  const current = String(STATE[key as keyof typeof STATE]);
+  const current = String(reliefControlValue(key) ?? STATE[key as keyof typeof STATE]);
   sel.dataset.default = String(DEFAULTS[key as keyof typeof DEFAULTS] ?? current);
   for (const [value, text] of options) {
     const opt = createElement('option') as HTMLOptionElement;
@@ -183,8 +180,9 @@ function buildPresetSection(): HTMLElement {
     .forEach((key) => {
       const button = createElement('button', `preset-pill${STATE.activeProfile === key ? ' active' : ''}`, key);
       button.dataset.profile = key;
+      button.id = `profile_${key}`;
       button.style.borderColor = 'var(--bg4)';
-      button.style.fontSize = '9px';
+      button.style.fontSize = '11px';
       buttonRow.append(button);
     });
 
@@ -200,10 +198,7 @@ function carveSlider(key: 'meshX' | 'meshY', value: number, reset: number): HTML
   const row = slider(key, `${key === 'meshX' ? 'X' : 'Y'} (inches)`, DRAPE_WIDTH_RANGE[0] * k, DRAPE_WIDTH_RANGE[1] * k, CARVE_STEP[key],
     key === 'meshX' ? 'Carve width' : 'Carve height');
   const input = row.querySelector<HTMLInputElement>('input')!;
-  input.value = String(value);
-  input.dataset.default = String(reset);
-  const val = row.querySelector<HTMLElement>(`#val_${key}`);
-  if (val) val.textContent = formatSliderValue(value, CARVE_STEP[key]);
+  syncRange(input, value, { defaultValue: reset });
   return row;
 }
 
@@ -229,13 +224,13 @@ function buildMeshDimensionsSection(): HTMLElement {
 
   const note = createElement('div');
   note.style.marginTop = '4px';
-  note.style.fontSize = '10px';
+  note.style.fontSize = '11px';
   note.style.color = 'var(--text3)';
   note.textContent = 'ShopBot Desktop Max ATC -- 36"x24"x6"';
 
   return buildSection('Mesh Dimensions', [
     inlineRow,
-    slider('resolution', 'Grid Resolution', 16, 1024, 4),
+    slider('resolution', 'Grid Resolution', Math.min(16, Math.max(2, STATE.resolution)), 1024, 4),
     // Stock is limited independently of the machine Z travel.
     slider('baseThickness', 'Material Thickness (in)', 0.25, MAX_STOCK_THICKNESS_IN, 0.05),
     note,
@@ -255,7 +250,7 @@ function buildNoiseParametersSection(): HTMLElement {
     },
     {
       label: 'Fractal',
-      options: [['fbm', 'FBM (Fractional Brownian)'], ['ridged', 'Ridged'], ['billow', 'Billow'], ['turbulence', 'Turbulence']],
+      options: [['ridged', 'Ridged'], ['billow', 'Billow']],
     },
     {
       label: 'Multi-Fractal',
@@ -293,8 +288,8 @@ function buildNoiseParametersSection(): HTMLElement {
   const seedInput = createElement('input', 'text-input') as HTMLInputElement;
   seedInput.type = 'text';
   seedInput.id = 'seedInput';
-  seedInput.placeholder = 'seed (blank=random)';
-  seedInput.value = STATE.seed ? String(STATE.seed) : '';
+  seedInput.placeholder = 'seed';
+  seedInput.value = String(STATE.seed);
   const seedButton = createElement('button', 'btn btn-sm', 'Dice');
   seedButton.id = 'btnRandSeed2';
   seedRow.append(seedInput, seedButton);
@@ -323,128 +318,141 @@ function buildNoiseParametersSection(): HTMLElement {
     return buildSection('Noise Parameters', children, false, 'noise-only');
   }
 
+  if (STATE.noiseType === 'voronoi' || STATE.noiseType === 'worley') {
+    children.push(
+      slider('cellJitter', 'Cell Jitter', 0, 1, 0.01),
+      enumSelect('cellMetric', 'Cell Distance', [['euclidean', 'Euclidean'], ['manhattan', 'Manhattan'], ['chebyshev', 'Chebyshev']]),
+    );
+  }
+  const invertRow = createElement('div', 'check-row');
+  const invert = createElement('input');
+  invert.type = 'checkbox'; invert.id = 'sl_invert';
+  invert.dataset.key = 'invert'; invert.dataset.default = String(Number(DEFAULTS.invert));
+  invert.checked = STATE.invert;
+  const invertLabel = createElement('label', undefined, 'Invert');
+  invertLabel.htmlFor = invert.id;
+  invertRow.append(invert, invertLabel);
+
   children.push(
     slider('frequency', 'Frequency (wave scale)', 0.01, 0.5, 0.005),
     slider('amplitude', 'Cut Depth (inches)', 0, Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness), 0.05),
-    slider('noiseExp', 'Noise Exponent (symmetric limiter)', 0.1, 3, 0.05),
     slider('offset', 'Vertical Offset', -2, 2, 0.05),
+    invertRow,
     seedRow,
   );
 
   return buildSection('Noise Parameters', children, false, 'noise-only');
 }
 
-function buildReliefSection(): HTMLElement {
-  const cellLayoutLabel = createElement('div');
-  cellLayoutLabel.style.fontSize = '10px';
-  cellLayoutLabel.style.color = 'var(--text3)';
-  cellLayoutLabel.style.marginBottom = '4px';
-  cellLayoutLabel.textContent = 'Cell layout';
+function buildReliefSections(): HTMLElement[] {
+  const note = (text: string): HTMLElement => createElement('p', 'profile-note', text);
+  const checkbox = createElement('div', 'check-row');
+  const domed = createElement('input');
+  domed.type = 'checkbox'; domed.id = 'sl_reliefInvertProfile';
+  domed.dataset.key = 'reliefInvertProfile'; domed.dataset.default = String(DEFAULTS.reliefInvertProfile);
+  domed.checked = STATE.reliefInvertProfile > 0.5;
+  const label = createElement('label', 'control-label', 'Domed Floors');
+  label.htmlFor = domed.id;
+  checkbox.append(domed, label);
+  return [
+    buildSection('Cells', [
+      note('Spacing is in inches. Density Boost adds cells; patchiness varies their size across the panel.'),
+      slider('reliefCellSize', 'Cell Size (inches)', 0.4, 6, 0.1),
+      slider('reliefJitter', 'Jitter', 0, 1, 0.05),
+      slider('reliefRelaxIterations', 'Lloyd Relaxation', 0, 2, 1),
+      slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
+      slider('reliefDensityNoise', 'Cell Size Patchiness', 0, 1.5, 0.05),
+      slider('reliefDensityNoiseFreq', 'Patch Scale', 0.02, 0.3, 0.01),
+    ], false, 'noise-only relief-controls'),
+    buildSection('Walls & Floors', [
+      note('Lower Floor Size leaves more of each cell flat. Domed Floors carves the boundaries. Pillowed Floors raises the centres of sunken floors.'),
+      enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
+      enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
+      slider('reliefSeamDepth', 'Floor Size', 0.05, 1, 0.05),
+      slider('reliefWallWidth', 'Wall Width', 0, 0.5, 0.01),
+      checkbox,
+      slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
+      slider('reliefPillow', 'Pillowed Floors', 0, 1, 0.05),
+      slider('reliefPillowCoverage', 'Pillow Coverage', 0, 1, 0.05),
+      slider('reliefDepthVariation', 'Depth Variation', 0, 1, 0.05),
+      slider('reliefJunctionLift', 'Junction Peaks', 0, 1, 0.05),
+      slider('reliefCrestVariation', 'Crest Variation', 0, 1, 0.05),
+    ], false, 'noise-only relief-controls'),
+    buildSection('Layout', [
+      note('Attractors fade cells across the panel. Starburst foci place radial cells; Anisotropy stretches the distance used to shape them.'),
+      slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
+      slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
+      enumSelect('reliefAttractorMode', 'Mode', [['none', 'None'], ['vertical', 'Vertical'], ['horizontal', 'Horizontal'], ['radial', 'Radial'], ['point', 'Point (inverse)']]),
+      slider('reliefAttractorX', 'Anchor X (0-1)', 0, 1, 0.01),
+      slider('reliefAttractorY', 'Anchor Y (0-1)', 0, 1, 0.01),
+      slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
+      slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
+      slider('reliefCellSizeGradient', 'Cell Size Gradient', 0, 2, 0.05),
+      slider('reliefIntensityStrength', 'Depth Follows Attractor', 0, 1, 0.05),
+      slider('reliefTransitionSoftness', 'Edge Blend', 0, 1, 0.05),
+      slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
+      slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
+      slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
+      slider('reliefRadialFociCount', 'Starburst Foci (0=off)', 0, 3, 1),
+      ...[1, 2, 3].flatMap(index => [
+        slider(`reliefRadialFocus${index}X`, `Focus ${index} X`, 0, 1, 0.01),
+        slider(`reliefRadialFocus${index}Y`, `Focus ${index} Y`, 0, 1, 0.01),
+      ]),
+      slider('reliefRadialStrength', 'Starburst Strength', 0, 3, 0.05),
+      slider('reliefRadialFalloff', 'Starburst Width', 0.05, 0.6, 0.01),
+      slider('reliefRadialGrow', 'Focal Cell Size', 0, 2, 0.05),
+      slider('reliefRadialWarp', 'Starburst Wobble', 0, 1, 0.02),
+      enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
+    ], false, 'noise-only relief-controls'),
+    buildSection('Base', [
+      note('Flat stays level. Smooth Wave adds a broad wave beneath the cellular carve, raising and lowering the ridges as it crosses the panel.'),
+      enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
+      slider('reliefBaseAmplitude', 'Base Wave Amplitude', 0, 2, 0.05),
+      slider('reliefBaseFrequency', 'Base Wave Frequency', 0.02, 0.3, 0.01),
+    ], false, 'noise-only relief-controls'),
+  ];
+}
 
-  const shapeLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  shapeLabel.textContent = 'Cell shape';
-  const anisoLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  anisoLabel.textContent = 'Anisotropy';
-  const attractorLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  attractorLabel.textContent = 'Attractor';
-  const radialLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  radialLabel.textContent = 'Radial foci (starburst)';
-  const baseLabel = cellLayoutLabel.cloneNode() as HTMLDivElement;
-  baseLabel.textContent = 'Base field';
-
-  return buildSection('Cell Relief', [
-    cellLayoutLabel,
-    slider('reliefCellSize', 'Cell Size (inches)', 0.4, 6, 0.1),
-    slider('reliefJitter', 'Jitter', 0, 1, 0.05),
-    slider('reliefRelaxIterations', 'Lloyd Relaxation', 0, 2, 1),
-    shapeLabel,
-    enumSelect('reliefProfile', 'Profile', [['hemisphere', 'Hemisphere'], ['cosine', 'Cosine'], ['parabolic', 'Parabolic']]),
-    enumSelect('reliefPolarity', 'Polarity', [['domes', 'Domes (raised)'], ['pockets', 'Pockets (sunken)']]),
-    slider('reliefSeamDepth', 'Wall Extent (floor inset)', 0.05, 1, 0.05),
-    // v16: fraction of the normalized cell distance held at surface level around every
-    // cell boundary — walls get finite width instead of knife-edge ridge lines. The
-    // measured response is aggressive (0.3 already floors ~88% of pixels), so presets
-    // use small values (0.08–0.12).
-    slider('reliefWallWidth', 'Wall Width', 0, 0.5, 0.01),
-    // NB: `reliefSeamWidth` does NOT affect the visual mesh under the F2-F1 relief algorithm
-    // (see `voronoi-relief.ts`'s "seamWidth is no longer used" comment). It only drives the
-    // SBP V-carve toolpath width via `sbp-export.ts:189` (`seamWidthIn = reliefSeamWidth ·
-    // reliefCellSize · 0.5`). Label clarifies the slider's actual function so users don't tune
-    // it expecting a mesh effect.
-    slider('reliefSeamWidth', 'SBP V-carve Seam Width', 0.02, 0.6, 0.01),
-    // v15: 0/1 toggle. When 1, cell INTERIORS sit at the surface with a domed rise and the
-    // cell BOUNDARIES are carved (matches the reference panel's "domed floors" signature).
-    // When 0 (default), standard pocket carving (interior sunk, boundary at surface).
-    slider('reliefInvertProfile', 'Domed Floors (0/1)', 0, 1, 1),
-    // v15.1: 0 = smooth round-bottom gutter at cell boundary; 1 = knife-edge V-groove.
-    // Linear blend of the profile curve toward a `bowlT` ramp. High values produce real
-    // V-grooves but the rendered mesh will show polygon aliasing along seam ridges — fine
-    // for CNC V-bit carving paths.
-    slider('reliefSeamSharpness', 'Seam V-Groove Sharpness', 0, 1, 0.05),
-    // v16.1: double-curvature pocket floors — past the bowl's saturation point the floor
-    // rises into a soft central mound. Coverage gates which cells pillow (per-cell hash).
-    slider('reliefPillow', 'Pillowed Floors', 0, 1, 0.05),
-    slider('reliefPillowCoverage', 'Pillow Coverage', 0, 1, 0.05),
-    // v16.3: per-cell depth tiers (deep/intermediate/suppressed) + asymmetric wall
-    // profiles; junction crest lift with widened star-shaped nodes.
-    slider('reliefDepthVariation', 'Depth Variation', 0, 1, 0.05),
-    slider('reliefJunctionLift', 'Junction Peaks', 0, 1, 0.05),
-    // v17: ridge-local crest height noise — mesas/saddles/fragmented envelope.
-    slider('reliefCrestVariation', 'Crest Variation', 0, 1, 0.05),
-    anisoLabel,
-    slider('reliefAnisotropy', 'Anisotropy (0=round)', 0, 1, 0.05),
-    slider('reliefAnisotropyAngle', 'Anisotropy Angle (deg)', 0, 180, 1),
-    attractorLabel,
-    enumSelect('reliefAttractorMode', 'Mode', [
-      ['none', 'None'], ['vertical', 'Vertical'], ['horizontal', 'Horizontal'],
-      ['radial', 'Radial'], ['point', 'Point (inverse)'],
-    ]),
-    slider('reliefAttractorX', 'Anchor X (0-1)', 0, 1, 0.01),
-    slider('reliefAttractorY', 'Anchor Y (0-1)', 0, 1, 0.01),
-    slider('reliefAttractorRadius', 'Anchor Radius', 0.05, 1, 0.01),
-    slider('reliefAttractorFalloff', 'Falloff', 0.2, 4, 0.05),
-    slider('reliefDensityStrength', 'Density Boost', 0, 2, 0.05),
-    // v16: low-frequency noise on site density — giant and small cells coexist (the
-    // lafabrica multi-scale patchiness). Independent of the attractor gradient above.
-    slider('reliefDensityNoise', 'Cell Size Patchiness', 0, 1.5, 0.05),
-    slider('reliefDensityNoiseFreq', 'Patch Scale', 0.02, 0.3, 0.01),
-    slider('reliefCellSizeGradient', 'Cell Size Gradient', 0, 2, 0.05),
-    slider('reliefIntensityStrength', 'Intensity Strength', 0, 1, 0.05),
-    slider('reliefTransitionSoftness', 'Transition Softness', 0, 1, 0.05),
-    slider('reliefVoidStrength', 'Void / Cut-Through', 0, 1, 0.02),
-    slider('reliefAttractorNoise', 'Attractor Patchiness', 0, 1, 0.05),
-    slider('reliefAttractorNoiseFreq', 'Patch Frequency', 0.02, 0.5, 0.01),
-    radialLabel,
-    slider('reliefRadialFociCount', 'Starburst Foci (0=off)', 0, 3, 1),
-    slider('reliefRadialFocus1X', 'Focus 1 X', 0, 1, 0.01),
-    slider('reliefRadialFocus1Y', 'Focus 1 Y', 0, 1, 0.01),
-    slider('reliefRadialFocus2X', 'Focus 2 X', 0, 1, 0.01),
-    slider('reliefRadialFocus2Y', 'Focus 2 Y', 0, 1, 0.01),
-    slider('reliefRadialFocus3X', 'Focus 3 X', 0, 1, 0.01),
-    slider('reliefRadialFocus3Y', 'Focus 3 Y', 0, 1, 0.01),
-    slider('reliefRadialStrength', 'Starburst Strength', 0, 3, 0.05),
-    slider('reliefRadialFalloff', 'Starburst Width', 0.05, 0.6, 0.01),
-    slider('reliefRadialGrow', 'Focal Expansion', 0, 2, 0.05),
-    slider('reliefRadialWarp', 'Starburst Wobble', 0, 1, 0.02),
-    enumSelect('reliefRadialMode', 'Radial Mode', [['rays', 'Rays'], ['rings', 'Rings'], ['spiral', 'Spiral']]),
-    baseLabel,
-    enumSelect('reliefBaseMode', 'Base', [['flat', 'Flat'], ['wave', 'Smooth Wave']]),
-    // v16 superposition: the cellular carve rides ON this wave — ridge tops undulate.
-    slider('reliefBaseAmplitude', 'Base Wave Amplitude', 0, 2, 0.05),
-    slider('reliefBaseFrequency', 'Base Wave Frequency', 0.02, 0.3, 0.01),
-  ], false, 'noise-only');
+/** Hide only controls whose values the sampler cannot currently use. Keep those values intact. */
+export function syncReliefControls(): void {
+  const settings = reliefPreviewParams() ?? STATE;
+  const hide = (key: string, inert: boolean): void => {
+    const input = document.getElementById(`sl_${key}`);
+    const row = input?.closest<HTMLElement>('.control-row, .check-row');
+    if (row) row.hidden = inert;
+  };
+  hide('reliefDensityNoiseFreq', settings.reliefDensityNoise === 0);
+  hide('reliefAnisotropyAngle', settings.reliefAnisotropy === 0);
+  const mode = settings.reliefAttractorMode;
+  hide('reliefAttractorX', mode === 'none' || mode === 'vertical');
+  hide('reliefAttractorY', mode === 'none' || mode === 'horizontal');
+  hide('reliefAttractorRadius', mode !== 'radial' && mode !== 'point');
+  hide('reliefAttractorFalloff', mode === 'none');
+  const maskVaries = mode !== 'none' || settings.reliefAttractorNoise > 0;
+  hide('reliefTransitionSoftness', !maskVaries);
+  hide('reliefIntensityStrength', !maskVaries);
+  hide('reliefAttractorNoiseFreq', settings.reliefAttractorNoise === 0);
+  hide('reliefPillow', settings.reliefInvertProfile > 0.5);
+  hide('reliefPillowCoverage', settings.reliefPillow === 0 || settings.reliefInvertProfile > 0.5);
+  for (let index = 1; index <= 3; index++) {
+    hide(`reliefRadialFocus${index}X`, settings.reliefRadialFociCount < index);
+    hide(`reliefRadialFocus${index}Y`, settings.reliefRadialFociCount < index);
+  }
+  for (const key of ['reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp', 'reliefRadialMode']) hide(key, settings.reliefRadialFociCount === 0);
+  hide('reliefBaseAmplitude', settings.reliefBaseMode === 'flat');
+  hide('reliefBaseFrequency', settings.reliefBaseMode === 'flat' || settings.reliefBaseAmplitude === 0);
 }
 
 function buildPeakValleySection(): HTMLElement {
   const description = createElement('div');
-  description.style.fontSize = '10px';
+  description.style.fontSize = '11px';
   description.style.color = 'var(--text3)';
   description.style.marginBottom = '8px';
   description.textContent = 'Asymmetric control: shape peaks and valleys independently.';
   return buildSection('Peak / Valley Shaping', [
     description,
-    slider('peakExp', 'Peak Sharpness (>1 = crisper ridges)', 0.2, 4, 0.05),
-    slider('valleyExp', 'Valley Softness (<1 = broader valleys)', 0.1, 3, 0.05),
+    slider('peakExp', 'Peak Shape', 0.1, 4, 0.05),
+    slider('valleyExp', 'Valley Shape', 0.1, 3, 0.05),
     slider('valleyFloor', 'Valley Floor (0=deep, 1=flat)', 0, 1, 0.01),
   ], false, 'noise-only');
 }
@@ -457,15 +465,12 @@ function buildAdvancedNoiseSection(): HTMLElement {
     slider('distortion', 'Domain Warp / Distortion', 0, 2, 0.05),
     slider('warpFreq', 'Warp Frequency', 0.02, 0.4, 0.01),
     slider('warpCurl', 'Warp Curl (0=fold, 1=flow)', 0, 1, 0.05),
-    slider('contrast', 'Contrast', 0.1, 3, 0.05),
-    slider('sharpness', 'Sharpness', 0, 2, 0.05),
   ], false, 'noise-only');
 }
 
 function buildSmoothingSection(): HTMLElement {
   return buildSection('Smoothing', [
-    slider('smoothIter', 'Iterations', 0, 15, 1),
-    slider('smoothStr', 'Strength', 0, 1, 0.05),
+    slider('smoothRadiusIn', 'Smooth Radius (in)', 0, 1, 0.01),
   ], false, 'noise-only');
 }
 
@@ -503,7 +508,7 @@ function buildDepthMapSection(): HTMLElement {
     imageOnly(slider('dmHeightScale', 'Depth Map Height Scale', 0, Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness), 0.05)),
     imageOnly(slider('dmOffset', 'Depth Map Offset', -1, 1, 0.01)),
     imageOnly(slider('dmBackgroundCutoff', 'Background Cutoff (0=off)', 0, 0.9, 0.01)),
-    imageOnly(slider('dmSmoothing', 'Depth Map Smoothing', 0, 15, 1)),
+    imageOnly(slider('dmSmoothRadiusIn', 'Smooth Radius (in)', 0, 1, 0.01)),
   ], false, 'depth-map-only');
 }
 
@@ -544,12 +549,14 @@ function buildDrapeSections(): HTMLElement[] {
   placeRow.style.display = 'flex';
   placeRow.style.gap = '6px';
   placeRow.style.margin = '6px 0';
-  const up = createElement('select') as HTMLSelectElement;
+  const up = createElement('select', 'select-input') as HTMLSelectElement;
+  up.id = 'figureUploadUp';
   up.setAttribute('aria-label', 'Up axis of an uploaded mesh');
   up.add(new Option('Z up', 'z')); up.add(new Option('Y up', 'y'));
   up.value = figurePlacement.up;
   up.addEventListener('change', () => { figurePlacement.up = up.value === 'y' ? 'y' : 'z'; });
-  const turn = createElement('input') as HTMLInputElement;
+  const turn = createElement('input', 'num-input') as HTMLInputElement;
+  turn.id = 'figureUploadTurn';
   turn.type = 'number'; turn.min = '-180'; turn.max = '180'; turn.step = '5';
   turn.value = String(figurePlacement.turnDeg);
   turn.title = 'Turn the uploaded mesh about its vertical axis so the face looks at you, degrees';
@@ -559,7 +566,7 @@ function buildDrapeSections(): HTMLElement[] {
   placeRow.append(up, turn);
   const placeNote = createElement('div', undefined,
     'Upload placement: up axis (STL, OBJ, PLY; glTF and USD carry their own) and turn (deg), applied when a mesh is loaded. Any mesh is scaled to fit the panel; Figure Size and the X / Y size then resize it.');
-  placeNote.style.fontSize = '10px';
+  placeNote.style.fontSize = '11px';
   placeNote.style.color = 'var(--text3)';
 
   const btnRow = createElement('div');
@@ -578,6 +585,7 @@ function buildDrapeSections(): HTMLElement[] {
   cancel.addEventListener('click', () => cancelDrape());
   btnRow.append(gen, cancel);
   const dl = createElement('button', 'btn btn-sm', 'DOWNLOAD .MCRELIEF') as HTMLButtonElement;
+  dl.id = 'drapeDownloadBtn';
   dl.style.width = '100%';
   dl.addEventListener('click', () => { void downloadDrapeRelief(); });
 
@@ -585,11 +593,11 @@ function buildDrapeSections(): HTMLElement[] {
   status.id = 'drapeStatus';
   status.setAttribute('role', 'status');
   status.style.margin = '6px 0';
-  status.style.fontSize = '10px';
+  status.style.fontSize = '11px';
   status.style.color = 'var(--text2)';
   const about = createElement('div', undefined,
     'Silk cloth hung from the top of the figure under gravity, simulated in this tab (Jolt Physics). The relief is the front view at the X / Y size (3:4), cut to Material Thickness and Relief Depth.');
-  about.style.fontSize = '10px';
+  about.style.fontSize = '11px';
   about.style.color = 'var(--text3)';
 
   // Presets: one click sets every cloth, force and pose control.
@@ -600,6 +608,7 @@ function buildDrapeSections(): HTMLElement[] {
     b.type = 'button';
     b.title = preset.about;
     b.dataset.drapePreset = id;
+    b.id = `drapePreset_${id}`;
     b.addEventListener('click', () => {
       // A preset sets the drape, not the carve or the figure's size: both stay as the user set them.
       const { drapeReliefDepth: _carve, drapeFigureScale: _size, ...settings } = preset.settings;
@@ -621,7 +630,7 @@ function buildDrapeSections(): HTMLElement[] {
   });
   const note = (text: string): HTMLDivElement => {
     const n = createElement('div', undefined, text);
-    n.style.fontSize = '10px'; n.style.color = 'var(--text3)'; n.style.margin = '4px 0';
+    n.style.fontSize = '11px'; n.style.color = 'var(--text3)'; n.style.margin = '4px 0';
     return n;
   };
   const windMode = enumSelect('drapeWindMode', 'Mode', [['off', 'Off'], ['wind', 'Wind (fixed direction)'], ['pressure', 'Pressure (onto the cloth)']]);
@@ -654,7 +663,7 @@ function buildDrapeSections(): HTMLElement[] {
 function reliefMasterInfo(): HTMLDivElement {
   const note = createElement('div', 'relief-master-info');
   note.style.margin = '6px 0 8px';
-  note.style.fontSize = '10px';
+  note.style.fontSize = '11px';
   note.style.color = 'var(--text3)';
   const m = STATE.reliefMaster;
   if (!m) { note.style.display = 'none'; return note; }
@@ -670,7 +679,7 @@ function reliefMasterInfo(): HTMLDivElement {
 function buildViewControlsSection(): HTMLElement {
   const note = createElement('div');
   note.style.marginTop = '8px';
-  note.style.fontSize = '10px';
+  note.style.fontSize = '11px';
   note.style.color = 'var(--text3)';
   note.textContent = 'Left drag = orbit/tilt · Right/Shift drag = pan · Scroll = zoom · Double-click = fit';
 
@@ -687,14 +696,16 @@ function buildViewControlsSection(): HTMLElement {
 /** Clamp the requested cut and keep the value, range and label in agreement. */
 export function syncDepthCaps(): void {
   const activeKey = STATE.mode === 'noise' ? 'amplitude' : STATE.mode === 'depthmap' && !STATE.reliefMaster ? 'dmHeightScale' : null;
+  const preview = reliefPreviewParams();
   for (const key of ['amplitude', 'dmHeightScale'] as const) {
-    const max = key === activeKey ? Math.min(MAX_CUT_DEPTH_IN, STATE.baseThickness) : MAX_CUT_DEPTH_IN;
-    if (key === activeKey) STATE[key] = Math.max(0, Math.min(max, STATE[key]));
+    if (key === activeKey) STATE[key] = clampCutDepth(STATE[key], STATE.baseThickness);
+    const stock = key === 'amplitude' && preview ? preview.baseThickness : STATE.baseThickness;
+    const max = key === activeKey ? Math.min(MAX_CUT_DEPTH_IN, stock) : MAX_CUT_DEPTH_IN;
+    const value = key === 'amplitude' && preview ? clampCutDepth(preview.amplitude, stock) : STATE[key];
     const input = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
-    if (input) { input.max = String(max); input.value = String(STATE[key]); }
-    const label = document.getElementById(`val_${key}`);
-    if (label) label.textContent = formatSliderValue(STATE[key], input ? Number(input.dataset.step ?? input.step) : 0.0001);
+    if (input) syncRange(input, value, { max });
   }
+  refreshControlResets();
 }
 
 /** Relief Depth can use all but MIN_DRAPE_BACKING_IN of the drape's material: cap its slider (and the
@@ -702,26 +713,42 @@ export function syncDepthCaps(): void {
 function syncDrapeDepthMax(): void {
   const max = Math.min(MAX_CUT_DEPTH_IN, Math.max(0.05, STATE.drapeStock - MIN_DRAPE_BACKING_IN));
   const sl = document.querySelector<HTMLInputElement>('input[data-key="drapeReliefDepth"]');
-  if (sl) sl.max = String(max);
-  if (STATE.drapeReliefDepth > max) {
-    STATE.drapeReliefDepth = max;
-    if (sl) sl.value = String(STATE.drapeReliefDepth);
-    const val = document.getElementById('val_drapeReliefDepth');
-    if (val) val.textContent = formatSliderValue(STATE.drapeReliefDepth, 0.0001);
-  }
+  STATE.drapeReliefDepth = Math.min(STATE.drapeReliefDepth, max);
+  if (sl) syncRange(sl, STATE.drapeReliefDepth, { max });
+  refreshControlResets();
 }
 
 function wireControls(): void {
   // Sliders
   document.querySelectorAll<HTMLInputElement>('input[type="range"][data-key]').forEach(sl => {
     const key = sl.dataset.key!;
+    let pointerDown = false;
+    let completionTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearCompletion = (): void => {
+      if (completionTimer !== null) { clearTimeout(completionTimer); completionTimer = null; }
+    };
+    const finish = (): void => {
+      pointerDown = false;
+      endNoiseGesture(key);
+      endReliefControlGesture(key);
+      clearCompletion();
+      if (drapeControlEffect(key)) return;
+      if (STATE.mode === 'drape' && ['baseThickness', 'meshX', 'meshY'].includes(key)) return;
+      if (controlIsReadOnly(key)) return;
+      debouncedGenerate(key, 'full');
+    };
+    sl.addEventListener('pointerdown', () => { pointerDown = true; clearCompletion(); beginNoiseGesture(key); beginReliefControlGesture(key); });
+    sl.addEventListener('pointerup', finish);
+    sl.addEventListener('pointercancel', () => { endReliefControlGesture(key, true); finish(); });
+    sl.addEventListener('lostpointercapture', () => { if (pointerDown) finish(); });
+    sl.addEventListener('change', finish);
     sl.addEventListener('input', () => {
+      if (!pointerDown) endNoiseGesture(key);
       // DRAPE owns its material thickness (drapeStock); baseThickness follows it there.
       if (STATE.mode === 'drape' && key === 'baseThickness') {
-        const v = Math.min(DRAPE_STOCK_RANGE[1], Math.max(DRAPE_STOCK_RANGE[0], parseFloat(sl.value)));
+        const v = Math.min(DRAPE_STOCK_RANGE[1], Math.max(DRAPE_STOCK_RANGE[0], readRangeValue(sl)));
         STATE.drapeStock = v; STATE.baseThickness = v;
-        const valEl = document.getElementById('val_baseThickness');
-        if (valEl) valEl.textContent = formatSliderValue(v, Number(sl.dataset.step ?? sl.step));
+        syncRange(sl, v);
         syncDrapeDepthMax();
         // Safe Z follows once the remapped master lands (drape-ui syncSizeControls); exports wait for it.
         onDrapeCarveChanged();
@@ -730,33 +757,31 @@ function wireControls(): void {
       // DRAPE: X and Y set the carve's width (the height is 4/3 of it); the figure scales with the carve.
       if (STATE.mode === 'drape' && (key === 'meshX' || key === 'meshY')) {
         // Snapped to the shared 3:4 grid (CARVE_STEP), so both sliders and labels show exact values.
-        const raw = parseFloat(sl.value), w = key === 'meshX' ? raw : raw * PANEL_ASPECT;
+        const raw = readRangeValue(sl), w = key === 'meshX' ? raw : raw * PANEL_ASPECT;
         STATE.drapeCarveWidth = snapCarveWidth(w);
         for (const [k, v] of [['meshX', STATE.drapeCarveWidth], ['meshY', STATE.drapeCarveWidth / PANEL_ASPECT]] as const) {
           const input = document.querySelector<HTMLInputElement>(`input[data-key="${k}"]`);
-          if (input) input.value = String(v);
-          const val = document.getElementById(`val_${k}`);
-          if (val) val.textContent = formatSliderValue(v, CARVE_STEP[k]);
+          if (input) syncRange(input, v);
         }
         // The master is rebuilt at the new size; STATE.meshX / meshY follow it there (syncSizeControls).
         onDrapeCarveChanged();
         return;
       }
-      if (reliefMasterActive() && RELIEF_LOCKED_KEYS.has(key)) {
-        sl.value = String(STATE[key as keyof typeof STATE]);
+      if (controlIsReadOnly(key)) {
+        syncRange(sl, Number(STATE[key as keyof typeof STATE]));
         showToast('A relief master fixes size, stock and heights. Load an image to change them.', 3000);
         return;
       }
-      const v = parseFloat(sl.value);
+      const v = readRangeValue(sl);
+      if (STATE.mode === 'noise' && changeReliefParams({[key]: v})) { syncRange(sl, v); return; }
       (STATE as unknown as Record<string, unknown>)[key] = v;
-      const valEl = document.getElementById('val_' + key);
-      if (valEl) valEl.textContent = formatSliderValue(v, Number(sl.dataset.step ?? sl.step));
+      syncRange(sl, v);
+      if (key.startsWith('relief')) syncReliefControls();
 
       // Aspect ratio lock
-      if (STATE.aspectLocked && STATE.depthMapAR && (key === 'meshX' || key === 'meshY')) {
-        const fitted = fitAspectToBed(STATE.depthMapAR, key === 'meshX' ? v : v * STATE.depthMapAR);
+      if (key === 'meshX' || key === 'meshY') {
+        const fitted = lockedDimensionPatch(key, v);
         if (fitted) Object.assign(STATE, fitted);
-        else { STATE.aspectLocked = false; showToast('Aspect lock is unavailable for this image within the dimension limits.'); }
         syncAspectLockButton();
       }
 
@@ -787,16 +812,51 @@ function wireControls(): void {
       }
 
       if (key === 'meshX' || key === 'meshY') updateEffectiveOffsetDisplay();
-      debouncedGenerate(key);
+      debouncedGenerate(key, 'preview');
+      clearCompletion();
+      // Numeric edits, resets and programmatic inputs may emit no change or pointer-release event.
+      if (!pointerDown) {
+        const mode = STATE.mode;
+        const token = noiseGeneration.completionToken;
+        completionTimer = setTimeout(() => {
+          completionTimer = null;
+          if (STATE.mode === mode && (mode !== 'noise' || noiseGeneration.completionToken === token)) finish();
+        }, 180);
+      }
     });
 
     // Double-click slider to reset to default
     sl.addEventListener('dblclick', () => {
       const def = sl.dataset.default;
       if (def === undefined) return;
-      sl.value = def;
+      syncRange(sl, Number(def));
       sl.dispatchEvent(new Event('input', { bubbles: true }));
     });
+  });
+
+  const invert = document.getElementById('sl_invert') as HTMLInputElement | null;
+  invert?.addEventListener('change', () => {
+    STATE.invert = invert.checked;
+    STATE.activePreset = null;
+    STATE.activeProfile = null;
+    const preset = document.getElementById('selPreset') as HTMLSelectElement | null;
+    if (preset) preset.value = '';
+    document.querySelector('.preset-pill.active[data-profile]')?.classList.remove('active');
+    refreshControlResets();
+    debouncedGenerate('invert', 'full');
+  });
+
+  const domed = document.getElementById('sl_reliefInvertProfile') as HTMLInputElement | null;
+  domed?.addEventListener('change', () => {
+    if (changeReliefParams({reliefInvertProfile: domed.checked ? 1 : 0})) return;
+    STATE.reliefInvertProfile = domed.checked ? 1 : 0;
+    STATE.activePreset = null;
+    STATE.activeProfile = null;
+    const preset = document.getElementById('selPreset') as HTMLSelectElement | null;
+    if (preset) preset.value = '';
+    document.querySelector('.preset-pill.active[data-profile]')?.classList.remove('active');
+    syncReliefControls();
+    debouncedGenerate('reliefInvertProfile', 'full');
   });
 
   // Click value label to type exact number
@@ -813,7 +873,9 @@ function wireControls(): void {
   document.querySelectorAll<HTMLSelectElement>('select[data-key]').forEach(sel => {
     const key = sel.dataset.key!;
     sel.addEventListener('change', () => {
+      if (STATE.mode === 'noise' && changeReliefParams({[key]: sel.value})) return;
       (STATE as unknown as Record<string, unknown>)[key] = sel.value;
+      if (key.startsWith('relief')) syncReliefControls();
       // Shading is view-only: swap the material, keep the mesh and the active preset.
       if (key === 'viewMaterial') {
         applySurfaceMaterial();
@@ -845,6 +907,7 @@ function wireControls(): void {
 
   // Section collapse
   wireSectionCollapse();
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('#controlsPane [data-default]').forEach(attachControlReset);
 }
 
 /** Show the demo image on DEPTH MAP: the board keeps a DEPTH MAP share link's size while it still is
@@ -873,60 +936,25 @@ export function syncAspectLockButton(): void {
   if (STATE.mode !== 'drape') {
     for (const key of ['meshX', 'meshY'] as const) {
       const input = document.querySelector<HTMLInputElement>(`input[data-key="${key}"]`);
-      if (input) {
-        input.step = STATE.aspectLocked || !Number.isInteger(STATE[key]) ? 'any' : '1';
-        input.value = String(STATE[key]);
-      }
-      const label = document.getElementById(`val_${key}`);
-      if (label) label.textContent = formatSliderValue(STATE[key], 1);
+      if (input) syncRange(input, STATE[key]);
     }
   }
-}
-
-const isMobile = (): boolean => window.matchMedia('(max-width: 900px)').matches;
-
-/** Wire accordion collapse/expand on a single section. Exported for SBP profile rebuild. */
-export function wireSectionAccordion(section: Element): void {
-  const sidebar = document.getElementById('sidebar');
-  if (!sidebar) return;
-  const header = section.querySelector<HTMLElement>('.section-header');
-  if (!header) return;
-  const syncExpanded = (): void => {
-    header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
-  };
-  header.addEventListener('click', () => {
-    if (isMobile()) {
-      const sections = sidebar.querySelectorAll('.section');
-      const wasCollapsed = section.classList.contains('collapsed');
-      sections.forEach(s => s.classList.add('collapsed'));
-      if (wasCollapsed) section.classList.remove('collapsed');
-      sections.forEach(s => {
-        const h = s.querySelector<HTMLElement>('.section-header');
-        if (h) h.setAttribute('aria-expanded', String(!s.classList.contains('collapsed')));
-      });
-    } else {
-      section.classList.toggle('collapsed');
-      syncExpanded();
-    }
-  });
-  syncExpanded();
+  refreshControlResets();
 }
 
 function wireSectionCollapse(): void {
   const sidebar = document.getElementById('sidebar')!;
   const sections = sidebar.querySelectorAll('.section');
   sections.forEach(s => wireSectionAccordion(s));
-  if (isMobile()) {
-    const visible = [...sections].filter(s => (s as HTMLElement).offsetParent !== null);
-    visible.forEach((s, i) => { if (i > 0) s.classList.add('collapsed'); });
-  }
 
   // Noise type select
   const sel = document.getElementById('selNoiseType') as HTMLSelectElement | null;
   if (sel) {
     sel.value = STATE.noiseType;
     sel.addEventListener('change', () => {
+      if (changeReliefParams({noiseType: sel.value as typeof STATE.noiseType})) return;
       STATE.noiseType = sel.value as typeof STATE.noiseType;
+      restoreReliefDocument();
       if (STATE.activePreset) {
         STATE.activePreset = null;
       }
@@ -939,7 +967,13 @@ function wireSectionCollapse(): void {
   const seedEl = document.getElementById('seedInput') as HTMLInputElement | null;
   if (seedEl) {
     seedEl.addEventListener('change', () => {
-      STATE.seed = seedEl.value ? parseInt(seedEl.value) || hashString(seedEl.value) : 0;
+      if (!seedEl.value.trim()) { randomSeed(); return; }
+      const value = seedEl.value.trim();
+      const parsed = Number(value);
+      const nextSeed = Number.isFinite(parsed) ? Math.trunc(parsed) : hashString(value);
+      if (changeReliefParams({seed: nextSeed})) return;
+      STATE.seed = nextSeed;
+      seedEl.value = String(STATE.seed);
       generateMesh();
     });
   }
@@ -967,6 +1001,7 @@ function wireSectionCollapse(): void {
       const key = presetSel.value;
       if (!key) return;
       if (!CNC_PRESETS[key]) return;
+      if (changeReliefParams(presetState(key))) { buildSidebar(); return; }
       Object.assign(STATE, presetState(key));
       STATE.activePreset = key;
       STATE.activeProfile = null;
@@ -980,6 +1015,7 @@ function wireSectionCollapse(): void {
     btn.addEventListener('click', () => {
       const p = PROFILES[(btn as HTMLElement).dataset.profile!];
       if (!p) return;
+      if (changeReliefParams(p)) { buildSidebar(); return; }
       Object.keys(p).forEach(k => { (STATE as unknown as Record<string, unknown>)[k] = p[k]; });
       STATE.activeProfile = (btn as HTMLElement).dataset.profile!;
       STATE.activePreset = null;
@@ -1046,6 +1082,17 @@ export function applyPendingFit(): boolean {
   pendingFit = null;
   fitSizes(w, h);
   return true;
+}
+
+/** Both the ordinary sliders and the manual document owner use this dimension coupling. */
+export function lockedDimensionPatch(key: string, value: number): {meshX: number; meshY: number} | null {
+  if (!STATE.aspectLocked || !STATE.depthMapAR || (key !== 'meshX' && key !== 'meshY')) return null;
+  const fitted = fitAspectToBed(STATE.depthMapAR, key === 'meshX' ? value : value * STATE.depthMapAR);
+  if (!fitted) {
+    STATE.aspectLocked = false; syncAspectLockButton();
+    showToast('Aspect lock is unavailable for this image within the dimension limits.');
+  }
+  return fitted;
 }
 
 /** Fit a locked image without changing its aspect, within both sliders' physical bounds. */
@@ -1219,7 +1266,9 @@ async function loadReliefMaster(file: File, revision: number): Promise<void> {
 }
 
 export function randomSeed(): void {
-  STATE.seed = Math.floor(Math.random() * 99999);
+  const seed = Math.floor(Math.random() * 99999);
+  if (changeReliefParams({seed})) { buildSidebar(); return; }
+  STATE.seed = seed;
   const el = document.getElementById('seedInput') as HTMLInputElement | null;
   if (el) el.value = String(STATE.seed);
   generateMesh();

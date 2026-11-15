@@ -43,6 +43,8 @@ npm run test:presets     # geometry, then each full default SBP export in a fres
 npm run test:presets:geometry  # preset ownership, ordering and production geometry
 npm run test:presets:export -- <preset>  # one full default SBP export
 npm run test:sbp-writer  # byte contract for SBP formatting and retract commands
+npm run test:ui-values  # Playwright against dist: exact ranges, resets, counts and source ownership
+npm run test:ui-interruptions  # Playwright against dist: sponsors, pane state and resets
 npm run test:drape       # tsx cli/drape.spec.ts (Drape tab, ~20 s)
 npm run test:drape-parity   # tsx cli/drape-parity.spec.ts (web drapes vs the Blender silk and gathered runs, ~2.5 min)
 npm run test:depthmap       # tsx cli/depthmap.spec.ts (luma sampling, orientation, cutoff, share links)
@@ -53,6 +55,20 @@ npm run relief-roundtrip -- <master.mcrelief> --out <dir> [--crop ...] [--sbp] [
 npm run stl-to-sbp -- <input.stl> [--dry-run]
 npm run deploy           # build, then wrangler pages deploy (needs CF env vars)
 ```
+
+`src/sidebar-state.ts` keeps pane scroll/focus and stable section open state outside generation
+settings. Remember focus within pane content before header navigation, restore it on Back, and initialize unseen mobile sections closed without erasing other modes' choices. Numeric URL keys accept only actual finite JSON numbers, never coercible strings or other JSON types. Rebuild only the controls pane so the active Sponsors pane remains intact. Programmatic
+control updates use `configureRange`/`syncRange` and input handlers read `readRangeValue` in
+`src/slider-utils.ts`. That shared path owns
+native precision, labels, bounds, defaults and Reset visibility. Preserve the nominal keyboard step
+when native `step=any` is needed to retain exact values. The exact model value and label remain
+independent of the native thumb string, which Chromium can serialize with fewer IEEE-754 digits. `controlIsReadOnly` in state.ts distinguishes locked imported DEPTH MAP sources from editable live Drape remaps. Use it in construction and guards. Read-only imported-source controls include
+the actual source in their presentation bounds, remain disabled and expose no reset/edit action.
+Do not add per-mode precision exceptions. SBP reset targets come from initial settings,
+stock-derived clearances or the selected material profile, never from the current edited values.
+Safe/Home Z ranges share continuous gap bounds with their input handlers. Only derived endpoints within IEEE slack of a short decimal lose arithmetic noise; entered values keep their digits. A constrained reset takes the nearest
+legal value within that range and preserves the other clearance. Stock changes validate the model Home against the same gap before synchronizing either range; use the stock-derived Home target only when needed. Reset visibility compares exact canonical model values, not an epsilon. Drape dimension/stock aliases show exact carve request fields while completed master dimensions remain export-authoritative. Dimension labels must wrap their
+value/reset targets within the sidebar; test pointer hits before actions that might auto-scroll.
 
 `typecheck` and `typecheck:cli` are separate configs covering different surfaces. Running one
 does not clear the other. Check both before claiming the repo is green.
@@ -76,11 +92,11 @@ Two consequences worth knowing before you commit:
 
 ## The Grasshopper parity invariant
 
-`grasshopper/builder/meshcraft_builder.py` embeds `NOISE_SCRIPT` and `PRESETS_SCRIPT` as
+`grasshopper/builder/meshcraft_builder.py` embeds `NOISE_SCRIPT`, `PRESETS_SCRIPT`, `SHAPE_SCRIPT` and `SMOOTH_SCRIPT` as
 triple-quoted Python literals. Those are hand-maintained mirrors of the canonical standalone
 components in `grasshopper/components/`. `npm run test:gh-parity` extracts the embedded
 literals and asserts they share an identical algorithmic core with the standalone files,
-after stripping shebang, header, footer and trailing whitespace.
+after right-trimming lines and dropping blank lines. Headers and comments remain part of the comparison.
 
 Per the spec's own header comment, drift between those two paths has already caused round-2
 through round-5 review findings. **Any change to a noise generator or to a preset has three
@@ -96,6 +112,9 @@ builder into `meshcraft_builder.gh` in that folder after input changes, then ope
 definition in Rhino 7 and confirm one preset generates. Passing text/value parity does not
 clear that runtime gate. The move preserves historical bytes and does not certify that the
 old artifacts embed the latest source. Keep the DLL branch separate.
+
+The builder uses `smooth_radius_in` for physical smoothing and supplies
+`relief_cut_depth_in` from the requested amplitude for relief slope calculations.
 
 ## Correctness rules specific to this tool
 
@@ -153,14 +172,17 @@ npm run stl-to-sbp -- <input.stl> --dry-run
 filter tests (`python3 scripts/test-review-provenance.py`), lint, both typechecks,
 `test:relief`, `test:presets:geometry`,
 `test:gh-parity`, `test:depthmap`, `test:drape`, `test:drape-parity`, `test:sbp-writer`,
-`test:cut`, `test:relief-master` and the build on every pull request. Full default preset exports
+`test:cut`, `test:relief-master`, the build, `test:ui-values` and `test:ui-interruptions` on every pull request. The UI
+gate installs Chromium and exercises the built application, including the old sponsor timer windows.
+Full default preset exports
 run in a separate per-preset matrix. Both `checks` and `Preset full export gate` must pass before merge.
 `test:drape-parity` runs two full cloth simulations of the bundled bust against the Blender references
 (`cli/fixtures/drape-silk-tilt25`, `cli/fixtures/drape-silk-gathered`); after any change under `src/drape-sim/`, paste its numbers in the PR.
 The references come from Blender (`scripts/drape/workflow.py`) and are never regenerated from the web solver.
 
-Visual and interaction items (view modes, orbit and pinch, responsive under 900px, URL state
-round-trip, depth map upload) are not covered by any suite. If a change touches them, verify
+The UI gate covers sidebar rebuilds, sponsor navigation, reset buttons, mouse/touch camera
+synchronization and Fit. Other visual and interaction items, including view modes, responsive
+layout, URL round-trip and depth-map upload, still require browser verification. If a change touches them, verify
 in a browser and say that you did. A passing gate suite is not evidence the render is right:
 the voronoi-relief work in May 2026 passed all 22 assertions while being a visible regression.
 
@@ -222,3 +244,8 @@ VAR=$(grep '^KEY_NAME=' /Users/sawyer/Code/mesh-maker/.env | tail -1 | cut -d= -
 
 Never echo a value back. `npm run deploy` requires `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` in the environment and fails fast if either is missing.
+
+Count semantics are explicit in `src/numeric-domain.ts`, independent of nominal range increments.
+`configureRange`/`syncRange`/`readRangeValue` and URL imports share its normalization.
+Integer counts floor; cloth quads use nearest-even as required by the solver. Dimensions,
+angles and displayed SBP fields remain continuous even when their keyboard step is whole.

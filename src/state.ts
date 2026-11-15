@@ -1,22 +1,27 @@
+import { validateReliefProjectParams } from './relief-project';
+import { isFiniteNumeric, normalizeNumericValue, numericDomain } from './numeric-domain';
+import { decodeReliefLink, encodeReliefLink, MAX_RELIEF_LINK_BYTES } from './relief-link';
 import { MAX_CUT_DEPTH_IN, MAX_STOCK_THICKNESS_IN, MACHINE_TRAVEL_IN, type SbpStats } from './sbp/types';
 import type { ReliefMaster } from './relief-master';
 import { CNC_PRESETS, PROFILES } from './noise/presets';
 import { DRAPE_CONTROLS, DRAPE_PRESETS, DRAPE_STOCK_RANGE, MIN_DRAPE_BACKING_IN, snapCarveWidth, type DrapeSettings, type DrapeWindMode } from './drape-controls';
-import type { ReliefAttractorMode, ReliefBaseMode, ReliefPolarity, ReliefProfile, ReliefRadialMode } from './types';
+import type { ReliefAttractorMode, ReliefBaseMode, ReliefCrestClipStatus, ReliefPolarity, ReliefProfile, ReliefRadialMode, ReliefSiteSet } from './types';
 
 /** Every DRAPE slider (src/drape-controls.ts) is a MeshState key. */
 export interface MeshState extends DrapeSettings {
   mode: 'noise' | 'depthmap' | 'drape';
-  viewMode: 'solid' | 'wireframe' | 'both' | 'points';
-  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp';
+  viewMode: 'solid' | 'wireframe' | 'both' | 'points' | 'plan';
+  exportFormat: 'stl' | 'obj' | '3dm' | 'heightmap' | 'sbp' | 'dxf';
   // Noise params
-  noiseType: 'simplex' | 'perlin' | 'ridged' | 'fbm' | 'voronoi'
-    | 'value' | 'opensimplex2' | 'worley' | 'billow' | 'turbulence'
+  noiseType: 'simplex' | 'perlin' | 'ridged' | 'voronoi'
+    | 'value' | 'opensimplex2' | 'worley' | 'billow'
     | 'hybrid' | 'hetero' | 'domainwarp' | 'gabor' | 'wavelet'
     | 'voronoi-relief';
   frequency: number;
   amplitude: number;
-  noiseExp: number;
+  cellJitter: number;
+  cellMetric: 'euclidean' | 'manhattan' | 'chebyshev';
+  invert: boolean;
   peakExp: number;
   valleyExp: number;
   valleyFloor: number;
@@ -28,10 +33,10 @@ export interface MeshState extends DrapeSettings {
   distortion: number;
   warpFreq: number;
   warpCurl: number;
-  contrast: number;
-  sharpness: number;
   gaborAngle: number;
   gaborBandwidth: number;
+  reliefSites: ReliefSiteSet | null;
+  reliefRevision: number;
   // Voronoi-relief params (only used when noiseType === 'voronoi-relief')
   reliefCellSize: number;
   reliefJitter: number;
@@ -39,7 +44,6 @@ export interface MeshState extends DrapeSettings {
   reliefPolarity: ReliefPolarity;
   reliefProfile: ReliefProfile;
   reliefSeamDepth: number;
-  reliefSeamWidth: number;
   reliefAnisotropy: number;
   reliefAnisotropyAngle: number;
   reliefAttractorMode: ReliefAttractorMode;
@@ -95,8 +99,7 @@ export interface MeshState extends DrapeSettings {
   meshX: number;
   meshY: number;
   resolution: number;
-  smoothIter: number;
-  smoothStr: number;
+  smoothRadiusIn: number;
   baseThickness: number;
   // Depth map
   depthMap: HTMLImageElement | null;
@@ -112,7 +115,7 @@ export interface MeshState extends DrapeSettings {
   reliefPreviewErrorIn: number;
   dmHeightScale: number;
   dmOffset: number;
-  dmSmoothing: number;
+  dmSmoothRadiusIn: number;
   /** Normalized height at or below which the depth map is flattened to the floor (both depth
    *  modes); the rest is stretched to the full cut. 0 = off. */
   dmBackgroundCutoff: number;
@@ -160,6 +163,8 @@ export interface MeshState extends DrapeSettings {
   cols: number;
   rows: number;
   genTime: number;
+  reliefTruncatedFrom: number;
+  reliefCrestClipStatus: ReliefCrestClipStatus;
   sbpStats: SbpStats | null;
 }
 
@@ -170,9 +175,11 @@ export const DEFAULTS: MeshState = {
   noiseType: 'simplex',
   frequency: 0.1,
   amplitude: 0.50,
-  noiseExp: 0.5,
-  peakExp: 1.0,
-  valleyExp: 1.0,
+  cellJitter: 1,
+  cellMetric: 'euclidean',
+  invert: false,
+  peakExp: 0.5,
+  valleyExp: 0.5,
   valleyFloor: 0,
   offset: 0,
   seed: 0,
@@ -182,17 +189,16 @@ export const DEFAULTS: MeshState = {
   distortion: 0,
   warpFreq: 0.1,
   warpCurl: 0,
-  contrast: 1.0,
-  sharpness: 0,
   gaborAngle: 45,
   gaborBandwidth: 1.5,
+  reliefSites: null,
+  reliefRevision: 0,
   reliefCellSize: 1.5,
   reliefJitter: 0.7,
   reliefRelaxIterations: 1,
   reliefPolarity: 'domes',
   reliefProfile: 'hemisphere',
   reliefSeamDepth: 0.6,
-  reliefSeamWidth: 0.15,
   reliefAnisotropy: 0,
   reliefAnisotropyAngle: 0,
   reliefAttractorMode: 'none',
@@ -235,8 +241,7 @@ export const DEFAULTS: MeshState = {
   meshX: 36,
   meshY: 24,
   resolution: 400,
-  smoothIter: 0,
-  smoothStr: 0.5,
+  smoothRadiusIn: 0,
   baseThickness: 0.75,
   depthMap: null,
   depthMapName: '',
@@ -245,7 +250,7 @@ export const DEFAULTS: MeshState = {
   reliefPreviewErrorIn: 0,
   dmHeightScale: 1.0,
   dmOffset: -0.08,
-  dmSmoothing: 7,
+  dmSmoothRadiusIn: 0.13074926387539343,
   dmBackgroundCutoff: 0,
   // The gathered silk of the 2026-10-21 Blender study (tilt 25 deg, as the proof accepted on 2026-10-20).
   ...DRAPE_PRESETS.gathered.settings,
@@ -274,7 +279,7 @@ export const DEFAULTS: MeshState = {
   vertices: null,
   cols: 400,
   rows: 267,
-  genTime: 0,
+  genTime: 0, reliefTruncatedFrom: 0, reliefCrestClipStatus: 'none',
   sbpStats: null,
 };
 
@@ -300,11 +305,16 @@ export function reliefMasterActive(): boolean {
   return activeMaster() !== null;
 }
 
-/** Controls a relief master fixes: its size, stock and heights are the data, not settings. Grid
+/** Controls an imported Depth Map relief master fixes: its size, stock and heights are the data, not settings. Grid
  *  Resolution stays live because it only sets the preview density. */
 export const RELIEF_LOCKED_KEYS: ReadonlySet<string> = new Set([
-  'meshX', 'meshY', 'baseThickness', 'dmHeightScale', 'dmOffset', 'dmBackgroundCutoff', 'dmSmoothing',
+  'meshX', 'meshY', 'baseThickness', 'dmHeightScale', 'dmOffset', 'dmBackgroundCutoff', 'dmSmoothRadiusIn',
 ]);
+
+/** Imported source data is immutable; live Drape controls remap their generated master. */
+export function controlIsReadOnly(key: string): boolean {
+  return STATE.mode === 'depthmap' && STATE.reliefMaster !== null && RELIEF_LOCKED_KEYS.has(key);
+}
 
 /** NOISE's own board, kept while another tab (DEPTH MAP, a relief master, DRAPE) takes over the size
  *  controls: it shares meshX, meshY, resolution and baseThickness with DEPTH MAP, so leaving NOISE
@@ -349,6 +359,7 @@ const ENUM_VALUES: {
   viewMode: Record<MeshState['viewMode'], true>;
   viewMaterial: Record<MeshState['viewMaterial'], true>;
   drapeWindMode: Record<DrapeWindMode, true>;
+  cellMetric: Record<MeshState['cellMetric'], true>;
   reliefPolarity: Record<ReliefPolarity, true>;
   reliefProfile: Record<ReliefProfile, true>;
   reliefAttractorMode: Record<ReliefAttractorMode, true>;
@@ -357,13 +368,14 @@ const ENUM_VALUES: {
 } = {
   mode: { noise: true, depthmap: true, drape: true },
   noiseType: {
-    simplex: true, perlin: true, ridged: true, fbm: true, voronoi: true, value: true, opensimplex2: true,
-    worley: true, billow: true, turbulence: true, hybrid: true, hetero: true, domainwarp: true,
+    simplex: true, perlin: true, ridged: true, voronoi: true, value: true, opensimplex2: true,
+    worley: true, billow: true, hybrid: true, hetero: true, domainwarp: true,
     gabor: true, wavelet: true, 'voronoi-relief': true,
   },
-  viewMode: { solid: true, wireframe: true, both: true, points: true },
+  viewMode: { solid: true, wireframe: true, both: true, points: true, plan: true },
   viewMaterial: { elevation: true, neutral: true },
   drapeWindMode: { off: true, wind: true, pressure: true },
+  cellMetric: { euclidean: true, manhattan: true, chebyshev: true },
   reliefPolarity: { pockets: true, domes: true },
   reliefProfile: { hemisphere: true, cosine: true, parabolic: true },
   reliefAttractorMode: { none: true, vertical: true, horizontal: true, radial: true, point: true },
@@ -372,11 +384,11 @@ const ENUM_VALUES: {
 };
 
 const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
-  'mode', 'noiseType', 'frequency', 'amplitude', 'noiseExp', 'peakExp', 'valleyExp',
+  'mode', 'noiseType', 'frequency', 'amplitude', 'cellJitter', 'cellMetric', 'invert', 'peakExp', 'valleyExp',
   'valleyFloor', 'offset', 'seed', 'octaves', 'persistence', 'lacunarity', 'distortion',
-  'warpFreq', 'warpCurl', 'contrast', 'sharpness', 'gaborAngle', 'gaborBandwidth',
+  'warpFreq', 'warpCurl', 'gaborAngle', 'gaborBandwidth',
   'reliefCellSize', 'reliefJitter', 'reliefRelaxIterations', 'reliefPolarity', 'reliefProfile',
-  'reliefSeamDepth', 'reliefSeamWidth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
+  'reliefSeamDepth', 'reliefAnisotropy', 'reliefAnisotropyAngle',
   'reliefAttractorMode', 'reliefAttractorX', 'reliefAttractorY', 'reliefAttractorRadius',
   'reliefAttractorFalloff', 'reliefDensityStrength', 'reliefIntensityStrength',
   'reliefTransitionSoftness', 'reliefBaseMode',
@@ -390,15 +402,22 @@ const URL_SERIALIZABLE_KEYS: (keyof MeshState)[] = [
   'reliefRadialFocus2X', 'reliefRadialFocus2Y', 'reliefRadialFocus3X', 'reliefRadialFocus3Y',
   'reliefRadialStrength', 'reliefRadialFalloff', 'reliefRadialGrow', 'reliefRadialWarp',
   'reliefRadialMode',
-  'meshX', 'meshY', 'resolution', 'smoothIter', 'smoothStr',
-  'baseThickness', 'dmHeightScale', 'dmOffset', 'dmSmoothing', 'dmBackgroundCutoff',
+  'meshX', 'meshY', 'resolution', 'smoothRadiusIn',
+  'baseThickness', 'dmHeightScale', 'dmOffset', 'dmSmoothRadiusIn', 'dmBackgroundCutoff',
   ...DRAPE_CONTROLS.map(c => c.key), 'drapeWindMode', 'drapeStock', 'drapeCarveWidth', 'watertight',
   'viewMode', 'viewMaterial', 'activePreset', 'activeProfile',
 ];
 
 // Generation and preset semantics changed. Incompatible links reset explicitly.
-export const CURRENT_PAYLOAD_VERSION = 17;
+export const CURRENT_PAYLOAD_VERSION = 24;
 let outdatedLinkReset = false;
+let invalidCellLink = false;
+
+export function consumeInvalidCellLink(): boolean {
+  const invalid = invalidCellLink;
+  invalidCellLink = false;
+  return invalid;
+}
 
 /** Read and clear the reset notice from the latest deserialize operation. */
 export function consumeOutdatedLinkReset(): boolean {
@@ -408,15 +427,23 @@ export function consumeOutdatedLinkReset(): boolean {
 }
 
 export function serializeConfig(): string {
+  const frozen = STATE.mode === 'noise' && STATE.noiseType === 'voronoi-relief' && STATE.reliefSites !== null;
   const diff: Record<string, unknown> = { _v: CURRENT_PAYLOAD_VERSION };
   for (const key of URL_SERIALIZABLE_KEYS) {
     if (STATE[key] !== DEFAULTS[key]) {
       diff[key] = STATE[key];
     }
   }
+  if (frozen) {
+    for (const [key, value] of Object.entries(validateReliefProjectParams(STATE))) {
+      if (!Object.is(value, DEFAULTS[key as keyof MeshState])) diff[key] = value;
+      else delete diff[key];
+    }
+    diff._sites = encodeReliefLink(STATE.reliefSites!, STATE.meshX, STATE.meshY);
+  }
   // Only _v present means no diffs -- return empty (default config)
   if (Object.keys(diff).length === 1) return '';
-  return btoa(JSON.stringify(diff))
+  return btoa(JSON.stringify(diff, frozen ? (_key, value: unknown) => Object.is(value, -0) ? '-0' : value : undefined))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
@@ -496,8 +523,10 @@ function extractBase64UrlBlob(input: string): string | null {
 
 export function deserializeConfig(input: URLSearchParams | Location | string): Partial<MeshState> {
   outdatedLinkReset = false;
+  invalidCellLink = false;
   const encoded = findEncodedPayload(input);
   if (!encoded) return {};
+  if (encoded.length > MAX_RELIEF_LINK_BYTES) { invalidCellLink = true; return {}; }
   try {
     const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
     const json = atob(padded);
@@ -506,40 +535,49 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
 
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const payloadVersion = parsed._v ?? 0;
-    if (!Number.isInteger(payloadVersion) || payloadVersion < 0) return {};
+    if (!Number.isInteger(payloadVersion) || payloadVersion < 0) {
+      invalidCellLink = Object.prototype.hasOwnProperty.call(parsed, '_sites');
+      return {};
+    }
     if (payloadVersion < CURRENT_PAYLOAD_VERSION) {
       outdatedLinkReset = true;
       return {};
     }
-    if (payloadVersion !== CURRENT_PAYLOAD_VERSION) return {};
+    if (payloadVersion !== CURRENT_PAYLOAD_VERSION) {
+      invalidCellLink = Object.prototype.hasOwnProperty.call(parsed, '_sites');
+      return {};
+    }
 
+    let frozenParams: ReturnType<typeof validateReliefProjectParams> | null = null;
+    if (Object.prototype.hasOwnProperty.call(parsed, '_sites')) {
+      try {
+        if (('mode' in parsed ? parsed.mode : DEFAULTS.mode) !== 'noise') throw new Error('Cell links require Noise mode');
+        frozenParams = validateReliefProjectParams({...DEFAULTS, ...parsed, reliefSites: null, reliefRevision: 0});
+      } catch { invalidCellLink = true; return {}; }
+    }
     for (const key of URL_SERIALIZABLE_KEYS) {
       if (key in parsed) {
-        (result as Record<string, unknown>)[key] = parsed[key];
+        const value: unknown = parsed[key];
+        if (typeof DEFAULTS[key] === 'number' && !isFiniteNumeric(value)) continue;
+        (result as Record<string, unknown>)[key] = value;
       }
     }
     // Clamp untrusted numeric ranges from URL payloads. Sliders enforce these in the UI,
     // but payloads can come from any source (manual URL edit, third-party share). Without
     // these guards, a crafted link can spin the browser:
-    //   - reliefRelaxIterations: each pass scans every sample × every site (O(rows·cols·sites))
-    //   - reliefDensityStrength: multiplies the site count itself, then both Pass 1+2 scan all sites
+    //   - reliefRelaxIterations repeats relaxation over the bounded site population
+    //   - reliefDensityStrength increases candidate population before representative selection
     //
-    // Values arrive as `unknown` from JSON.parse — accept anything coercible to a finite
-    // number (including numeric strings like "1000" that a crafted payload could use to
-    // bypass a strict `typeof === 'number'` check) but discard non-finite junk so it falls
-    // back to the field's default rather than poisoning STATE.
-    const toFiniteNumber = (v: unknown): number | null => {
-      const n = typeof v === 'number' ? v : Number(v);
-      return Number.isFinite(n) ? n : null;
-    };
+    // The allowlist boundary admits only actual finite numbers for numeric STATE fields.
     const clampField = (key: keyof MeshState, lo: number, hi: number, integer = false): void => {
-      const n = toFiniteNumber(result[key]);
-      if (n === null) {
+      const n = result[key];
+      if (!isFiniteNumeric(n)) {
         delete (result as Record<string, unknown>)[key];
         return;
       }
-      const v = integer ? Math.floor(n) : n;
-      (result as Record<string, unknown>)[key] = Math.max(lo, Math.min(hi, v));
+      const domain = numericDomain(key);
+      const v = integer && !domain ? Math.floor(n) : n;
+      (result as Record<string, unknown>)[key] = normalizeNumericValue(v, lo, hi, domain);
     };
     // Validate untrusted enum strings — drop anything not in the allowed set so it falls
     // back to DEFAULTS instead of feeding a junk string into the sampler/UI.
@@ -558,6 +596,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     };
     clampEnum('mode', ENUM_VALUES.mode);
     clampEnum('noiseType', ENUM_VALUES.noiseType);
+    clampEnum('cellMetric', ENUM_VALUES.cellMetric);
+    if ('cellJitter' in result) clampField('cellJitter', 0, 1);
     clampEnum('viewMode', ENUM_VALUES.viewMode);
     clampEnum('viewMaterial', ENUM_VALUES.viewMaterial);
     clampEnum('drapeWindMode', ENUM_VALUES.drapeWindMode);
@@ -568,15 +608,17 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     clampEnum('reliefRadialMode', ENUM_VALUES.reliefRadialMode);
     clampEnum('activePreset', CNC_PRESETS, true);
     clampEnum('activeProfile', PROFILES, true);
-    // Booleans must be booleans: "false" is a truthy string, and an array or number would flow
-    // into watertight's floor logic the same way. watertight is the only boolean link key.
-    if ('watertight' in result && typeof result.watertight !== 'boolean') {
-      delete (result as Record<string, unknown>).watertight;
+    for (const key of ['watertight', 'invert'] as const) {
+      if (key in result && typeof result[key] !== 'boolean') delete result[key];
     }
     // distortion drives the relief space-warp amplitude AND the radius-field padding —
     // an unbounded payload value explodes the padded coarse-grid allocation.
     if ('distortion' in result) clampField('distortion', 0, 2);
     if ('warpFreq' in result) clampField('warpFreq', 0.02, 0.5);
+    if ('reliefCellSize' in result) clampField('reliefCellSize', 0.4, 6);
+    if ('reliefJitter' in result) clampField('reliefJitter', 0, 1);
+    if ('reliefSeamDepth' in result) clampField('reliefSeamDepth', 0.05, 1);
+    if ('reliefAnisotropyAngle' in result) clampField('reliefAnisotropyAngle', 0, 180);
     if ('reliefRelaxIterations' in result) clampField('reliefRelaxIterations', 0, 2, true);
     if ('reliefDensityStrength' in result)  clampField('reliefDensityStrength',  0, 2);
     // anisotropy enters the metric scale `1 + anisotropy·1.5`; an unbounded value degenerates
@@ -615,11 +657,14 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefJunctionLift' in result) clampField('reliefJunctionLift', 0, 1);
     if ('reliefCrestVariation' in result) clampField('reliefCrestVariation', 0, 1);
     // Ranges match the sliders.
+    if ('smoothRadiusIn' in result) clampField('smoothRadiusIn', 0, 1);
+    if ('dmSmoothRadiusIn' in result) clampField('dmSmoothRadiusIn', 0, 1);
     if ('dmBackgroundCutoff' in result) clampField('dmBackgroundCutoff', 0, 0.9);
     // The board, to its sliders' ranges (a link with meshX 200 used to keep a 200 in board).
     if ('meshX' in result) clampField('meshX', 1, MACHINE_TRAVEL_IN.x);
     if ('meshY' in result) clampField('meshY', 1, MACHINE_TRAVEL_IN.y);
-    if ('resolution' in result) clampField('resolution', 16, 1024, true);
+    if ('resolution' in result) clampField('resolution', 16, 1024);
+    if ('octaves' in result) clampField('octaves', 1, 8);
     if ('baseThickness' in result) clampField('baseThickness', 0.25, MAX_STOCK_THICKNESS_IN);
     const stock = typeof result.baseThickness === 'number' ? result.baseThickness : DEFAULTS.baseThickness;
     // The shared stock belongs to the active mode. Keep other modes' requests when sharing a link.
@@ -632,8 +677,8 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('drapeStock' in result) clampField('drapeStock', DRAPE_STOCK_RANGE[0], DRAPE_STOCK_RANGE[1]);
     // On the sliders' grid too, so the labels show the exact carve (an off-grid width drifted on a label click).
     if ('drapeCarveWidth' in result) {
-      const n = toFiniteNumber(result.drapeCarveWidth);
-      if (n === null) delete (result as Record<string, unknown>).drapeCarveWidth;
+      const n = result.drapeCarveWidth;
+      if (!isFiniteNumeric(n)) delete (result as Record<string, unknown>).drapeCarveWidth;
       else (result as Record<string, unknown>).drapeCarveWidth = snapCarveWidth(n);
     }
     // Relief Depth must leave the minimum backing in the link's material (the slider is capped the same
@@ -655,7 +700,7 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     // a crafted payload could pair a positive reliefRadialFociCount with NaN/Infinity in a
     // focus X/Y, which would propagate through sampleReliefParamsFromState → radialFoci →
     // the sampler's per-pixel metric and either zero the site count (flat render) or NaN-poison
-    // every output pixel. Clamping to [0, 1] (with non-finite values dropped by toFiniteNumber)
+    // every output pixel. Clamping to [0, 1] (with invalid numeric values dropped by the shared input boundary)
     // closes that path before the value reaches STATE.
     if ('reliefRadialFocus1X' in result) clampField('reliefRadialFocus1X', 0, 1);
     if ('reliefRadialFocus1Y' in result) clampField('reliefRadialFocus1Y', 0, 1);
@@ -663,6 +708,16 @@ export function deserializeConfig(input: URLSearchParams | Location | string): P
     if ('reliefRadialFocus2Y' in result) clampField('reliefRadialFocus2Y', 0, 1);
     if ('reliefRadialFocus3X' in result) clampField('reliefRadialFocus3X', 0, 1);
     if ('reliefRadialFocus3Y' in result) clampField('reliefRadialFocus3Y', 0, 1);
+    if (Object.prototype.hasOwnProperty.call(parsed, '_sites')) {
+      try {
+        Object.assign(result, frozenParams);
+        result.reliefSites = decodeReliefLink(parsed._sites, result.meshX ?? DEFAULTS.meshX, result.meshY ?? DEFAULTS.meshY);
+        result.reliefRevision = 1;
+      } catch {
+        invalidCellLink = true;
+        return {};
+      }
+    }
     return result;
   } catch {
     return {};

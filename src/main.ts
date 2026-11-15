@@ -1,8 +1,11 @@
-import { STATE, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
+import { setupCellEditor } from './relief-editor-ui';
+import { setupCellOverlay } from './relief-editor-overlay';
+import { setupMobileLayout } from './mobile-layout';
+import { STATE, consumeInvalidCellLink, consumeOutdatedLinkReset, deserializeConfig, rememberLinkBoard, setDemoDepthMap } from './state';
 import { buildSidebar, showDemoDepthMap } from './ui';
 import { setupTabs, setupToolbar, setupResize, updateExportControls } from './toolbar';
 import { setupInteraction } from './interaction';
-import { setupSponsorModal } from './sponsor';
+import { setupSponsors } from './sponsor';
 import { generateMesh } from './mesh';
 import { setCameraFromState } from './render';
 import { showToast } from './toast';
@@ -37,6 +40,7 @@ function init(): void {
   }
 
   if (consumeOutdatedLinkReset()) showToast('This link was made with an older MeshCraft. Settings were reset.', 8000);
+  if (consumeInvalidCellLink()) showToast('This cell link is invalid. Open a saved project or request a new link.', 8000);
   rememberLinkBoard(urlConfig);
   // Sync body class with potentially URL-overridden mode
   document.body.className = 'mode-' + STATE.mode;
@@ -49,13 +53,16 @@ function init(): void {
   document.querySelectorAll('.format-btn').forEach(btn =>
     btn.classList.toggle('active', (btn as HTMLElement).dataset.fmt === STATE.exportFormat));
 
+  setupCellEditor();
   buildSidebar();
+  setupCellOverlay();
   setupTabs();
   setupToolbar();
   updateExportControls();
   setupInteraction();
   setupResize();
-  setupSponsorModal();
+  setupSponsors();
+  setupMobileLayout();
   generateMesh();
   preloadDemoDepthMap();
   // A page opened on DRAPE: load the figure and point the camera straight at the carve.
@@ -63,3 +70,8 @@ function init(): void {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// Following another cell link in this tab must initialize its complete document too.
+window.addEventListener('hashchange', event => {
+  if (new URL(event.oldURL).hash.startsWith('#c=') || window.location.hash.startsWith('#c=')) window.location.reload();
+});

@@ -1,153 +1,52 @@
 import { MAX_CUT_DEPTH_IN } from './sbp/types';
 import { STATE, activeMaster } from './state';
 import { previewErrorIn, reliefPreviewGrid } from './relief-master';
-import { createNoiseGen, SimplexNoiseGen } from './noise/generators';
-import { sampleReliefParamsFromState } from './noise/voronoi-relief';
-import type { VoronoiReliefGen } from './noise/voronoi-relief';
-import type { FBMGenerator, NoiseConfig, NoiseGridParams } from './types';
-import { renderViewport, setCameraFromState } from './render';
+import { buildNoiseSurface, noiseSurfaceParams, type NoiseSurface } from './noise/surface';
+import { noiseGridShape } from './noise/grid-shape';
+import { noiseGeneration, NOISE_CHANGED } from './noise/controller';
+import type { GenerationQuality } from './noise/messages';
+import { showToast } from './toast';
+import { renderViewport, setCameraFromState, updateDimsOverlay } from './render';
 import { updateStats } from './stats';
-import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, gridMinMax, normalizeGrid, sampleLumaGrid, weightedSmooth } from './geometry';
+import { MIN_WATERTIGHT_THICKNESS, applyBackgroundCutoff, normalizeGrid, sampleLumaGrid, gaussianSmooth } from './geometry';
 
 function surfaceFloor(): number {
   return Math.max(STATE.watertight ? MIN_WATERTIGHT_THICKNESS : 0, STATE.baseThickness - MAX_CUT_DEPTH_IN);
 }
 
-/** Sample a raw noise grid with domain warping + FBM + post-processing.
- *  Returns values in noise-native range (no CNC normalization, no smoothing). */
-function sampleNoiseGrid(p: NoiseGridParams): number[][] {
-  const { cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp,
-          valleyFloor, contrast, sharpness, octaves, persistence, lacunarity,
-          distortion, warpFreq, warpCurl, gen, warpGen } = p;
-
-  // Grid-aware generators bypass the per-pixel loop. Domain-warp + discrete cells produces
-  // visible tearing, so we skip the warp here and let the relief sampler handle anisotropy.
-  if (gen.kind === 'voronoi-relief') {
-    const reliefParams = sampleReliefParamsFromState(cols, rows, meshX, meshY, STATE.seed, STATE);
-    return (gen as VoronoiReliefGen).sampleGrid(reliefParams);
+/** Synchronous Node adapter, using exactly the same builder as the browser worker. */
+export function generateNoiseMesh(): void {
+  const params = noiseSurfaceParams(STATE);
+  noiseGeneration.invalidate(params);
+  try {
+    const surface = buildNoiseSurface(params);
+    applyNoiseSurface(surface);
+    noiseGeneration.acceptSync(params, surface);
+  } catch (error: unknown) {
+    noiseGeneration.failSync(params, error instanceof Error ? error.message : String(error));
+    throw error;
   }
-
-  const grid: number[][] = [];
-  for (let j = 0; j < rows; j++) {
-    grid[j] = [];
-    for (let i = 0; i < cols; i++) {
-      const u = i / (cols - 1), v = j / (rows - 1);
-      let x = u * meshX, y = v * meshY;
-
-      // Domain warp with convergent/curl blend.
-      // Convergent warp (curl=0) displaces toward noise extrema -- organic but creates
-      // donut-shaped folds at high amplitudes. Curl warp (curl=1) rotates the gradient
-      // 90 degrees producing divergence-free flow -- no folds, no donuts.
-      // Convergent x cascades into y lookup for asymmetric patterns.
-      if (warpGen && distortion > 0) {
-        const wf = warpFreq;
-        const wAmp = distortion * 5; // empirically tuned for visible warp at slider range [0,1]
-        const sx = x * wf, sy = y * wf;
-
-        // Curl component: numerical gradient of noise, rotated 90 degrees
-        let curlDx = 0, curlDy = 0;
-        if (warpCurl > 0) {
-          const eps = 0.01;
-          const dndx = (warpGen.noise(sx + eps, sy) - warpGen.noise(sx - eps, sy)) / (2 * eps);
-          const dndy = (warpGen.noise(sx, sy + eps) - warpGen.noise(sx, sy - eps)) / (2 * eps);
-          curlDx = dndy;
-          curlDy = -dndx;
-        }
-
-        // Blend convergent + curl. Skip convergent samples when full curl.
-        const convW = 1 - warpCurl;
-        if (convW > 0) {
-          const convDx = warpGen.noise(sx, sy);
-          x += (convDx * convW + curlDx * warpCurl) * wAmp;
-          const convDy = warpGen.noise((x + 100) * wf, (y + 100) * wf);
-          y += (convDy * convW + curlDy * warpCurl) * wAmp;
-        } else {
-          x += curlDx * wAmp;
-          y += curlDy * wAmp;
-        }
-      }
-
-      let n: number;
-      if ('fbm' in gen) {
-        n = (gen as FBMGenerator).fbm(x * frequency, y * frequency, octaves, persistence, lacunarity);
-      } else if (octaves > 1) {
-        n = 0; let a = 1, freq = 1, max = 0;
-        for (let o = 0; o < octaves; o++) {
-          n += gen.noise(x * frequency * freq, y * frequency * freq) * a;
-          max += a; a *= persistence; freq *= lacunarity;
-        }
-        n /= max;
-      } else {
-        n = gen.noise(x * frequency, y * frequency);
-      }
-
-      n *= contrast;
-      if (sharpness > 0) {
-        const s = n >= 0 ? 1 : -1;
-        n = s * Math.pow(Math.abs(n), 1 + sharpness);
-      }
-      const sgn = n >= 0 ? 1 : -1;
-      n = sgn * Math.pow(Math.abs(n), noiseExp);
-      if (n >= 0) n = Math.pow(n, peakExp);
-      else n = -Math.pow(-n, valleyExp);
-      if (valleyFloor > 0 && n < 0) n = n * (1 - valleyFloor);
-
-      grid[j][i] = n;
-    }
-  }
-  return grid;
 }
 
-export function generateNoiseMesh(): void {
-  const t0 = performance.now();
-  const { frequency, amplitude, noiseExp, peakExp, valleyExp, valleyFloor, offset, seed, octaves, persistence, lacunarity,
-          distortion, warpFreq, warpCurl, contrast, sharpness, meshX, meshY, resolution, smoothIter, smoothStr, noiseType, baseThickness } = STATE;
-
-  const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
-  STATE.cols = cols; STATE.rows = rows;
-
-  const noiseConfig: NoiseConfig = { gaborAngle: STATE.gaborAngle, gaborBandwidth: STATE.gaborBandwidth };
-  const gen = createNoiseGen(noiseType, seed, noiseConfig);
-  const warpGen = distortion > 0 ? (noiseType === 'simplex' ? gen : new SimplexNoiseGen(seed)) : null;
-
-  const verts = sampleNoiseGrid({
-    cols, rows, meshX, meshY, frequency, noiseExp, peakExp, valleyExp, valleyFloor,
-    contrast, sharpness, octaves, persistence, lacunarity, distortion, warpFreq, warpCurl,
-    gen, warpGen,
-  });
-
-  const finalVerts = smoothIter > 0 ? weightedSmooth(verts, rows, cols, smoothIter, smoothStr) : verts;
-
-  // CNC z-model: z=0 is machine bed, stock from 0 to baseThickness.
-  // amplitude = total cut depth (peak to valley), clamped to stock thickness.
-  // Peaks sit at z=baseThickness (stock top), valleys at z=baseThickness-cutDepth.
-  // Floor to 0.01" when watertight to prevent degenerate enclosure triangles: both the stock
-  // and every surface vertex (a vertex at z=0 coincides with the bottom face the exporter adds).
-  const bt = STATE.watertight ? Math.max(MIN_WATERTIGHT_THICKNESS, baseThickness) : baseThickness;
-  const cutDepth = Math.min(amplitude, bt, MAX_CUT_DEPTH_IN);
-  const floorZ = surfaceFloor();
-  const [nMin, nMax] = gridMinMax(finalVerts, rows, cols);
-  const range = nMax - nMin || 1;
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++) {
-      const t = (finalVerts[j][i] - nMin) / range;
-      // Clamp to material boundaries: hard crop at stock top and machine bed
-      const raw = (bt - cutDepth) + t * cutDepth + offset;
-      finalVerts[j][i] = Math.max(floorZ, Math.min(bt, raw));
-    }
-
-  STATE.vertices = finalVerts;
-  STATE.genTime = performance.now() - t0;
+function applyNoiseSurface(surface: NoiseSurface): void {
+  STATE.vertices = surface.vertices;
+  STATE.cols = surface.cols;
+  STATE.rows = surface.rows;
+  STATE.genTime = surface.genTime;
+  STATE.reliefTruncatedFrom = surface.truncatedFrom;
+  STATE.reliefCrestClipStatus = surface.crestClipStatus;
 }
 
 export function generateDepthMapMesh(): void {
+  STATE.reliefTruncatedFrom = 0;
+  STATE.reliefCrestClipStatus = 'none';
   const t0 = performance.now();
-  const { depthMap, dmHeightScale, dmOffset, dmSmoothing, meshX, meshY, resolution, baseThickness } = STATE;
+  const { depthMap, dmHeightScale, dmOffset, dmSmoothRadiusIn, meshX, meshY, resolution, baseThickness } = STATE;
 
   if (activeMaster()) { generateReliefMasterPreview(); return; }
   if (!depthMap) { STATE.vertices = null; return; }
 
-  const cols = Math.max(2, resolution), rows = Math.max(4, Math.round(cols * (meshY / meshX)));
+  const {cols, rows} = noiseGridShape(resolution, meshX, meshY);
   STATE.cols = cols; STATE.rows = rows;
 
   const tmpCanvas = document.createElement('canvas');
@@ -166,7 +65,7 @@ export function generateDepthMapMesh(): void {
   normalizeGrid(sampled, rows, cols);
   applyBackgroundCutoff(sampled, rows, cols, STATE.dmBackgroundCutoff);
 
-  const finalVerts = dmSmoothing > 0 ? weightedSmooth(sampled, rows, cols, dmSmoothing, 0.6) : sampled;
+  const finalVerts = gaussianSmooth(sampled, rows, cols, meshX, meshY, dmSmoothRadiusIn);
   // Same flat-range rule as the first normalization (geometry.ts), not a second copy of it.
   normalizeGrid(finalVerts, rows, cols);
   for (let j = 0; j < rows; j++)
@@ -185,6 +84,8 @@ export function generateDepthMapMesh(): void {
  *  own); exports read the master itself (export-surface.ts getExportSurface), so preview density
  *  never changes exported geometry. */
 function generateReliefMasterPreview(): void {
+  STATE.reliefTruncatedFrom = 0;
+  STATE.reliefCrestClipStatus = 'none';
   const t0 = performance.now();
   const m = activeMaster()!;
   STATE.meshX = m.widthIn;
@@ -198,45 +99,98 @@ function generateReliefMasterPreview(): void {
   STATE.genTime = performance.now() - t0;
 }
 
-export function generateMesh(): void {
-  const overlay = document.getElementById('genOverlay')!;
-  overlay.classList.add('visible');
+function setGenerationBusy(busy: boolean): void {
+  if (typeof document === 'undefined') return;
+  document.getElementById('genOverlay')?.classList.toggle('visible', busy);
+  updateStats();
+  updateDimsOverlay();
+}
 
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      if (STATE.mode === 'noise') {
-        generateNoiseMesh();
-      } else if (STATE.mode === 'depthmap') {
-        generateDepthMapMesh();
-      } else if (STATE.drapeMaster) {
-        // DRAPE: the figure (bare or draped) is a relief master built by src/drape-ui.ts.
-        generateReliefMasterPreview();
-      } else {
-        STATE.vertices = null;   // the figure is still loading
-      }
+noiseGeneration.includeWire = () => STATE.viewMode === 'wireframe' || STATE.viewMode === 'both';
+noiseGeneration.onBusy = setGenerationBusy;
+noiseGeneration.onError = reason => showToast(reason, 8000);
+noiseGeneration.onCommit = surface => {
+  applyNoiseSurface(surface);
+  STATE.sbpStats = null;
+  renderViewport(surface.renderBuffers);
+  updateStats();
+};
+
+let frameRevision = 0;
+let genTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearGenerationTimer(): void {
+  if (genTimer !== null) { clearTimeout(genTimer); genTimer = null; }
+}
+
+/** Noise starts in its worker immediately; other modes retain their existing preview path. */
+export function generateMesh(): void { noiseGeneration.endGesture(); requestMesh('full'); }
+
+export function beginNoiseGesture(key: string): void {
+  if (STATE.mode === 'noise' && !VIEW_ONLY_KEYS.has(key)) noiseGeneration.beginGesture();
+}
+export function endNoiseGesture(key: string): void {
+  if (STATE.mode === 'noise' && !VIEW_ONLY_KEYS.has(key)) noiseGeneration.endGesture();
+}
+
+function requestMesh(quality: GenerationQuality): void {
+  clearGenerationTimer();
+  const revision = ++frameRevision;
+  if (STATE.mode === 'noise') {
+    void noiseGeneration.start(noiseSurfaceParams(STATE), quality);
+    return;
+  }
+  // Until the two-frame image/figure preview lands, an old mode's ordinary grid is not a source.
+  // Active relief masters remain independently exportable through getExportSurface.
+  STATE.vertices = null;
+  noiseGeneration.cancel();
+  setGenerationBusy(true);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (revision !== frameRevision) return;
+    try {
+      if (STATE.mode === 'depthmap') generateDepthMapMesh();
+      else if (STATE.mode === 'drape' && STATE.drapeMaster) generateReliefMasterPreview();
+      else STATE.vertices = null;
       STATE.sbpStats = null;
       renderViewport();
       updateStats();
-      overlay.classList.remove('visible');
-    });
-  });
+    } catch (error: unknown) {
+      STATE.vertices = null;
+      renderViewport();
+      showToast(`Generation failed: ${error instanceof Error ? error.message : String(error)}`, 8000);
+    } finally {
+      if (revision === frameRevision) setGenerationBusy(false);
+    }
+  }));
 }
 
+/** A waiter captures a generation revision. Edits or mode changes refuse that export. */
+export async function ensureFullNoiseSurface(): Promise<string | null> {
+  if (STATE.mode !== 'noise') return null;
+  const params = noiseSurfaceParams(STATE);
+  const key = JSON.stringify(params);
+  clearGenerationTimer();
+  const outcome = await noiseGeneration.start(params, 'full');
+  if ('reason' in outcome) return outcome.reason;
+  if (STATE.mode !== 'noise' || !noiseGeneration.isRevisionCurrent(outcome.revision)
+    || JSON.stringify(noiseSurfaceParams(STATE)) !== key) return NOISE_CHANGED;
+  return noiseGeneration.exportBlock(params);
+}
 
-// Debounced generation — moved here to avoid circular dependency with stats.ts
-const VIEW_ONLY_KEYS = new Set(['orbit','tilt','roll','zoom']);
-let _genTimer: ReturnType<typeof setTimeout> | null = null;
-let _needsMeshRegen = false;
-
-export function debouncedGenerate(key: string): void {
-  if (!VIEW_ONLY_KEYS.has(key)) _needsMeshRegen = true;
-  if (_genTimer) clearTimeout(_genTimer);
-  _genTimer = setTimeout(() => {
-    if (_needsMeshRegen) {
-      _needsMeshRegen = false;
-      generateMesh();
-    } else {
-      setCameraFromState();
-    }
-  }, 60);
+// View changes must not cancel a pending mesh debounce or trigger new generation.
+const VIEW_ONLY_KEYS = new Set(['orbit', 'tilt', 'roll', 'zoom', 'panX', 'panY', 'viewMode', 'viewMaterial']);
+export function debouncedGenerate(key: string, quality: GenerationQuality = 'full'): void {
+  if (VIEW_ONLY_KEYS.has(key)) { setCameraFromState(); return; }
+  if (STATE.mode === 'noise') {
+    noiseGeneration.invalidate(noiseSurfaceParams(STATE));
+    updateStats();
+    updateDimsOverlay();
+  } else if (!activeMaster()) {
+    STATE.vertices = null;
+    updateStats();
+    updateDimsOverlay();
+  }
+  clearGenerationTimer();
+  if (quality === 'preview' && STATE.mode === 'noise') { requestMesh(quality); return; }
+  genTimer = setTimeout(() => { genTimer = null; requestMesh(quality); }, 60);
 }

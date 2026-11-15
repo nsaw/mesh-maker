@@ -67,7 +67,9 @@ try:
     a = "checkpoint: save path = " + _sp
 
     # ── Embedded component scripts ─────────────────────────────────────────
-    NOISE_SCRIPT = """# GHPython component script — MeshCraft | Noise
+    NOISE_SCRIPT = """#! python 2
+# -*- coding: utf-8 -*-
+# GHPython component script — MeshCraft | Noise
 # Runtime: IronPython 2.7 (Rhino 7)
 #
 # Inputs:  noise_type, seed, frequency, octaves, persistence, lacunarity,
@@ -103,13 +105,13 @@ def _relief_default(name, default):
         return default
     return default if v is None else v
 
+relief_cut_depth_in        = _relief_default('relief_cut_depth_in',        0.65)
 relief_cell_size           = _relief_default('relief_cell_size',           1.5)
 relief_jitter              = _relief_default('relief_jitter',              0.7)
 relief_relax_iter          = _relief_default('relief_relax_iter',          1)
 relief_polarity            = _relief_default('relief_polarity',            'domes')        # 'domes' | 'pockets'
 relief_profile             = _relief_default('relief_profile',             'hemisphere')   # 'hemisphere' | 'cosine' | 'parabolic'
 relief_seam_depth          = _relief_default('relief_seam_depth',          0.6)
-relief_seam_width          = _relief_default('relief_seam_width',          0.15)
 relief_anisotropy          = _relief_default('relief_anisotropy',          0.0)
 relief_anisotropy_angle    = _relief_default('relief_anisotropy_angle',    0.0)
 relief_attractor_mode      = _relief_default('relief_attractor_mode',      'none')         # 'none'|'vertical'|'horizontal'|'radial'|'point'
@@ -169,11 +171,366 @@ mesh_y      = float(mesh_y)
 
 # ── Noise classes ─────────────────────────────────────────────────────────────
 
+class _Mulberry32(object):
+    def __init__(self, seed): self.state = int(seed) & 0xffffffff
+    def next(self):
+        self.state = (self.state + 0x6D2B79F5) & 0xffffffff
+        r = self.state
+        r = ((r ^ (r >> 15)) * (r | 1)) & 0xffffffff
+        r ^= (r + (((r ^ (r >> 7)) * (r | 61)) & 0xffffffff)) & 0xffffffff
+        return float((r ^ (r >> 14)) & 0xffffffff) / 4294967296.0
+
+# BEGIN SHARED SITE GRID
+class _SiteGrid(object):
+    # Squared differences stay finite within this supported coordinate range.
+    MAX_COORDINATE = 1e150
+    EPSILON = 2.220446049250313e-16
+
+    @staticmethod
+    def _dyadic(value):
+        if value != value or abs(value) == float('inf'):
+            raise ValueError('Metric comparison requires finite coordinates')
+        if value == 0.0:
+            return (0, 0)
+        mantissa, exponent = math.frexp(value)
+        return (int(math.ldexp(mantissa, 53)), exponent - 53)
+
+    @staticmethod
+    def _dyadic_add(a, b):
+        exponent = min(a[1], b[1])
+        return ((a[0] << (a[1] - exponent)) + (b[0] << (b[1] - exponent)), exponent)
+
+    @staticmethod
+    def _dyadic_sub(a, b):
+        return _SiteGrid._dyadic_add(a, (-b[0], b[1]))
+
+    @staticmethod
+    def _dyadic_mul(a, b):
+        return (a[0] * b[0], a[1] + b[1])
+
+    @staticmethod
+    def exact_metric_order(a, b, x, y, c=1.0, s=0.0, scale=1.0):
+        if a[0] == b[0] and a[1] == b[1]:
+            return 0
+        dyadic = _SiteGrid._dyadic
+        add = _SiteGrid._dyadic_add
+        sub = _SiteGrid._dyadic_sub
+        mul = _SiteGrid._dyadic_mul
+        ax, ay = dyadic(a[0]), dyadic(a[1])
+        ux, uy = sub(dyadic(b[0]), ax), sub(dyadic(b[1]), ay)
+        vx = sub(mul((2, 0), sub(dyadic(x), ax)), ux)
+        vy = sub(mul((2, 0), sub(dyadic(y), ay)), uy)
+        if scale > 1.0001:
+            dc, ds, dk = dyadic(c), dyadic(s), dyadic(scale)
+            def transform(px, py):
+                return mul(add(mul(px, dc), mul(py, ds)), dk), sub(mul(py, dc), mul(px, ds))
+            u, v = transform(ux, uy), transform(vx, vy)
+        else:
+            u, v = (ux, uy), (vx, vy)
+        sign = add(mul(u[0], v[0]), mul(u[1], v[1]))[0]
+        return -1 if sign < 0 else 1 if sign > 0 else 0
+
+    @staticmethod
+    def ordering(sites, x, y, cos_a=1.0, sin_a=0.0, scale=1.0, squared=False, coordinate_scale=None):
+        if coordinate_scale is None:
+            coordinate_scale = max([1.0] + [abs(v) for p in sites for v in p[:2]])
+        factor = 1.0 if scale <= 1.0001 else max(1.0, abs(cos_a) + abs(sin_a)) * max(1.0, abs(scale))
+        magnitude = max(1.0, coordinate_scale, abs(x), abs(y)) * factor
+        error = 256 * _SiteGrid.EPSILON * magnitude
+        def precedes(index, current, distance, current_distance):
+            if current < 0 or current_distance == float('inf'):
+                return True
+            difference = distance - current_distance
+            guard = error * (2 * max(1.0, distance, current_distance) + error) if squared else error
+            if difference < -guard:
+                return True
+            if difference > guard:
+                return False
+            order = _SiteGrid.exact_metric_order(sites[index], sites[current], x, y, cos_a, sin_a, scale)
+            return order < 0 or (order == 0 and index < current)
+        return precedes
+
+    def __init__(self, sites, spacing, bounds=None):
+        self.sites = sites
+        if bounds is None:
+            if sites:
+                xs = [p[0] for p in sites]
+                ys = [p[1] for p in sites]
+                bounds = (min(xs), min(ys), max(xs), max(ys))
+            else:
+                bounds = (0.0, 0.0, 0.0, 0.0)
+        if any(v != v or abs(v) > self.MAX_COORDINATE for v in bounds) or spacing != spacing or spacing <= 0 or spacing == float('inf'):
+            raise ValueError('Site index bounds or spacing exceed supported numeric range')
+        self.min_x, self.min_y, self.max_x, self.max_y = bounds
+        self.coordinate_scale = max([1.0] + [abs(v) for v in bounds])
+        width = self.max_x - self.min_x
+        height = self.max_y - self.min_y
+        if width < 0 or height < 0:
+            raise ValueError('Site index bounds are reversed')
+        self.spacing = max(spacing, width / 4096.0, height / 4096.0)
+        self.columns = max(1, int(math.floor(width / self.spacing)) + 1)
+        self.rows = max(1, int(math.floor(height / self.spacing)) + 1)
+        self.buckets = {}
+        for i in range(len(sites)):
+            self.add(i)
+
+    @classmethod
+    def from_sites(cls, sites, bounds=None):
+        if not sites:
+            return cls(sites, 1.0)
+        xs = [p[0] for p in sites]
+        ys = [p[1] for p in sites]
+        measured = (min(xs), min(ys), max(xs), max(ys))
+        bounds = bounds if bounds is not None else measured
+        width = measured[2] - measured[0]
+        height = measured[3] - measured[1]
+        spacing = math.sqrt(width) * math.sqrt(height) / math.sqrt(len(sites))
+        if spacing <= 0:
+            spacing = max(width, height) / len(sites) or 1.0
+        return cls(sites, spacing, bounds)
+
+    def _column(self, x):
+        return max(0, min(self.columns - 1, int(math.floor((x - self.min_x) / self.spacing))))
+
+    def _row(self, y):
+        return max(0, min(self.rows - 1, int(math.floor((y - self.min_y) / self.spacing))))
+
+    def add(self, index):
+        p = self.sites[index]
+        if any(v != v or abs(v) > self.MAX_COORDINATE for v in p[:2]):
+            raise ValueError('Site coordinates exceed supported numeric range')
+        if not (self.min_x <= p[0] <= self.max_x and self.min_y <= p[1] <= self.max_y):
+            raise ValueError('Site lies outside index bounds')
+        key = (self._column(p[0]), self._row(p[1]))
+        self.buckets.setdefault(key, []).append(index)
+
+    def move(self, index, x, y):
+        if not (self.min_x <= x <= self.max_x and self.min_y <= y <= self.max_y):
+            raise ValueError('Site move lies outside index bounds')
+        p = self.sites[index]
+        self.buckets[(self._column(p[0]), self._row(p[1]))].remove(index)
+        self.coordinate_scale = max(self.coordinate_scale, abs(x), abs(y))
+        p[0] = x
+        p[1] = y
+        self.add(index)
+
+    def has_within(self, x, y, radius, exclude=-1):
+        if any(v != v or abs(v) > self.MAX_COORDINATE for v in [x, y, radius]) or radius < 0:
+            raise ValueError('Site query coordinates or radius exceed supported numeric range')
+        if not self.sites:
+            return False
+        radius2 = radius * radius
+        margin = 16 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y), radius)
+        for j in range(self._row(y - radius - margin), self._row(y + radius + margin) + 1):
+            for i in range(self._column(x - radius - margin), self._column(x + radius + margin) + 1):
+                for index in self.buckets.get((i, j), ()):
+                    if index == exclude:
+                        continue
+                    dx = self.sites[index][0] - x
+                    dy = self.sites[index][1] - y
+                    if dx * dx + dy * dy < radius2:
+                        return True
+        return False
+
+    def within_radius(self, x, y, radius, cos_a=1.0, sin_a=0.0, scale=1.0):
+        if radius != radius or radius < 0 or radius > self.MAX_COORDINATE:
+            raise ValueError('Site radius exceeds supported numeric range')
+        result = []
+        margin = 16 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y), radius)
+        isotropic = scale <= 1.0001
+        for j in range(self._row(y - radius - margin), self._row(y + radius + margin) + 1):
+            for i in range(self._column(x - radius - margin), self._column(x + radius + margin) + 1):
+                for index in self.buckets.get((i, j), ()):
+                    dx = x - self.sites[index][0]
+                    dy = y - self.sites[index][1]
+                    xr = dx * cos_a + dy * sin_a
+                    yr = -dx * sin_a + dy * cos_a
+                    d = math.sqrt(dx * dx + dy * dy) if isotropic else math.sqrt((xr * scale) ** 2 + yr * yr)
+                    if d < radius:
+                        result.append((index, d))
+        return sorted(result, key=lambda item: item[0])
+
+    def bisector_distance(self, x, y, owner, index, cos_a=1.0, sin_a=0.0, scale=1.0):
+        dx = self.sites[index][0] - self.sites[owner][0]
+        dy = self.sites[index][1] - self.sites[owner][1]
+        qx = x - self.sites[owner][0]; qy = y - self.sites[owner][1]
+        if scale > 1.0001:
+            sx = (dx * cos_a + dy * sin_a) * scale
+            dy = -dx * sin_a + dy * cos_a; dx = sx
+            tx = (qx * cos_a + qy * sin_a) * scale
+            qy = -qx * sin_a + qy * cos_a; qx = tx
+        separation = math.hypot(dx, dy)
+        if separation == 0.0:
+            return float('inf')  # Coincident IDs retain field weights, but define no plane.
+        return max(0.0, separation / 2.0 - qx * (dx / separation) - qy * (dy / separation))
+
+    def boundary_distance(self, x, y, owner, nearest, bound, cos_a=1.0, sin_a=0.0, scale=1.0):
+        return self.boundary_neighborhood(x, y, owner, nearest, bound, cos_a, sin_a, scale)[0]
+
+    def boundary_neighborhood(self, x, y, owner, nearest, bound, cos_a=1.0, sin_a=0.0, scale=1.0, support_radius=0.0):
+        margin = 64 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y), nearest, bound) * max(1.0, scale)
+        candidates = self.within_radius(x, y, max(support_radius, nearest + 2 * bound + margin), cos_a, sin_a, scale)
+        for index, distance in candidates:
+            if index == owner:
+                continue
+            plane = self.bisector_distance(x, y, owner, index, cos_a, sin_a, scale)
+            bound = min(bound, plane)
+        return bound, candidates
+
+    def nearest(self, x, y, distance_limit=float('inf')):
+        if x != x or y != y or abs(x) > self.MAX_COORDINATE or abs(y) > self.MAX_COORDINATE:
+            raise ValueError('Site query coordinates exceed supported numeric range')
+        if distance_limit != distance_limit or distance_limit < 0:
+            raise ValueError('Site index distance limit must be nonnegative')
+        if not self.sites:
+            return 0
+        cx = self._column(x)
+        cy = self._row(y)
+        best = 0
+        best_d = distance_limit
+        have_owner = False
+        precedes = self.ordering(self.sites, x, y, squared=True, coordinate_scale=self.coordinate_scale)
+        # Distance to the occupied bounds on the perpendicular axis strengthens the bound
+        # for collinear populations and warped queries outside the board.
+        dx_bounds = max(0.0, self.min_x - x, x - self.max_x)
+        dy_bounds = max(0.0, self.min_y - y, y - self.max_y)
+        ring = 0
+        while ring < max(self.columns, self.rows):
+            left = max(0, cx - ring)
+            right = min(self.columns - 1, cx + ring)
+            bottom = max(0, cy - ring)
+            top = min(self.rows - 1, cy + ring)
+            keys = []
+            if ring == 0:
+                keys.append((cx, cy))
+            else:
+                if cy - ring >= 0:
+                    keys.extend((i, cy - ring) for i in range(left, right + 1))
+                if cy + ring < self.rows:
+                    keys.extend((i, cy + ring) for i in range(left, right + 1))
+                y0 = max(0, cy - ring + 1)
+                y1 = min(self.rows - 1, cy + ring - 1)
+                if cx - ring >= 0:
+                    keys.extend((cx - ring, j) for j in range(y0, y1 + 1))
+                if cx + ring < self.columns:
+                    keys.extend((cx + ring, j) for j in range(y0, y1 + 1))
+            for key in keys:
+                for index in self.buckets.get(key, ()):
+                    dx = self.sites[index][0] - x
+                    dy = self.sites[index][1] - y
+                    d = dx * dx + dy * dy
+                    # The optional cap admits candidates by the legacy strict Float
+                    # predicate. Exact ranking applies only after this eligibility test.
+                    if not d < distance_limit:
+                        continue
+                    if not have_owner:
+                        best_d = d
+                        best = index
+                        have_owner = True
+                    elif precedes(index, best, d, best_d):
+                        best_d = d
+                        best = index
+            if left == 0 and right == self.columns - 1 and bottom == 0 and top == self.rows - 1:
+                return best
+            bounds = []
+            if left > 0:
+                bounds.append(max(0.0, x - (self.min_x + left * self.spacing)) ** 2 + dy_bounds * dy_bounds)
+            if right < self.columns - 1:
+                bounds.append(max(0.0, self.min_x + (right + 1) * self.spacing - x) ** 2 + dy_bounds * dy_bounds)
+            if bottom > 0:
+                bounds.append(max(0.0, y - (self.min_y + bottom * self.spacing)) ** 2 + dx_bounds * dx_bounds)
+            if top < self.rows - 1:
+                bounds.append(max(0.0, self.min_y + (top + 1) * self.spacing - y) ** 2 + dx_bounds * dx_bounds)
+            # Strict inequality includes lower-index sites tied in an unvisited bucket.
+            error = 16 * self.EPSILON * max(self.coordinate_scale, abs(x), abs(y))
+            tolerance = error * (2 * math.sqrt(best_d) + error) + 16 * self.EPSILON * max(1.0, best_d)
+            if min(bounds) > best_d + tolerance:
+                return best
+            ring += 1
+        return best
+
+    def nearest_four(self, x, y, cos_a=1.0, sin_a=0.0, scale=1.0):
+        if x != x or y != y or abs(x) > self.MAX_COORDINATE or abs(y) > self.MAX_COORDINATE:
+            raise ValueError('Site query coordinates exceed supported numeric range')
+        cx = self._column(x)
+        cy = self._row(y)
+        f1 = float('inf'); f2 = float('inf'); f3 = float('inf'); f4 = float('inf')
+        idx = 0; idx2 = -1; idx3 = -1; idx4 = -1
+        isotropic = scale <= 1.0001
+        precedes = self.ordering(self.sites, x, y, cos_a, sin_a, scale, coordinate_scale=self.coordinate_scale)
+        factor = 1.0 if isotropic else max(1.0, abs(cos_a) + abs(sin_a)) * max(1.0, abs(scale))
+        error = 256 * self.EPSILON * max(1.0, self.coordinate_scale, abs(x), abs(y)) * factor
+        # Rotation is supplied as cos/sin. Account for its rounded norm in pruning.
+        minimum_scale = 1.0 if isotropic else min(1.0, abs(scale)) * math.hypot(cos_a, sin_a)
+        # Distance to the occupied bounds on the perpendicular axis strengthens the bound
+        # for collinear populations and warped queries outside the board.
+        dx_bounds = max(0.0, self.min_x - x, x - self.max_x)
+        dy_bounds = max(0.0, self.min_y - y, y - self.max_y)
+        ring = 0
+        while ring < max(self.columns, self.rows):
+            left = max(0, cx - ring)
+            right = min(self.columns - 1, cx + ring)
+            bottom = max(0, cy - ring)
+            top = min(self.rows - 1, cy + ring)
+            keys = []
+            if ring == 0:
+                keys.append((cx, cy))
+            else:
+                if cy - ring >= 0:
+                    keys.extend((i, cy - ring) for i in range(left, right + 1))
+                if cy + ring < self.rows:
+                    keys.extend((i, cy + ring) for i in range(left, right + 1))
+                y0 = max(0, cy - ring + 1)
+                y1 = min(self.rows - 1, cy + ring - 1)
+                if cx - ring >= 0:
+                    keys.extend((cx - ring, j) for j in range(y0, y1 + 1))
+                if cx + ring < self.columns:
+                    keys.extend((cx + ring, j) for j in range(y0, y1 + 1))
+            for key in keys:
+                for index in self.buckets.get(key, ()):
+                    dx = self.sites[index][0] - x
+                    dy = self.sites[index][1] - y
+                    if isotropic:
+                        d = math.sqrt(dx * dx + dy * dy)
+                    else:
+                        xr = dx * cos_a + dy * sin_a
+                        yr = -dx * sin_a + dy * cos_a
+                        d = math.sqrt((xr * scale) ** 2 + yr * yr)
+                    if precedes(index, idx, d, f1): f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = index
+                    elif precedes(index, idx2, d, f2): f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = index
+                    elif precedes(index, idx3, d, f3): f4 = f3; idx4 = idx3; f3 = d; idx3 = index
+                    elif precedes(index, idx4, d, f4): f4 = d; idx4 = index
+            if left == 0 and right == self.columns - 1 and bottom == 0 and top == self.rows - 1:
+                break
+            bounds = []
+            if left > 0:
+                bounds.append(max(0.0, x - (self.min_x + left * self.spacing)) ** 2 + dy_bounds * dy_bounds)
+            if right < self.columns - 1:
+                bounds.append(max(0.0, self.min_x + (right + 1) * self.spacing - x) ** 2 + dy_bounds * dy_bounds)
+            if bottom > 0:
+                bounds.append(max(0.0, y - (self.min_y + bottom * self.spacing)) ** 2 + dx_bounds * dx_bounds)
+            if top < self.rows - 1:
+                bounds.append(max(0.0, self.min_y + (top + 1) * self.spacing - y) ** 2 + dx_bounds * dx_bounds)
+            # Strict inequality retains tied lower-index sites in unvisited buckets.
+            if math.sqrt(min(bounds)) * minimum_scale > f4 + error + 16 * self.EPSILON * max(1.0, f4):
+                break
+            ring += 1
+        if f2 == float('inf'): idx2 = -1
+        if f3 == float('inf'): idx3 = -1
+        if f4 == float('inf'): idx4 = -1
+        return f1, f2, f3, f4, idx, idx2, idx3, idx4
+# END SHARED SITE GRID
+
 class SimplexNoise(object):
     GRAD3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],
              [1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]]
     def __init__(self, seed=0):
-        p = [int(self._sr(seed + i) * 256) for i in range(256)]
+        p = list(range(256))
+        rng = _Mulberry32(seed)
+        rand = rng.next
+        for i in range(255, 0, -1):
+            j = int(rand() * (i + 1))
+            p[i], p[j] = p[j], p[i]
         self.perm = [p[i & 255] for i in range(512)]
     def _sr(self, s):
         x = math.sin(s) * 10000.0; return x - math.floor(x)
@@ -272,13 +629,13 @@ class OpenSimplex2Noise(object):
         gi1 = self.perm[ii+i1+self.perm[jj+j1]] % 24
         gi2 = self.perm[ii+1+self.perm[jj+1]] % 24
         val = 0.0
-        a0 = 2.0/3.0-x0*x0-y0*y0
+        a0 = 0.5-x0*x0-y0*y0
         if a0 > 0: a0 *= a0; val += a0*a0*(self.grad2[gi0][0]*x0+self.grad2[gi0][1]*y0)
-        a1 = 2.0/3.0-x1*x1-y1*y1
+        a1 = 0.5-x1*x1-y1*y1
         if a1 > 0: a1 *= a1; val += a1*a1*(self.grad2[gi1][0]*x1+self.grad2[gi1][1]*y1)
-        a2 = 2.0/3.0-x2*x2-y2*y2
+        a2 = 0.5-x2*x2-y2*y2
         if a2 > 0: a2 *= a2; val += a2*a2*(self.grad2[gi2][0]*x2+self.grad2[gi2][1]*y2)
-        return val*18.0
+        return val*99.20453188556945
 
 
 class RidgedNoise(object):
@@ -289,22 +646,6 @@ class RidgedNoise(object):
 class BillowNoise(object):
     def __init__(self, seed=0): self.base = SimplexNoise(seed)
     def noise(self, x, y): return abs(self.base.noise(x,y))*2.0-1.0
-
-
-class FBMNoise(object):
-    def __init__(self, seed=0): self.base = SimplexNoise(seed)
-    def noise(self, x, y): return self.base.noise(x, y)
-    def fbm(self, x, y, octs, pers, lac):
-        val = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
-        for i in range(octs):
-            val += self.base.noise(x*freq, y*freq)*amp
-            mx += amp; amp *= pers; freq *= lac
-        return val/mx
-
-
-class TurbulenceNoise(object):
-    def __init__(self, seed=0): self.base = SimplexNoise(seed)
-    def noise(self, x, y): return self.base.noise(x, y)
     def fbm(self, x, y, octs, pers, lac):
         val = 0.0; amp = 1.0; freq = 1.0; mx = 0.0
         for i in range(octs):
@@ -359,38 +700,58 @@ class DomainWarpNoise(object):
         return val/mx
 
 
-class VoronoiNoise(object):
-    def __init__(self, seed=0): self.seed = seed
-    def _sr(self, s): x = math.sin(s)*10000.0; return x-math.floor(x)
-    def _hash(self, x, y):
-        return int(math.floor(self._sr(x*374761393.0+y*668265263.0+self.seed)*1000.0))
-    def noise(self, x, y):
-        cx = int(math.floor(x)); cy = int(math.floor(y)); mn = float('inf')
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = cx+i; ny = cy+j; h = self._hash(nx, ny)
-                px = nx+self._sr(h); py = ny+self._sr(h+1)
-                d = math.hypot(x-px, y-py)
-                if d < mn: mn = d
-        return 1.0-mn*2.0
-
-
-class WorleyNoise(object):
-    def __init__(self, seed=0): self.seed = seed
-    def _sr(self, s): x = math.sin(s)*10000.0; return x-math.floor(x)
-    def _hash(self, x, y):
-        return int(math.floor(self._sr(x*374761393.0+y*668265263.0+self.seed)*1000.0))
-    def noise(self, x, y):
+class _Cellular(object):
+    @staticmethod
+    def avalanche(value):
+        value &= 0xffffffff
+        h = ((value ^ (value >> 16)) * 0x7feb352d) & 0xffffffff
+        h = ((h ^ (h >> 15)) * 0x846ca68b) & 0xffffffff
+        return (h ^ (h >> 16)) & 0xffffffff
+    @staticmethod
+    def hash01(x, y, seed):
+        h = _Cellular.avalanche((int(seed) & 0xffffffff) ^ 0x9e3779b9)
+        h = _Cellular.avalanche(h + int(x) * 0x85ebca6b)
+        h = _Cellular.avalanche(h + (int(x) // 4294967296) * 0x9e3779b1)
+        h = _Cellular.avalanche(h + int(y) * 0xc2b2ae35)
+        h = _Cellular.avalanche(h + (int(y) // 4294967296) * 0x27d4eb2d)
+        return float(h) / 4294967296.0
+    @staticmethod
+    def site(x, y, seed, jitter):
+        seed32 = int(seed) & 0xffffffff
+        return (x + 0.5 + (_Cellular.hash01(x, y, seed32) - 0.5) * jitter,
+                y + 0.5 + (_Cellular.hash01(x, y, (seed32 + 1013) & 0xffffffff) - 0.5) * jitter)
+    @staticmethod
+    def distances(x, y, seed, jitter, metric):
+        if x != x or y != y or abs(x) > 9007199254740987 or abs(y) > 9007199254740987 or jitter != jitter or jitter < 0 or jitter > 1:
+            raise ValueError('Cellular samples require finite coordinates and jitter in [0, 1]')
         cx = int(math.floor(x)); cy = int(math.floor(y))
-        f1 = float('inf'); f2 = float('inf')
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = cx+i; ny = cy+j; h = self._hash(nx, ny)
-                px = nx+self._sr(h); py = ny+self._sr(h+1)
-                d = math.hypot(x-px, y-py)
-                if d < f1: f2 = f1; f1 = d
-                elif d < f2: f2 = d
-        return min((f2-f1)*1.5, 1.0)*2.0-1.0
+        f1 = float('inf'); f2 = float('inf'); radius = 0
+        while True:
+            for i in range(-radius, radius + 1):
+                for j in range(-radius, radius + 1):
+                    if radius and abs(i) != radius and abs(j) != radius: continue
+                    px, py = _Cellular.site(cx + i, cy + j, seed, jitter)
+                    dx = abs(x - px); dy = abs(y - py)
+                    d = dx + dy if metric == 'manhattan' else max(dx, dy) if metric == 'chebyshev' else math.hypot(dx, dy)
+                    if d < f1: f2 = f1; f1 = d
+                    elif d < f2: f2 = d
+            outside = min(x - (cx - radius), cx + radius + 1 - x,
+                          y - (cy - radius), cy + radius + 1 - y)
+            if outside >= f2: return (f1, f2)
+            radius += 1
+
+
+class VoronoiNoise(object):
+    def __init__(self, seed=0, jitter=1.0, metric='euclidean'):
+        self.seed = seed; self.jitter = jitter; self.metric = metric
+    def noise(self, x, y):
+        return 1.0 - _Cellular.distances(x, y, self.seed, self.jitter, self.metric)[0] * 2.0
+
+
+class WorleyNoise(VoronoiNoise):
+    def noise(self, x, y):
+        f1, f2 = _Cellular.distances(x, y, self.seed, self.jitter, self.metric)
+        return min((f2 - f1) * 1.5, 1.0) * 2.0 - 1.0
 
 
 class GaborNoise(object):
@@ -432,7 +793,7 @@ class WaveletNoise(object):
                 self.tile[j*n+i] = val/total
     def noise(self, x, y):
         n = self.SIZE
-        tx = ((x % n)+n) % n; ty = ((y % n)+n) % n
+        tx = (((x * 8) % n)+n) % n; ty = (((y * 8) % n)+n) % n
         ix = int(math.floor(tx)) & (n-1); iy = int(math.floor(ty)) & (n-1)
         fx = tx-math.floor(tx); fy = ty-math.floor(ty)
         u = fx*fx*(3.0-2.0*fx); v = fy*fy*(3.0-2.0*fy)
@@ -469,10 +830,31 @@ class VoronoiReliefNoise(object):
         if t < 0.0: t = 0.0
         elif t > 1.0: t = 1.0
         return t * t * (3.0 - 2.0 * t)
+    def _junction_blend(self, pair, neighborhood, support):
+        if support == 0.0: return pair
+        return (1.0 - support) * pair + support * neighborhood
+    def _junction_fields(self, candidates, nearest, *fields):
+        if nearest != nearest or nearest < 0 or nearest == float('inf'):
+            raise ValueError('Junction nearest distance must be finite and nonnegative')
+        weight_sum = 0.0; sums = [0.0 for field in fields]
+        for candidate, distance in candidates:
+            ratio = distance / max(nearest, 1e-9)
+            weight = (1.0 - self._smoothstep(2.0 / 0.98 - 1.0, 2.08, ratio)) ** 2
+            if weight == 0.0:
+                continue
+            weight_sum += weight
+            for i in range(len(fields)):
+                sums[i] += weight * (fields[i](candidate) if callable(fields[i]) else fields[i][candidate])
+        if not weight_sum > 0.0 or any(v != v or abs(v) == float('inf') for v in sums):
+            raise ValueError('Junction support must have positive finite weights and fields')
+        return tuple(value / weight_sum for value in sums)
+    def _crown_weight(self, width, distance, minimum_span):
+        span = max(width, minimum_span)
+        return self._smoothstep(0.0, minimum_span, width) * (1.0 - self._smoothstep(0.0, span, distance))
     def _edge_hash01(self, a, b, seed):
         # v21 per-EDGE hash. ORDERED (a, b) gives each SIDE of a shared ridge its own
         # value (wall asymmetry); pass (min, max) for a value both sides agree on.
-        return self._cell_hash01(((a + 1) * 7919 + b + 1) & 0x7fffffff, seed)
+        return self._cell_hash01(((a + 1) * 7919 + b + 1) & 0xffffffff, seed)
     def _smootherstep(self, e0, e1, x):
         # Quintic smootherstep — zero first AND second derivatives at both edges (G2).
         if e1 <= e0:
@@ -545,10 +927,12 @@ class VoronoiReliefNoise(object):
     STOCK_CAP_SPAN = 0.13
     # v21.1 slope budget (normalized depth per inch of wall extent), sized against the
     # tempered profile family's PEAK slope: ~68 deg at the default 2.4in cut depth.
-    SLOPE_DEPTH_BUDGET = 0.55
+    SLOPE_DEPTH_BUDGET = 0.4
     # v21.1 minimum feature floors — PHYSICAL constants (tool-radius scale), never
     # derived from sample pitch (geometry must not change shape with grid resolution).
     WALL_MIN_PHYS = 0.3
+    CELL_MEASUREMENT_PITCH_IN = WALL_MIN_PHYS / 4.0
+    CELL_MEASUREMENT_MAX = 320000
     CROWN_MIN_PHYS = 0.25
     # v23 membrane cushions: fixed SOR sweep count for determinism.
     MEMBRANE_SWEEPS = 80
@@ -558,7 +942,20 @@ class VoronoiReliefNoise(object):
     DENSITY_NOISE_GAIN = 1.6
     FOCAL_EXPAND_GAIN = 1.7
     FOCAL_EXPAND_CAP = 2.2
+    def _representative_indices(self, length, limit, retained=()):
+        # One population, required focal nuclei, original order for Cartesian-prefix pinning.
+        indices = list(range(length))
+        if length <= limit:
+            return indices
+        required = set(retained)
+        available = [i for i in indices if i not in required]
+        count = limit - len(required)
+        for i in range(count):
+            chosen = i + int(self._rand() * (len(available) - i))
+            available[i], available[chosen] = available[chosen], available[i]
+        return sorted(list(retained) + available[:count])
     def _gen_sites(self, p, density_gen, exclusion_foci, exclusion_r, suppress_gen):
+        self._check_site_work(0, 0.0, p['cell_size'], 0, 0, p['mesh_x'], p['mesh_y'])
         # v16: sites live on the unwarped jittered grid and are NEVER displaced — cell flow
         # comes entirely from warping the query points (see _make_warp). Density is modulated
         # by the attractor mask and a low-frequency noise field (giant-vs-small patches).
@@ -576,11 +973,10 @@ class VoronoiReliefNoise(object):
         suppress_freq_sites = 0.16 / max(0.2, p['cell_size'])
         killed_reserve = []
         sites = []
+        separation = _SiteGrid(sites, 0.35 * spacing, (0.0, 0.0, p['mesh_x'], p['mesh_y']))
         # Hard caps prevent O(rows*cols*sites) blowup from crafted params or unwired density attractors.
         for j in range(ny):
-            if len(sites) >= self.SITE_COUNT_MAX: break
             for i in range(nx):
-                if len(sites) >= self.SITE_COUNT_MAX: break
                 cx = (i + 0.5) * sx; cy = (j + 0.5) * sy
                 u = cx / p['mesh_x']; v = cy / p['mesh_y']
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
@@ -606,22 +1002,13 @@ class VoronoiReliefNoise(object):
                 if self._rand() < (local - math.floor(local)):
                     reps += 1
                 for _ in range(reps):
-                    if len(sites) >= self.SITE_COUNT_MAX: break
                     jx = (self._rand() - 0.5) * p['jitter'] * sx
                     jy = (self._rand() - 0.5) * p['jitter'] * sy
                     px = max(0.0, min(p['mesh_x'], cx + jx))
                     py = max(0.0, min(p['mesh_y'], cy + jy))
                     # v21.1 minimum separation: jittered reps can land two sites arbitrarily
                     # close, producing sliver cells narrower than any cuttable feature.
-                    min_sep2 = (0.35 * spacing) * (0.35 * spacing)
-                    too_close = False
-                    for sq in sites:
-                        ddx = sq[0] - px
-                        ddy = sq[1] - py
-                        if ddx * ddx + ddy * ddy < min_sep2:
-                            too_close = True
-                            break
-                    if too_close:
+                    if separation.has_within(px, py, 0.35 * spacing):
                         continue
                     # v16.2: polar lattices own the focal zones — Cartesian sites inside
                     # an exclusion disc would shred the petal structure.
@@ -636,6 +1023,7 @@ class VoronoiReliefNoise(object):
                         if excluded:
                             continue
                     sites.append([px, py, 0.0])
+                    separation.add(len(sites) - 1)
         # Minimum-site floor: deletion is independent per candidate, so a small grid
         # inside a strong suppression field can wipe out EVERY site — restore deleted
         # cell centers (deterministic order) so the panel degrades to giant merged
@@ -676,6 +1064,36 @@ class VoronoiReliefNoise(object):
             qy = y + flow_gen.noise(x * flow_freq + 31.7, y * flow_freq + 17.3) * flow_amp
             return qx, qy
         return warp
+    def _check_site_work(self, foci_count, zone_r, cell_size, radial_strength, radial_grow, mesh_x, mesh_y):
+        # Shared candidate-loop budget, before ceil/int sizing or either allocation path.
+        def refuse():
+            raise ValueError('Relief site enumeration exceeds supported work budget')
+        values = [zone_r, cell_size, mesh_x, mesh_y]
+        if any(v != v or abs(v) == float('inf') for v in values) or mesh_x <= 0.0 or mesh_y <= 0.0 or cell_size <= 0.0:
+            refuse()
+        budget = 5000000.0
+        spacing = max(0.2, cell_size)
+        x_cells = mesh_x / spacing
+        y_cells = mesh_y / spacing
+        if any(v != v or abs(v) == float('inf') or v > budget for v in [x_cells, y_cells]):
+            refuse()
+        work = max(2, math.ceil(x_cells) + 1.0) * max(2, math.ceil(y_cells) + 1.0) * self.LOCAL_DENSITY_MAX
+        if work != work or work == float('inf') or work > budget:
+            refuse()
+        if foci_count > 0:
+            pitch = max(0.3, cell_size * self.POLAR_TANGENTIAL_PITCH_CELLS
+                        * (1.0 + 0.5 * max(0.0, min(2.0, 1.0 if radial_grow > 1.0 else radial_grow))))
+            ring_bound = zone_r / (pitch * 0.8)
+            if ring_bound != ring_bound or ring_bound == float('inf') or ring_bound > budget:
+                refuse()
+            rings = math.ceil(ring_bound) + 1.0
+            max_gap = pitch * (1.0 + radial_strength) * (1.0 + 0.1 * rings)
+            sector_bound = 2.0 * math.pi * (zone_r + max_gap * 0.5) / pitch
+            if sector_bound != sector_bound or sector_bound == float('inf') or sector_bound > budget:
+                refuse()
+            work += foci_count * (1.0 + rings * max(4, math.ceil(sector_bound)))
+        if work != work or work == float('inf') or work > budget:
+            refuse()
     def _gen_polar_sites(self, foci_phys, zone_r, cell_size, radial_strength, radial_grow, jitter_amt, mode, mesh_x, mesh_y, sites):
         # Starburst polar site lattices (v16.2). Around each focus: a nucleus site plus
         # jittered concentric rings whose RADIAL gap is (1 + radialStrength) x the
@@ -691,8 +1109,9 @@ class VoronoiReliefNoise(object):
                       * (1.0 + 0.5 * max(0.0, min(2.0, pitch_grow))))
         elong = 1.0 + max(0.0, min(4.0, radial_strength))
         margin = max(0.2, cell_size)
+        nuclei = []
         for k in range(len(foci_phys)):
-            if len(sites) >= self.SITE_COUNT_MAX: break
+            nuclei.append(len(sites))
             cpx = foci_phys[k][0]; cpy = foci_phys[k][1]
             sites.append([
                 max(0.0, min(mesh_x, cpx + (self._rand() - 0.5) * 0.2 * pitch_t)),
@@ -702,7 +1121,7 @@ class VoronoiReliefNoise(object):
             r = pitch_t * 0.75
             ring = 0
             sectors_locked = 0
-            while r < zone_r and len(sites) < self.SITE_COUNT_MAX:
+            while r < zone_r:
                 if mode == 'rings':
                     gap = pitch_t * 0.8
                     pitch = pitch_t * elong
@@ -720,7 +1139,6 @@ class VoronoiReliefNoise(object):
                 drop_p = 0.1 if fan else 0.25
                 jit_scale = 0.35 if fan else 1.0
                 for si in range(sectors):
-                    if len(sites) >= self.SITE_COUNT_MAX: break
                     # v17 sector dropout — random spoke deletion breaks radial regularity.
                     if self._rand() < drop_p * jitter_amt: continue
                     th = (base_theta + spiral_off + ((si + 0.5) / float(sectors)) * 2.0 * math.pi
@@ -736,31 +1154,13 @@ class VoronoiReliefNoise(object):
                         0.0])
                 r += gap
                 ring += 1
-    def _nearest_three(self, sites, x, y, cosA, sinA, aniso_scale):
-        # CONSTANT anisotropic metric (v16 removed per-pixel rotation — a constant frame
-        # cannot tear ownership). F3 drives junction detection: at a three-way Voronoi
-        # corner F1 ≈ F2 ≈ F3, so (F3 − F1) → 0 exactly at junctions (v16.3).
-        # v18.1: also returns the COMPETITOR INDICES so callers can compute the exact
-        # bisector distance to the shared cell boundary.
-        f1 = float('inf'); f2 = float('inf'); f3 = float('inf'); f4 = float('inf')
-        idx = 0; idx2 = -1; idx3 = -1; idx4 = -1
-        isotropic = (aniso_scale <= 1.0001)
-        for i in range(len(sites)):
-            dx = x - sites[i][0]; dy = y - sites[i][1]
-            if isotropic:
-                d = math.sqrt(dx * dx + dy * dy)
-            else:
-                xr = dx * cosA + dy * sinA
-                yr = -dx * sinA + dy * cosA
-                d = math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-            if d < f1: f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = f1; idx2 = idx; f1 = d; idx = i
-            elif d < f2: f4 = f3; idx4 = idx3; f3 = f2; idx3 = idx2; f2 = d; idx2 = i
-            elif d < f3: f4 = f3; idx4 = idx3; f3 = d; idx3 = i
-            elif d < f4: f4 = d; idx4 = i
-        if f2 == float('inf'): idx2 = -1
-        if f3 == float('inf'): idx3 = -1
-        if f4 == float('inf'): idx4 = -1
-        return f1, f2, f3, f4, idx, idx2, idx3, idx4
+        return nuclei
+    def _nearest_three(self, sites, x, y, cosA, sinA, aniso_scale, lookup=None):
+        # Keep the historical rank tuple and distance arithmetic; share the index
+        # across quadrature, site anchors and output queries during sample_grid.
+        if lookup is None:
+            lookup = _SiteGrid.from_sites(sites)
+        return lookup.nearest_four(x, y, cosA, sinA, aniso_scale)
     def _halton(self, index, base):
         result = 0.0; f = 1.0 / base; i = index
         while i > 0:
@@ -768,27 +1168,28 @@ class VoronoiReliefNoise(object):
             i = i // base
             f /= base
         return result
-    def _lloyd_relax(self, sites, p, samples, warp_fn, pinned_from):
+    def _lloyd_relax(self, sites, p, samples, warp_fn, pinned_from, pinned=None):
         # One Lloyd pass — move each site toward the centroid of its assigned low-discrepancy
         # samples. Samples are warped through W so relaxation happens in the same space the
         # distance queries use.
         n = len(sites)
+        if n > self.SITE_COUNT_MAX or samples < 0 or samples > n * 64:
+            raise ValueError('Relief Lloyd sampling exceeds supported work budget')
+        lookup = _SiteGrid.from_sites(sites)
         sumX = [0.0] * n; sumY = [0.0] * n; counts = [0] * n
         for s in range(samples):
             x = self._halton(s + 1, 2) * p['mesh_x']
             y = self._halton(s + 1, 3) * p['mesh_y']
             if warp_fn is not None:
                 x, y = warp_fn(x, y)
-            best_idx = 0; best_d = float('inf')
-            for i in range(n):
-                dx = sites[i][0] - x; dy = sites[i][1] - y
-                d = dx * dx + dy * dy
-                if d < best_d:
-                    best_d = d; best_idx = i
+            best_idx = lookup.nearest(x, y)
             sumX[best_idx] += x; sumY[best_idx] += y; counts[best_idx] += 1
+        # Ownership queries use the occupied bounds. A separate movement index covers
+        # the board so centroids can leave the initial population's bounding box.
+        separation = _SiteGrid(sites, 0.3, (0.0, 0.0, p['mesh_x'], p['mesh_y']))
         move_limit = min(n, max(0, pinned_from))
-        min_sep2 = 0.3 * 0.3
         for i in range(move_limit):
+            if pinned is not None and pinned[i]: continue
             if counts[i] > 0:
                 # Warped centroids can land slightly outside the physical panel at high
                 # distortion — clamp so edge sites cannot drift off-panel and starve
@@ -797,18 +1198,38 @@ class VoronoiReliefNoise(object):
                 ny = max(0.0, min(p['mesh_y'], sumY[i] / counts[i]))
                 # Relaxation must not defeat the minimum separation — reject moves that
                 # would land within the feature floor of any other site.
-                ok = True
-                for q in range(n):
-                    if q == i:
-                        continue
-                    ddx = sites[q][0] - nx
-                    ddy = sites[q][1] - ny
-                    if ddx * ddx + ddy * ddy < min_sep2:
-                        ok = False
-                        break
-                if ok:
-                    sites[i][0] = nx
-                    sites[i][1] = ny
+                if not separation.has_within(nx, ny, 0.3, i):
+                    separation.move(i, nx, ny)
+    def _copy_frozen_sites(self, frozen, p):
+        if any(v != v or abs(v) == float('inf') or v <= 0 for v in [p['mesh_x'], p['mesh_y']]):
+            raise ValueError('Invalid relief board')
+        xy = list(frozen['xy']); ids = list(frozen['ids']); pinned = list(frozen['pinned'])
+        n = len(ids)
+        if n > self.SITE_COUNT_MAX or len(xy) != n * 2 or len(pinned) != n:
+            raise ValueError('Invalid relief site lengths')
+        truncated = frozen.get('truncated_from', 0)
+        if isinstance(truncated, bool) or int(truncated) != truncated or truncated < 0 or truncated > 5000000 or (truncated != 0 and (n != self.SITE_COUNT_MAX or truncated <= n)):
+            raise ValueError('Invalid relief candidate count')
+        for i in range(n):
+            x = xy[i * 2]; y = xy[i * 2 + 1]; identity = ids[i]
+            if isinstance(identity, bool) or int(identity) != identity or identity < 0 or identity > 0xffffffff or (i > 0 and identity <= ids[i - 1]):
+                raise ValueError('Invalid relief identity')
+            ids[i] = int(identity)
+            if pinned[i] not in (0, 1) or isinstance(pinned[i], bool):
+                raise ValueError('Invalid relief pin')
+            if x != x or y != y or x < 0 or x > p['mesh_x'] or y < 0 or y > p['mesh_y']:
+                raise ValueError('Invalid relief coordinate')
+        # Coincident producer sites retain their ordered identities and exact coordinates.
+        return {'xy': xy, 'ids': ids, 'pinned': pinned, 'truncated_from': int(truncated)}
+    def relax_sites(self, p, frozen):
+        copy = self._copy_frozen_sites(frozen, p)
+        sites = [[copy['xy'][i * 2], copy['xy'][i * 2 + 1], 0.0] for i in range(len(copy['ids']))]
+        distortion = p.get('warp_distortion', 0.0)
+        if distortion != distortion or abs(distortion) == float('inf'): distortion = 0.0
+        warp = self._make_warp(p, int(p.get('seed', 0)) & 0xffffffff, max(0.0, min(2.0, distortion)))
+        if sites: self._lloyd_relax(sites, p, len(sites) * 64, warp, len(sites), copy['pinned'])
+        copy['xy'] = [v for site in sites for v in site[:2]]
+        return copy
     def sample_grid(self, p):
         # Re-seed PRNG + wave generator from p.seed (canonical source). Mirrors the TS
         # sampler — same seed produces same site layout and wave field even when the
@@ -861,33 +1282,39 @@ class VoronoiReliefNoise(object):
         # field at the site position — neighboring cells lean and inflate together.
         panel_field_gen = SimplexNoise(seed + 17 + 61)
         PANEL_FIELD_FREQ = 0.045
-        sites = self._gen_sites(p, density_noise_gen,
-                                foci_phys if starburst_active else [],
-                                zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
-                                suppress_gen)
-        cartesian_count = len(sites)
-        if starburst_active:
-            # Polar sites must survive the global cap — generate into a scratch list,
-            # then trim the Cartesian TAIL to reserve capacity (Cartesian-first ordering
-            # is what pinned_from relies on).
-            polar = []
-            self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
-                                  radial_grow, radial_warp_amt, radial_mode,
-                                  p['mesh_x'], p['mesh_y'], polar)
-            budget = max(0, self.SITE_COUNT_MAX - len(polar))
-            if len(sites) > budget:
-                del sites[budget:]
-            cartesian_count = len(sites)
-            sites.extend(polar)
-        if not sites:
-            return [0.0] * (p['cols'] * p['rows'])
-        # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
-        # erase their deliberate radial elongation).
-        relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
-        if relax_iter > 0:
-            lloyd_samples = min(8192, len(sites) * 64)
-            for _ in range(relax_iter):
-                self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
+        frozen = p.get('frozen_sites')
+        if frozen is not None:
+            copy = self._copy_frozen_sites(frozen, p)
+            sites = [[copy['xy'][i * 2], copy['xy'][i * 2 + 1], 0.0] for i in range(len(copy['ids']))]
+            ids = copy['ids']; pinned = copy['pinned']
+        else:
+            self._check_site_work(len(foci_phys), zone_r, p['cell_size'], radial_strength,
+                                  radial_grow, p['mesh_x'], p['mesh_y'])
+            sites = self._gen_sites(p, density_noise_gen,
+                                    foci_phys if starburst_active else [],
+                                    zone_r * self.POLAR_EXCLUSION_FRACTION if starburst_active else 0.0,
+                                    suppress_gen)
+            original_cartesian_count = len(sites)
+            nuclei = []
+            if starburst_active:
+                nuclei = self._gen_polar_sites(foci_phys, zone_r, max(0.2, p['cell_size']), radial_strength,
+                                               radial_grow, radial_warp_amt, radial_mode,
+                                               p['mesh_x'], p['mesh_y'], sites)
+            candidate_count = len(sites)
+            selected = self._representative_indices(len(sites), self.SITE_COUNT_MAX, nuclei)
+            sites = [sites[i] for i in selected]
+            cartesian_count = sum(1 for i in selected if i < original_cartesian_count)
+            # Lloyd relaxation passes — clamped 0..2. Polar sites are pinned (relaxation would
+            # erase their deliberate radial elongation).
+            relax_iter = max(0, min(2, int(p.get('relax_iter', 1))))
+            if relax_iter > 0:
+                lloyd_samples = len(sites) * 64
+                for _ in range(relax_iter):
+                    self._lloyd_relax(sites, p, lloyd_samples, warp_fn, cartesian_count)
+            ids = list(range(len(sites)))
+            pinned = [int(i >= cartesian_count) for i in range(len(sites))]
+        self.source_sites = {'xy': [v for site in sites for v in site[:2]], 'ids': list(ids), 'pinned': list(pinned),
+                             'truncated_from': frozen.get('truncated_from', 0) if frozen is not None else (candidate_count if candidate_count > len(sites) else 0)}
         # NaN guards on the constant metric frame — mirrors the TS sampler's defensive
         # clamps (crafted params or unwired pins can pass non-finite values).
         aniso_raw = p['anisotropy']
@@ -900,6 +1327,11 @@ class VoronoiReliefNoise(object):
         a_rad = angle_raw * math.pi / 180.0
         cosA = math.cos(a_rad); sinA = math.sin(a_rad)
         aniso_scale = 1.0 + aniso_raw * 1.5
+        self.source_query = {'implementation': 'meshcraft-relief-query/1', 'meshX': p['mesh_x'], 'meshY': p['mesh_y'], 'seed': seed,
+            'metric': {'cosA': 1.0 if aniso_scale <= 1.0001 else cosA, 'sinA': 0.0 if aniso_scale <= 1.0001 else sinA, 'scale': 1.0 if aniso_scale <= 1.0001 else aniso_scale},
+            'warp': {'amplitude': warp_distortion * max(0.2, p['cell_size']) * self.FLOW_WARP_AMPLITUDE_CELLS,
+                     'frequency': max(0.02, _finite(p.get('warp_frequency', 0.1), 0.1)), 'seed': seed + 30}}
+        if not sites: return [0.0] * (p['cols'] * p['rows'])
         # Clamp + hoist transition_softness so pow(mask, exponent) is finite when
         # mask=0 even if a crafted param sneaks past the URL boundary.
         ts_clamped = max(0.0, min(1.0, p['transition_softness']))
@@ -923,35 +1355,19 @@ class VoronoiReliefNoise(object):
                     wx_arr[idx0] = qx; wy_arr[idx0] = qy
                 else:
                     wx_arr[idx0] = x; wy_arr[idx0] = y
-        # Exact boundary distance (v18.1). (F2−F1)/2 is exact only on the two-site axis —
-        # the true distance to the shared Voronoi boundary is the bisector distance
-        # (Fk² − F1²)/(2·|sk − s1|), minimized over the two nearest competitors. Its level
-        # sets are TRUE inset polygons of the cell. Measured in the same (an)isotropic
-        # metric as the F-distances; capped at the panel diagonal so degenerate one-site
-        # panels stay finite.
+        # Competitor ranks seed a bound, never the final bisector support.
         db_cap = p['mesh_x'] + p['mesh_y']
-        def site_dist(a, b):
-            dx = sites[a][0] - sites[b][0]; dy = sites[a][1] - sites[b][1]
-            if aniso_scale <= 1.0001:
-                return math.sqrt(dx * dx + dy * dy)
-            xr = dx * cosA + dy * sinA
-            yr = -dx * sinA + dy * cosA
-            return math.sqrt((xr * aniso_scale) ** 2 + yr * yr)
-        # Minimized over the THREE nearest competitors: Fk ordering does not strictly
-        # order bisector distances (the |sk - s1| denominator varies); the third covers
-        # cell-corner regions and 4-degree vertices.
-        def boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4):
-            db = db_cap
-            if i2 >= 0 and f2 != float('inf'):
-                d = (f2 * f2 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i2)))
-                if d < db: db = d
-            if i3 >= 0 and f3 != float('inf'):
-                d = (f3 * f3 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i3)))
-                if d < db: db = d
-            if i4 >= 0 and f4 != float('inf'):
-                d = (f4 * f4 - f1 * f1) / (2.0 * max(1e-9, site_dist(owner, i4)))
-                if d < db: db = d
-            return db
+        junction_grid = _SiteGrid.from_sites(sites)
+        def boundary_seed(f1, f2, f3, f4, owner, i2, i3, i4, x, y):
+            bound = db_cap
+            for distance, index in [(f2, i2), (f3, i3), (f4, i4)]:
+                if index >= 0 and distance != float('inf'):
+                    bound = min(bound, junction_grid.bisector_distance(x, y, owner, index, cosA, sinA, aniso_scale))
+            roundoff = 64 * _SiteGrid.EPSILON * max(1.0, abs(x), abs(y), f1, db_cap) * aniso_scale
+            return min(db_cap, bound + roundoff)
+        def boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4, x, y):
+            return junction_grid.boundary_distance(x, y, owner, f1,
+                boundary_seed(f1, f2, f3, f4, owner, i2, i3, i4, x, y), cosA, sinA, aniso_scale)
         # Pass 1: accumulate mean F1 per site to derive per-cell radius (in the warped
         # metric — the same one Pass 2 normalizes with).
         # v18: per-cell INRADIUS = max distance-to-shared-boundary observed in the cell —
@@ -960,13 +1376,36 @@ class VoronoiReliefNoise(object):
         radius_sum = [0.0] * n_sites
         radius_n = [0] * n_sites
         inradius = [0.0] * n_sites
-        for idx0 in range(rows * cols):
-            f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, wx_arr[idx0], wy_arr[idx0], cosA, sinA, aniso_scale)
-            radius_sum[idx] += f1; radius_n[idx] += 1
-            db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4)
-            if db > inradius[idx]: inradius[idx] = db
+        # Physical quadrature, independent of output resolution; cap panel work and
+        # query every retained site center so a narrow cell cannot disappear.
+        measure_cols = max(2, int(math.ceil(p['mesh_x'] / self.CELL_MEASUREMENT_PITCH_IN)) + 1)
+        measure_rows = max(4, int(math.ceil(p['mesh_y'] / self.CELL_MEASUREMENT_PITCH_IN)) + 1)
+        if measure_cols * measure_rows > self.CELL_MEASUREMENT_MAX:
+            scale = math.sqrt(float(self.CELL_MEASUREMENT_MAX) / (measure_cols * measure_rows))
+            measure_cols = min(self.CELL_MEASUREMENT_MAX // 4, max(2, int(math.floor(measure_cols * scale))))
+            measure_rows = min(self.CELL_MEASUREMENT_MAX // measure_cols, max(4, int(math.floor(measure_rows * scale))))
+        for j in range(measure_rows):
+            for i in range(measure_cols):
+                x = i / float(measure_cols - 1) * p['mesh_x']
+                y = j / float(measure_rows - 1) * p['mesh_y']
+                qx, qy = warp_fn(x, y) if warp_fn is not None else (x, y)
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale, junction_grid)
+                radius_sum[idx] += f1; radius_n[idx] += 1
+                db = boundary_dist(f1, f2, f3, f4, idx, idx2, idx3, idx4, qx, qy)
+                if db > inradius[idx]: inradius[idx] = db
+        geometric_owner = [0] * n_sites
         for k in range(n_sites):
-            sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else p['cell_size']
+            x, y = sites[k][:2]
+            f1, f2, f3, f4, owner, i2, i3, i4 = self._nearest_three(sites, x, y, cosA, sinA, aniso_scale, junction_grid)
+            geometric_owner[k] = owner
+            anchor = boundary_dist(f1, f2, f3, f4, owner, i2, i3, i4, x, y)
+            inradius[k] = max(inradius[k], anchor)
+            sites[k][2] = (radius_sum[k] / radius_n[k]) * 2.0 if radius_n[k] > 0 else 4.0 * anchor / 3.0
+        for k in range(n_sites):
+            owner = geometric_owner[k]
+            if owner != k:
+                sites[k][2] = sites[owner][2]
+                inradius[k] = inradius[owner]
         # v17 size-depth coupling normalizes against the MEDIAN actual cell radius.
         sorted_radii = sorted(s2[2] for s2 in sites)
         median_radius = max(0.05, sorted_radii[len(sorted_radii) // 2])
@@ -998,18 +1437,21 @@ class VoronoiReliefNoise(object):
         # can descend at the aesthetic ceiling) and BLENDED across the nearest edges per
         # pixel — dissolution lifts boundaries off zero, so unblended per-cell factors
         # would step there.
+        cut_depth_in = max(0.05, min(2.6, _finite(p.get('cut_depth_in', 2.4), 2.4)))
         static_mul = [0.0] * n_sites
+        slope_mul = [0.0] * n_sites
         for k in range(n_sites):
             s_mul = max(self.SIZE_DEPTH_MIN, min(self.SIZE_DEPTH_MAX,
                 math.sqrt(sites[k][2] / median_radius)))
             tier_mul = 1.0
             if depth_variation > 0.0:
-                h_depth = self._cell_hash01(k, seed + 13)
+                h_depth = self._cell_hash01(ids[k], seed + 13)
                 tier_mul = 1.0 - depth_variation * (1.0 - (0.45 + 0.65 * h_depth))
             # Conservative: final per-edge/crest modifiers can narrow the wall to ~0.65x
             # this estimate — budget against the worst case (C0 requires per-cell static).
             w_typ = max(0.05, seam_depth_base * inradius[k] * 0.52)
-            static_mul[k] = s_mul * tier_mul * min(1.0, self.SLOPE_DEPTH_BUDGET * w_typ)
+            slope_mul[k] = min(1.0, self.SLOPE_DEPTH_BUDGET * (2.4 / cut_depth_in) * w_typ)
+            static_mul[k] = s_mul * tier_mul * slope_mul[k]
         # Wider deceleration band (v22): the wall flattens BEFORE the cushion rises.
         FILLET_BAND = 0.2
         # v16.1 pillow — ramps on the UNCAPPED bowl saturation ratio (1.0 = just saturated,
@@ -1017,6 +1459,9 @@ class VoronoiReliefNoise(object):
         pillow_amt = max(0.0, min(1.0, p.get('pillow', 0.0)))
         pillow_coverage = max(0.0, min(1.0, p.get('pillow_coverage', 0.6)))
         inv2s2_radial = 1.0 / (2.0 * sigma_radial * sigma_radial)
+        geometry_radius = [max(0.01, radius) for radius in inradius]
+        seam_scale = [1.0 + (self._cell_hash01(ids[k], seed + 29) - 0.5) * 0.8 * depth_variation for k in range(n_sites)]
+        shared_strength = [self._cell_hash01(ids[k], seed + 53) for k in range(n_sites)]
         out = [0.0] * (cols * rows)
         # v23 membrane-cushion buffers: the crown SHAPE comes from a per-cell membrane
         # solve after this pass (Poisson, u=0 clamped at the gutter ring, composed
@@ -1029,7 +1474,7 @@ class VoronoiReliefNoise(object):
                 u = i / float(max(1, cols - 1)); x = u * p['mesh_x']
                 pix = j * cols + i
                 qx = wx_arr[pix]; qy = wy_arr[pix]
-                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale)
+                f1, f2, f3, f4, idx, idx2, idx3, idx4 = self._nearest_three(sites, qx, qy, cosA, sinA, aniso_scale, junction_grid)
                 mask = self._attractor_mask(p['attractor_mode'], u, v,
                     p['attractor_x'], p['attractor_y'],
                     p['attractor_radius'], p['attractor_falloff'])
@@ -1052,46 +1497,19 @@ class VoronoiReliefNoise(object):
                 # measured inradius, so the wall spans the FULL territory from the shared
                 # boundary to the inset floor: every interior point is crest, wall, or
                 # floor — no neutral gaps. q = d_b/w: 0 at the boundary, 1 at the floor edge.
-                # Per-competitor bisector distances (also feed the exact boundary distance).
-                db2 = ((f2 * f2 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx2)))) if (idx2 >= 0 and f2 != float('inf')) else db_cap
-                db3 = ((f3 * f3 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx3)))) if (idx3 >= 0 and f3 != float('inf')) else db_cap
-                db4 = ((f4 * f4 - f1 * f1) / (2.0 * max(1e-9, site_dist(idx, idx4)))) if (idx4 >= 0 and f4 != float('inf')) else db_cap
-                db = min(db2, db3, db4)
-                inr = max(0.01, inradius[idx])
-                # Scale-free junction proximity: (F3-F1)/(F3+F1) -> 0 at three-way corners.
-                # With fewer than three sites there is no junction anywhere — jn stays 0.
-                if f3 == float('inf'):
-                    jn = 0.0
-                else:
-                    jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1))
+                radius = 2.08 * max(f1, 1e-9)
+                db, candidates = junction_grid.boundary_neighborhood(qx, qy, idx, f1,
+                    boundary_seed(f1, f2, f3, f4, idx, idx2, idx3, idx4, qx, qy), cosA, sinA, aniso_scale, radius)
+                jn = 1.0 - min(1.0, (f3 - f1) / max(1e-9, f3 + f1)) if f3 != float('inf') else 0.0
                 jn_s = self._smoothstep(0.65, 0.98, jn)
-                # v21 PER-EDGE FIELDS, blended between the two nearest edges by relative
-                # bisector distance (edge identity switches at corner rays — unblended
-                # values would jump there and render cliffs along every cell corner).
-                nb2 = idx2 if idx2 >= 0 else idx
-                nb3 = idx3 if idx3 >= 0 else nb2
-                e2_side = self._edge_hash01(idx, nb2, seed + 59)
-                e2_shared = self._edge_hash01(min(idx, nb2), max(idx, nb2), seed + 53)
-                e3_side = self._edge_hash01(idx, nb3, seed + 59)
-                e3_shared = self._edge_hash01(min(idx, nb3), max(idx, nb3), seed + 53)
-                # Symmetric interpolation: bisector distances need not preserve the F2/F3
-                # ordering, so the signed ratio must map both ways.
-                edge_ratio = (db3 - db2) / max(1e-9, db3 + db2)
-                if edge_ratio >= 0.0:
-                    edge_mix = 0.5 + 0.5 * self._smoothstep(0.0, 0.3, edge_ratio)
-                else:
-                    edge_mix = 0.5 - 0.5 * self._smoothstep(0.0, 0.3, -edge_ratio)
-                edge_side = edge_mix * e2_side + (1.0 - edge_mix) * e3_side
-                edge_shared = edge_mix * e2_shared + (1.0 - edge_mix) * e3_shared
-                # Dissolution fades near junction corners (pairwise blend is ill-conditioned
-                # there; physically, references dissolve boundaries MID-EDGE, nodes survive).
+                static_mul_blended, slope_blended, inr, seam, edge_shared, local_side = self._junction_fields(
+                    candidates, f1, static_mul, slope_mul, geometry_radius, seam_scale, shared_strength,
+                    lambda index: self._edge_hash01(ids[idx], ids[index], seed + 59))
+                owner_fade = min(1.0, db / max(1e-6, 0.35 * inr))
+                edge_side = edge_shared + owner_fade * (local_side - edge_shared)
+                wall_field_noise = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq) if wall_noise_gen is not None else 0.0
                 dissolve = ((1.0 - self._smoothstep(0.06, 0.3, edge_shared)) * self.EDGE_DISSOLVE_MAX
                             * (1.0 - self._smoothstep(0.45, 0.75, jn)))
-                # v21.1 blended static depth multiplier + boundary-fading tilt weight.
-                owner_mix = 0.5 + 0.5 * min(1.0, db / max(1e-6, 0.35 * inr))
-                nb_mul = edge_mix * static_mul[nb2] + (1.0 - edge_mix) * static_mul[nb3]
-                static_mul_blended = owner_mix * static_mul[idx] + (1.0 - owner_mix) * nb_mul
-                owner_fade = max(0.0, 2.0 * owner_mix - 1.0)
                 # Ridge crest band: a physical plateau on the shared boundary. The plateau
                 # width SWINGS along each edge with the wall-noise field (chunky-to-thin
                 # ridges) and widens toward junctions.
@@ -1099,11 +1517,9 @@ class VoronoiReliefNoise(object):
                 # Wall extent = seamDepth fraction of the remaining inradius, varied per cell
                 # (asymmetric neighbors), along each edge (noise), and at junctions (widening).
                 wall_scale = 0.7 + 0.7 * edge_side
-                if depth_variation > 0.0:
-                    h_seam = self._cell_hash01(idx, seed + 29)
-                    wall_scale *= 1.0 + (h_seam - 0.5) * 0.8 * depth_variation
+                wall_scale *= seam
                 if wall_noise_gen is not None:
-                    wn = wall_noise_gen.noise(x * wall_noise_freq, y * wall_noise_freq)
+                    wn = wall_field_noise
                     wall_scale *= max(0.3, 1.0 + 0.6 * wn + 1.1 * jn_s)
                     # Junction DELTAS use a wider gate than the lift term: the plateau
                     # flares well before the corner into bold triangular Y-masses.
@@ -1217,16 +1633,16 @@ class VoronoiReliefNoise(object):
                 # where the attractor has faded the cell system out.
                 if crest_variation > 0.0 and crest_gen is not None:
                     ridge_mask = pow(1.0 - bowl_h, 1.5)
-                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw
+                    h += crest_variation * self.CREST_VARIATION_GAIN * crest_gen.noise(x * crest_freq, y * crest_freq) * ridge_mask * cw * slope_blended
                 # v17 junction lift: tighter gate, lower gain — tense nodes, not domes.
                 if junction_lift > 0.0:
-                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw
+                    h += junction_lift * self.JUNCTION_LIFT_GAIN * jn_s * (1.0 - bowl_h) * cw * slope_blended
                 # v20 ridge crown: rounded bead over the crest band — dome peaking on the
                 # shared boundary. Melted zones keep ghost creases (0.35 floor).
-                if wall_frac > 0.0 and crest_w > 1e-6 and db < max(crest_w, self.CROWN_MIN_PHYS):
-                    crown = 1.0 - self._smoothstep(0.0, max(crest_w, self.CROWN_MIN_PHYS), db)
+                if wall_frac > 0.0:
+                    crown = self._crown_weight(crest_w, db, self.CROWN_MIN_PHYS)
                     crown_mul = (0.35 + 0.65 * cell_depth_mul) * (0.35 + 0.9 * edge_shared) * (1.0 - dissolve)
-                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul
+                    h -= polarity * self.RIDGE_CROWN_GAIN * crown * cw * crown_mul * slope_blended
                 # v21 stock-plane soft cap (pockets only): broad crests flatten into
                 # plateaus just above the base wave; junction fins become saddles.
                 if polarity < 0.0:
@@ -1301,19 +1717,19 @@ _NOISE_MAP = {
     'opensimplex2': lambda s, cfg: OpenSimplex2Noise(s),
     'ridged':       lambda s, cfg: RidgedNoise(s),
     'billow':       lambda s, cfg: BillowNoise(s),
-    'fbm':          lambda s, cfg: FBMNoise(s),
-    'turbulence':   lambda s, cfg: TurbulenceNoise(s),
     'hybrid':       lambda s, cfg: HybridMultifractal(s),
     'hetero':       lambda s, cfg: HeteroTerrain(s),
     'domainwarp':   lambda s, cfg: DomainWarpNoise(s),
-    'voronoi':      lambda s, cfg: VoronoiNoise(s),
-    'worley':       lambda s, cfg: WorleyNoise(s),
+    'voronoi':      lambda s, cfg: VoronoiNoise(s, cfg['jitter'], cfg['metric']),
+    'worley':       lambda s, cfg: WorleyNoise(s, cfg['jitter'], cfg['metric']),
     'gabor':        lambda s, cfg: GaborNoise(s, cfg.get('angle', 45.0), cfg.get('bw', 1.5)),
     'wavelet':      lambda s, cfg: WaveletNoise(s),
     'voronoi-relief': lambda s, cfg: VoronoiReliefNoise(s),
 }
 
-cfg = {'angle': gabor_angle, 'bw': gabor_bw}
+cell_jitter = float(globals().get('cell_jitter') if globals().get('cell_jitter') is not None else 1.0)
+cell_metric = globals().get('cell_metric') or 'euclidean'
+cfg = {'angle': gabor_angle, 'bw': gabor_bw, 'jitter': cell_jitter, 'metric': cell_metric}
 gen = _NOISE_MAP.get(str(noise_type), _NOISE_MAP['simplex'])(seed, cfg)
 has_fbm = hasattr(gen, 'fbm')
 is_relief = isinstance(gen, VoronoiReliefNoise)
@@ -1330,13 +1746,13 @@ if is_relief:
         'cols': cols, 'rows': rows,
         'mesh_x': mesh_x, 'mesh_y': mesh_y,
         'seed': int(seed),
+        'cut_depth_in': min(2.6, float(relief_cut_depth_in)),
         'cell_size': float(relief_cell_size),
         'jitter': float(relief_jitter),
         'relax_iter': int(relief_relax_iter),
         'polarity': str(relief_polarity),
         'profile': str(relief_profile),
         'seam_depth': float(relief_seam_depth),
-        'seam_width': float(relief_seam_width),
         'anisotropy': float(relief_anisotropy),
         'anisotropy_angle': float(relief_anisotropy_angle),
         'attractor_mode': str(relief_attractor_mode),
@@ -1407,55 +1823,43 @@ else:
 # mesh_x and mesh_y pass through so Shape component can build the point grid
 """
 
-    SHAPE_SCRIPT = """# GHPython component script — MeshCraft | Shape
+    SHAPE_SCRIPT = """#! python 2
+# -*- coding: utf-8 -*-
+# GHPython component script — MeshCraft | Shape
 # Runtime: IronPython 2.7 (Rhino 7)
 #
 # Inputs:  z_values (list), cols (int), rows (int), mesh_x (float), mesh_y (float),
-#          amplitude, noise_exp, peak_exp, valley_exp, valley_floor,
-#          offset, contrast, sharpness
+#          amplitude, peak_exp, valley_exp, valley_floor,
+#          offset, invert
 # Outputs: pts (list of Point3d), cols (int passthrough), rows (int passthrough)
 import Rhino.Geometry as rg
 
+invert = globals().get('invert', False)
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 if amplitude    is None: amplitude    = 0.65
-if noise_exp    is None: noise_exp    = 0.5
-if peak_exp     is None: peak_exp     = 1.0
-if valley_exp   is None: valley_exp   = 1.0
+if peak_exp     is None: peak_exp     = 0.5
+if valley_exp   is None: valley_exp   = 0.5
 if valley_floor is None: valley_floor = 0.0
 if offset       is None: offset       = 0.0
-if contrast     is None: contrast     = 1.0
-if sharpness    is None: sharpness    = 0.0
 
 amplitude    = float(amplitude)
-noise_exp    = float(noise_exp)
 peak_exp     = float(peak_exp)
 valley_exp   = float(valley_exp)
 valley_floor = float(valley_floor)
 offset       = float(offset)
-contrast     = float(contrast)
-sharpness    = float(sharpness)
 cols_i = int(cols)
 rows_i = int(rows)
 mx = float(mesh_x)
 my = float(mesh_y)
 
-# ── Shaping pipeline (mirrors mesh.ts generateNoiseMesh lines 47-65) ──────────
+# ── Shaping pipeline (signed-amplitude path; web normalizes the shaped grid) ──────────
 pts = []
 for j in range(rows_i):
     for i in range(cols_i):
         n = float(z_values[j * cols_i + i])
 
-        # Contrast
-        n *= contrast
-
-        # Sharpness — preserves sign, amplifies curvature
-        if sharpness > 0:
-            sgn = 1 if n >= 0 else -1
-            n = sgn * (abs(n) ** (1.0 + sharpness))
-
-        # Noise exponent
-        sgn = 1 if n >= 0 else -1
-        n = sgn * (abs(n) ** noise_exp)
+        if bool(invert): n = -n
 
         # Peak / valley exponents applied to positive / negative halves separately
         if n >= 0:
@@ -1478,101 +1882,175 @@ cols = cols_i
 rows = rows_i
 """
 
-    SMOOTH_SCRIPT = """# GHPython component script — MeshCraft | Smooth
+    SMOOTH_SCRIPT = """#! python 2
+# -*- coding: utf-8 -*-
+# GHPython component script: MeshCraft | Smooth
 # Runtime: IronPython 2.7 (Rhino 7)
-#
-# Port of weightedSmooth() from mesh.ts:153-174
-# Kernel: 3x3, weights — center=4, cardinal=2, diagonal=1
-#
-# Inputs:  pts (list of Point3d), cols (int), rows (int),
-#          smooth_iter (int), smooth_str (float)
+# Inputs: pts (list of Point3d), cols, rows, smooth_radius_in (Gaussian sigma, inches)
 # Outputs: pts (list of Point3d)
+import math
 import Rhino.Geometry as rg
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
-if smooth_iter is None: smooth_iter = 0
-if smooth_str  is None: smooth_str  = 0.5
+def _transform(real, imag, inverse, cosine, sine):
+    n = len(real)
+    j = 0
+    for i in range(1, n):
+        bit = n // 2
+        while j & bit:
+            j ^= bit
+            bit //= 2
+        j ^= bit
+        if i < j:
+            real[i], real[j] = real[j], real[i]
+            imag[i], imag[j] = imag[j], imag[i]
+    length = 2
+    while length <= n:
+        half = length // 2
+        stride = n // length
+        for start in range(0, n, length):
+            for j in range(half):
+                k = j * stride
+                c = cosine[k]
+                s = sine[k] if inverse else -sine[k]
+                a = start + j
+                b = a + half
+                re = real[b] * c - imag[b] * s
+                im = real[b] * s + imag[b] * c
+                real[b], imag[b] = real[a] - re, imag[a] - im
+                real[a] += re
+                imag[a] += im
+        length *= 2
+    if inverse:
+        for i in range(n):
+            real[i] /= n
+            imag[i] /= n
 
-iters    = int(smooth_iter)
-strength = float(smooth_str)
-cols_i   = int(cols)
-rows_i   = int(rows)
 
-if iters <= 0:
-    # No smoothing — pass through as plain list
-    pts = list(pts)
-else:
-    # Decompose Point3d list into separate arrays for fast Z manipulation
+def _gaussian_fft_pass(values, rows, cols, weights, horizontal):
+    # Zero padding preserves linear convolution. A symmetric kernel has a real
+    # spectrum, so two independent lanes fit in one complex transform.
+    axis, lanes = (cols, rows) if horizontal else (rows, cols)
+    radius = len(weights) - 1
+    n = 1
+    while n < axis + radius:
+        n *= 2
+    cosine = [math.cos(2.0 * math.pi * k / n) for k in range(n // 2)]
+    sine = [math.sin(2.0 * math.pi * k / n) for k in range(n // 2)]
+    real, imag = [0.0] * n, [0.0] * n
+    real[0] = weights[0]
+    for k in range(1, radius + 1):
+        real[k] = real[n - k] = weights[k]
+    _transform(real, imag, False, cosine, sine)
+    spectrum = real[:]
+    prefix = [0.0] * len(weights)
+    for k in range(1, radius + 1):
+        prefix[k] = prefix[k - 1] + weights[k]
+    norm = []
+    for i in range(axis):
+        total = weights[0] + prefix[min(i, radius)] + prefix[min(axis - 1 - i, radius)]
+        if i <= radius: total -= weights[i] * 0.5
+        if axis - 1 - i <= radius: total -= weights[axis - 1 - i] * 0.5
+        norm.append(total)
+    out = [0.0] * len(values)
+    for lane in range(0, lanes, 2):
+        real, imag = [0.0] * n, [0.0] * n
+        for i in range(axis):
+            edge = 0.5 if i == 0 or i == axis - 1 else 1.0
+            real[i] = values[lane * cols + i if horizontal else i * cols + lane] * edge
+            if lane + 1 < lanes:
+                imag[i] = values[(lane + 1) * cols + i if horizontal else i * cols + lane + 1] * edge
+        _transform(real, imag, False, cosine, sine)
+        for i in range(n):
+            real[i] *= spectrum[i]
+            imag[i] *= spectrum[i]
+        _transform(real, imag, True, cosine, sine)
+        for i in range(axis):
+            out[lane * cols + i if horizontal else i * cols + lane] = real[i] / norm[i]
+            if lane + 1 < lanes:
+                out[(lane + 1) * cols + i if horizontal else i * cols + lane + 1] = imag[i] / norm[i]
+    return out
+
+if smooth_radius_in is None: smooth_radius_in = 0.0
+sigma = float(smooth_radius_in)
+cols_i = int(cols)
+rows_i = int(rows)
+pts = list(pts)
+if sigma > 0.0 and any(p.Z != pts[0].Z for p in pts):
     xs = [p.X for p in pts]
     ys = [p.Y for p in pts]
     zv = [p.Z for p in pts]
-
-    for it in range(iters):
-        nzv = list(zv)
+    pitches = [abs(xs[1] - xs[0]), abs(ys[cols_i] - ys[0])]
+    for axis in range(2):
+        size = cols_i if axis == 0 else rows_i
+        pitch = pitches[axis]
+        radius = min(size - 1, int(math.ceil(3.0 * sigma / pitch)))
+        weights = [math.exp(-0.5 * (i * pitch / sigma) ** 2) for i in range(radius + 1)]
+        if len(weights) > 32:
+            zv = _gaussian_fft_pass(zv, rows_i, cols_i, weights, axis == 0)
+            continue
+        out = [0.0] * len(zv)
         for j in range(rows_i):
             for i in range(cols_i):
-                ws = 0.0; tw = 0.0
-                for dj in range(-1, 2):
-                    for di in range(-1, 2):
-                        nj = j+dj; ni = i+di
-                        if 0 <= nj < rows_i and 0 <= ni < cols_i:
-                            # Center weight=4, cardinal=2, diagonal=1
-                            if dj == 0 and di == 0:
-                                w = 4
-                            elif dj == 0 or di == 0:
-                                w = 2
-                            else:
-                                w = 1
-                            ws += zv[nj*cols_i+ni] * w; tw += w
-                idx = j*cols_i+i
-                nzv[idx] = zv[idx]*(1.0-strength) + (ws/tw)*strength
-        zv = nzv
-
-    pts = [rg.Point3d(xs[k], ys[k], zv[k]) for k in range(len(xs))]
+                total = 0.0
+                weighted = 0.0
+                for d in range(-radius, radius + 1):
+                    x = i + d if axis == 0 else i
+                    y = j if axis == 0 else j + d
+                    if x < 0 or x >= cols_i or y < 0 or y >= rows_i:
+                        continue
+                    # Half-weight physical panel endpoints before kernel renormalization.
+                    index = x if axis == 0 else y
+                    w = weights[abs(d)] * (0.5 if index == 0 or index == size - 1 else 1.0)
+                    weighted += zv[y * cols_i + x] * w
+                    total += w
+                out[j * cols_i + i] = weighted / total
+        zv = out
+    pts = [rg.Point3d(xs[k], ys[k], zv[k]) for k in range(len(zv))]
 """
 
-    PRESETS_SCRIPT = """
-#! python 2
+    PRESETS_SCRIPT = """#! python 2
 # GHPython component script — MeshCraft | Presets
 # Runtime: IronPython 2.7 (Rhino 7)
 #
 # Inputs:  preset (str) — name of preset to load
-# Outputs: noise_type, frequency, amplitude, noise_exp, peak_exp, valley_exp,
+# Outputs: noise_type, frequency, amplitude, invert, peak_exp, valley_exp,
 #          valley_floor, offset, octaves, persistence, lacunarity, distortion,
-#          contrast, sharpness, mesh_x, mesh_y, smooth_iter, smooth_str,
+#          cell_jitter, cell_metric, mesh_x, mesh_y, smooth_radius_in,
 #          gabor_angle, gabor_bw
 #
 # Usage: wire any output to the matching input on Noise/Shape/Smooth components
 #        to override the slider value for that parameter.
 
 PRESETS = {
-    'gentle-waves': {'noise_type':'simplex', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':2, 'persistence':0.3, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':3, 'smooth_str':0.5},
-    'organic-terrain': {'noise_type':'fbm', 'frequency':0.1, 'amplitude':0.8, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':4, 'persistence':0.55, 'lacunarity':2, 'distortion':0.3, 'contrast':1.2, 'sharpness':0.2, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4},
-    'sharp-ridges': {'noise_type':'ridged', 'frequency':0.08, 'amplitude':0.5, 'noise_exp':1.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0, 'contrast':1.5, 'sharpness':0.8, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':0, 'smooth_str':0},
-    'voronoi-cells': {'noise_type':'voronoi', 'frequency':0.15, 'amplitude':0.3, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.6},
-    'subtle-texture': {'noise_type':'perlin', 'frequency':0.12, 'amplitude':0.25, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.4, 'lacunarity':2.5, 'distortion':0.1, 'contrast':0.8, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.7},
-    'deep-carve': {'noise_type':'fbm', 'frequency':0.05, 'amplitude':2, 'noise_exp':1.2, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.6, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.8, 'sharpness':0.5, 'mesh_x':24, 'mesh_y':18, 'smooth_iter':0, 'smooth_str':0},
-    'sculptural': {'noise_type':'fbm', 'frequency':0.04, 'amplitude':1.5, 'noise_exp':0.7, 'peak_exp':1.8, 'valley_exp':0.35, 'valley_floor':0.6, 'offset':0, 'octaves':3, 'persistence':0.55, 'lacunarity':1.8, 'distortion':0.4, 'contrast':1.3, 'sharpness':0.15, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.45},
-    'hard-wave': {'noise_type':'simplex', 'frequency':0.05, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':2, 'valley_exp':0.3, 'valley_floor':0.75, 'offset':0, 'octaves':2, 'persistence':0.4, 'lacunarity':2, 'distortion':0.25, 'contrast':1.4, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':3, 'smooth_str':0.5},
-    'eroded-stone': {'noise_type':'ridged', 'frequency':0.06, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1.5, 'valley_exp':0.4, 'valley_floor':0.5, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2.2, 'distortion':0.35, 'contrast':1.6, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
-    'billowy-clouds': {'noise_type':'billow', 'frequency':0.07, 'amplitude':0.8, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.45, 'lacunarity':2, 'distortion':0.15, 'contrast':1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.5},
-    'turbulent-marble': {'noise_type':'turbulence', 'frequency':0.08, 'amplitude':1, 'noise_exp':0.7, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':5, 'persistence':0.55, 'lacunarity':2.2, 'distortion':0.3, 'contrast':1.4, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
-    'natural-ridge': {'noise_type':'hybrid', 'frequency':0.06, 'amplitude':1.2, 'noise_exp':0.6, 'peak_exp':1.2, 'valley_exp':0.5, 'valley_floor':0.3, 'offset':0, 'octaves':4, 'persistence':0.5, 'lacunarity':2, 'distortion':0.2, 'contrast':1.2, 'sharpness':0.1, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4},
-    'organic-swirl': {'noise_type':'domainwarp', 'frequency':0.05, 'amplitude':1, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':3, 'persistence':0.5, 'lacunarity':1.8, 'distortion':0, 'contrast':1.1, 'sharpness':0, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.5},
-    'worley-cracks': {'noise_type':'worley', 'frequency':0.12, 'amplitude':0.5, 'noise_exp':0.8, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.1, 'contrast':1.2, 'sharpness':0.3, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.4},
-    'brushed-metal': {'noise_type':'gabor', 'frequency':0.1, 'amplitude':0.3, 'noise_exp':0.5, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0, 'contrast':1, 'sharpness':0, 'gabor_angle':15, 'gabor_bw':1.2, 'mesh_x':36, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
-    'relief-vertical': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':0.75, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.55, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.16, 'warp_curl':0, 'relief_cell_size':0.8, 'relief_jitter':0.95, 'relief_relax_iter':1, 'relief_polarity':'domes', 'relief_profile':'parabolic', 'relief_seam_depth':0.95, 'relief_seam_width':0.14, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':2.2, 'relief_density_strength':1.8, 'relief_intensity_strength':1, 'relief_transition_softness':0.45, 'relief_base_mode':'wave', 'relief_base_amp':0.5, 'relief_base_freq':0.2, 'relief_cell_size_gradient':1, 'relief_void_strength':0.7, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.6, 'relief_attractor_noise':0, 'relief_attractor_noise_freq':0.3, 'relief_density_noise':0.3, 'relief_density_noise_freq':0.16, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_iter':3, 'smooth_str':0.55},
-    'relief-radial': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1.333333333333333, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.4, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.733333333333333, 'relief_jitter':0.8, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.7, 'relief_seam_width':0.14, 'relief_wall_width':0.12, 'relief_anisotropy':0.25, 'relief_anisotropy_angle':35, 'relief_attractor_mode':'radial', 'relief_attractor_x':0.62, 'relief_attractor_y':0.42, 'relief_attractor_radius':0.55, 'relief_attractor_falloff':0.9, 'relief_density_strength':2, 'relief_intensity_strength':0.55, 'relief_transition_softness':0.15, 'relief_base_mode':'wave', 'relief_base_amp':0.25, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0.38, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.45, 'relief_pillow_coverage':0.75, 'relief_depth_variation':0.2, 'relief_junction_lift':0.25, 'relief_crest_variation':0.15, 'relief_attractor_noise':0.25, 'relief_attractor_noise_freq':0.15, 'relief_density_noise':0.55, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':0, 'relief_radial_focus1_x':0.5, 'relief_radial_focus1_y':0.25, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':1.5, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.45, 'relief_radial_warp':0.4, 'relief_radial_mode':'rays', 'mesh_x':16, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.5},
-    'relief-pockets': {'noise_type':'voronoi-relief', 'frequency':0.2, 'amplitude':1.2, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.12, 'warp_curl':0, 'relief_cell_size':2, 'relief_jitter':0.85, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.62, 'relief_seam_width':0.15, 'relief_wall_width':0.11, 'relief_anisotropy':0.2, 'relief_anisotropy_angle':75, 'relief_attractor_mode':'vertical', 'relief_attractor_x':0.5, 'relief_attractor_y':0, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':0.35, 'relief_density_strength':1.2, 'relief_intensity_strength':0.9, 'relief_transition_softness':0.35, 'relief_base_mode':'wave', 'relief_base_amp':0.3, 'relief_base_freq':0.14, 'relief_cell_size_gradient':0.8, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0.5, 'relief_pillow_coverage':0.85, 'relief_depth_variation':0.35, 'relief_junction_lift':0.3, 'relief_crest_variation':0.5, 'relief_attractor_noise':0.5, 'relief_attractor_noise_freq':0.2, 'relief_density_noise':1, 'relief_density_noise_freq':0.09, 'relief_radial_foci_count':1, 'relief_radial_focus1_x':0.3, 'relief_radial_focus1_y':0.42, 'relief_radial_focus2_x':0.25, 'relief_radial_focus2_y':0.6, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.8, 'relief_radial_strength':2.2, 'relief_radial_falloff':0.32, 'relief_radial_grow':1.6, 'relief_radial_warp':0.5, 'relief_radial_mode':'rays', 'mesh_x':12, 'mesh_y':24, 'smooth_iter':2, 'smooth_str':0.45},
-    'relief-starburst': {'noise_type':'voronoi-relief', 'frequency':0.15, 'amplitude':1, 'noise_exp':1, 'peak_exp':1, 'valley_exp':1, 'valley_floor':0, 'offset':0, 'octaves':1, 'persistence':0.5, 'lacunarity':2, 'distortion':0.35, 'contrast':1, 'sharpness':0, 'relief_warp_freq':0.105, 'warp_curl':0, 'relief_cell_size':1.2, 'relief_jitter':0.55, 'relief_relax_iter':1, 'relief_polarity':'pockets', 'relief_profile':'cosine', 'relief_seam_depth':0.5, 'relief_seam_width':0.15, 'relief_wall_width':0.08, 'relief_anisotropy':0, 'relief_anisotropy_angle':0, 'relief_attractor_mode':'none', 'relief_attractor_x':0.5, 'relief_attractor_y':0.5, 'relief_attractor_radius':0.5, 'relief_attractor_falloff':1, 'relief_density_strength':0, 'relief_intensity_strength':1, 'relief_transition_softness':0.5, 'relief_base_mode':'wave', 'relief_base_amp':0.35, 'relief_base_freq':0.09, 'relief_cell_size_gradient':0.4, 'relief_void_strength':0, 'relief_invert_profile':0, 'relief_seam_sharpness':0, 'relief_pillow':0, 'relief_pillow_coverage':0.5, 'relief_depth_variation':0.35, 'relief_junction_lift':0.25, 'relief_crest_variation':0.4, 'relief_attractor_noise':0.2, 'relief_attractor_noise_freq':0.18, 'relief_density_noise':0.2, 'relief_density_noise_freq':0.12, 'relief_radial_foci_count':3, 'relief_radial_focus1_x':0.7, 'relief_radial_focus1_y':0.18, 'relief_radial_focus2_x':0.2, 'relief_radial_focus2_y':0.5, 'relief_radial_focus3_x':0.75, 'relief_radial_focus3_y':0.85, 'relief_radial_strength':1.2, 'relief_radial_falloff':0.3, 'relief_radial_grow':0.3, 'relief_radial_warp':0.65, 'relief_radial_mode':'rays', 'mesh_x':8, 'mesh_y':24, 'smooth_iter':1, 'smooth_str':0.3},
+    'gentle-waves': {'noise_type': 'simplex', 'frequency': 0.06, 'amplitude': 0.5, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 2, 'persistence': 0.3, 'lacunarity': 2, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.07813763041664107},
+    'organic-terrain': {'noise_type': 'simplex', 'frequency': 0.1, 'amplitude': 0.8, 'peak_exp': 0.84, 'valley_exp': 0.84, 'valley_floor': 0.0, 'offset': 0, 'octaves': 4, 'persistence': 0.55, 'lacunarity': 2, 'distortion': 0.3, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.040350098842101466},
+    'sharp-ridges': {'noise_type': 'ridged', 'frequency': 0.08, 'amplitude': 0.5, 'peak_exp': 2.7, 'valley_exp': 2.7, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.5, 'lacunarity': 2.2, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.0},
+    'voronoi-cells': {'noise_type': 'voronoi', 'frequency': 0.15, 'amplitude': 0.3, 'peak_exp': 0.8, 'valley_exp': 0.8, 'valley_floor': 0.0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.06988842128494586},
+    'subtle-texture': {'noise_type': 'perlin', 'frequency': 0.12, 'amplitude': 0.25, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.4, 'lacunarity': 2.5, 'distortion': 0.1, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.0754881226948038},
+    'deep-carve': {'noise_type': 'simplex', 'frequency': 0.05, 'amplitude': 2, 'peak_exp': 1.7999999999999998, 'valley_exp': 1.7999999999999998, 'valley_floor': 0.0, 'offset': 0, 'octaves': 5, 'persistence': 0.6, 'lacunarity': 1.8, 'distortion': 0.4, 'mesh_x': 24, 'mesh_y': 18, 'smooth_radius_in': 0.0},
+    'sculptural': {'noise_type': 'simplex', 'frequency': 0.04, 'amplitude': 1.5, 'peak_exp': 1.4489999999999998, 'valley_exp': 0.28174999999999994, 'valley_floor': 0.7055174172996764, 'offset': 0, 'octaves': 3, 'persistence': 0.55, 'lacunarity': 1.8, 'distortion': 0.4, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.0605251482631522},
+    'hard-wave': {'noise_type': 'simplex', 'frequency': 0.05, 'amplitude': 1.2, 'peak_exp': 1.32, 'valley_exp': 0.198, 'valley_floor': 0.8286104444190472, 'offset': 0, 'octaves': 2, 'persistence': 0.4, 'lacunarity': 2, 'distortion': 0.25, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.07813763041664107},
+    'eroded-stone': {'noise_type': 'ridged', 'frequency': 0.06, 'amplitude': 0.5, 'peak_exp': 1.56, 'valley_exp': 0.41600000000000004, 'valley_floor': 0.7079503136385321, 'offset': 0, 'octaves': 4, 'persistence': 0.5, 'lacunarity': 2.2, 'distortion': 0.35, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.03494421064247293},
+    'billowy-clouds': {'noise_type': 'billow', 'frequency': 0.07, 'amplitude': 0.8, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.45, 'lacunarity': 2, 'distortion': 0.15, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.06379910807698173},
+    'turbulent-marble': {'noise_type': 'billow', 'frequency': 0.08, 'amplitude': 1, 'peak_exp': 0.9099999999999999, 'valley_exp': 0.9099999999999999, 'valley_floor': 0.0, 'offset': 0, 'octaves': 5, 'persistence': 0.55, 'lacunarity': 2.2, 'distortion': 0.3, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.03494421064247293},
+    'natural-ridge': {'noise_type': 'hybrid', 'frequency': 0.06, 'amplitude': 1.2, 'peak_exp': 0.792, 'valley_exp': 0.33, 'valley_floor': 0.3565477788936814, 'offset': 0, 'octaves': 4, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.2, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.040350098842101466},
+    'organic-swirl': {'noise_type': 'domainwarp', 'frequency': 0.05, 'amplitude': 1, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 3, 'persistence': 0.5, 'lacunarity': 1.8, 'distortion': 0, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.06379910807698173},
+    'worley-cracks': {'noise_type': 'worley', 'frequency': 0.12, 'amplitude': 0.5, 'peak_exp': 1.04, 'valley_exp': 1.04, 'valley_floor': 0.0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.1, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.040350098842101466},
+    'brushed-metal': {'noise_type': 'gabor', 'frequency': 0.1, 'amplitude': 0.3, 'peak_exp': 0.5, 'valley_exp': 0.5, 'valley_floor': 0.0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0, 'gabor_angle': 15, 'gabor_bw': 1.2, 'mesh_x': 36, 'mesh_y': 24, 'smooth_radius_in': 0.03494421064247293},
+    'relief-vertical': {'noise_type': 'voronoi-relief', 'frequency': 0.2, 'amplitude': 0.75, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.55, 'relief_warp_freq': 0.16, 'warp_curl': 0, 'relief_cell_size': 0.8, 'relief_jitter': 0.95, 'relief_relax_iter': 1, 'relief_polarity': 'domes', 'relief_profile': 'parabolic', 'relief_seam_depth': 0.95, 'relief_wall_width': 0.08, 'relief_anisotropy': 0, 'relief_anisotropy_angle': 0, 'relief_attractor_mode': 'vertical', 'relief_attractor_x': 0.5, 'relief_attractor_y': 0, 'relief_attractor_radius': 0.5, 'relief_attractor_falloff': 2.2, 'relief_density_strength': 1.8, 'relief_intensity_strength': 1, 'relief_transition_softness': 0.45, 'relief_base_mode': 'wave', 'relief_base_amp': 0.5, 'relief_base_freq': 0.2, 'relief_cell_size_gradient': 1, 'relief_void_strength': 0.7, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0, 'relief_pillow_coverage': 0.6, 'relief_attractor_noise': 0, 'relief_attractor_noise_freq': 0.3, 'relief_density_noise': 0.3, 'relief_density_noise_freq': 0.16, 'relief_radial_foci_count': 0, 'relief_radial_focus1_x': 0.5, 'relief_radial_focus1_y': 0.25, 'relief_radial_focus2_x': 0.25, 'relief_radial_focus2_y': 0.6, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.8, 'relief_radial_strength': 1.5, 'relief_radial_falloff': 0.3, 'relief_radial_grow': 0.45, 'relief_radial_warp': 0.4, 'relief_radial_mode': 'rays', 'mesh_x': 12, 'mesh_y': 24, 'smooth_radius_in': 0.027317146052007444},
+    'relief-radial': {'noise_type': 'voronoi-relief', 'frequency': 0.15, 'amplitude': 1.333333333333333, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.4, 'relief_warp_freq': 0.105, 'warp_curl': 0, 'relief_cell_size': 1.733333333333333, 'relief_jitter': 0.8, 'relief_relax_iter': 1, 'relief_polarity': 'pockets', 'relief_profile': 'cosine', 'relief_seam_depth': 0.7, 'relief_wall_width': 0.12, 'relief_anisotropy': 0.25, 'relief_anisotropy_angle': 35, 'relief_attractor_mode': 'radial', 'relief_attractor_x': 0.62, 'relief_attractor_y': 0.42, 'relief_attractor_radius': 0.55, 'relief_attractor_falloff': 0.9, 'relief_density_strength': 2, 'relief_intensity_strength': 0.55, 'relief_transition_softness': 0.15, 'relief_base_mode': 'wave', 'relief_base_amp': 0.25, 'relief_base_freq': 0.09, 'relief_cell_size_gradient': 0.8, 'relief_void_strength': 0.38, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0.45, 'relief_pillow_coverage': 0.75, 'relief_depth_variation': 0.2, 'relief_junction_lift': 0.25, 'relief_crest_variation': 0.15, 'relief_attractor_noise': 0.25, 'relief_attractor_noise_freq': 0.15, 'relief_density_noise': 0.55, 'relief_density_noise_freq': 0.09, 'relief_radial_foci_count': 0, 'relief_radial_focus1_x': 0.5, 'relief_radial_focus1_y': 0.25, 'relief_radial_focus2_x': 0.25, 'relief_radial_focus2_y': 0.6, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.8, 'relief_radial_strength': 1.5, 'relief_radial_falloff': 0.3, 'relief_radial_grow': 0.45, 'relief_radial_warp': 0.4, 'relief_radial_mode': 'rays', 'mesh_x': 16, 'mesh_y': 24, 'smooth_radius_in': 0.028355159145325215},
+    'relief-pockets': {'noise_type': 'voronoi-relief', 'frequency': 0.2, 'amplitude': 1.2, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.35, 'relief_warp_freq': 0.12, 'warp_curl': 0, 'relief_cell_size': 2, 'relief_jitter': 0.85, 'relief_relax_iter': 1, 'relief_polarity': 'pockets', 'relief_profile': 'cosine', 'relief_seam_depth': 0.62, 'relief_wall_width': 0.11, 'relief_anisotropy': 0.2, 'relief_anisotropy_angle': 75, 'relief_attractor_mode': 'vertical', 'relief_attractor_x': 0.5, 'relief_attractor_y': 0, 'relief_attractor_radius': 0.5, 'relief_attractor_falloff': 0.35, 'relief_density_strength': 1.2, 'relief_intensity_strength': 0.9, 'relief_transition_softness': 0.35, 'relief_base_mode': 'wave', 'relief_base_amp': 0.3, 'relief_base_freq': 0.14, 'relief_cell_size_gradient': 0.8, 'relief_void_strength': 0, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0.5, 'relief_pillow_coverage': 0.85, 'relief_depth_variation': 0.35, 'relief_junction_lift': 0.3, 'relief_crest_variation': 0.5, 'relief_attractor_noise': 0.5, 'relief_attractor_noise_freq': 0.2, 'relief_density_noise': 1, 'relief_density_noise_freq': 0.09, 'relief_radial_foci_count': 1, 'relief_radial_focus1_x': 0.3, 'relief_radial_focus1_y': 0.42, 'relief_radial_focus2_x': 0.25, 'relief_radial_focus2_y': 0.6, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.8, 'relief_radial_strength': 2.2, 'relief_radial_falloff': 0.32, 'relief_radial_grow': 1.6, 'relief_radial_warp': 0.5, 'relief_radial_mode': 'rays', 'mesh_x': 12, 'mesh_y': 24, 'smooth_radius_in': 0.020175049421050733},
+    'relief-starburst': {'noise_type': 'voronoi-relief', 'frequency': 0.15, 'amplitude': 1, 'peak_exp': 1, 'valley_exp': 1, 'valley_floor': 0, 'offset': 0, 'octaves': 1, 'persistence': 0.5, 'lacunarity': 2, 'distortion': 0.35, 'relief_warp_freq': 0.105, 'warp_curl': 0, 'relief_cell_size': 1.2, 'relief_jitter': 0.55, 'relief_relax_iter': 1, 'relief_polarity': 'pockets', 'relief_profile': 'cosine', 'relief_seam_depth': 0.5, 'relief_wall_width': 0.08, 'relief_anisotropy': 0, 'relief_anisotropy_angle': 0, 'relief_attractor_mode': 'none', 'relief_attractor_x': 0.5, 'relief_attractor_y': 0.5, 'relief_attractor_radius': 0.5, 'relief_attractor_falloff': 1, 'relief_density_strength': 0, 'relief_intensity_strength': 1, 'relief_transition_softness': 0.5, 'relief_base_mode': 'wave', 'relief_base_amp': 0.35, 'relief_base_freq': 0.09, 'relief_cell_size_gradient': 0.4, 'relief_void_strength': 0, 'relief_invert_profile': 0, 'relief_seam_sharpness': 0, 'relief_pillow': 0, 'relief_pillow_coverage': 0.5, 'relief_depth_variation': 0.35, 'relief_junction_lift': 0.25, 'relief_crest_variation': 0.4, 'relief_attractor_noise': 0.2, 'relief_attractor_noise_freq': 0.18, 'relief_density_noise': 0.2, 'relief_density_noise_freq': 0.12, 'relief_radial_foci_count': 3, 'relief_radial_focus1_x': 0.7, 'relief_radial_focus1_y': 0.18, 'relief_radial_focus2_x': 0.2, 'relief_radial_focus2_y': 0.5, 'relief_radial_focus3_x': 0.75, 'relief_radial_focus3_y': 0.85, 'relief_radial_strength': 1.2, 'relief_radial_falloff': 0.3, 'relief_radial_grow': 0.3, 'relief_radial_warp': 0.65, 'relief_radial_mode': 'rays', 'mesh_x': 8, 'mesh_y': 24, 'smooth_radius_in': 0.007765380142771763},
 }
 
 p = PRESETS.get(str(preset), PRESETS['gentle-waves'])
+invert = False
+cell_jitter = 1.0
+cell_metric = 'euclidean'
 
 noise_type   = p['noise_type']
 frequency    = p['frequency']
 amplitude    = p['amplitude']
-noise_exp    = p['noise_exp']
 peak_exp     = p['peak_exp']
 valley_exp   = p['valley_exp']
 valley_floor = p['valley_floor']
@@ -1581,12 +2059,9 @@ octaves      = p['octaves']
 persistence  = p['persistence']
 lacunarity   = p['lacunarity']
 distortion   = p['distortion']
-contrast     = p['contrast']
-sharpness    = p['sharpness']
 mesh_x       = p['mesh_x']
 mesh_y       = p['mesh_y']
-smooth_iter  = p['smooth_iter']
-smooth_str   = p['smooth_str']
+smooth_radius_in = p['smooth_radius_in']
 gabor_angle  = p.get('gabor_angle', 45.0)
 gabor_bw     = p.get('gabor_bw', 1.5)
 # Voronoi Relief outputs (only meaningful when noise_type == 'voronoi-relief'; non-relief
@@ -1597,7 +2072,6 @@ relief_relax_iter          = p.get('relief_relax_iter',          1)
 relief_polarity            = p.get('relief_polarity',            'domes')
 relief_profile             = p.get('relief_profile',             'hemisphere')
 relief_seam_depth          = p.get('relief_seam_depth',          0.6)
-relief_seam_width          = p.get('relief_seam_width',          0.15)
 relief_anisotropy          = p.get('relief_anisotropy',          0.0)
 relief_anisotropy_angle    = p.get('relief_anisotropy_angle',    0.0)
 relief_attractor_mode      = p.get('relief_attractor_mode',      'none')
@@ -1638,6 +2112,8 @@ relief_radial_grow         = p.get('relief_radial_grow',         0.45)
 relief_radial_warp         = p.get('relief_radial_warp',         0.4)
 relief_radial_mode         = p.get('relief_radial_mode',         'rays')
 relief_warp_freq           = p.get('relief_warp_freq',           0.08)
+
+relief_cut_depth_in = min(2.6, amplitude)
 """
 
     # ── Builder helpers ────────────────────────────────────────────────────
@@ -1717,8 +2193,6 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
         ("OpenSimplex2",        "opensimplex2"),
         ("Ridged",              "ridged"),
         ("Billow",              "billow"),
-        ("FBM",                 "fbm"),
-        ("Turbulence",          "turbulence"),
         ("Hybrid Multifractal", "hybrid"),
         ("Hetero Terrain",      "hetero"),
         ("Domain Warp",         "domainwarp"),
@@ -1734,7 +2208,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     RELIEF_INPUTS = [
         "relief_cell_size", "relief_jitter", "relief_relax_iter",
         "relief_polarity", "relief_profile",
-        "relief_seam_depth", "relief_seam_width",
+        "relief_seam_depth", "relief_cut_depth_in",
         "relief_anisotropy", "relief_anisotropy_angle",
         "relief_attractor_mode",
         "relief_attractor_x", "relief_attractor_y",
@@ -1799,7 +2273,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     ni = {}
     for name in ["noise_type","seed","frequency","octaves","persistence",
                  "lacunarity","distortion","gabor_angle","gabor_bw",
-                 "mesh_x","mesh_y","resolution"]:
+                 "mesh_x","mesh_y","resolution","cell_jitter","cell_metric"]:
         ni[name] = add_in(noise_comp, name)
     # Voronoi-relief input pins. Unwired by default — the embedded NOISE_SCRIPT
     # handles missing/None values via `_relief_default`, so these pins can sit
@@ -1821,8 +2295,8 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     si["z_values"] = add_in(shape_comp, "z_values", ghk.GH_ParamAccess.list)
     for name in ["cols","rows","mesh_x","mesh_y"]:
         si[name] = add_in(shape_comp, name)
-    for name in ["amplitude","noise_exp","peak_exp","valley_exp",
-                 "valley_floor","offset","contrast","sharpness"]:
+    for name in ["amplitude","invert","peak_exp","valley_exp",
+                 "valley_floor","offset"]:
         si[name] = add_in(shape_comp, name)
 
     so = {}
@@ -1839,8 +2313,7 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     smi["pts"].TypeHint = GH_Point3dHint()
     smi["cols"]        = add_in(smooth_comp, "cols")
     smi["rows"]        = add_in(smooth_comp, "rows")
-    smi["smooth_iter"] = add_in(smooth_comp, "smooth_iter")
-    smi["smooth_str"]  = add_in(smooth_comp, "smooth_str")
+    smi["smooth_radius_in"] = add_in(smooth_comp, "smooth_radius_in")
 
     smo = {}
     smo["pts"] = add_out(smooth_comp, "pts", ghk.GH_ParamAccess.list)
@@ -1852,10 +2325,10 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     pri["preset"] = add_in(preset_comp, "preset")
 
     pro = {}
-    for name in ["noise_type","frequency","amplitude","noise_exp","peak_exp",
+    for name in ["noise_type","frequency","amplitude","invert","peak_exp",
                  "valley_exp","valley_floor","offset","octaves","persistence",
-                 "lacunarity","distortion","contrast","sharpness",
-                 "mesh_x","mesh_y","smooth_iter","smooth_str","gabor_angle","gabor_bw"]:
+                 "lacunarity","distortion",
+                 "mesh_x","mesh_y","smooth_radius_in","gabor_angle","gabor_bw","cell_jitter","cell_metric"]:
         pro[name] = add_out(preset_comp, name)
     # Voronoi-relief preset outputs — wire to the Noise component's matching pins
     # to use the relief presets (relief-vertical / relief-radial / relief-pockets).
@@ -1875,25 +2348,24 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     sl["distortion"]  = fslider("distortion",  SL1, Y, 0.0, 1.0, 0.0)     ; Y += DY
     sl["gabor_angle"] = fslider("gabor_angle", SL1, Y, 0.0, 180., 45., 1) ; Y += DY
     sl["gabor_bw"]    = fslider("gabor_bw",    SL1, Y, 0.1, 3.0, 1.5)     ; Y += DY
+    sl["cell_jitter"] = fslider("cell_jitter", SL1, Y, 0.0, 1.0, 1.0) ; Y += DY
+    vl_metric = vlist(SL1, Y, [("Euclidean", "euclidean"), ("Manhattan", "manhattan"), ("Chebyshev", "chebyshev")], 0) ; Y += DY
     sl["mesh_x"]      = fslider("mesh_x",      SL1, Y, 1.0, 36., 36., 1)  ; Y += DY
     sl["mesh_y"]      = fslider("mesh_y",      SL1, Y, 1.0, 24., 24., 1)  ; Y += DY
     sl["resolution"]  = islider("resolution",   SL1, Y,  16, 256, 96)      ; Y += DY
 
     # ── Sliders: Shape ────────────────────────────────────────────────────
     Y = 100
-    sl["amplitude"]    = fslider("amplitude",    SL2, Y, .01, 6.0, .65)   ; Y += DY
-    sl["noise_exp"]    = fslider("noise_exp",    SL2, Y, 0.1, 3.0, 0.5)   ; Y += DY
-    sl["peak_exp"]     = fslider("peak_exp",     SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
-    sl["valley_exp"]   = fslider("valley_exp",   SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
+    sl["amplitude"]    = fslider("amplitude",    SL2, Y, .01, 2.6, .65)   ; Y += DY
+    sl["invert"] = islider("invert", SL2, Y, 0, 1, 0) ; Y += DY
+    sl["peak_exp"]     = fslider("Peak Shape",     SL2, Y, 0.1, 5.4, 0.5)   ; Y += DY
+    sl["valley_exp"]   = fslider("Valley Shape",   SL2, Y, 0.1, 5.4, 0.5)   ; Y += DY
     sl["valley_floor"] = fslider("valley_floor", SL2, Y, 0.0, 1.0, 0.0)   ; Y += DY
     sl["offset"]       = fslider("offset",       SL2, Y,-2.0, 2.0, 0.0)   ; Y += DY
-    sl["contrast"]     = fslider("contrast",     SL2, Y, 0.1, 3.0, 1.0)   ; Y += DY
-    sl["sharpness"]    = fslider("sharpness",    SL2, Y, 0.0, 2.0, 0.0)   ; Y += DY
 
     # ── Sliders: Smooth ───────────────────────────────────────────────────
     Y = 100
-    sl["smooth_iter"] = islider("smooth_iter", SL3, Y, 0, 8,   0)         ; Y += DY
-    sl["smooth_str"]  = fslider("smooth_str",  SL3, Y, 0., 1., 0.5)       ; Y += DY
+    sl["smooth_radius_in"] = fslider("smooth_radius_in", SL3, Y, 0., 1., 0.) ; Y += DY
 
     # ── Preset value list (placed left of noise block, y=720) ─────────────
     vl_preset = vlist(PVL, 720, PRESET_NAMES, 0)
@@ -1901,6 +2373,8 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     a = "checkpoint: step 6 - wiring " + str(len(sl)) + " sliders"
     # ── Wire: sliders → Noise Gen ─────────────────────────────────────────
     ni["noise_type"].AddSource(vl_noise)
+    ni["cell_jitter"].AddSource(sl["cell_jitter"])
+    ni["cell_metric"].AddSource(vl_metric)
     for k in ["seed","frequency","octaves","persistence","lacunarity",
               "distortion","gabor_angle","gabor_bw","mesh_x","mesh_y","resolution"]:
         ni[k].AddSource(sl[k])
@@ -1913,16 +2387,16 @@ relief_warp_freq           = p.get('relief_warp_freq',           0.08)
     si["mesh_y"].AddSource(no["mesh_y"])
 
     # ── Wire: sliders → Shape ─────────────────────────────────────────────
-    for k in ["amplitude","noise_exp","peak_exp","valley_exp",
-              "valley_floor","offset","contrast","sharpness"]:
+    for k in ["amplitude","invert","peak_exp","valley_exp",
+              "valley_floor","offset"]:
         si[k].AddSource(sl[k])
 
     # ── Wire: Shape → Smooth ──────────────────────────────────────────────
     smi["pts"].AddSource(so["pts"])
     smi["cols"].AddSource(so["cols"])
     smi["rows"].AddSource(so["rows"])
-    smi["smooth_iter"].AddSource(sl["smooth_iter"])
-    smi["smooth_str"].AddSource(sl["smooth_str"])
+    smi["smooth_radius_in"].AddSource(sl["smooth_radius_in"])
+    ni["relief_cut_depth_in"].AddSource(sl["amplitude"])
 
     # ── Wire: preset VL → Presets comp (outputs remain unwired) ──────────
     pri["preset"].AddSource(vl_preset)

@@ -12,9 +12,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Exact Float64 goldens were captured on Darwin arm64 with Node 24.22.1.
+# Checks use that acceptance host; exactness on other hosts is not claimed.
+# Full preset SBP exports remain independently gated on Linux.
 jobs:
-  checks:
-    runs-on: ubuntu-latest
+  numerical_checks:
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -22,8 +25,19 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: '24.22.1'
+          architecture: arm64
           cache: npm
+
+      - name: Verify fixture capture host
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          process.stdout.write(JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version, v8: process.versions.v8 }) + '\n');
+          assert.equal(process.platform, 'darwin', 'Fixture capture operating system');
+          assert.equal(process.arch, 'arm64', 'Fixture capture architecture');
+          assert.equal(process.version, 'v24.22.1', 'Fixture capture Node version');
+          NODE
 
       - run: npm ci
       - run: python3 -m unittest discover -s scripts/drape -p 'test_*.py'
@@ -32,15 +46,78 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:cli
       - run: npm run test:relief
+      - run: npm run test:relief-measurement-mutants
+      - run: npm run test:generators
+      - run: npm run test:generator-migration
+      - run: npm run test:cellular-hash-mutant
+      - run: npm run test:noise-worker
+      - run: npm run test:fit-frame
+      - run: npm run test:render-geometry
+      - run: npm run test:relief-placement
+      - run: npm run test:relief-editor
+      - run: npm run test:cell-graph
+      - run: npm run test:cell-graph-bounds
+      - run: npm run test:cell-graph-warp
+      - run: npm run test:cell-graph-worker
+      - run: npm run test:relief-project
+      - run: npm run test:relief-link
+      - run: npm run test:relief-near-ties
+      - run: npm run test:relief-near-ties-mutants
+      - run: npm run test:native-distance-consumers
+      - run: npm run test:relief-junction-mutants
       - run: npm run test:presets:geometry
       - run: npm run test:gh-parity
+      - run: npm run test:gh-site-grid
       - run: npm run test:depthmap
       - run: npm run test:drape
       - run: npm run test:drape-parity
       - run: npm run test:sbp-writer
       - run: npm run test:cut
       - run: npm run test:relief-master
+
+  # Linux retains the browser functional checks. Strict Metal/4x timing remains
+  # a separate gate on identified reference hardware, not every hosted runner.
+  browser_checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - run: npm ci
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:noise-browser
+      - run: npm run test:export-authority
+      - run: npm run test:ui-values
+      - run: npm run test:ui-interruptions
+      - run: npm run test:mobile-layout
+      - run: npm run test:relief-link-browser
+      - run: npm run test:relief-editor-browser
+      - run: npm run test:relief-editor-navigation
+      - run: npm run test:relief-editor-transport
+      - run: npm run test:generator-controls
+
+  checks:
+    if: ${{ always() }}
+    # Full SBP preset exports are informational: MeshCraft toolpaths are not used for cutting.
+    needs: [numerical_checks, browser_checks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require numerical and browser checks
+        env:
+          NUMERICAL_RESULT: ${{ needs.numerical_checks.result }}
+          BROWSER_RESULT: ${{ needs.browser_checks.result }}
+        run: |
+          if [ "$NUMERICAL_RESULT" != "success" ] || [ "$BROWSER_RESULT" != "success" ]; then
+            echo "Numerical: $NUMERICAL_RESULT; browser: $BROWSER_RESULT"
+            exit 1
+          fi
 
   preset_export_list:
     name: Preset export matrix
@@ -53,7 +130,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: '24.22.1'
           cache: npm
       - run: npm ci
       - id: presets
@@ -65,6 +142,8 @@ jobs:
     name: Preset export (${{ matrix.preset }})
     needs: preset_export_list
     runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -75,7 +154,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: '24.22.1'
           cache: npm
       - run: npm ci
       - run: npm run test:presets:export -- "$PRESET_NAME"

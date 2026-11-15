@@ -1,3 +1,4 @@
+import type { SimplexKernelDescription } from './noise/generators';
 export interface NoiseGenerator {
   noise(x: number, y: number): number;
   /** Discriminator for grid-aware generators that bypass the per-pixel sampleNoiseGrid loop.
@@ -8,6 +9,9 @@ export interface NoiseGenerator {
 export interface FBMGenerator extends NoiseGenerator {
   fbm(x: number, y: number, octaves: number, persistence: number, lacunarity: number): number;
 }
+
+/** Observed clipping of sampled crest bands, not a physical minimum-width certificate. */
+export type ReliefCrestClipStatus = 'none' | 'narrowed' | 'collapsed';
 
 export type ReliefPolarity = 'pockets' | 'domes';
 export type ReliefProfile = 'hemisphere' | 'cosine' | 'parabolic';
@@ -24,7 +28,6 @@ export interface ReliefParams {
   polarity: ReliefPolarity;
   profile: ReliefProfile;
   seamDepth: number;
-  seamWidth: number;
   anisotropy: number;
   anisotropyAngle: number;
   attractorMode: ReliefAttractorMode;
@@ -134,7 +137,29 @@ export interface ReliefParams {
   radialMode: ReliefRadialMode;
 }
 
+/** Lossless ordered positions in query space. Boundary crossings retain lower stable-ID ownership. */
+export interface ReliefSiteSet {
+  xy: Float64Array;
+  ids: Uint32Array;
+  pinned: Uint8Array;
+  truncatedFrom: number;
+}
+
+/** Effective producer values used by both ownership queries and later cell-edge extraction. */
+export interface ReliefQueryDescription {
+  implementation: 'meshcraft-relief-query/2';
+  ownerPolicy: 'exact-represented-metric-stable-id-v1';
+  meshX: number;
+  meshY: number;
+  seed: number;
+  metric: Readonly<{ cosA: number; sinA: number; scale: number }>;
+  warp: Readonly<{ amplitude: number; frequency: number; seed: number; kernel: SimplexKernelDescription | null }>;
+}
+export interface ReliefSourceSnapshot { sites: ReliefSiteSet; query: ReliefQueryDescription }
+
 export interface ReliefSampleParams extends ReliefParams {
+  frozenSites?: ReliefSiteSet | null;
+  cutDepthIn: number;
   cols: number;
   rows: number;
   meshX: number;
@@ -143,6 +168,8 @@ export interface ReliefSampleParams extends ReliefParams {
 }
 
 export interface NoiseConfig {
+  cellJitter?: number;
+  cellMetric?: 'euclidean' | 'manhattan' | 'chebyshev';
   gaborAngle?: number;
   gaborBandwidth?: number;
 }
@@ -159,12 +186,10 @@ export interface NoiseGridParams {
   meshX: number;
   meshY: number;
   frequency: number;
-  noiseExp: number;
+  invert: boolean;
   peakExp: number;
   valleyExp: number;
   valleyFloor: number;
-  contrast: number;
-  sharpness: number;
   octaves: number;
   persistence: number;
   lacunarity: number;
