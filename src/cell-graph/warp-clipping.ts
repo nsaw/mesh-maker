@@ -19,6 +19,7 @@ import {
   sumI,
 } from './interval';
 import type { Interval } from './interval';
+import { encloseAtPoint } from './warp-bounds';
 import type { WarpCertificate } from './warp-bounds';
 import { invertWarp } from './warp-inverse';
 import type { InversePoint } from './warp-inverse';
@@ -97,18 +98,42 @@ export function boardRoots(
   height: number,
   budget: GraphBudget,
 ): BoundaryRoot[] {
+  const exactA = [rationalInterval(edge.a[0]), rationalInterval(edge.a[1])] as const;
+  const roots: BoundaryRoot[] = [];
+  // Every warped side point lies within the certified per-axis displacement of its side, so
+  // a side farther than that from the query segment's box holds no crossing with parameter
+  // in [0, 1]; only the infinite supporting line could meet it, and those roots are discarded.
+  const exactB = [rationalInterval(edge.b[0]), rationalInterval(edge.b[1])] as const;
+  const reach = nextUp(nextUp(certificate.displacement + certificate.evaluationResidue) + 1e-9);
+  const lowX = Math.min(exactA[0][0], exactB[0][0]), highX = Math.max(exactA[0][1], exactB[0][1]);
+  const lowY = Math.min(exactA[1][0], exactB[1][0]), highY = Math.max(exactA[1][1], exactB[1][1]);
+  const unreachable = [lowY > reach, highX < nextDown(width - reach), highY < nextDown(height - reach), lowX > reach];
+  if (unreachable.every(Boolean)) return roots;
   const line = queryLine(edge);
   const deltaX = rationalInterval(sub(edge.b[0], edge.a[0])),
     deltaY = rationalInterval(sub(edge.b[1], edge.a[1]));
   const denominator = addI(squareI(deltaX), squareI(deltaY));
-  const exactA = [rationalInterval(edge.a[0]), rationalInterval(edge.a[1])] as const;
-  const roots: BoundaryRoot[] = [];
   for (let side = 0; side < 4; side++) {
+    if (unreachable[side]) continue;
     const extent = side % 2 === 0 ? width : height;
     const evaluate = (t: number): Interval => {
       const [x, y] = sidePoint(side, interval(t), width, height),
         warp = certificate.enclose(x, y);
       return subI(addI(mulI(line[0], warp[0]), mulI(line[1], warp[1])), line[2]);
+    };
+    // Bisection only needs a sign. The point enclosure contains the full one, so a sign it
+    // decides is the full enclosure's sign; otherwise the full enclosure decides, exactly
+    // as before. Every bracket step is therefore unchanged.
+    const quickValue = (t: number): Interval => {
+      const [x, y] = sidePoint(side, interval(t), width, height),
+        warp = encloseAtPoint(certificate, x[0], y[0]);
+      return subI(addI(mulI(line[0], warp[0]), mulI(line[1], warp[1])), line[2]);
+    };
+    const signAt = (t: number): { sign: number; value: () => Interval } => {
+      const quickSign = sign(quickValue(t));
+      if (quickSign !== 0) return { sign: quickSign, value: () => evaluate(t) };
+      const full = evaluate(t);
+      return { sign: sign(full), value: () => full };
     };
     const derivative = (t: Interval): Interval => {
       const [x, y] = sidePoint(side, t, width, height),
@@ -123,12 +148,17 @@ export function boardRoots(
       budget.step();
       const box = stack.pop()!,
         mid = midpointI(box.t),
-        d = derivative(box.t),
-        fm = evaluate(mid);
+        d = derivative(box.t);
       const radius = scaleI(interval(absI(d)), nextUp((box.t[1] - box.t[0]) / 2))[1];
+      // A box excluded by the wider point enclosure is excluded by the full one too.
+      if (sign(inflateI(quickValue(mid), radius)) !== 0) continue;
+      const fm = evaluate(mid);
       if (sign(inflateI(fm, radius)) !== 0) continue;
       const ds = sign(d);
       if (ds !== 0) {
+        const quickFirst = quickValue(box.t[0]),
+          quickLast = quickValue(box.t[1]);
+        if (sign(quickFirst) !== 0 && sign(quickFirst) === sign(quickLast)) continue;
         const first = evaluate(box.t[0]),
           last = evaluate(box.t[1]);
         if (sign(first) !== 0 && sign(first) === sign(last)) continue;
@@ -151,9 +181,10 @@ export function boardRoots(
           budget.step();
           if (++iterations > 96) throw new Error('Warp board root work budget exhausted');
           const t = lo + (hi - lo) / 2,
-            ft = evaluate(t),
-            fs = sign(ft);
+            probe = signAt(t),
+            fs = probe.sign;
           if (fs === 0) {
+            const ft = probe.value();
             const local = derivative([lo, hi]),
               minimum = Math.min(Math.abs(local[0]), Math.abs(local[1]));
             if (sign(local) === 0) throw new Error('Warp board root lost monotonicity');
@@ -239,16 +270,11 @@ export function clipWarpEdge(
   budget: GraphBudget,
   junctions: Map<string, EdgeEndpoint>,
 ): ClippedFragment[] {
-  const queryA: [number, number] = [emitCoordinate(edge.a[0]), emitCoordinate(edge.a[1])],
-    queryB: [number, number] = [emitCoordinate(edge.b[0]), emitCoordinate(edge.b[1])];
-  const endpoint = (
-    p: typeof edge.a,
-    q: readonly [number, number],
-    parameter: number,
-  ): EdgeEndpoint => {
+  const endpoint = (p: typeof edge.a, parameter: number): EdgeEndpoint => {
     const id = `junction:${p[0].n}/${p[0].d},${p[1].n}/${p[1].d}`;
     let result = junctions.get(id);
     if (!result) {
+      const q: readonly [number, number] = [emitCoordinate(p[0]), emitCoordinate(p[1])];
       result = {
         id,
         parameter,
@@ -261,7 +287,7 @@ export function clipWarpEdge(
   };
   const roots = boardRoots(edge, certificate, width, height, budget);
   const endpoints: EdgeEndpoint[] = [
-    endpoint(edge.a, queryA, 0),
+    endpoint(edge.a, 0),
     ...roots.map((root, i) => ({
       id: `edge:${edgeIndex}:root:${i}`,
       parameter: midpointI(root.parameter),
@@ -269,19 +295,26 @@ export function clipWarpEdge(
       world: root.world,
       boundary: root,
     })),
-    endpoint(edge.b, queryB, 1),
+    endpoint(edge.b, 1),
   ];
   const result: ClippedFragment[] = [];
+  // Fragment midpoints come from outward intervals of the exact a + t (b - a).
+  const startX = rationalInterval(edge.a[0]),
+    startY = rationalInterval(edge.a[1]),
+    stepX = subI(rationalInterval(edge.b[0]), startX),
+    stepY = subI(rationalInterval(edge.b[1]), startY);
   for (let i = 0; i + 1 < endpoints.length; i++) {
     const a = endpoints[i],
       b = endpoints[i + 1];
     const lo = a.boundary?.parameter[1] ?? a.parameter,
       hi = b.boundary?.parameter[0] ?? b.parameter;
     if (!(lo < hi)) throw new Error('Warp clipping has no certified gap between roots');
-    const t = exact(lo + (hi - lo) / 2);
-    const x = emitCoordinate(add(edge.a[0], mul(t, sub(edge.b[0], edge.a[0]))));
-    const y = emitCoordinate(add(edge.a[1], mul(t, sub(edge.b[1], edge.a[1]))));
-    const inverted = invertWarp(certificate, x, y, budget);
+    const t = interval(lo + (hi - lo) / 2),
+      qx = addI(startX, mulI(t, stepX)),
+      qy = addI(startY, mulI(t, stepY));
+    if (qx[1] - qx[0] > 1e-10 || qy[1] - qy[0] > 1e-10)
+      throw new Error('Graph coordinate conversion exceeds numeric error budget');
+    const inverted = invertWarp(certificate, midpointI(qx), midpointI(qy), budget);
     const mid = {
       ...inverted,
       error: addI(

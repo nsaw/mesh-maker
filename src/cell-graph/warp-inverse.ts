@@ -1,3 +1,4 @@
+import { encloseAtPoint } from './warp-bounds';
 import type { WarpCertificate } from './warp-bounds';
 import type { GraphBudget } from './exact-diagram';
 import {
@@ -26,9 +27,12 @@ export function invertWarp(
   qy: number,
   budget: GraphBudget,
   target = 1e-7,
+  start?: readonly [number, number],
 ): InversePoint {
-  let x = qx,
-    y = qy;
+  // Any start inside the contraction rectangle converges to the same fixed point, and the
+  // returned error is certified a posteriori, so a nearby start only saves iterations.
+  let x = start?.[0] ?? qx,
+    y = start?.[1] ?? qy;
   const K = certificate.inverseLipschitz;
   for (let iteration = 0; iteration < 256; iteration++) {
     budget.step();
@@ -41,7 +45,7 @@ export function invertWarp(
       K * nextUp(residual + nextUp(Math.SQRT2 * certificate.evaluationResidue)),
     );
     if (coarse < target * 0.5) {
-      const enclosure = certificate.enclose(interval(x), interval(y));
+      const enclosure = encloseAtPoint(certificate, x, y);
       const errors = [subI(enclosure[0], interval(qx)), subI(enclosure[1], interval(qy))];
       const norm = sqrtNonnegativeI(sumI(errors.map((v) => squareI(interval(absI(v))))))[1];
       const error = divI(interval(norm), subI(interval(1), interval(certificate.lipschitz)))[1];

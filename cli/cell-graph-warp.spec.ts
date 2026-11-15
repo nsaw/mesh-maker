@@ -218,6 +218,11 @@ for (const name of ['relief-pockets', 'relief-starburst', 'relief-vertical', 're
     );
   }
 
+  // #80: graph work stays bounded. Before the reach-limited board roots, one-cell Simplex
+  // corner margin and point-enclosure root pruning these took 3.0e6 to 2.2e7 steps (and 2.5 to
+  // 21.5 s); they now take 4.8e5 to 3.0e6.
+  assert.ok(graph.certificate.steps < 4_000_000, `${name}: ${graph.certificate.steps} graph steps`);
+
   const dxf = cellGraphDxf(graph);
   assert.ok(dxf.endsWith('0\nEOF\n'));
   assert.throws(
@@ -233,6 +238,18 @@ for (const name of ['relief-pockets', 'relief-starburst', 'relief-vertical', 're
       certificate: graph.certificate,
     }) + '\n',
   );
+}
+// #80: a large unwarped layout no longer spends its step budget on every edge pair. 2,051
+// cells used to exceed the 25e6-step budget in the quadratic emission check.
+{
+  const large = buildNoiseSurface(noiseSurfaceParams({ ...DEFAULTS, ...presetState('relief-pockets'),
+    distortion: 0, reliefCellSize: 0.25, reliefAnisotropy: 0, resolution: 32 })).reliefSource!;
+  assert.equal(large.query.warp.amplitude, 0);
+  assert.ok(large.sites.ids.length > 1900, `${large.sites.ids.length} cells`);
+  const straight = buildCellGraph({ source: large, revision: 3 });
+  assert.ok(straight.ok, straight.ok ? undefined : straight.reason);
+  assert.equal(straight.graph.certificate.kind, 'exact-rational');
+  assert.ok(straight.graph.certificate.steps < 1_000_000, `${straight.graph.certificate.steps} straight steps`);
 }
 process.stdout.write(
   'Warp disconnected clipping, tangency refusal, cocircular junctions, metric and producer graphs passed\n',

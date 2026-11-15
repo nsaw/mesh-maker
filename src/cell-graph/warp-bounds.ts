@@ -41,7 +41,13 @@ export interface WarpCertificate {
   readonly jacobian: (x: Interval, y: Interval) => Matrix;
   readonly evaluate: (x: number, y: number) => readonly [number, number];
   readonly enclose: (x: Interval, y: Interval) => readonly [Interval, Interval];
+  /** At one point: evaluationResidue bounds |source - model| per component, so every value
+   * enclose admits there (model +- residue) lies within twice the residue of the source. */
+  readonly encloseAt?: (x: number, y: number) => readonly [Interval, Interval];
 }
+/** The point enclosure when the certificate provides one, else the full enclosure. */
+export const encloseAtPoint = (c: WarpCertificate, x: number, y: number): readonly [Interval, Interval] =>
+  c.encloseAt ? c.encloseAt(x, y) : c.enclose(interval(x), interval(y));
 
 const SQRT3 = sqrtI(interval(3));
 const F = scaleI(subI(SQRT3, interval(1)), 0.5);
@@ -51,20 +57,26 @@ const OFFSET_X = 31.7,
 
 /** The continuous model sums compact-support corner polynomials on the ideal skew lattice.
  * The permutation and gradient table are copied from the actual producer runtime. */
+// describeKernel copies the 512-entry permutation; a generator's kernel never changes.
+const kernels = new WeakMap<SimplexNoiseGen, ReturnType<SimplexNoiseGen['describeKernel']>>();
 export function simplexBounds(
   gen: SimplexNoiseGen,
   x: Interval,
   y: Interval,
   budget: GraphBudget,
 ): NoiseBounds {
-  const kernel = gen.describeKernel();
+  let kernel = kernels.get(gen);
+  if (!kernel) { kernel = gen.describeKernel(); kernels.set(gen, kernel); }
   const skew = mulI(addI(x, y), F),
     u = addI(x, skew),
     v = addI(y, skew);
-  const lowerI = Math.floor(u[0]) - 2,
-    upperI = Math.ceil(u[1]) + 2;
-  const lowerJ = Math.floor(v[0]) - 2,
-    upperJ = Math.ceil(v[1]) + 2;
+  // A corner's support is the unskewed disk of radius sqrt(1/2). Skewing maps a displacement
+  // (a, b) to a + (a + b)F, of magnitude at most sqrt((1+F)^2 + F^2) sqrt(1/2) = 1 per axis
+  // (F = (sqrt 3 - 1)/2), so every contributing corner lies within one skewed cell of the box.
+  const lowerI = Math.floor(u[0]) - 1,
+    upperI = Math.ceil(u[1]) + 1;
+  const lowerJ = Math.floor(v[0]) - 1,
+    upperJ = Math.ceil(v[1]) + 1;
   if (upperI - lowerI > 128 || upperJ - lowerJ > 128)
     throw new Error('Simplex interval box exceeds lattice work budget');
   const values: Interval[] = [],
@@ -324,6 +336,11 @@ export function certifyWarp(query: ReliefQueryDescription, budget: GraphBudget):
       inflateI(addI(y, scaleI(b.value, A)), evaluationResidue),
     ];
   };
+  const pointSlack = nextUp(2 * evaluationResidue);
+  const encloseAt = (x: number, y: number): readonly [Interval, Interval] => {
+    const [wx, wy] = evaluate(x, y);
+    return [inflateI(interval(wx), pointSlack), inflateI(interval(wy), pointSlack)];
+  };
   return {
     domain,
     kernel: kernel.implementation,
@@ -335,5 +352,6 @@ export function certifyWarp(query: ReliefQueryDescription, budget: GraphBudget):
     jacobian,
     evaluate,
     enclose,
+    encloseAt,
   };
 }
