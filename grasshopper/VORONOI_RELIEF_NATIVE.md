@@ -155,7 +155,8 @@ Lloyd relaxation (node-in-code Voronoi) stay in Python.
 `scripts/rhino-native-relief-dll-parity.py` is the parity gate. It runs the component in
 Rhino 7 twice per layout, once on the Python pass and once on the DLL, and requires identical
 heights bit for bit. On 2026-11-14 (Rhino 7.38, M3) it passed on all seven layouts, 106,585
-nodes (`grasshopper/rhino-native-relief-dll-parity.json`): both
+nodes. `grasshopper/rhino-native-relief-dll-parity.json` is that run's raw output, for the build
+with md5 `e3d25730ed5f007ba33dd6043c08c6f9`, compiled from a scratch copy and deployed unchanged. It covered both
 polarities, pillow on and off, four profiles, and cells deep enough that `v > 1`. Whole
 component recomputes:
 

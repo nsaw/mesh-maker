@@ -42,10 +42,11 @@ python_version = re.search(r"^RELIEF_DLL_VERSION = '([^']+)'$", SOURCE, re.M).gr
 csharp_version = re.search(r'public const string Version = "([^"]+)";', CSHARP).group(1)
 assert python_version == csharp_version, 'version drift: component %r, C# %r' % (python_version, csharp_version)
 def csharp_hash(source):
-    # The C# port with its own Version line removed, so stamping the version leaves it unchanged.
-    lines = [line for line in source.splitlines(True) if 'public const string Version' not in line]
-    assert len(lines) == len(source.splitlines(True)) - 1
-    return hashlib.sha256(''.join(lines).encode('utf-8')).hexdigest()[:12]
+    # The C# port with only its Version literal blanked, so stamping the version leaves the hash
+    # unchanged while any other edit, on that line included, changes it.
+    blanked, count = re.subn(r'(public const string Version = ")[^"]*(";)', r'\1\2', source)
+    assert count == 1, 'MeshCraftRelief.cs must declare exactly one Version'
+    return hashlib.sha256(blanked.encode('utf-8')).hexdigest()[:12]
 
 
 current_hash = height_pass_hash(SOURCE) + '-' + csharp_hash(CSHARP)

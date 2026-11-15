@@ -741,7 +741,7 @@ site_coordinate_scale = max([1.0] + [abs(v) for p in site_positions for v in p])
 # extracts it), so any edit there fails that test until the C# is ported, rebuilt and
 # re-verified and both strings carry the new hash. A second hash covers MeshCraftRelief.cs
 # itself (minus its Version line), so an edit to the C# alone fails the test too.
-RELIEF_DLL_VERSION = 'v24-lattice-membrane-07d522836b69-a532819c090c'
+RELIEF_DLL_VERSION = 'v24-lattice-membrane-07d522836b69-50f49e16b04a'
 
 def _relief_dll():
     try:

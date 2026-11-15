@@ -66,6 +66,10 @@ try:
         a = list(python['z_values'].AllData())
         b = list(dll['z_values'].AllData())
         worst = max(abs(x - y) for x, y in zip(a, b)) if len(a) == len(b) else None
+        used = dll.get('_relief_impl')
+        used_from = clr.GetClrType(used).Assembly.Location if used is not None else None
+        if used_from is None or os.path.realpath(used_from) != os.path.realpath(DLL):
+            raise RuntimeError('%s: the component used MeshCraftRelief from %s, not %s' % (label, used_from, DLL))
         bits = System.BitConverter.DoubleToInt64Bits
         same = (len(a) == len(b) and all(bits(x) == bits(y) for x, y in zip(a, b))
                 and python['height_pass'] == 'Python (no CLR)' and dll['height_pass'] == 'DLL')

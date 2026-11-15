@@ -1,95 +1,94 @@
 {
- "loaded": "MeshCraftNoise.dll (md5 3dd4541eb963028aa64faabdb872bc06, built from MeshCraftNoise.cs and this commit's MeshCraftRelief.cs)",
- "dll": "MeshCraftNoise.dll (md5 3dd4541eb963028aa64faabdb872bc06, built from MeshCraftNoise.cs and this commit's MeshCraftRelief.cs)",
+ "loaded": "/private/tmp/claude-501/-Users-sawyer--claude-spares-spare-hlECTq/a59a9f1e-b920-40b4-b6d4-0eef59d93ed0/scratchpad/dllwork/MeshCraftNoise.dll", 
+ "dll": "/private/tmp/claude-501/-Users-sawyer--claude-spares-spare-hlECTq/a59a9f1e-b920-40b4-b6d4-0eef59d93ed0/scratchpad/dllwork/MeshCraftNoise.dll", 
  "layouts": [
   {
-   "python_s": 4.9907989501953125,
-   "identical": true,
-   "worst": 0.0,
-   "dll_s": 0.14038848876953125,
-   "label": "pillow pockets 97",
+   "python_s": 5.0541458129882813, 
+   "identical": true, 
+   "worst": 0.0, 
+   "dll_s": 0.1373748779296875, 
+   "label": "pillow pockets 97", 
    "paths": [
-    "Python (no CLR)",
+    "Python (no CLR)", 
     "DLL"
-   ],
+   ], 
    "nodes": 9409
-  },
+  }, 
   {
-   "python_s": 4.0961151123046875,
-   "identical": true,
-   "worst": 0.0,
-   "dll_s": 0.08655548095703125,
-   "label": "rich domes 97",
+   "python_s": 4.0779953002929688, 
+   "identical": true, 
+   "worst": 0.0, 
+   "dll_s": 0.0880889892578125, 
+   "label": "rich domes 97", 
    "paths": [
-    "Python (no CLR)",
+    "Python (no CLR)", 
     "DLL"
-   ],
+   ], 
    "nodes": 9409
-  },
+  }, 
   {
-   "python_s": 4.105323791503906,
-   "identical": true,
-   "worst": 0.0,
-   "dll_s": 0.0936737060546875,
-   "label": "rich cone 24x36 seed 139, 81",
+   "python_s": 4.0849990844726563, 
+   "identical": true, 
+   "worst": 0.0, 
+   "dll_s": 0.1039581298828125, 
+   "label": "rich cone 24x36 seed 139, 81", 
    "paths": [
-    "Python (no CLR)",
+    "Python (no CLR)", 
     "DLL"
-   ],
+   ], 
    "nodes": 4374
-  },
+  }, 
   {
-   "python_s": 0.7821578979492188,
-   "identical": true,
-   "worst": 0.0,
-   "dll_s": 0.030609130859375,
-   "label": "pillow off spherical-cap 65",
+   "python_s": 0.777679443359375, 
+   "identical": true, 
+   "worst": 0.0, 
+   "dll_s": 0.03110504150390625, 
+   "label": "pillow off spherical-cap 65", 
    "paths": [
-    "Python (no CLR)",
+    "Python (no CLR)", 
     "DLL"
-   ],
+   ], 
    "nodes": 4225
-  },
+  }, 
   {
-   "python_s": 14.273918151855469,
-   "identical": true,
-   "worst": 0.0,
-   "dll_s": 0.25975799560546875,
-   "label": "rich pockets 256",
+   "python_s": 14.277168273925781, 
+   "identical": true, 
+   "worst": 0.0, 
+   "dll_s": 0.26065826416015625, 
+   "label": "rich pockets 256", 
    "paths": [
-    "Python (no CLR)",
+    "Python (no CLR)", 
     "DLL"
-   ],
+   ], 
    "nodes": 65536
-  },
+  }, 
   {
-   "python_s": 3.6925430297851562,
-   "identical": true,
-   "worst": 0.0,
-   "dll_s": 0.1096954345703125,
-   "label": "defaults 128",
+   "python_s": 3.6591339111328125, 
+   "identical": true, 
+   "worst": 0.0, 
+   "dll_s": 0.11037445068359375, 
+   "label": "defaults 128", 
    "paths": [
-    "Python (no CLR)",
+    "Python (no CLR)", 
     "DLL"
-   ],
+   ], 
    "nodes": 10880
-  },
+  }, 
   {
-   "python_s": 0.20832061767578125,
-   "identical": true,
-   "worst": 0.0,
-   "dll_s": 0.00955963134765625,
-   "label": "deep cells (v > 1) 64",
+   "python_s": 0.20137786865234375, 
+   "identical": true, 
+   "worst": 0.0, 
+   "dll_s": 0.0104827880859375, 
+   "label": "deep cells (v > 1) 64", 
    "paths": [
-    "Python (no CLR)",
+    "Python (no CLR)", 
     "DLL"
-   ],
+   ], 
    "nodes": 2752
   }
- ],
- "version": "v24-lattice-membrane-07d522836b69-a532819c090c",
- "passed": true,
- "nodes": 106585,
- "rhino": "7.38.24338.17002",
- "date": "2026-11-14"
+ ], 
+ "version": "v24-lattice-membrane-07d522836b69-50f49e16b04a", 
+ "passed": true, 
+ "nodes": 106585, 
+ "rhino": "7.38.24338.17002"
 }
