@@ -218,14 +218,16 @@ project copy, so `Skill` loads the user-level one. Reach a project copy with `Re
 - `frontend-design` for the browser UI. The MESHCRAFT 3000 tokens and conventions are in
   `.claude/skills/frontend-design/SKILL.md`; read that file, since the `frontend-design` skill
   name resolves to the user-level judgment layer.
-- `pr-review` and `triage-pr-comments` for review work. These two are the only skills the
-  `.gitignore` comment claims are tracked; in practice all seven are tracked.
+- `pr-review` and `triage-pr-comments` for review work. All seven skills are tracked:
+  `.gitignore`'s `!.*/skills/**` re-includes every skill file on every surface.
 - `voice-system` for any user-facing copy, including sponsor-facing and README text.
 
 ## Surfaces and .gitignore
 
 `.gitignore` excludes `.claude/`, `.codex/` and `.agents/` wholesale, then walks back down to
-re-include the skill trees and this file. A bare negation cannot re-include a path whose
+re-include the skill trees, this file, and `.claude/commands/3-plan.md` with its sync pin
+`.claude/commands/.skill-sync-ignore-3-plan.md`. The command's body is a copy of the `plan`
+skill; edit both together. A bare negation cannot re-include a path whose
 parent is still excluded, because git will not descend into an excluded directory. That is
 why the rules are written as a descent (`!.claude/`, `.claude/*`, `!.claude/skills/`, and so
 on) rather than a single pattern. Preserve that shape when editing.
