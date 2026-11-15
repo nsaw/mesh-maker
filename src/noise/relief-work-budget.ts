@@ -51,9 +51,11 @@ export function frozenReliefQueryWork(p: WorkShape, sites: ReliefSiteSet, additi
 }
 
 // Every relief query averages its fields over the sites within RELIEF_SUPPORT_RATIO times
-// its nearest distance (voronoi-relief.ts), and its boundary search visits about as many.
-// Far from a packed cluster that support holds the whole cluster, so work grows with
-// queries x cluster size even when no two sites coincide. Measured on the producer at
+// its nearest distance (voronoi-relief.ts), and its boundary search scans out to f1 + 2B,
+// B the least bisector distance to the second through fourth nearest sites, which can reach
+// far beyond the support (an isolated site beside a distant cluster). The estimate counts
+// the larger of the two radii. Far from a packed cluster either one holds the whole
+// cluster, so work grows with queries x cluster size even when no two sites coincide. Measured on the producer at
 // 70-125 ns per support visit, the budget is about 20-35 s of worker time. It refuses the
 // #82 probes (4,096 sites in 0.64 in at resolution 100, about 3.3e8 visits; 961 sites at
 // link precision at resolution 400, about 3.6e8) and keeps a board with half its cells
