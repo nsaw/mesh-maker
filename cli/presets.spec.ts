@@ -92,6 +92,9 @@ if (args.length === 0) {
     assert(STATE.meshX <= MACHINE_TRAVEL_IN.x && STATE.meshY <= MACHINE_TRAVEL_IN.y, `${name} bed fit`);
     if (STATE.noiseType === 'voronoi-relief') {
       assert(maxZ - minZ <= depth + 1e-9, `${name} cut depth is an upper bound`);
+      // The mapping never amplifies, so a preset whose raw field spans less than one carves
+      // shallower than it asks for. Presets must deliver what they request.
+      assert(maxZ - minZ >= depth * 0.98, `${name} actual relief ${(maxZ - minZ).toFixed(4)} in, requested ${depth} in`);
       const raw = new VoronoiReliefGen(STATE.seed).sampleGrid(sampleReliefParamsFromState(
         STATE.cols, STATE.rows, STATE.meshX, STATE.meshY, STATE.seed, STATE));
       const smoothed = gaussianSmooth(raw, STATE.rows, STATE.cols, STATE.meshX, STATE.meshY, STATE.smoothRadiusIn);
