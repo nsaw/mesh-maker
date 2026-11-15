@@ -731,6 +731,57 @@ sy = [s.Y for s in sites]
 site_positions = list(zip(sx, sy))
 site_coordinate_scale = max([1.0] + [abs(v) for p in site_positions for v in p])
 
+# Compiled height pass. MeshCraftRelief in MeshCraftNoise.dll (source:
+# grasshopper/components/MeshCraftRelief.cs) reproduces everything below, from the inradius
+# pass through renormalization, with the same operation order, so its output is bit-identical
+# (verified in Rhino 7.38 on 92,953 nodes across both polarities, pillow on and off). It is
+# used only when its Version equals RELIEF_DLL_VERSION; a missing or stale DLL falls back to
+# the Python pass. Bump both versions together whenever this height pass changes.
+RELIEF_DLL_VERSION = 'v24-lattice-membrane-1'
+
+def _relief_dll():
+    try:
+        import clr
+    except ImportError:
+        return None, 'Python (no CLR)'
+    try:
+        clr.AddReference('MeshCraftNoise')
+    except Exception:
+        _env = globals().get('ghenv')
+        _doc = _env.Component.OnPingDocument() if _env is not None else None
+        _path = _doc.FilePath if _doc is not None else None
+        if not _path:
+            return None, 'Python (MeshCraftNoise.dll not found)'
+        import os
+        _candidate = os.path.join(os.path.dirname(_path), 'MeshCraftNoise.dll')
+        if not os.path.isfile(_candidate):
+            return None, 'Python (MeshCraftNoise.dll not found)'
+        try:
+            clr.AddReferenceToFileAndPath(_candidate)
+        except Exception:
+            return None, 'Python (MeshCraftNoise.dll failed to load)'
+    try:
+        import MeshCraftRelief
+    except ImportError:
+        return None, 'Python (DLL has no MeshCraftRelief)'
+    if getattr(MeshCraftRelief, 'Version', None) != RELIEF_DLL_VERSION:
+        return None, 'Python (DLL height pass is stale)'
+    return MeshCraftRelief, 'DLL'
+
+_dll_heights = None
+_relief_impl, height_pass = _relief_dll()
+if _relief_impl is not None and abs(seed) >= 2 ** 62:
+    _relief_impl, height_pass = None, 'Python (seed outside the DLL range)'
+if _relief_impl is not None:
+    import System
+    _dll_heights = list(_relief_impl.VoronoiReliefHeights(
+        System.Array[float](sx), System.Array[float](sy), mesh_x, mesh_y, g_cols, g_rows,
+        cell_size, seed, profile, polarity, seam_sharpness, seam_depth, base_amp, base_freq,
+        wall_width, pillow, pillow_coverage, depth_variation, junction_lift, crest_variation))
+_env = globals().get('ghenv')
+if _env is not None:
+    _env.Component.Message = height_pass
+
 # v18 per-cell INRADIUS proxy: half the distance from the site to its nearest
 # neighboring site — the exact boundary distance evaluated AT the site. The true
 # cell maximum (at the incenter) can slightly exceed this when the incenter is
@@ -1015,16 +1066,18 @@ def _relief_node(px, py):
         zc = base + 1.0 + 0.04 + 0.13 * math.tanh((hp - 0.04) / 0.13)
     return zc, cushion, owner
 
-for j in xrange(g_rows):
-    py = j * dy_pix
-    row_off = j * g_cols
-    for i in xrange(g_cols):
-        px = i * dx_pix
-        z_value, cushion, owner = _relief_node(px, py)
-        z_arr[row_off + i] = z_value
-        if cushion > 0.0:
-            cush_a[row_off + i] = cushion
-            cush_owner[row_off + i] = owner
+# The pixel pass runs only without the DLL; cush_a then stays empty and the membrane is skipped.
+if _dll_heights is None:
+    for j in xrange(g_rows):
+        py = j * dy_pix
+        row_off = j * g_cols
+        for i in xrange(g_cols):
+            px = i * dx_pix
+            z_value, cushion, owner = _relief_node(px, py)
+            z_arr[row_off + i] = z_value
+            if cushion > 0.0:
+                cush_a[row_off + i] = cushion
+                cush_owner[row_off + i] = owner
 
 # v24 membrane cushion pass. The cushion region is evaluated on a fixed physical lattice
 # (0.2 in pitch, coarsened to about 10,000 nodes: IronPython runs this whole pass in
@@ -1164,13 +1217,16 @@ if _any_cush:
 
 # Renormalize to [0,1] -- Shape expects a normalized field; the base wave
 # pushes values outside the raw [0,1] band.
-z_min = min(z_arr)
-z_max = max(z_arr)
-z_span = z_max - z_min
-if z_span > 1e-12:
-    inv_span = 1.0 / z_span
-    for idx in xrange(total):
-        z_arr[idx] = (z_arr[idx] - z_min) * inv_span
+if _dll_heights is not None:
+    z_arr = _dll_heights  # already renormalized by the DLL
+else:
+    z_min = min(z_arr)
+    z_max = max(z_arr)
+    z_span = z_max - z_min
+    if z_span > 1e-12:
+        inv_span = 1.0 / z_span
+        for idx in xrange(total):
+            z_arr[idx] = (z_arr[idx] - z_min) * inv_span
 
 # Outputs ------------------------------------------------------------------
 # DataTree[float] is the only output type that survives GhPython serialization

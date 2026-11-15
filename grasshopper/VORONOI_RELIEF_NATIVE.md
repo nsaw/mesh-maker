@@ -147,20 +147,31 @@ On `MeshCraft | Shape`:
 
 ## Performance
 
-~24K pixels × ~175 sites = ~4M distance ops per frame. Expect 4–8 sec in
-IronPython for the height-field pass.
+The height pass (inradius, every output node, the lattice membrane and renormalization) runs
+in `MeshCraftRelief.VoronoiReliefHeights` from `MeshCraftNoise.dll` when that DLL is
+current. Its source is `grasshopper/components/MeshCraftRelief.cs`. In Rhino 7.38 on an M3,
+its output was identical to the Python pass at every node: 92,953 nodes over five layouts
+covering both polarities, pillow on and off, and three profiles. The whole component also
+matched the previous release on 78,081 nodes over four more layouts. A whole component recompute with
+pillow, walls and depth variation on a 24 x 36 in panel took 0.19 s at resolution 97 and
+0.36 s at 256. The Python pass took 7.2 s and 21.8 s. Site generation and Lloyd relaxation
+(node-in-code Voronoi) stay in Python.
 
-If too slow at higher resolutions, the kNN-2 inner loop is the obvious target
-for a port into `MeshCraftNoise.dll`:
+The component's `Message` shows which pass ran: `DLL`, or `Python (...)` with the reason.
+The Python pass runs when no CLR is present, when the DLL cannot be found or has no
+`MeshCraftRelief`, or when the DLL's `Version` differs from `RELIEF_DLL_VERSION`. A stale DLL
+therefore never changes the output. Bump both strings whenever the height pass changes.
 
-- Add a `Voronoi(...)` method to `MeshCraftNoise.cs` following the existing
-  `Shape` / `Smooth` pattern.
-- Mirror the Bridson rejection sampler and the kNN-2 brute force in C#.
-- The GhPython component becomes a thin DLL loader, same shape as
-  `meshcraft.node1.noise.dll-loader.py`.
+Build, from the folder holding `MeshCraftNoise.cs`
+(`sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/ghpy/`):
 
-Profile the GhPython component first via `ghenv.Component.Description` time
-deltas; only port if the inner loop is actually the bottleneck.
+```bash
+mcs -target:library -optimize+ -r:System.Numerics.dll -out:MeshCraftNoise.dll \
+  MeshCraftNoise.cs /Users/sawyer/Code/mesh-maker/grasshopper/components/MeshCraftRelief.cs
+```
+
+Copy the result over all three installed copies: `rhino/grasshopper/`, `rhino/grasshopper/ghpy/`
+and Grasshopper's `Libraries` folder. Then restart Rhino, because a loaded assembly is never replaced.
 
 ---
 
