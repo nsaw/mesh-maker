@@ -15,6 +15,13 @@ export class SiteGrid {
   private readonly minY: number;
   private readonly spacing: number;
   private coordinateScale = 1;
+  // Actual site extent, including sites clamped into edge buckets. Moves only grow it.
+  private siteMinX = Infinity;
+  private siteMinY = Infinity;
+  private siteMaxX = -Infinity;
+  private siteMaxY = -Infinity;
+  private scratchIndices = new Int32Array(0);
+  private scratchDistances = new Float64Array(0);
   private planes: Float64Array | undefined;
   private planeFrame: readonly [number, number, number] = [1, 0, 1];
 
@@ -73,6 +80,8 @@ export class SiteGrid {
     this.planes = undefined;
     const site = this.sites[index];
     this.coordinateScale = Math.max(this.coordinateScale,Math.abs(site.x),Math.abs(site.y));
+    this.siteMinX = Math.min(this.siteMinX, site.x); this.siteMaxX = Math.max(this.siteMaxX, site.x);
+    this.siteMinY = Math.min(this.siteMinY, site.y); this.siteMaxY = Math.max(this.siteMaxY, site.y);
     const key = this.row(site.y) * this.columns + this.column(site.x);
     (this.buckets[key] ??= []).push(index);
   }
@@ -106,14 +115,22 @@ export class SiteGrid {
    * by the world-space radius; the final distance predicate owns membership. */
   withinRadius(x: number, y: number, radius: number, cosA = 1, sinA = 0, scale = 1): Array<{index: number; distance: number}> {
     if (!Number.isFinite(radius) || radius < 0) throw new RangeError('Site radius must be finite and nonnegative');
-    const result: Array<{index: number; distance: number}> = [];
     const margin = 16 * Number.EPSILON * Math.max(1, Math.abs(x), Math.abs(y), radius);
     const x0 = this.column(x - radius - margin), x1 = this.column(x + radius + margin);
     const y0 = this.row(y - radius - margin), y1 = this.row(y + radius + margin);
     const isotropic = scale <= 1.0001;
     const componentBound = radius + margin;
+    if (this.scratchIndices.length < this.sites.length) {
+      this.scratchIndices = new Int32Array(this.sites.length);
+      this.scratchDistances = new Float64Array(this.sites.length);
+    }
+    const indices = this.scratchIndices, distances = this.scratchDistances;
+    let count = 0;
     for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) {
-      for (const index of this.buckets[j * this.columns + i] ?? []) {
+      const bucket = this.buckets[j * this.columns + i];
+      if (!bucket) continue;
+      for (let k = 0; k < bucket.length; k++) {
+        const index = bucket[k];
         const dx = x - this.sites[index].x, dy = y - this.sites[index].y;
         const tx = isotropic ? dx : (dx * cosA + dy * sinA) * scale;
         const ty = isotropic ? dy : -dx * sinA + dy * cosA;
@@ -121,10 +138,14 @@ export class SiteGrid {
         // Retain a roundoff margin and leave strict membership to the original hypot.
         if (Math.abs(tx) > componentBound || Math.abs(ty) > componentBound) continue;
         const distance = Math.hypot(tx, ty);
-        if (distance < radius) result.push({index, distance});
+        if (distance < radius) { indices[count++] = index; distances[index] = distance; }
       }
     }
-    return result.sort((a, b) => a.index - b.index);
+    // Each site lives in exactly one bucket, so a numeric index sort is the stable site order.
+    indices.subarray(0, count).sort();
+    const result = new Array<{index: number; distance: number}>(count);
+    for (let k = 0; k < count; k++) result[k] = {index: indices[k], distance: distances[indices[k]]};
+    return result;
   }
 
   /** Relative coordinates avoid cancellation between rounded radial distances. */
@@ -185,6 +206,34 @@ export class SiteGrid {
     return {distance: bound, candidates};
   }
 
+  /** Lower bound on the metric distance from (x, y) to any site in the half-open bucket
+   * band intersected with the site extent, or Infinity when no site can lie there.
+   * The Euclidean rectangle distance bounds every metric with scale >= 1. A stretched
+   * metric also exceeds hypot(scale * g1, g2), where g1 and g2 are the gaps between the
+   * query and the rectangle's projections onto the metric axes. The band limits keep the
+   * original bucket arithmetic, so the existing roundoff margin still covers them; the
+   * projected bound subtracts its own rounding allowance. */
+  private regionDistance(x: number, y: number, xMin: number, xMax: number, yMin: number, yMax: number,
+    cosA: number, sinA: number, scale: number): number {
+    const x0 = Math.max(xMin, this.siteMinX), x1 = Math.min(xMax, this.siteMaxX);
+    const y0 = Math.max(yMin, this.siteMinY), y1 = Math.min(yMax, this.siteMaxY);
+    if (!(x0 <= x1 && y0 <= y1)) return Infinity;
+    const gx = x < x0 ? x0 - x : x > x1 ? x - x1 : 0;
+    const gy = y < y0 ? y0 - y : y > y1 ? y - y1 : 0;
+    const euclidean = gy === 0 ? gx : gx === 0 ? gy : Math.hypot(gx, gy);
+    if (scale === 1) return euclidean;
+    const gap = (u: number, v: number): number => {
+      const q = x * u + y * v;
+      const a = x0 * u + y0 * v, b = x1 * u + y0 * v, c = x0 * u + y1 * v, d = x1 * u + y1 * v;
+      const lo = Math.min(a, b, c, d), hi = Math.max(a, b, c, d);
+      return q < lo ? lo - q : q > hi ? q - hi : 0;
+    };
+    const slack = 32 * Number.EPSILON * scale
+      * Math.max(1, Math.abs(x), Math.abs(y), Math.abs(x0), Math.abs(x1), Math.abs(y0), Math.abs(y1));
+    const projected = Math.hypot(scale * gap(cosA, sinA), gap(-sinA, cosA)) - slack;
+    return Math.max(euclidean, projected);
+  }
+
   nearestOwner(x: number, y: number): number {
     return this.query(x, y, 1, 0, 1, true).idx;
   }
@@ -236,11 +285,14 @@ export class SiteGrid {
       if (left === 0 && right === this.columns - 1 && bottom === 0 && top === this.rows - 1) break;
       // Scale >= 1 makes Euclidean distance a lower bound on the metric distance.
       // Strict inequality retains equal-distance lower-index sites in unvisited buckets.
+      // Every unvisited site lies beyond one side of the visited block and inside the
+      // actual site extent, so the bound is the distance to that clipped rectangle.
+      const metric = isotropic || squared ? 1 : scale;
       let outside = Infinity;
-      if (left > 0) outside = Math.min(outside, x - (this.minX + left * this.spacing));
-      if (right < this.columns - 1) outside = Math.min(outside, this.minX + (right + 1) * this.spacing - x);
-      if (bottom > 0) outside = Math.min(outside, y - (this.minY + bottom * this.spacing));
-      if (top < this.rows - 1) outside = Math.min(outside, this.minY + (top + 1) * this.spacing - y);
+      if (left > 0) outside = Math.min(outside, this.regionDistance(x, y, -Infinity, this.minX + left * this.spacing, -Infinity, Infinity, cosA, sinA, metric));
+      if (right < this.columns - 1) outside = Math.min(outside, this.regionDistance(x, y, this.minX + (right + 1) * this.spacing, Infinity, -Infinity, Infinity, cosA, sinA, metric));
+      if (bottom > 0) outside = Math.min(outside, this.regionDistance(x, y, -Infinity, Infinity, -Infinity, this.minY + bottom * this.spacing, cosA, sinA, metric));
+      if (top < this.rows - 1) outside = Math.min(outside, this.regionDistance(x, y, -Infinity, Infinity, this.minY + (top + 1) * this.spacing, Infinity, cosA, sinA, metric));
       const bound = squared && outside >= 0 ? outside * outside : outside;
       const furthest = squared ? f1 : f4;
       const orderingMargin=squared?orderingError*(2*Math.max(1,furthest)+orderingError):orderingError;
