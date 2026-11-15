@@ -231,6 +231,22 @@ assert(frozenReliefSupportVisits(supportShape(1024,cappedProject.params.meshX,ca
   }
 }
 
+// Sparse layouts put their extreme site on a capped bucket boundary, where floor-based
+// bucketing and the boundary sum disagree by an ulp. The clipped stopping bound must still
+// visit that site: without its rounding allowance these seeded layouts (found by
+// differential fuzzing against the unclipped bound) lost f2/f3 ranks on the query lattice.
+for (const layoutSeed of [68, 79, 118]) {
+  let seed=layoutSeed;
+  const step=()=>(seed=(Math.imul(seed,1103515245)+12345)>>>0),next=()=>(step()+step()/4294967296)/4294967296;
+  const sites=Array.from({length:6+Math.floor(next()*40)},()=>({x:next()*12,y:next()*24}));
+  const index=SiteGrid.fromSites(sites.map(site=>({...site})));
+  for (let j=0;j<=60;j++) for (let i=0;i<=30;i++) {
+    const x=i/30*12,y=j/60*24,actual=index.nearestFour(x,y);
+    assert.deepEqual([actual.idx,actual.idx2,actual.idx3,actual.idx4],rankSitesExactly(sites,x,y).slice(0,4).concat(-1,-1,-1).slice(0,4),
+      `sparse layout ${layoutSeed} at ${i},${j}`);
+  }
+}
+
 // Independent distance ordering covers clustered, sparse, collinear and coincident
 // authored populations. Bucket sizing must change only work, not arithmetic or ties.
 const layouts = [

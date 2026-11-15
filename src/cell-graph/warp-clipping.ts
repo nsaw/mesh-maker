@@ -121,9 +121,9 @@ export function boardRoots(
         warp = certificate.enclose(x, y);
       return subI(addI(mulI(line[0], warp[0]), mulI(line[1], warp[1])), line[2]);
     };
-    // Bisection only needs a sign. The point enclosure contains the full one, so a sign it
-    // decides is the full enclosure's sign; otherwise the full enclosure decides, exactly
-    // as before. Every bracket step is therefore unchanged.
+    // Bisection only needs a sign. The point enclosure (source +- twice the residue) and the
+    // full enclosure both contain the model value, so a sign either decides is its true sign;
+    // when the point enclosure is undecided the full enclosure decides, as before.
     const quickValue = (t: number): Interval => {
       const [x, y] = sidePoint(side, interval(t), width, height),
         warp = encloseAtPoint(certificate, x[0], y[0]);
@@ -150,7 +150,7 @@ export function boardRoots(
         mid = midpointI(box.t),
         d = derivative(box.t);
       const radius = scaleI(interval(absI(d)), nextUp((box.t[1] - box.t[0]) / 2))[1];
-      // A box excluded by the wider point enclosure is excluded by the full one too.
+      // A box the point enclosure excludes holds no root: it contains the model value.
       if (sign(inflateI(quickValue(mid), radius)) !== 0) continue;
       const fm = evaluate(mid);
       if (sign(inflateI(fm, radius)) !== 0) continue;

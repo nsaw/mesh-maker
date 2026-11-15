@@ -215,8 +215,15 @@ export class SiteGrid {
    * projected bound subtracts its own rounding allowance. */
   private regionDistance(x: number, y: number, xMin: number, xMax: number, yMin: number, yMax: number,
     cosA: number, sinA: number, scale: number): number {
-    const x0 = Math.max(xMin, this.siteMinX), x1 = Math.min(xMax, this.siteMaxX);
-    const y0 = Math.max(yMin, this.siteMinY), y1 = Math.min(yMax, this.siteMaxY);
+    // A site's column comes from floor((x - minX) / spacing) while the band limit is
+    // minX + k * spacing; the two can disagree by a few ulps, so a site may sit just
+    // inside a limit it was bucketed beyond. Widening the clipped rectangle by a rounding
+    // allowance keeps such a site inside its band, as the unclipped bound did.
+    const slop = 64 * Number.EPSILON * (1 + Math.abs(this.minX) + Math.abs(this.minY)
+      + (this.columns + this.rows) * this.spacing + Math.abs(this.siteMinX) + Math.abs(this.siteMaxX)
+      + Math.abs(this.siteMinY) + Math.abs(this.siteMaxY));
+    const x0 = Math.max(xMin, this.siteMinX) - slop, x1 = Math.min(xMax, this.siteMaxX) + slop;
+    const y0 = Math.max(yMin, this.siteMinY) - slop, y1 = Math.min(yMax, this.siteMaxY) + slop;
     if (!(x0 <= x1 && y0 <= y1)) return Infinity;
     const gx = x < x0 ? x0 - x : x > x1 ? x - x1 : 0;
     const gy = y < y0 ? y0 - y : y > y1 ? y - y1 : 0;

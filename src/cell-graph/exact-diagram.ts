@@ -153,6 +153,7 @@ export function exactDiagram(
     rows = Math.max(1, Math.floor((maxY - minY) / cell) + 1);
   const columnOf = (x: number): number => Math.min(columns - 1, Math.floor((x - minX) / cell)),
     rowOf = (y: number): number => Math.min(rows - 1, Math.floor((y - minY) / cell));
+  const bucketSlop = 64 * Number.EPSILON * (1 + Math.abs(minX) + Math.abs(maxX) + Math.abs(minY) + Math.abs(maxY) + (columns + rows) * cell);
   const buckets: number[][] = Array.from({ length: columns * rows }, () => []);
   for (let k = 0; k < count; k++) buckets[rowOf(sites.xy[2 * k + 1]) * columns + columnOf(sites.xy[2 * k])].push(k);
   function* nearestFirst(i: number): Generator<number> {
@@ -198,9 +199,10 @@ export function exactDiagram(
           }
         }
       }
-      // Sites in unread rings are at least `ring` whole cells from the site's own cell.
-      const unread = ring >= maxRing ? Infinity : ring * cell;
-      const floor = unread === Infinity ? Infinity : nextDown(nextDown(unread * unread) * (1 - 1e-12));
+      // Sites in unread rings are at least `ring` whole cells from the site's own cell, less
+      // the few-ulp disagreement between floor-based bucketing and the cell boundaries.
+      const unread = ring >= maxRing ? Infinity : ring * cell - bucketSlop;
+      const floor = unread === Infinity ? Infinity : unread <= 0 ? -1 : nextDown(nextDown(unread * unread) * (1 - 1e-12));
       while (heap.length && heap[0].d <= floor) yield pop().j;
     }
   }

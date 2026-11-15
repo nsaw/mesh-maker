@@ -166,7 +166,9 @@ function certifyEmission(edges: readonly ExactEdge[], budget: GraphBudget): void
     (maxX - minX) / 2048, (maxY - minY) / 2048) || 1;
   const columns = Math.max(1, Math.floor((maxX - minX + 2 * pad) / size) + 1);
   const cellOf = (value: number, origin: number): number => Math.max(0, Math.floor((value - origin + pad) / size));
-  const ranges = boxes.map((box) => [cellOf(box.x[0] - pad, minX), cellOf(box.x[1] + pad, minX),
+  // Rounding can put a padded edge one past the last column; clamp so keys never alias rows.
+  const columnOf = (value: number): number => Math.min(columns - 1, cellOf(value, minX));
+  const ranges = boxes.map((box) => [columnOf(box.x[0] - pad), columnOf(box.x[1] + pad),
     cellOf(box.y[0] - pad, minY), cellOf(box.y[1] + pad, minY)] as const);
   const cells = new Map<number, number[]>();
   ranges.forEach(([x0, x1, y0, y1], index) => {
