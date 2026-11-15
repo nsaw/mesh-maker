@@ -222,15 +222,19 @@ export class SiteGrid {
     const gy = y < y0 ? y0 - y : y > y1 ? y - y1 : 0;
     const euclidean = gy === 0 ? gx : gx === 0 ? gy : Math.hypot(gx, gy);
     if (scale === 1) return euclidean;
-    const gap = (u: number, v: number): number => {
-      const q = x * u + y * v;
-      const a = x0 * u + y0 * v, b = x1 * u + y0 * v, c = x0 * u + y1 * v, d = x1 * u + y1 * v;
-      const lo = Math.min(a, b, c, d), hi = Math.max(a, b, c, d);
-      return q < lo ? lo - q : q > hi ? q - hi : 0;
-    };
+    // Projections are separable over the rectangle: min/max of x*u plus min/max of y*v.
+    const ux0 = x0 * cosA, ux1 = x1 * cosA, vy0 = y0 * sinA, vy1 = y1 * sinA;
+    const q1 = x * cosA + y * sinA;
+    const lo1 = Math.min(ux0, ux1) + Math.min(vy0, vy1), hi1 = Math.max(ux0, ux1) + Math.max(vy0, vy1);
+    const g1 = q1 < lo1 ? lo1 - q1 : q1 > hi1 ? q1 - hi1 : 0;
+    const sx0 = -x0 * sinA, sx1 = -x1 * sinA, cy0 = y0 * cosA, cy1 = y1 * cosA;
+    const q2 = -x * sinA + y * cosA;
+    const lo2 = Math.min(sx0, sx1) + Math.min(cy0, cy1), hi2 = Math.max(sx0, sx1) + Math.max(cy0, cy1);
+    const g2 = q2 < lo2 ? lo2 - q2 : q2 > hi2 ? q2 - hi2 : 0;
+    if (g1 === 0 && g2 === 0) return euclidean;
     const slack = 32 * Number.EPSILON * scale
       * Math.max(1, Math.abs(x), Math.abs(y), Math.abs(x0), Math.abs(x1), Math.abs(y0), Math.abs(y1));
-    const projected = Math.hypot(scale * gap(cosA, sinA), gap(-sinA, cosA)) - slack;
+    const projected = Math.hypot(scale * g1, g2) - slack;
     return Math.max(euclidean, projected);
   }
 
