@@ -1624,23 +1624,25 @@ class VoronoiReliefNoise(object):
             if v0 > 0.0:
                 any_cush = True
                 break
-        if any_cush:
-            mc = measure_cols; mr = measure_rows; lattice = mc * mr
+        if any_cush and measure_cols >= 5 and measure_rows >= 5:
+            # Every second quadrature node in each axis: the same exact nearest ranks and
+            # boundary distances, a quarter of the node work.
+            mc = (measure_cols - 1) // 2 + 1; mr = (measure_rows - 1) // 2 + 1; lattice = mc * mr
             owner = [-1] * lattice
             # bowl_t_raw = (db - crest_w) / w > 1.25 needs db > 1.25 * WALL_MIN_PHYS.
             reach = 1.25 * self.WALL_MIN_PHYS * (1.0 - 1e-9)
             for j in range(1, mr - 1):
-                lv = j / float(mr - 1); y = lv * p['mesh_y']
+                lv = (2 * j) / float(measure_rows - 1); y = lv * p['mesh_y']
                 for i in range(1, mc - 1):
-                    node = j * mc + i
+                    node = 2 * j * measure_cols + 2 * i
                     if measure_boundary[node] <= reach:
                         continue
-                    lu = i / float(mc - 1); x = lu * p['mesh_x']
+                    lu = (2 * i) / float(measure_cols - 1); x = lu * p['mesh_x']
                     qx, qy = warp_fn(x, y) if warp_fn is not None else (x, y)
                     known = measure_nearest[node] if measure_nearest is not None else None
                     _h, cushion, owner_idx = evaluate_node(x, y, qx, qy, lu, lv, known)
                     if cushion > 0.0:
-                        owner[node] = owner_idx
+                        owner[j * mc + i] = owner_idx
             nodes = [k for k in range(lattice) if owner[k] >= 0]
             u = [0.0] * lattice; r = [0.0] * lattice
             direction = [0.0] * lattice; applied = [0.0] * lattice
@@ -1676,7 +1678,7 @@ class VoronoiReliefNoise(object):
                     u_max[owner[k]] = u[k]
             pol = -1.0 if p['polarity'] == 'pockets' else 1.0
             for j in range(rows):
-                gy = min(mr - 1.0, max(0.0, j / float(max(1, rows - 1)) * (mr - 1)))
+                gy = min(mr - 1.0, max(0.0, j / float(max(1, rows - 1)) * ((measure_rows - 1) / 2.0)))
                 j0 = min(mr - 2, int(math.floor(gy))); fy = gy - j0
                 for i in range(cols):
                     idx0 = j * cols + i
@@ -1685,7 +1687,7 @@ class VoronoiReliefNoise(object):
                     o = cush_owner[idx0]
                     if o < 0 or u_max[o] <= 1e-9:
                         continue
-                    gx = min(mc - 1.0, max(0.0, i / float(max(1, cols - 1)) * (mc - 1)))
+                    gx = min(mc - 1.0, max(0.0, i / float(max(1, cols - 1)) * ((measure_cols - 1) / 2.0)))
                     i0 = min(mc - 2, int(math.floor(gx))); fx = gx - i0; k = j0 * mc + i0
                     c00 = u[k] if owner[k] == o else 0.0
                     c10 = u[k + 1] if owner[k + 1] == o else 0.0

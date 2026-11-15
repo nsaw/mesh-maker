@@ -1476,7 +1476,7 @@ export class VoronoiReliefGen implements ReliefGenerator {
     }
 
     // v24 membrane cushion pass. The cushion region and its owners are evaluated on the
-    // physical measurement lattice (the pass-1 quadrature, independent of output density).
+    // physical measurement lattice (every second pass-1 quadrature node, independent of output density).
     // One Poisson solve, 4u - sum(neighbors) = 4 with u = 0 outside each cell's region,
     // runs by conjugate gradients to a relative residual of MEMBRANE_TOLERANCE; neighbors
     // owned by another cell are Dirichlet zero, so cells never share a membrane. Each
@@ -1488,8 +1488,10 @@ export class VoronoiReliefGen implements ReliefGenerator {
     for (let i = 0; i < cushA.length; i++) {
       if (cushA[i] > 0) { anyCushion = true; break; }
     }
-    if (anyCushion) {
-      const mc = measureCols, mr = measureRows, lattice = mc * mr;
+    if (anyCushion && measureCols >= 5 && measureRows >= 5) {
+      // Every second quadrature node in each axis (0.15 in at the full measurement pitch): the
+      // same exact nearest ranks and boundary distances, a quarter of the node work.
+      const mc = Math.floor((measureCols - 1) / 2) + 1, mr = Math.floor((measureRows - 1) / 2) + 1, lattice = mc * mr;
       const owner = new Int32Array(lattice).fill(-1);
       // A cushion needs bowlTRaw = (db - crestW) / w > PILLOW_GUTTER_END with crestW >= 0 and
       // w >= wallMinPhys, so a lattice node nearer its cell boundary than the product cannot
@@ -1497,10 +1499,11 @@ export class VoronoiReliefGen implements ReliefGenerator {
       // query; the small margin only keeps rounding from deciding the skip.
       const cushionReach = PILLOW_GUTTER_END * wallMinPhys * (1 - 1e-9);
       for (let j = 1; j < mr - 1; j++) {
-        const lv = j / (mr - 1), y = lv * p.meshY;
+        const lv = (2 * j) / (measureRows - 1), y = lv * p.meshY;
         for (let i = 1; i < mc - 1; i++) {
-          if (measureBoundary[j * mc + i] <= cushionReach) continue;
-          const lu = i / (mc - 1), x = lu * p.meshX, node = j * mc + i;
+          const node = 2 * j * measureCols + 2 * i;
+          if (measureBoundary[node] <= cushionReach) continue;
+          const lu = (2 * i) / (measureCols - 1), x = lu * p.meshX;
           const [qx, qy] = warpFn ? warpFn(x, y) : [x, y];
           const known = measureNearest && measureRanks ? {
             f1: measureNearest[node * 4], f2: measureNearest[node * 4 + 1], f3: measureNearest[node * 4 + 2], f4: measureNearest[node * 4 + 3],
@@ -1535,14 +1538,14 @@ export class VoronoiReliefGen implements ReliefGenerator {
       for (const k of nodes) if (u[k] > uMax[owner[k]]) uMax[owner[k]] = u[k];
       for (let j = 0; j < rows; j++) {
         const off = j * cols;
-        const gy = Math.min(mr - 1, Math.max(0, (queryOverride ? queryOverride.y / p.meshY : j / Math.max(1, rows - 1)) * (mr - 1)));
+        const gy = Math.min(mr - 1, Math.max(0, (queryOverride ? queryOverride.y / p.meshY : j / Math.max(1, rows - 1)) * ((measureRows - 1) / 2)));
         const j0 = Math.min(mr - 2, Math.floor(gy)), fy = gy - j0;
         for (let i = 0; i < cols; i++) {
           const idx = off + i;
           if (cushA[idx] <= 0) continue;
           const o = cushOwner[idx];
           if (o < 0 || uMax[o] <= 1e-9) continue;
-          const gx = Math.min(mc - 1, Math.max(0, (queryOverride ? queryOverride.x / p.meshX : i / Math.max(1, cols - 1)) * (mc - 1)));
+          const gx = Math.min(mc - 1, Math.max(0, (queryOverride ? queryOverride.x / p.meshX : i / Math.max(1, cols - 1)) * ((measureCols - 1) / 2)));
           const i0 = Math.min(mc - 2, Math.floor(gx)), fx = gx - i0, k = j0 * mc + i0;
           const at = (n: number): number => owner[n] === o ? u[n] : 0;
           const membrane = (1 - fy) * ((1 - fx) * at(k) + fx * at(k + 1)) + fy * ((1 - fx) * at(k + mc) + fx * at(k + mc + 1));

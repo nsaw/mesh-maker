@@ -1027,11 +1027,11 @@ for j in xrange(g_rows):
             cush_owner[row_off + i] = owner
 
 # v24 membrane cushion pass. The cushion region is evaluated on a fixed physical lattice
-# (0.2 in pitch, coarsened to stay under 10,000 nodes: IronPython runs this whole pass in
+# (0.2 in pitch, coarsened to about 10,000 nodes: IronPython runs this whole pass in
 # about 2-4 s on a 24 in panel), not on the output grid, so the
 # cushion no longer depends on resolution. One Poisson system, 4u - sum(neighbors) = 4 with
-# u = 0 outside each cell's region and other cells' nodes held at zero, is solved by
-# conjugate gradients to a 1e-10 relative residual. Each cushion pixel reads its own cell's
+# u = 0 outside each cell's region and other cells' nodes held at zero, is solved cell by
+# cell by conjugate gradients to a 1e-10 relative residual. Each cushion pixel reads its own cell's
 # membrane bilinearly at its position, normalized by that cell's lattice maximum.
 _any_cush = False
 for _cv in cush_a:
@@ -1094,34 +1094,43 @@ if _any_cush:
     for k in _nodes:
         _o = _owner[k]
         _links.append([_n for _n in (k - 1, k + 1, k - _mc, k + _mc) if _owner[_n] == _o])
-    _count = len(_nodes)
-    _rr = 0.0
-    for k in _nodes:
-        _r[k] = 4.0
-        _dir[k] = 4.0
-        _rr += 16.0
-    _target = _rr * 1e-20
-    _iteration = 0
-    while _iteration < 4 * (_mc + _mr) + 100 and _rr > _target:
-        _curvature = 0.0
-        for _m in xrange(_count):
+    # One conjugate-gradient solve per cell: cells never share a membrane, and solving each
+    # alone keeps a cell's values independent of which other cells are present.
+    _groups = {}
+    for _m in xrange(len(_nodes)):
+        _groups.setdefault(_owner[_nodes[_m]], []).append(_m)
+    for _cell in sorted(_groups):
+        _members = _groups[_cell]
+        _rr = 0.0
+        for _m in _members:
             k = _nodes[_m]
-            _value = 4.0 * _dir[k]
-            for _n in _links[_m]:
-                _value -= _dir[_n]
-            _applied[k] = _value
-            _curvature += _dir[k] * _value
-        _alpha = _rr / _curvature
-        _next = 0.0
-        for k in _nodes:
-            u_mem[k] += _alpha * _dir[k]
-            _r[k] -= _alpha * _applied[k]
-            _next += _r[k] * _r[k]
-        _beta = _next / _rr
-        _rr = _next
-        for k in _nodes:
-            _dir[k] = _r[k] + _beta * _dir[k]
-        _iteration += 1
+            _r[k] = 4.0
+            _dir[k] = 4.0
+            _rr += 16.0
+        _target = _rr * 1e-20
+        _iteration = 0
+        while _iteration < 4 * (_mc + _mr) + 100 and _rr > _target:
+            _curvature = 0.0
+            for _m in _members:
+                k = _nodes[_m]
+                _value = 4.0 * _dir[k]
+                for _n in _links[_m]:
+                    _value -= _dir[_n]
+                _applied[k] = _value
+                _curvature += _dir[k] * _value
+            _alpha = _rr / _curvature
+            _next = 0.0
+            for _m in _members:
+                k = _nodes[_m]
+                u_mem[k] += _alpha * _dir[k]
+                _r[k] -= _alpha * _applied[k]
+                _next += _r[k] * _r[k]
+            _beta = _next / _rr
+            _rr = _next
+            for _m in _members:
+                k = _nodes[_m]
+                _dir[k] = _r[k] + _beta * _dir[k]
+            _iteration += 1
     u_max = [0.0] * n_sites
     for k in _nodes:
         if u_mem[k] > u_max[_owner[k]]:

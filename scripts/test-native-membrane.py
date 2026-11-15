@@ -42,6 +42,12 @@ for polarity in ('pockets', 'domes'):
     assert lifted >= 5, '%s: the membrane must lift cushions (%d nodes)' % (polarity, lifted)
     difference, nodes = worst(coarse, fine)
     # Raw heights are recovered from the normalized output, so allow its rounding (old: 7e-3).
-    assert nodes == 49 * 49 and difference <= 1e-12, '%s: pillowed raw heights differ by %r across grids' % (polarity, difference)
+    assert nodes == 49 * 49 and difference <= 1e-15, '%s: pillowed raw heights differ by %r across grids' % (polarity, difference)
     print('%s: %d cushion nodes, raw heights within %.1e at %d coincident nodes' % (polarity, lifted, difference, nodes))
+# Review of #84: grids that see different sets of cushion cells (25 vs 97 here) must still
+# agree, so each cell's membrane cannot depend on which other cells were solved with it.
+for seed in (3, 11):
+    inputs = dict(pillow=1.0, pillow_coverage=1.0, cell_size=1.5, seed=seed)
+    difference, nodes = worst(grid(25, **inputs), grid(97, **inputs))
+    assert nodes == 25 * 25 and difference <= 1e-15, 'seed %d: raw heights differ by %r between 25 and 97' % (seed, difference)
 print('Native membrane resolution independence passed.')

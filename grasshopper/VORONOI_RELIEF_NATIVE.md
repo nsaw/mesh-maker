@@ -105,7 +105,7 @@ On `MeshCraft | Shape`:
 | `wall_width`      | 0.0              | v18 nominal crest plateau on the shared boundary (`crest_w = wall_width × cell_size / 2` before modulation and local clamps). Local inradius and wall-width caps can narrow or collapse it; this input does not guarantee a minimum physical ridge width. |
 | `density_noise`   | 0.0              | 0..1.5 patchy cell-size noise (giant cells next to small ones). |
 | `density_noise_freq` | 0.08          | Patch spatial frequency (lower = larger patches). |
-| `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). The mound's membrane is solved on a fixed physical lattice (0.2 in, at most 10,000 nodes), so it does not change with `resolution`; with pillows on it adds about 3-4 s per recompute in Rhino 7 on a 24 in panel. |
+| `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). The mound's membrane is solved on a fixed physical lattice (0.2 in, about 10,000 nodes), so it does not change with `resolution`; with pillows on it adds about 3-4 s per recompute in Rhino 7 on a 24 in panel. |
 | `pillow_coverage` | 0.6              | Fraction of cells that get pillows (seeded per-cell hash) — the reference mixes pillowed and plain pockets. |
 | `depth_variation` | 0.0              | 0..1 per-cell depth tiers (deep/intermediate/shallow-suppressed) + asymmetric wall saturation per cell. High values merge shallow cells into calm surface masses. |
 | `junction_lift`   | 0.0              | 0..1 crest lift toward three-way junctions (tense nodes/saddles; also widens the wall band there). |

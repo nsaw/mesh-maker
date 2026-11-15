@@ -142,7 +142,7 @@ tolerances 1e-10 and 1e-4.
 The native Rhino component (`grasshopper/components/voronoi_relief_native.py`) is a separate
 algorithm, but its pillow membrane had the same output-grid dependence (0.0042 of the
 normalized range between resolutions 49 and 97 in Rhino 7). It now evaluates its cushion test
-on its own fixed lattice (0.2 in, at most 10,000 nodes, sized for IronPython) and solves the
-same conjugate-gradient system; pillowed raw heights agree exactly at coincident nodes in Rhino
+on its own fixed lattice (0.2 in, about 10,000 nodes, sized for IronPython) and solves the
+same conjugate-gradient system cell by cell; pillowed raw heights agree exactly at coincident nodes in Rhino
 7.38 and in `npm run test:native-membrane`, and output with the pillow off is unchanged.
 
