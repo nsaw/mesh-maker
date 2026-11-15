@@ -18,7 +18,7 @@ class Geometry:
 
 module = ast.parse(SOURCE)
 module.body = [node for node in module.body if isinstance(node, (ast.ClassDef, ast.FunctionDef))]
-scope = {'math': math, 'xrange': range, 'rg': Geometry}
+scope = {'math': math, 'xrange': range, 'rg': Geometry, '_dll_heights': None}
 exec(compile(module, '<actual native definitions>', 'exec'), scope)
 Grid = scope['_SiteGrid']
 

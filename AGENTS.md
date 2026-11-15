@@ -174,8 +174,9 @@ when the DLL's `Version` equals the component's `RELIEF_DLL_VERSION`, and otherw
 Python pass. `grasshopper/components/MeshCraftRelief.cs` is that class's only source, a
 line-for-line port. A change to the native height pass has two landing sites: the Python and the C#.
 Bump both version strings, rebuild with the command in `grasshopper/VORONOI_RELIEF_NATIVE.md`,
-and confirm bit parity in Rhino 7 before deploying. `npm run test:native-relief-dll` checks the
-wiring and the version match, but it cannot check the C# arithmetic.
+and confirm bit parity with `scripts/rhino-native-relief-dll-parity.py` in Rhino 7 before
+deploying. `npm run test:native-relief-dll` checks the wiring and fails when the ported source
+changes without a version bump. It cannot check the C# arithmetic.
 
 ## Deployment
 

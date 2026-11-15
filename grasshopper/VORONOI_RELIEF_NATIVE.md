@@ -149,18 +149,38 @@ On `MeshCraft | Shape`:
 
 The height pass (inradius, every output node, the lattice membrane and renormalization) runs
 in `MeshCraftRelief.VoronoiReliefHeights` from `MeshCraftNoise.dll` when that DLL is
-current. Its source is `grasshopper/components/MeshCraftRelief.cs`. In Rhino 7.38 on an M3,
-its output was identical to the Python pass at every node: 92,953 nodes over five layouts
-covering both polarities, pillow on and off, and three profiles. The whole component also
-matched the previous release on 78,081 nodes over four more layouts. A whole component recompute with
-pillow, walls and depth variation on a 24 x 36 in panel took 0.19 s at resolution 97 and
-0.36 s at 256. The Python pass took 7.2 s and 21.8 s. Site generation and Lloyd relaxation
-(node-in-code Voronoi) stay in Python.
+current. Its source is `grasshopper/components/MeshCraftRelief.cs`. Site generation and
+Lloyd relaxation (node-in-code Voronoi) stay in Python.
+
+`scripts/rhino-native-relief-dll-parity.py` is the parity gate. It runs the component in
+Rhino 7 twice per layout, once on the Python pass and once on the DLL, and requires identical
+heights. On 2026-11-14 (Rhino 7.38, M3) it passed on all seven layouts, 106,585 nodes: both
+polarities, pillow on and off, four profiles, and cells deep enough that `v > 1`. Whole
+component recomputes:
+
+| layout | Python | DLL |
+|---|---|---|
+| pillow, walls, depth variation, crest, domes, 24 x 24 in, res 97 | 4.1 s | 0.09 s |
+| same, pockets, res 256 | 14.5 s | 0.26 s |
+| defaults, 24 x 36 in, res 128 | 3.6 s | 0.11 s |
 
 The component's `Message` shows which pass ran: `DLL`, or `Python (...)` with the reason.
-The Python pass runs when no CLR is present, when the DLL cannot be found or has no
-`MeshCraftRelief`, or when the DLL's `Version` differs from `RELIEF_DLL_VERSION`. A stale DLL
-therefore never changes the output. Bump both strings whenever the height pass changes.
+The Python pass runs in each of these cases:
+- no CLR is present;
+- `MeshCraftNoise.dll` cannot be found or fails to load;
+- the DLL has no `MeshCraftRelief`;
+- the DLL's `Version` differs from `RELIEF_DLL_VERSION`;
+- the seed or coordinates are outside the range where the DLL's 64-bit arithmetic equals Python's;
+- the DLL call throws or returns the wrong number of heights.
+
+A stale DLL therefore never changes the output. Both version strings end in a hash of the
+ported Python source, and `npm run test:native-relief-dll` fails whenever that source changes
+without them. After such a change:
+1. Port it to the C#.
+2. Rebuild.
+3. Run the parity gate.
+4. Put the new hash (printed by the test) in both strings.
+5. Deploy.
 
 Build, from the folder holding `MeshCraftNoise.cs`
 (`sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/ghpy/`):
@@ -168,6 +188,13 @@ Build, from the folder holding `MeshCraftNoise.cs`
 ```bash
 mcs -target:library -optimize+ -r:System.Numerics.dll -out:MeshCraftNoise.dll \
   MeshCraftNoise.cs /Users/sawyer/Code/mesh-maker/grasshopper/components/MeshCraftRelief.cs
+```
+
+Then run the gate on that build (Rhino closed):
+
+```bash
+MESHCRAFT_DLL="$PWD/MeshCraftNoise.dll" ~/.claude/skills/rhino-grasshopper-ghpython/scripts/rhino-run.sh \
+  /Users/sawyer/Code/mesh-maker/scripts/rhino-native-relief-dll-parity.py /tmp/parity.json 900
 ```
 
 Copy the result over all three installed copies: `rhino/grasshopper/`, `rhino/grasshopper/ghpy/`

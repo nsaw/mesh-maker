@@ -15,7 +15,7 @@ public static class MeshCraftRelief
 
     /// <summary>The height-pass revision this build reproduces. voronoi_relief_native.py uses the
     /// DLL only when this equals its own RELIEF_DLL_VERSION, so a stale DLL falls back to Python.</summary>
-    public const string Version = "v24-lattice-membrane-1";
+    public const string Version = "v24-lattice-membrane-07d522836b69";
 
     // ---- exact metric ordering (isotropic, squared distances) ----
     struct Dyadic { public BigInteger M; public int E; public Dyadic(BigInteger m, int e) { M = m; E = e; } }
@@ -261,7 +261,7 @@ public static class MeshCraftRelief
             double baseWave = BaseAmp * VNoise(px * BaseFreq, py * BaseFreq, Seed + 99);
             double crest = 0.0;
             if (CrestVariation > 0.0)
-                crest = CrestVariation * 0.4 * VNoise(px * CrestFreq, py * CrestFreq, Seed + 97) * Math.Pow(1.0 - v, 1.5);
+                crest = CrestVariation * 0.4 * VNoise(px * CrestFreq, py * CrestFreq, Seed + 97) * Math.Pow(Math.Max(0.0, 1.0 - v), 1.5);
             double lift = JunctionLift > 0.0 ? JunctionLift * 0.1 * jnS * (1.0 - v) : 0.0;
             lift += crest;
             double crownTerm = 0.0;

@@ -6,8 +6,9 @@ when the DLL's Version equals RELIEF_DLL_VERSION. This checks, in CPython with s
 modules, that the component falls back to its Python pass without a CLR, with a DLL lacking
 MeshCraftRelief, and with a stale DLL; that a current DLL receives the relaxed sites and the
 clamped inputs and its heights become the output unchanged; and that the C# source carries
-the same version string. Bit parity of the C# itself needs Rhino 7 (grasshopper/README.md)."""
+the same version string. Bit parity of the C# itself needs Rhino 7: scripts/rhino-native-relief-dll-parity.py."""
 from pathlib import Path
+import hashlib
 import re
 import sys
 import types
@@ -21,9 +22,30 @@ CSHARP = (ROOT / 'grasshopper/components/MeshCraftRelief.cs').read_text()
 INPUTS = dict(resolution=33, mesh_x=24.0, mesh_y=18.0, pillow=1.0, pillow_coverage=1.0, cell_size=3.0,
               seam_depth=0.4, relax_iter=1, seed=7, wall_width=0.3, profile='Cosine', polarity='domes')
 
+# Every part of the component that MeshCraftRelief.cs ports. The loader block between
+# '# Compiled height pass.' and '# v18 per-cell' is excluded: it holds the version itself.
+HEIGHT_PASS = [('class _SiteGrid(object):', 'if mesh_x             is None'), ('def _vn_hash(', 'ax = attractor_pt'),
+               ('def _edge_hash01(', 'def local_min_dist('), ('def profile_fn(', '# Compiled height pass.'),
+               ('# v18 per-cell INRADIUS proxy', '# Outputs ----')]
+
+
+def height_pass_hash(source):
+    digest = hashlib.sha256()
+    for start, end in HEIGHT_PASS:
+        assert source.count(start) == 1 and source.count(end) == 1, (start, end)
+        i = source.index(start)
+        digest.update(source[i:source.index(end, i)].encode('utf-8'))
+    return digest.hexdigest()[:12]
+
+
 python_version = re.search(r"^RELIEF_DLL_VERSION = '([^']+)'$", SOURCE, re.M).group(1)
 csharp_version = re.search(r'public const string Version = "([^"]+)";', CSHARP).group(1)
 assert python_version == csharp_version, 'version drift: component %r, C# %r' % (python_version, csharp_version)
+current_hash = height_pass_hash(SOURCE)
+assert python_version.endswith('-' + current_hash), (
+    'the native height pass changed (hash %s) but RELIEF_DLL_VERSION is %r: port the change to '
+    'MeshCraftRelief.cs, rebuild, rerun scripts/rhino-native-relief-dll-parity.py, then put the new '
+    'hash in both version strings' % (current_hash, python_version))
 
 
 class _Array(object):
@@ -96,7 +118,29 @@ huge = dict(INPUTS)
 INPUTS['seed'] = 2 ** 62
 outside = run(clr=fake_clr(), relief=current_module)
 INPUTS.update(huge)
-assert outside['height_pass'] == 'Python (seed outside the DLL range)', outside['height_pass']
+assert outside['height_pass'] == 'Python (inputs outside the DLL range)', outside['height_pass']
 assert len(calls) == 1
+assert all(r == s['cell_size'] * 0.5 for r in current['inradius']), 'the Python inradius pass must not run beside the DLL'
+
+failing_module = types.ModuleType('MeshCraftRelief')
+failing_module.Version = python_version
+failing_module.VoronoiReliefHeights = lambda *args: (_ for _ in ()).throw(ArithmeticError('overflow'))
+failing = run(clr=fake_clr(), relief=failing_module)
+assert failing['height_pass'] == 'Python (DLL call failed: ArithmeticError)', failing['height_pass']
+assert list(failing['z_values'].items) == expected
+short_module = types.ModuleType('MeshCraftRelief')
+short_module.Version = python_version
+short_module.VoronoiReliefHeights = lambda *args: sentinel[:-1]
+short = run(clr=fake_clr(), relief=short_module)
+assert short['height_pass'] == 'Python (DLL returned %d heights)' % (len(sentinel) - 1), short['height_pass']
+assert list(short['z_values'].items) == expected
+
+# Review of #85: large cells carve deeper than the stock face (v > 1), where pow(1 - v, 1.5)
+# raised in Python and gave NaN in C#. The crest term now clamps at the face.
+INPUTS.update(cell_size=8.0, seam_depth=1.0, crest_variation=0.5, seed=2, resolution=64, mesh_x=24.0, mesh_y=36.0,
+              profile='cosine', polarity='pockets', pillow=0.0, wall_width=0.0)
+deep = run()
+values = list(deep['z_values'].items)
+assert all(v == v for v in values) and min(values) == 0.0 and max(values) == 1.0, 'deep cells must give finite heights'
 print('Native relief DLL wiring passed: fallback without CLR, without MeshCraftRelief and on a stale '
       'version; a current DLL receives the clamped inputs and its heights are the output.')

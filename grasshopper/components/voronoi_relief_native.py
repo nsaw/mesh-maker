@@ -734,10 +734,13 @@ site_coordinate_scale = max([1.0] + [abs(v) for p in site_positions for v in p])
 # Compiled height pass. MeshCraftRelief in MeshCraftNoise.dll (source:
 # grasshopper/components/MeshCraftRelief.cs) reproduces everything below, from the inradius
 # pass through renormalization, with the same operation order, so its output is bit-identical
-# (verified in Rhino 7.38 on 92,953 nodes across both polarities, pillow on and off). It is
-# used only when its Version equals RELIEF_DLL_VERSION; a missing or stale DLL falls back to
-# the Python pass. Bump both versions together whenever this height pass changes.
-RELIEF_DLL_VERSION = 'v24-lattice-membrane-1'
+# (scripts/rhino-native-relief-dll-parity.py checks that in Rhino 7). It is used only when its
+# Version equals RELIEF_DLL_VERSION; a missing, stale or failing DLL falls back to the Python
+# pass. The version ends in the first 12 hex digits of the SHA-256 of this file's height pass
+# (from the inradius proxy through renormalization, as scripts/test-native-relief-dll.py
+# extracts it), so any edit there fails that test until the C# is ported, rebuilt and
+# re-verified and both strings carry the new hash.
+RELIEF_DLL_VERSION = 'v24-lattice-membrane-07d522836b69'
 
 def _relief_dll():
     try:
@@ -770,14 +773,20 @@ def _relief_dll():
 
 _dll_heights = None
 _relief_impl, height_pass = _relief_dll()
-if _relief_impl is not None and abs(seed) >= 2 ** 62:
-    _relief_impl, height_pass = None, 'Python (seed outside the DLL range)'
+# The DLL's 64-bit seed hashes and value-noise lattice indices equal Python's only in this range.
+if _relief_impl is not None and (abs(seed) >= 2 ** 62 or max(mesh_x, mesh_y, site_coordinate_scale) >= 2.0 ** 52):
+    _relief_impl, height_pass = None, 'Python (inputs outside the DLL range)'
 if _relief_impl is not None:
     import System
-    _dll_heights = list(_relief_impl.VoronoiReliefHeights(
-        System.Array[float](sx), System.Array[float](sy), mesh_x, mesh_y, g_cols, g_rows,
-        cell_size, seed, profile, polarity, seam_sharpness, seam_depth, base_amp, base_freq,
-        wall_width, pillow, pillow_coverage, depth_variation, junction_lift, crest_variation))
+    try:
+        _dll_heights = list(_relief_impl.VoronoiReliefHeights(
+            System.Array[float](sx), System.Array[float](sy), mesh_x, mesh_y, g_cols, g_rows,
+            cell_size, seed, profile, polarity, seam_sharpness, seam_depth, base_amp, base_freq,
+            wall_width, pillow, pillow_coverage, depth_variation, junction_lift, crest_variation))
+    except Exception as _error:
+        _dll_heights, height_pass = None, 'Python (DLL call failed: %s)' % type(_error).__name__
+    if _dll_heights is not None and len(_dll_heights) != g_cols * g_rows:
+        _dll_heights, height_pass = None, 'Python (DLL returned %d heights)' % len(_dll_heights)
 _env = globals().get('ghenv')
 if _env is not None:
     _env.Component.Message = height_pass
@@ -788,7 +797,8 @@ if _env is not None:
 # off-site; the small underestimate only makes floors marginally larger. O(n^2)
 # on a few hundred sites is negligible next to the pixel loop.
 inradius = [cell_size * 0.5] * n_sites
-for k in xrange(n_sites):
+# Only the Python pass reads inradius and size_mul_cell; the DLL computes its own.
+for k in xrange(n_sites if _dll_heights is None else 0):
     best = float('inf')
     for m in xrange(n_sites):
         if m == k: continue
@@ -804,7 +814,7 @@ for k in xrange(n_sites):
 sorted_inr = sorted(inradius)
 median_inr = max(0.05, sorted_inr[n_sites // 2])
 size_mul_cell = [0.0] * n_sites
-for k in xrange(n_sites):
+for k in xrange(n_sites if _dll_heights is None else 0):
     sm = math.sqrt(inradius[k] / median_inr)
     if sm < 0.8: sm = 0.8
     elif sm > 1.2: sm = 1.2
@@ -1043,7 +1053,7 @@ def _relief_node(px, py):
     # v17 crest variation (ridge-local envelope fragmentation) + tamed junction lift.
     crest = 0.0
     if crest_variation > 0.0:
-        crest = crest_variation * 0.4 * vnoise(px * crest_freq, py * crest_freq, seed + 97) * pow(1.0 - v, 1.5)
+        crest = crest_variation * 0.4 * vnoise(px * crest_freq, py * crest_freq, seed + 97) * pow(max(0.0, 1.0 - v), 1.5)
     lift = junction_lift * 0.1 * jn_s * (1.0 - v) if junction_lift > 0.0 else 0.0
     lift += crest
     # v20 ridge crown: rounded bead over the crest band — dome peaking on the shared
