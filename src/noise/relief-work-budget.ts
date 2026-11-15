@@ -20,7 +20,11 @@ export function reliefMeasurementShape(meshX: number, meshY: number): {cols: num
 // time or total query operations. The budget is four times the project output-node cap:
 // distributed populations remain admitted while coincidence cannot expand work without limit.
 export const MAX_FROZEN_RELIEF_QUERY_WORK = 16_777_216;
-interface WorkShape { cols: number; rows: number; meshX: number; meshY: number }
+interface WorkShape {
+  cols: number; rows: number; meshX: number; meshY: number;
+  /** Pillowed generation queries the measurement lattice a second time (the membrane pass). */
+  pillow?: number; pillowCoverage?: number; invertProfile?: number;
+}
 
 /** A separate resource policy. Validation/serialization keep every coordinate and identity. */
 export function frozenReliefQueryWork(p: WorkShape, sites: ReliefSiteSet, additionalQueries = 0): number {
@@ -68,7 +72,9 @@ export function frozenReliefSupportVisits(p: WorkShape, sites: ReliefSiteSet, ad
   const n = sites.ids.length;
   if (n === 0) return 0;
   const measurement = reliefMeasurementShape(p.meshX, p.meshY);
-  const queries = measurement.cols * measurement.rows + p.cols * p.rows + 2 * n + additionalQueries;
+  const cushions = (p.pillow ?? 0) > 0 && (p.invertProfile ?? 0) <= 0.5 && !((p.pillowCoverage ?? 0.6) <= 0);
+  const lattice = measurement.cols * measurement.rows;
+  const queries = (cushions ? 2 : 1) * lattice + p.cols * p.rows + 2 * n + additionalQueries;
   // Buckets at the even-layout spacing hold about one site each in distributed layouts.
   const spacing = Math.sqrt(p.meshX * p.meshY / n);
   const bc = Math.max(1, Math.min(4 * n, Math.ceil(p.meshX / spacing)));
@@ -98,45 +104,53 @@ export function frozenReliefSupportVisits(p: WorkShape, sites: ReliefSiteSet, ad
   };
   const siteDistance = (site: number, x: number, y: number): number =>
     Math.hypot(sites.xy[site * 2] - x, sites.xy[site * 2 + 1] - y);
-  // The two nearest sites (distance, index), by ring search while it is cheaper than the
-  // occupied-bucket list, then the list.
-  const nearestTwo = (x: number, y: number): [number, number, number, number] => {
+  // The four nearest sites (distances, indices), by ring search while it is cheaper than
+  // the occupied-bucket list, then the list.
+  const nearestFour = (x: number, y: number): {d: number[]; k: number[]} => {
     const ci = column(x), cj = row(y);
-    let d1 = Infinity, i1 = -1, d2 = Infinity, i2 = -1, visited = 0;
+    let d = [Infinity, Infinity, Infinity, Infinity], k = [-1, -1, -1, -1], visited = 0;
     const consider = (site: number): void => {
-      const d = siteDistance(site, x, y);
-      if (d < d1) { d2 = d1; i2 = i1; d1 = d; i1 = site; } else if (d < d2) { d2 = d; i2 = site; }
+      const value = siteDistance(site, x, y);
+      for (let slot = 0; slot < 4; slot++) {
+        if (value < d[slot]) {
+          d.splice(slot, 0, value); k.splice(slot, 0, site); d.length = 4; k.length = 4;
+          return;
+        }
+      }
     };
     for (let ring = 0; visited <= occupied.length; ring++) {
-      const i0 = ci - ring, i1r = ci + ring, j0 = cj - ring, j1 = cj + ring;
+      const i0 = ci - ring, i1 = ci + ring, j0 = cj - ring, j1 = cj + ring;
       for (let j = Math.max(0, j0); j <= Math.min(br - 1, j1); j++) {
         const edge = j === j0 || j === j1;
-        for (let i = Math.max(0, i0); i <= Math.min(bc - 1, i1r); i += edge || i >= i1r ? 1 : i1r - i) {
+        for (let i = Math.max(0, i0); i <= Math.min(bc - 1, i1); i += edge || i >= i1 ? 1 : i1 - i) {
           visited++;
-          for (let k = start[j * bc + i]; k < start[j * bc + i + 1]; k++) consider(order[k]);
+          for (let m = start[j * bc + i]; m < start[j * bc + i + 1]; m++) consider(order[m]);
         }
       }
       // Unvisited buckets lie at least `ring` whole buckets away in some axis.
-      if (d2 <= ring * Math.min(bucketWidth, bucketHeight)
-        || (i0 <= 0 && j0 <= 0 && i1r >= bc - 1 && j1 >= br - 1)) return [d1, i1, d2, i2];
+      if (d[3] <= ring * Math.min(bucketWidth, bucketHeight)
+        || (i0 <= 0 && j0 <= 0 && i1 >= bc - 1 && j1 >= br - 1)) return {d, k};
     }
-    d1 = Infinity; i1 = -1; d2 = Infinity; i2 = -1;
-    for (const k of occupied) {
-      if (near(k, x, y) >= d2) continue;
-      for (let m = start[k]; m < start[k + 1]; m++) consider(order[m]);
+    d = [Infinity, Infinity, Infinity, Infinity]; k = [-1, -1, -1, -1];
+    for (const bucket of occupied) {
+      if (near(bucket, x, y) >= d[3]) continue;
+      for (let m = start[bucket]; m < start[bucket + 1]; m++) consider(order[m]);
     }
-    return [d1, i1, d2, i2];
+    return {d, k};
   };
-  // The producer scans max(support, f1 + 2B) around each query, where B, the boundary seed,
-  // is at most the bisector distance to the second-nearest site, (f2^2 - f1^2) / (2 d12).
+  // The producer scans max(support, f1 + 2B). Its boundary seed B is the least bisector
+  // distance to the second through fourth nearest sites, (fj^2 - f1^2) / (2 d1j); a site
+  // coincident with the owner has no bisector, and with none left B is the board cap.
+  const boardCap = p.meshX + p.meshY;
   const searchRadius = (x: number, y: number): number => {
-    const [f1, s1, f2, s2] = nearestTwo(x, y);
-    let radius = RELIEF_SUPPORT_RATIO * Math.max(f1, 1e-9);
-    if (s2 >= 0 && Number.isFinite(f2)) {
-      const d12 = siteDistance(s2, sites.xy[s1 * 2], sites.xy[s1 * 2 + 1]);
-      if (d12 > 0) radius = Math.max(radius, f1 + (f2 * f2 - f1 * f1) / d12);
+    const {d, k} = nearestFour(x, y), f1 = d[0];
+    let bound = boardCap;
+    for (let rank = 1; rank < 4; rank++) {
+      if (k[rank] < 0 || !Number.isFinite(d[rank])) continue;
+      const separation = siteDistance(k[rank], sites.xy[k[0] * 2], sites.xy[k[0] * 2 + 1]);
+      if (separation > 0) bound = Math.min(bound, (d[rank] * d[rank] - f1 * f1) / (2 * separation));
     }
-    return radius;
+    return Math.max(RELIEF_SUPPORT_RATIO * Math.max(f1, 1e-9), f1 + 2 * bound);
   };
   const supportCount = (x: number, y: number, radius: number): number => {
     let count = 0;

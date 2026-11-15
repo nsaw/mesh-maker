@@ -1,5 +1,5 @@
 import { metricOrdering } from './metric-order';
-import { assertFrozenReliefWork, reliefMeasurementShape, RELIEF_WALL_MIN_PHYS as WALL_MIN_PHYS } from './relief-work-budget';
+import { assertFrozenReliefWork, reliefMeasurementShape, RELIEF_SUPPORT_RATIO as JUNCTION_SUPPORT_RATIO, RELIEF_WALL_MIN_PHYS as WALL_MIN_PHYS } from './relief-work-budget';
 /**
  * VoronoiReliefGen — grid-aware 3D Voronoi cell relief sampler (v16).
  *
@@ -201,7 +201,6 @@ function representativeIndices(length: number, limit: number, rand: () => number
   return [...retained, ...available.slice(0, count)].sort((a, b) => a - b);
 }
 
-const JUNCTION_SUPPORT_RATIO = 2.08;
 // jn >= 0.98 implies F3/F1 <= this ratio. Keep the incident-cell mean in that core.
 const JUNCTION_CORE_RATIO = 2 / 0.98 - 1;
 

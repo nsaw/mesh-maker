@@ -156,7 +156,8 @@ export function copyReliefProject(project: ReliefProject): ReliefProject { retur
 export function assertReliefProjectGenerationWork(project: ReliefProject): void {
   const p = project.params;
   const {cols, rows} = noiseGridShape(p.resolution, p.meshX, p.meshY);
-  assertFrozenReliefWork({cols, rows, meshX: p.meshX, meshY: p.meshY}, project.sites);
+  assertFrozenReliefWork({cols, rows, meshX: p.meshX, meshY: p.meshY,
+    pillow: p.reliefPillow, pillowCoverage: p.reliefPillowCoverage, invertProfile: p.reliefInvertProfile}, project.sites);
 }
 export function projectSurfaceParams(project: ReliefProject, revision: number): NoiseSurfaceParams {
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid project source revision');

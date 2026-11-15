@@ -204,13 +204,24 @@ const scatter=(count:number,height:number):ReliefSiteSet=>({xy:Float64Array.from
 assert(frozenReliefSupportVisits(supportShape(1024,12,24),scatter(4096,24))<=MAX_FROZEN_RELIEF_SUPPORT_VISITS/16);
 assert(frozenReliefSupportVisits(supportShape(400,12,24),scatter(2048,12))<=MAX_FROZEN_RELIEF_SUPPORT_VISITS*0.8);
 assert(frozenReliefSupportVisits(supportShape(1024,cappedProject.params.meshX,cappedProject.params.meshY),cappedProject.sites)<=MAX_FROZEN_RELIEF_SUPPORT_VISITS/4);
-// The boundary search also reaches f1 + 2B, B up to the bisector distance to the second site:
-// one isolated site beside a far packed cluster makes every query it owns visit the cluster.
+// The boundary search also reaches f1 + 2B, with B the least bisector distance to the second
+// through fourth nearest sites: one isolated site beside a far packed cluster makes every query
+// it owns visit the cluster (the 2.08 f1 support alone admitted width 200 at 83%). When the
+// two nearest coincide, the next noncoincident site seeds B, as in the producer.
 {
   let draw=5;const near=()=>(draw=(Math.imul(draw,1103515245)+12345)>>>0)/4294967296;
-  const xy=[6,12];for(let k=0;k<4095;k++)xy.push(11.99+near()*0.0064,23.99+near()*0.0064);
-  const lone:ReliefSiteSet={xy:Float64Array.from(xy),ids:Uint32Array.from({length:4096},(_,i)=>i),pinned:new Uint8Array(4096),truncatedFrom:0};
-  assert.throws(()=>assertFrozenReliefWork(supportShape(400,12,24),lone),/coincident-site query work/);
+  const packedBeside=(head:number[],count:number):ReliefSiteSet=>{
+    const xy=[...head];for(let k=0;k<count;k++)xy.push(11.99+near()*0.0064,23.99+near()*0.0064);
+    return {xy:Float64Array.from(xy),ids:Uint32Array.from({length:xy.length/2},(_,i)=>i),pinned:new Uint8Array(xy.length/2),truncatedFrom:0};
+  };
+  const lone=packedBeside([6,12],4095);draw=5;
+  const pairHead=packedBeside([6,12,6,12],4094);
+  assert.throws(()=>assertFrozenReliefWork(supportShape(200,12,24),lone),/coincident-site query work/);
+  assert.throws(()=>assertFrozenReliefWork(supportShape(115,12,24),pairHead),/coincident-site query work/);
+  // A pillowed layout queries the measurement lattice a second time for its membrane.
+  const flat=frozenReliefSupportVisits(supportShape(120,12,24),linkCluster);
+  assert(frozenReliefSupportVisits({...supportShape(120,12,24),pillow:1},linkCluster)>flat);
+  assert.equal(frozenReliefSupportVisits({...supportShape(120,12,24),pillow:1,invertProfile:1},linkCluster),flat);
 }
 
 // A far query from a packed cluster stops at the true distance to the unvisited buckets

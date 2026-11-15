@@ -56,6 +56,8 @@ assert.equal(result.crestClipStatus,'narrowed','physical crest diagnostic');
     for(let k=0;k<sites.length;k++)sites[k].radius=radiusN[k]>0?(radiusSum[k]/radiusN[k])*2:p.cellSize;
 """
         mutated = original[:start] + old_grid + original[end:]
+        if mutated.count('const MEMBRANE_TOLERANCE = 1e-10;') != 1:
+            raise AssertionError('Membrane tolerance control was not installed')
         mutated = mutated.replace('const MEMBRANE_TOLERANCE = 1e-10;', 'const MEMBRANE_TOLERANCE = %s;' % tolerance)
         if mutated == original:
             raise AssertionError('Output-grid mutant was not installed')

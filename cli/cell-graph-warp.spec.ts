@@ -251,6 +251,17 @@ for (const name of ['relief-pockets', 'relief-starburst', 'relief-vertical', 're
   assert.equal(straight.graph.certificate.kind, 'exact-rational');
   assert.ok(straight.graph.certificate.steps < 1_000_000, `${straight.graph.certificate.steps} straight steps`);
 }
+// Review of #84: long parallel bisectors share grid cells, so every emission pair visit is
+// charged; a 1,025-site diagonal stops at the step budget instead of running unbounded.
+{
+  const xy: number[] = [];
+  for (let k = 0; k < 1025; k++) xy.push(1 + k / 512, 1 + k / 512);
+  const diagonal = buildCellGraph({ revision: 4, source: {
+    sites: { xy: Float64Array.from(xy), ids: Uint32Array.from({ length: 1025 }, (_, i) => i), pinned: new Uint8Array(1025), truncatedFrom: 0 },
+    query: { implementation: 'meshcraft-relief-query/2', ownerPolicy: 'exact-represented-metric-stable-id-v1', meshX: 4, meshY: 4,
+      seed: 7, metric: { cosA: 1, sinA: 0, scale: 1 }, warp: { amplitude: 0, frequency: 0.1, seed: 37, kernel: null } } } });
+  assert.ok(!diagonal.ok && diagonal.reason === 'Cell graph work budget exceeded', diagonal.ok ? 'built' : diagonal.reason);
+}
 process.stdout.write(
   'Warp disconnected clipping, tangency refusal, cocircular junctions, metric and producer graphs passed\n',
 );
