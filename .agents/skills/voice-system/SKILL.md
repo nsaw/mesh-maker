@@ -133,7 +133,7 @@ Every routed register maps to exactly one base gate. Do not infer one — look i
 - **Selling** (a specific ask): **I:you <= 0.5 AND you-words >= 45/1k**
 - **Captions and peer text** (`06-social-and-peer.md`): the **rhythm** half of the Written gate — burstiness — is suspended. That sheet says so in as many words: "Rhythm gate suspended. Captions fragment harder than VO and that is correct." The hedge floor still applies and is not the binding constraint; the sheet sets hedges around 20/1k, an order above the Written floor. Anti-corpus, banned phrasebook and device density apply unchanged.
 
-- **All**: em dashes <=2/1k, zero anti-corpus patterns (A1-A22 are validated)
+- **All**: em dashes <=2/1k, zero anti-corpus patterns (A1-A26 are validated)
 - **Banned phrasebook**: a hit BLOCKS the draft, it does not auto-reject the phrase. The list is
   explicitly provisional (`humor-and-hooks.md:107` — "measured on a partial corpus and he has
   already removed eight entries from it. If a banned phrase is actually his, it comes off. Ask

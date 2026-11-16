@@ -1,6 +1,6 @@
 # Anti-corpus
 
-Named failure modes. A1-A7 quoted from AI drafts found in Nick's own archive. A8-A18 derived from his blind review notes. A19-A22 are provenance failures Claude made and Nick caught. Pattern-match and kill these before anything reaches him.
+Named failure modes. A1-A7 quoted from AI drafts found in Nick's own archive. A8-A18 derived from his blind review notes. A19-A22 are provenance failures Claude made and Nick caught. A23-A26 are AI tells Nick named directly on 2026-11-15; they are confirmed bans, not provisional phrasebook entries. Pattern-match and kill these before anything reaches him.
 
 **A1 The AI aphorism.** Profound-shaped, meaning-free, always in the outro.
 > "Because insecurities are loud; true confidence doesn't have much to prove."
@@ -62,3 +62,28 @@ His opens are cold: mid-thought, mid-problem, or mid-aphorism. His close is fixe
 **A21 Mixed-authorship files.** More dangerous than wholly foreign ones, because you cannot exclude the file, you have to segment inside it. His NorthOne sponsor read contains agency deck copy ("financial Swiss Army knife," "Picture this:," "straight-up beautifully bundled business banking") interleaved with his own jokes ("onlyfans" planted in a list, "Just making sure you're still with me," "\*COUGH Quickbooks \*COUGH"). Extracting from the wrong half produced a canonized AI simile. **Segment before sampling: brand decks, AI drafts, and his edits coexist in single files.**
 
 **A22 Comprehension-gating humor.** A joke whose vehicle requires insider knowledge narrows the audience and the advertiser demo. The subject may be insider. The vehicle may not be.
+
+**A23 The mic-drop conclusion.** A line that announces the point was made instead of making it.
+> "That's the whole point." · "Read that again." · "That's it. That's the post."
+
+If the sentence before it did the work, the announcement adds nothing. If it did not, the announcement will not rescue it. Cut the announcement and fix the sentence.
+
+**A24 The staged short question.** A two- or three-word rhetorical question staged for effect, then answered with something that did not need the setup. Distinct from A2: a single aside, not a stack of questions aimed at the audience.
+> "The best part?" · "The truth?" · "And honestly?"
+
+State the answer as the sentence. "The truth is" (VO blacklist) is the same move without the question mark. Bare "honestly" inside a sentence is one of his core hedges (`SKILL.md`, LAW 1) and stays; only the standalone "And honestly?" setup is banned.
+
+**A25 The fake secret.** Teases insight nobody else has, then delivers something ordinary. Same family as A3.
+> "Here's what most people miss..." · "The part no one talks about..." · "Here's the part no one will say out loud..."
+
+If the thing really is overlooked, the specific (a number, a defect, a failure) proves it without the tease.
+
+**A26 AI-tell vocabulary.** Nick's list: **quietly, unlock, carrying, land, pile up, say out loud.** Every inflection counts (carry, carries, carried; lands, landed, landing; piles up, piled up, piling up). Banned in their figurative senses:
+- "quietly" as an intensifier or a humble-brag ("quietly the best clamp I own," "quietly changed everything")
+- "unlock" for anything that is not a lock ("unlocks a new level of precision")
+- "carrying" for a line, feature or detail doing the work ("the grain is carrying this piece")
+- "land" for a joke, point, message or design ("that line lands," "where it lands")
+- "pile up" for abstract costs, reasons or wins
+- "say out loud" in any figurative form, including "the quiet part out loud" and "no one will say out loud"
+
+Literal uses stay: a stretcher carrying load, shavings piling up, a part landing on its stop, a line actually read aloud on camera. If the sentence describes a physical object or person doing the physical thing, it is fine.
