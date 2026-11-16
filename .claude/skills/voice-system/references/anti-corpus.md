@@ -63,27 +63,27 @@ His opens are cold: mid-thought, mid-problem, or mid-aphorism. His close is fixe
 
 **A22 Comprehension-gating humor.** A joke whose vehicle requires insider knowledge narrows the audience and the advertiser demo. The subject may be insider. The vehicle may not be.
 
-**A23 The mic-drop conclusion.** A line that announces the point landed instead of making it land.
+**A23 The mic-drop conclusion.** A line that announces the point was made instead of making it.
 > "That's the whole point." · "Read that again." · "That's it. That's the post."
 
 If the sentence before it did the work, the announcement adds nothing. If it did not, the announcement will not rescue it. Cut the announcement and fix the sentence.
 
-**A24 The dramatic one-word question.** A rhetorical question staged for effect, then answered with something that did not need the setup. Distinct from A2: one question, asked of himself, not a stack aimed at the audience.
+**A24 The staged short question.** A two- or three-word rhetorical question staged for effect, then answered with something that did not need the setup. Distinct from A2: a single aside, not a stack of questions aimed at the audience.
 > "The best part?" · "The truth?" · "And honestly?"
 
-State the answer as the sentence. "The truth is" (VO blacklist) is the same move without the question mark.
+State the answer as the sentence. "The truth is" (VO blacklist) is the same move without the question mark. Bare "honestly" inside a sentence is one of his core hedges (`SKILL.md`, LAW 1) and stays; only the standalone "And honestly?" setup is banned.
 
 **A25 The fake secret.** Teases insight nobody else has, then delivers something ordinary. Same family as A3.
 > "Here's what most people miss..." · "The part no one talks about..." · "Here's the part no one will say out loud..."
 
 If the thing really is overlooked, the specific (a number, a defect, a failure) proves it without the tease.
 
-**A26 AI-tell vocabulary.** Nick's list: **quietly, unlock, carrying, land, pile up, say out loud.** Banned in their figurative senses:
+**A26 AI-tell vocabulary.** Nick's list: **quietly, unlock, carrying, land, pile up, say out loud.** Every inflection counts (carry, carries, carried; lands, landed, landing; piles up, piled up, piling up). Banned in their figurative senses:
 - "quietly" as an intensifier or a humble-brag ("quietly the best clamp I own," "quietly changed everything")
 - "unlock" for anything that is not a lock ("unlocks a new level of precision")
 - "carrying" for a line, feature or detail doing the work ("the grain is carrying this piece")
 - "land" for a joke, point, message or design ("that line lands," "where it lands")
 - "pile up" for abstract costs, reasons or wins
-- "say out loud" in any form, including "the quiet part out loud"
+- "say out loud" in any figurative form, including "the quiet part out loud" and "no one will say out loud"
 
-Literal shop uses stay: a stretcher carrying load, shavings piling up, a part landing on its stop. If the sentence describes a physical object doing the physical thing, it is fine.
+Literal uses stay: a stretcher carrying load, shavings piling up, a part landing on its stop, a line actually read aloud on camera. If the sentence describes a physical object or person doing the physical thing, it is fine.
