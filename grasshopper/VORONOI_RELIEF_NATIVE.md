@@ -105,7 +105,7 @@ On `MeshCraft | Shape`:
 | `wall_width`      | 0.0              | v18 nominal crest plateau on the shared boundary (`crest_w = wall_width × cell_size / 2` before modulation and local clamps). Local inradius and wall-width caps can narrow or collapse it; this input does not guarantee a minimum physical ridge width. |
 | `density_noise`   | 0.0              | 0..1.5 patchy cell-size noise (giant cells next to small ones). |
 | `density_noise_freq` | 0.08          | Patch spatial frequency (lower = larger patches). |
-| `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). The mound's membrane is solved on a fixed physical lattice (0.2 in, about 10,000 nodes), so it does not change with `resolution`; with pillows on it adds about 3-4 s per recompute in Rhino 7 on a 24 in panel. |
+| `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). The mound's membrane is solved on a fixed physical lattice (0.2 in, about 10,000 nodes), so it does not change with `resolution`. With the DLL current, a pillowed 24 in panel at `resolution` 97 solves in 0.2-0.3 s in Rhino 7; the Python pass takes about 6 s. |
 | `pillow_coverage` | 0.6              | Fraction of cells that get pillows (seeded per-cell hash) — the reference mixes pillowed and plain pockets. |
 | `depth_variation` | 0.0              | 0..1 per-cell depth tiers (deep/intermediate/shallow-suppressed) + asymmetric wall saturation per cell. High values merge shallow cells into calm surface masses. |
 | `junction_lift`   | 0.0              | 0..1 crest lift toward three-way junctions (tense nodes/saddles; also widens the wall band there). |
@@ -166,6 +166,13 @@ component recomputes:
 | same, pockets, res 256 | 14.3 s | 0.26 s |
 | defaults, 24 x 36 in, res 128 | 3.7 s | 0.11 s |
 
+`scripts/rhino-native-relief-component.py` tests the component as Grasshopper runs it. It builds a
+GhPython component with the current source in a fresh document, solves four layouts and requires
+`Message` `DLL`, no runtime errors, and heights identical bit for bit to the Python pass. It loads
+nothing by path, so it checks the installed copy the component finds by name. On 2026-11-16
+(Rhino 7.38) it passed on all four layouts against the Libraries copy, md5
+`e3d25730ed5f007ba33dd6043c08c6f9`; `grasshopper/rhino-native-relief-component.json` is the raw output.
+
 The component's `Message` shows which pass ran: `DLL`, or `Python (...)` with the reason.
 The Python pass runs in each of these cases:
 - no CLR is present;
@@ -183,6 +190,7 @@ fails whenever either changes without them. After such a change:
 3. Run the parity gate.
 4. Put the new hash (printed by the test) in both strings.
 5. Deploy.
+6. Restart Rhino, close it, and run the component test.
 
 Build, from the folder holding `MeshCraftNoise.cs`
 (`sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/ghpy/`):
@@ -200,7 +208,13 @@ MESHCRAFT_DLL="$PWD/MeshCraftNoise.dll" ~/.claude/skills/rhino-grasshopper-ghpyt
 ```
 
 Copy the result over all three installed copies: `rhino/grasshopper/`, `rhino/grasshopper/ghpy/`
-and Grasshopper's `Libraries` folder. Then restart Rhino, because a loaded assembly is never replaced.
+and Grasshopper's `Libraries` folder. Then restart Rhino, because a loaded assembly is never replaced. Run the component test
+with Rhino closed:
+
+```bash
+~/.claude/skills/rhino-grasshopper-ghpython/scripts/rhino-run.sh \
+  /Users/sawyer/Code/mesh-maker/scripts/rhino-native-relief-component.py /tmp/component.json 500
+```
 
 ---
 

@@ -1,0 +1,101 @@
+{
+ "loaded_dll": "/Users/sawyer/Library/Application Support/McNeel/Rhinoceros/7.0/Plug-ins/Grasshopper (b45a29b1-4343-4035-989e-044e8580d9cf)/Libraries/MeshCraftNoise.dll", 
+ "loaded_version": "v24-lattice-membrane-07d522836b69-50f49e16b04a", 
+ "layouts": [
+  {
+   "nodes": 10880, 
+   "label": "defaults 24x36", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 1.0175094604492188, 
+   "cols": [
+    85
+   ], 
+   "sites": 94, 
+   "cells": 94, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 1.0, 
+   "python_pass_s": 4.6851348876953125, 
+   "rows": [
+    128
+   ], 
+   "errors": []
+  }, 
+  {
+   "nodes": 9409, 
+   "label": "pillow pockets 24x24 res 97", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 0.33152008056640625, 
+   "cols": [
+    97
+   ], 
+   "sites": 49, 
+   "cells": 49, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 1.0, 
+   "python_pass_s": 5.9463043212890625, 
+   "rows": [
+    97
+   ], 
+   "errors": []
+  }, 
+  {
+   "nodes": 9409, 
+   "label": "rich domes 24x24 res 97", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 0.21355438232421875, 
+   "cols": [
+    97
+   ], 
+   "sites": 38, 
+   "cells": 38, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 0.99999999999999989, 
+   "python_pass_s": 5.5958175659179688, 
+   "rows": [
+    97
+   ], 
+   "errors": []
+  }, 
+  {
+   "nodes": 65536, 
+   "label": "rich pockets res 256", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 0.46010589599609375, 
+   "cols": [
+    256
+   ], 
+   "sites": 38, 
+   "cells": 38, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 1.0, 
+   "python_pass_s": 18.443099975585938, 
+   "rows": [
+    256
+   ], 
+   "errors": []
+  }
+ ], 
+ "passed": true, 
+ "loaded_md5": "e3d25730ed5f007ba33dd6043c08c6f9", 
+ "rhino": "7.38.24338.17002"
+}
