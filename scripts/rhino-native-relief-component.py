@@ -13,7 +13,7 @@ with Rhino closed, after deploying a rebuilt DLL:
     scripts/rhino-native-relief-component.py /tmp/component.json 500
 
 Saves nothing."""
-import json, os, sys, time, hashlib, traceback
+import json, os, re, sys, time, hashlib, traceback
 import clr, System, Rhino
 import ghpythonlib.components  # needs clr; imported before any pass hides it
 import Grasshopper
@@ -136,10 +136,15 @@ try:
     loc = loaded[0].Location
     relief = loaded[0].GetType('MeshCraftRelief')
     version = relief.GetField('Version').GetValue(None) if relief is not None else None
-    expected = [l.split('=', 1)[1].strip().strip("'") for l in CODE.splitlines() if l.startswith('RELIEF_DLL_VERSION')][0]
+    found = re.search(r'''^RELIEF_DLL_VERSION\s*=\s*['"]([^'"]+)['"]''', CODE, re.M)
+    if found is None:
+        raise RuntimeError('RELIEF_DLL_VERSION not found in ' + SRC)
+    expected = found.group(1)
     r['loaded_dll'] = loc
     r['loaded_md5'] = hashlib.md5(open(loc, 'rb').read()).hexdigest()
     r['loaded_version'] = version
+    if version != expected:
+        r['error'] = 'loaded MeshCraftRelief.Version %r differs from RELIEF_DLL_VERSION %r' % (version, expected)
     passed = passed and version == expected
     r['rhino'] = str(Rhino.RhinoApp.Version)
     r['passed'] = passed

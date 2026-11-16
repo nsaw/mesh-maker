@@ -171,7 +171,7 @@ GhPython component with the current source in a fresh document, solves four layo
 `Message` `DLL`, no runtime errors, and heights identical bit for bit to the Python pass. It loads
 nothing by path, so it checks the installed copy the component finds by name, and it fails unless
 exactly one `MeshCraftNoise` assembly is loaded and its `Version` matches. Its timings are whole
-Grasshopper solves (0.2-0.5 s per layout; the first solve also loads the DLL), so they run above the
+Grasshopper solves (0.2-0.5 s per layout after the first, which takes about 1 s), so they run above the
 script-only figures in the table. On 2026-11-16
 (Rhino 7.38) it passed on all four layouts against the Libraries copy, md5
 `e3d25730ed5f007ba33dd6043c08c6f9`; `grasshopper/rhino-native-relief-component.json` is the raw output.
