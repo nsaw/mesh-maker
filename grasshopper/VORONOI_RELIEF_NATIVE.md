@@ -105,7 +105,7 @@ On `MeshCraft | Shape`:
 | `wall_width`      | 0.0              | v18 nominal crest plateau on the shared boundary (`crest_w = wall_width × cell_size / 2` before modulation and local clamps). Local inradius and wall-width caps can narrow or collapse it; this input does not guarantee a minimum physical ridge width. |
 | `density_noise`   | 0.0              | 0..1.5 patchy cell-size noise (giant cells next to small ones). |
 | `density_noise_freq` | 0.08          | Patch spatial frequency (lower = larger patches). |
-| `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). The mound's membrane is solved on a fixed physical lattice (0.2 in, about 10,000 nodes), so it does not change with `resolution`. With the DLL current, a pillowed 24 in panel at `resolution` 97 solves in 0.2-0.3 s in Rhino 7; the Python pass takes about 6 s. |
+| `pillow`          | 0.0              | 0..1 pillowed floors — past saturation the pocket floor rises into a soft central mound (double-curvature pockets). The mound's membrane is solved on a fixed physical lattice (0.2 in, about 10,000 nodes), so it does not change with `resolution`. With the DLL current, a pillowed 24 in panel at `resolution` 97 takes about 0.1 s in the component script and 0.2-0.35 s for a whole Grasshopper solve in Rhino 7, against 4-6 s on the Python pass (see Performance). |
 | `pillow_coverage` | 0.6              | Fraction of cells that get pillows (seeded per-cell hash) — the reference mixes pillowed and plain pockets. |
 | `depth_variation` | 0.0              | 0..1 per-cell depth tiers (deep/intermediate/shallow-suppressed) + asymmetric wall saturation per cell. High values merge shallow cells into calm surface masses. |
 | `junction_lift`   | 0.0              | 0..1 crest lift toward three-way junctions (tense nodes/saddles; also widens the wall band there). |
@@ -157,8 +157,8 @@ Rhino 7 twice per layout, once on the Python pass and once on the DLL, and requi
 heights bit for bit. On 2026-11-14 (Rhino 7.38, M3) it passed on all seven layouts, 106,585
 nodes. `grasshopper/rhino-native-relief-dll-parity.json` is that run's raw output, for the build
 with md5 `e3d25730ed5f007ba33dd6043c08c6f9`, compiled from a scratch copy and deployed unchanged. It covered both
-polarities, pillow on and off, four profiles, and cells deep enough that `v > 1`. Whole
-component recomputes:
+polarities, pillow on and off, four profiles, and cells deep enough that `v > 1`. Timings below are
+the component script alone, as the gate executes it, without Grasshopper's solve overhead:
 
 | layout | Python | DLL |
 |---|---|---|
@@ -169,7 +169,10 @@ component recomputes:
 `scripts/rhino-native-relief-component.py` tests the component as Grasshopper runs it. It builds a
 GhPython component with the current source in a fresh document, solves four layouts and requires
 `Message` `DLL`, no runtime errors, and heights identical bit for bit to the Python pass. It loads
-nothing by path, so it checks the installed copy the component finds by name. On 2026-11-16
+nothing by path, so it checks the installed copy the component finds by name, and it fails unless
+exactly one `MeshCraftNoise` assembly is loaded and its `Version` matches. Its timings are whole
+Grasshopper solves (0.2-0.5 s per layout; the first solve also loads the DLL), so they run above the
+script-only figures in the table. On 2026-11-16
 (Rhino 7.38) it passed on all four layouts against the Libraries copy, md5
 `e3d25730ed5f007ba33dd6043c08c6f9`; `grasshopper/rhino-native-relief-component.json` is the raw output.
 
@@ -190,7 +193,7 @@ fails whenever either changes without them. After such a change:
 3. Run the parity gate.
 4. Put the new hash (printed by the test) in both strings.
 5. Deploy.
-6. Restart Rhino, close it, and run the component test.
+6. With Rhino closed, run the component test. It starts a fresh Rhino, which loads the new DLL.
 
 Build, from the folder holding `MeshCraftNoise.cs`
 (`sawyer-design/rhino-aspire-grasshopper/rhino/grasshopper/ghpy/`):
@@ -208,7 +211,7 @@ MESHCRAFT_DLL="$PWD/MeshCraftNoise.dll" ~/.claude/skills/rhino-grasshopper-ghpyt
 ```
 
 Copy the result over all three installed copies: `rhino/grasshopper/`, `rhino/grasshopper/ghpy/`
-and Grasshopper's `Libraries` folder. Then restart Rhino, because a loaded assembly is never replaced. Run the component test
+and Grasshopper's `Libraries` folder. A running Rhino keeps the DLL it loaded, so restart any open session. Run the component test
 with Rhino closed:
 
 ```bash

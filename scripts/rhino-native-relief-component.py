@@ -99,8 +99,9 @@ try:
     bits = System.BitConverter.DoubleToInt64Bits
     passed = True
     for label, inputs in LAYOUTS:
-        doc = GH_Document()
-        Grasshopper.Instances.DocumentServer.AddDocument(doc)
+      doc = GH_Document()
+      Grasshopper.Instances.DocumentServer.AddDocument(doc)
+      try:
         comp = build(doc, inputs)
         doc.Enabled = True
         t = time.time()
@@ -122,18 +123,27 @@ try:
                              'bit_identical_to_python_pass': same,
                              'worst': max(abs(a - b) for a, b in zip(z, ref)) if len(z) == len(ref) and z else None,
                              'gh_solve_s': gh_s, 'python_pass_s': py_s, 'python_path': py['height_pass'], 'ok': ok})
+      finally:
         doc.Enabled = False
         Grasshopper.Instances.DocumentServer.RemoveDocument(doc)
         doc.Dispose()
-    clr.AddReference('MeshCraftNoise')
-    import MeshCraftRelief
-    loc = clr.GetClrType(MeshCraftRelief).Assembly.Location
+    # The components bound MeshCraftNoise by name. Exactly one such assembly may be loaded in this
+    # process, or the copy named below is not provably the one they used.
+    loaded = [a for a in System.AppDomain.CurrentDomain.GetAssemblies() if a.GetName().Name == 'MeshCraftNoise']
+    r['loaded_assemblies'] = [a.Location for a in loaded]
+    if len(loaded) != 1:
+        raise RuntimeError('expected one MeshCraftNoise assembly, found %d' % len(loaded))
+    loc = loaded[0].Location
+    relief = loaded[0].GetType('MeshCraftRelief')
+    version = relief.GetField('Version').GetValue(None) if relief is not None else None
+    expected = [l.split('=', 1)[1].strip().strip("'") for l in CODE.splitlines() if l.startswith('RELIEF_DLL_VERSION')][0]
     r['loaded_dll'] = loc
     r['loaded_md5'] = hashlib.md5(open(loc, 'rb').read()).hexdigest()
-    r['loaded_version'] = MeshCraftRelief.Version
+    r['loaded_version'] = version
+    passed = passed and version == expected
     r['rhino'] = str(Rhino.RhinoApp.Version)
     r['passed'] = passed
 except Exception:
     r['error'] = traceback.format_exc()
-f = open(OUT, 'w'); f.write(json.dumps(r, indent=1)); f.close()
+f = open(OUT, 'w'); f.write(json.dumps(r, indent=1) + '\n'); f.close()
 Rhino.RhinoApp.RunScript("_-Exit _No", False)
