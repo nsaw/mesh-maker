@@ -15,6 +15,12 @@ concurrency:
 # Exact Float64 goldens were captured on Darwin arm64 with Node 24.22.1.
 # Checks use that acceptance host; exactness on other hosts is not claimed.
 # Full preset SBP exports remain independently gated on Linux.
+# onnxruntime-node (a dependency of @huggingface/transformers) downloads a Linux GPU package from
+# NuGet during npm ci. Nothing in Node uses it; the browser depth model runs on onnxruntime-web.
+# That download timed out and failed npm ci on #84, #85 and #87, so it is skipped.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   numerical_checks:
     runs-on: macos-15
