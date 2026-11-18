@@ -136,15 +136,19 @@ try:
     loc = loaded[0].Location
     relief = loaded[0].GetType('MeshCraftRelief')
     version = relief.GetField('Version').GetValue(None) if relief is not None else None
-    found = re.search(r'''^RELIEF_DLL_VERSION\s*=\s*['"]([^'"]+)['"]''', CODE, re.M)
+    # The same whole-line pattern scripts/test-native-relief-dll.py uses, so both tests read one form.
+    found = re.search(r"^RELIEF_DLL_VERSION = '([^']+)'$", CODE, re.M)
     if found is None:
         raise RuntimeError('RELIEF_DLL_VERSION not found in ' + SRC)
     expected = found.group(1)
     r['loaded_dll'] = loc
     r['loaded_md5'] = hashlib.md5(open(loc, 'rb').read()).hexdigest()
     r['loaded_version'] = version
+    reasons = ['layout %r failed' % l['label'] for l in r['layouts'] if not l['ok']]
     if version != expected:
-        r['error'] = 'loaded MeshCraftRelief.Version %r differs from RELIEF_DLL_VERSION %r' % (version, expected)
+        reasons.append('loaded MeshCraftRelief.Version %r differs from RELIEF_DLL_VERSION %r' % (version, expected))
+    if reasons:
+        r['error'] = '; '.join(reasons)
     passed = passed and version == expected
     r['rhino'] = str(Rhino.RhinoApp.Version)
     r['passed'] = passed
