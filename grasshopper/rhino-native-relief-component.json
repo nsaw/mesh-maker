@@ -1,0 +1,104 @@
+{
+ "loaded_dll": "/Users/sawyer/Library/Application Support/McNeel/Rhinoceros/7.0/Plug-ins/Grasshopper (b45a29b1-4343-4035-989e-044e8580d9cf)/Libraries/MeshCraftNoise.dll", 
+ "loaded_version": "v24-lattice-membrane-07d522836b69-50f49e16b04a", 
+ "layouts": [
+  {
+   "nodes": 10880, 
+   "label": "defaults 24x36", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 0.9155731201171875, 
+   "cols": [
+    85
+   ], 
+   "sites": 94, 
+   "cells": 94, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 1.0, 
+   "python_pass_s": 4.2425689697265625, 
+   "rows": [
+    128
+   ], 
+   "errors": []
+  }, 
+  {
+   "nodes": 9409, 
+   "label": "pillow pockets 24x24 res 97", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 0.2319183349609375, 
+   "cols": [
+    97
+   ], 
+   "sites": 49, 
+   "cells": 49, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 1.0, 
+   "python_pass_s": 5.1615371704101563, 
+   "rows": [
+    97
+   ], 
+   "errors": []
+  }, 
+  {
+   "nodes": 9409, 
+   "label": "rich domes 24x24 res 97", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 0.20534515380859375, 
+   "cols": [
+    97
+   ], 
+   "sites": 38, 
+   "cells": 38, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 0.99999999999999989, 
+   "python_pass_s": 5.0652313232421875, 
+   "rows": [
+    97
+   ], 
+   "errors": []
+  }, 
+  {
+   "nodes": 65536, 
+   "label": "rich pockets res 256", 
+   "python_path": "Python (no CLR)", 
+   "message": "DLL", 
+   "ok": true, 
+   "warnings": [], 
+   "bit_identical_to_python_pass": true, 
+   "gh_solve_s": 0.451141357421875, 
+   "cols": [
+    256
+   ], 
+   "sites": 38, 
+   "cells": 38, 
+   "worst": 0.0, 
+   "z_min": 0.0, 
+   "z_max": 1.0, 
+   "python_pass_s": 16.688430786132813, 
+   "rows": [
+    256
+   ], 
+   "errors": []
+  }
+ ], 
+ "loaded_assemblies": [
+  "/Users/sawyer/Library/Application Support/McNeel/Rhinoceros/7.0/Plug-ins/Grasshopper (b45a29b1-4343-4035-989e-044e8580d9cf)/Libraries/MeshCraftNoise.dll"
+ ], 
+ "passed": true, 
+ "loaded_md5": "e3d25730ed5f007ba33dd6043c08c6f9", 
+ "rhino": "7.38.24338.17002"
+}

@@ -25,6 +25,12 @@ concurrency:
   group: pages-deploy-${{ github.ref }}
   cancel-in-progress: false
 
+# onnxruntime-node (a dependency of @huggingface/transformers) downloads a Linux GPU package from
+# NuGet during npm ci. Nothing in Node uses it; the browser depth model runs on onnxruntime-web.
+# That download timed out and failed npm ci on #84, #85 and #87, so it is skipped.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
