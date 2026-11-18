@@ -179,6 +179,14 @@ deploying. After deploying, `scripts/rhino-native-relief-component.py` solves th
 Grasshopper document against the installed DLL. `npm run test:native-relief-dll` checks the wiring and fails when the ported source
 changes without a version bump. It cannot check the C# arithmetic.
 
+## Dependency updates
+
+Dependabot raises alerts but opens no pull requests: security updates were turned off on
+2026-11-18 and there is no `.github/dependabot.yml`, so version updates are off too. Check
+`gh api 'repos/nsaw/mesh-maker/dependabot/alerts?state=open'` and `npm audit`, then fix every
+open alert in one branch. Report each one's reach (runtime bundle, Node CLI, or dev tooling only)
+in the PR, and keep `@huggingface/transformers` at its pin (see `.claude/CLAUDE.md`).
+
 ## Deployment
 
 **Platform**: Cloudflare Pages (static site hosting)
