@@ -130,8 +130,26 @@ settings, selected-frame force strength, the complete requested profile and maxi
 node motion. A baked cache is not evidence of rest or penetration-free geometry. The approved
 frame is still moving; neither the figure/cloth contact nor CNC suitability is certified here.
 
-Relief extraction retains the existing 1201×1601 frontmost figure/cloth samples, mapped linearly
-to a 12×16 inch panel with 0.125 inch backing and 0.625 inch relief. It cannot preserve undercuts.
+Relief extraction retains the existing 1201×1601 frontmost figure/cloth samples on a 12×16 inch
+panel with 0.125 inch backing and 0.625 inch relief. It cannot preserve undercuts. The default
+`--relief linear` maps depth straight into that 0.625 inch, unchanged from earlier runs.
+
+`--relief gradient` compresses it as a bas-relief instead (`scripts/relief/compress.py`, after
+Weyrich et al., "Digital Bas-Relief from 3D Scenes", SIGGRAPH 2007). Slopes steeper than
+`--relief-edge-slope` (default 8) are treated as occlusion cliffs and dropped. Each remaining slope
+is split into its mean over `--relief-base-radius` panel inches (default 0.5) and the finer rest;
+only the mean is shrunk, by ln(1 + a·s)/a with a = `--relief-alpha` (default 4). The height field
+is rebuilt by a Poisson solve with the background held at the backing, so the outline meets the
+backing and the depth goes to form and folds instead of the silhouette wall. `drape.json`
+`relief.mapping` records the settings, solver iterations, and how much foreground the solve put
+below the backing (clamped to it).
+
+Measured on the 2026-11-19 gathered Venus drape (no new bake), as RMS of features under about
+0.17 inch, at least 0.17 inch inside the outline, relative to linear: alpha 4 gave 1.53x, alpha 8
+gave 2.15x. Without the base split, alpha 4 gave 0.72x, because cloth folds are steep and plain
+log compression flattens them first. The solve takes about 50 s at full resolution, and 1.3 to 2.0
+percent of the foreground was clamped at the backing. Run `scripts/relief/compress.py` on an
+existing `veiled-depth.npy` to try settings without re-baking.
 `export_figure.py` separately produces `.mcfig` placement for the web app; it does not export
 these new Blender material or force controls.
 
@@ -144,6 +162,12 @@ Fast configuration and force-volume tests run without Blender, NumPy or Pillow:
 
 ```bash
 python3 -m unittest discover -s scripts/drape -p 'test_*.py'
+```
+
+The bas-relief solver tests need NumPy and are not in CI (no CI job installs NumPy):
+
+```bash
+(cd scripts/relief && python3 test_compress.py)
 ```
 
 Source attribution: [SMK Venus de Milo, CC0](https://sketchfab.com/3d-models/venus-de-milo-aphrodite-of-milos-53082b5d6cef4c34a9701a2a24f58075).
