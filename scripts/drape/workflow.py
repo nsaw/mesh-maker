@@ -12,8 +12,13 @@ Options override a preset: --tilt DEG, --cling STRENGTH (negative attracts), --c
 Figure placement: --azimuth DEG (turn about Z so the face looks toward -Y), --scale (scene units per source
 unit; pick it so the head is about 2.4 units tall), --pose JSON (measured 3x3 'rigid_pose_rotation_rows'
 that makes the face vertical, e.g. scripts/drape/venus-de-milo-pose.json), --head-height UNITS.
-Relief: a 12 x 16 in panel, 1201 x 1601 samples, linear mapping of 0.125 in backing + 0.625 in relief
-(the accepted Monti mapping). --frame-width UNITS sets how much of the figure the panel spans.
+Relief: a 12 x 16 in panel, 1201 x 1601 samples, 0.125 in backing + 0.625 in relief. --frame-width UNITS
+sets how much of the figure the panel spans. --relief linear (default, the accepted Monti mapping) scales
+depth straight into the 0.625 in. --relief gradient compresses it as a bas-relief (scripts/relief/compress.py):
+slopes steeper than --relief-edge-slope (default 8, rise over run) are treated as occlusion cliffs and
+dropped; the large-scale part of each remaining slope (its mean over --relief-base-radius, default 0.5 in
+of panel) is shrunk by ln(1 + a*s)/a with a = --relief-alpha (default 4) while the finer remainder (folds)
+is kept; the height field is rebuilt with the background held at the backing.
 
 Writes DIR/drape.blend (open it in Blender to inspect or re-bake), front.png, oblique.png, drape.json,
 relief-preview.png, veiled.mcrelief (open in MeshCraft's Depth Map tab), and relief.stl (for Aspire)
@@ -24,6 +29,7 @@ from pathlib import Path
 from quartering_wind import finite, validate_profile
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / 'scripts/relief'))
 PRESETS = {
     'silk-gathered': dict(tilt_deg=25.0, cling_strength=-1000.0, cling_reach=0.8),
     'silk-tilt25': dict(tilt_deg=25.0, cling_strength=0.0, cling_reach=0.0),
@@ -42,6 +48,10 @@ def parse_args(argv=None):
     a.add_argument('--threads', type=int, help='Blender threads; default 4 for silk-gathered (as in its study), else all cores (as before)')
     a.add_argument('--left-quarter-wind', type=float, default=0.0, metavar='STRENGTH', help='Opt-in local wind, calibrated on silk-gathered (tested: 250, 750)')
     a.add_argument('--wind-profile', help='Editable force-volume JSON; default is the measured Venus region')
+    a.add_argument('--relief', choices=['linear', 'gradient'], default='linear', help='depth-to-height mapping; see above')
+    a.add_argument('--relief-alpha', type=float, default=4.0, help='gradient only: log compression strength')
+    a.add_argument('--relief-edge-slope', type=float, default=8.0, help='gradient only: slopes above this are cliffs and dropped')
+    a.add_argument('--relief-base-radius', type=float, default=0.5, metavar='IN', help='gradient only: panel inches; coarser shape is compressed, finer kept')
     a.add_argument('--blender', default='/Applications/Blender.app/Contents/MacOS/Blender'); a.add_argument('--no-stl', action='store_true')
     return a.parse_args(argv)
 
@@ -86,11 +96,21 @@ def build_config(o):
         args['quartering_wind'] = dict(strength=o.left_quarter_wind, profile=profile)
     return args
 
+def relief_config(o):
+    if o.relief == 'linear':
+        if (o.relief_alpha, o.relief_edge_slope, o.relief_base_radius) != (4.0, 8.0, 0.5):
+            raise ValueError('--relief-alpha, --relief-edge-slope and --relief-base-radius need --relief gradient')
+        return dict(method='linear')
+    for name, v in (('relief-alpha', o.relief_alpha), ('relief-edge-slope', o.relief_edge_slope), ('relief-base-radius', o.relief_base_radius)):
+        if not finite(v) or v <= 0: raise ValueError(f'--{name} must be finite and positive')
+    if o.relief_base_radius > 6: raise ValueError('--relief-base-radius is in panel inches and the panel is 12 in wide')
+    return dict(method='gradient', alpha=o.relief_alpha, edge_slope=o.relief_edge_slope, base_radius_in=o.relief_base_radius)
+
 def main():
     import numpy as np
     o = parse_args()
     try:
-        args = build_config(o)
+        args = build_config(o); relief = relief_config(o)
     except (ValueError, KeyError, OSError) as error:
         sys.exit(str(error))
     if not Path(args['input']).is_file(): sys.exit('figure file does not exist')
@@ -104,20 +124,31 @@ def main():
     if r.returncode != 0 or 'DRAPE_DONE' not in r.stdout:
         sys.exit(f'Blender step failed (exit {r.returncode}); see {out / "blender.log"}')
 
-    # Linear relief: the deepest visible point (figure or veil) to the frontmost point spans 0.625 in,
-    # so veil hanging behind the figure never maps below the 0.125 in backing (or below 0).
     veiled, bare = np.load(out / 'veiled-depth.npy'), np.load(out / 'bare-depth.npy')
     fg = np.isfinite(veiled)
     if not fg.any(): sys.exit('nothing in the relief window: adjust --frame-width or the figure placement')
     lo, hi = float(np.nanmin(np.fmin(bare, veiled))), float(np.nanmax(veiled))
     if not hi > lo: sys.exit(f'degenerate depth range ({lo} to {hi}): check the figure placement')
-    h = np.where(fg, BACK + SPAN * (veiled - lo) / (hi - lo), BACK).astype(np.float32)
+    if relief['method'] == 'linear':
+        # The deepest visible point (figure or veil) to the frontmost point spans 0.625 in,
+        # so veil hanging behind the figure never maps below the 0.125 in backing (or below 0).
+        h = np.where(fg, BACK + SPAN * (veiled - lo) / (hi - lo), BACK).astype(np.float32)
+    else:
+        from compress import bas_relief
+        try:
+            samples_per_in = (veiled.shape[1] - 1) / 12
+            u, stats = bas_relief(veiled, args['frame_width'] / (veiled.shape[1] - 1), relief['alpha'], relief['edge_slope'],
+                                  max(1, round(relief['base_radius_in'] * samples_per_in)))
+        except ValueError as error:
+            sys.exit(f'relief compression failed: {error}')
+        relief.update(stats)
+        h = np.where(fg, BACK + SPAN * u / stats['height_max'], BACK).astype(np.float32)
     np.save(out / 'veiled-height-m.npy', h); np.save(out / 'mask.npy', fg)
     W, H = 12 * IN, 16 * IN
     subprocess.run([sys.executable, str(REPO / 'scripts/relief/npy_to_mcrelief.py'), str(out / 'veiled-height-m.npy'), str(out / 'veiled.mcrelief'),
                     '--units', 'm', '--width', repr(W), '--height', repr(H), '--backing', repr(BACK), '--stock', repr(BACK + SPAN),
                     '--row-order', 'top-down', '--triangulation', 'tr-bl', '--mask', str(out / 'mask.npy'),
-                    '--name', f'Silk veil drape ({o.preset}) on {Path(o.figure).name}', '--source', f'scripts/drape/workflow.py, Blender silk drape of {Path(o.figure).name}'],
+                    '--name', f'Silk veil drape ({o.preset}, {relief["method"]} relief) on {Path(o.figure).name}', '--source', f'scripts/drape/workflow.py, Blender silk drape of {Path(o.figure).name}'],
                    check=True, capture_output=True)
     preview(h, out / 'relief-preview.png')
     if not o.no_stl:
@@ -125,7 +156,8 @@ def main():
         if s.returncode != 0: sys.exit(f'STL export failed: {s.stderr.strip()[-400:]}')
     meta = json.loads((out / 'drape.json').read_text())
     meta['relief'] = dict(panel_in=[12, 16], backing_in=0.125, relief_in=0.625, depth_range_units=[lo, hi],
-                          depth_compression_vs_xy=((hi - lo) / 0.625) / (o.frame_width / 12), stl=None if o.no_stl else str(out / 'relief.stl'))
+                          depth_compression_vs_xy=((hi - lo) / 0.625) / (o.frame_width / 12) if relief['method'] == 'linear' else None, mapping=relief,
+                          stl=None if o.no_stl else str(out / 'relief.stl'))
     meta['total_seconds'] = round(time.time() - t0, 1)
     (out / 'drape.json').write_text(json.dumps(meta, indent=1, allow_nan=False))
     print(json.dumps(dict(out=str(out), preset=o.preset, seconds=meta['total_seconds'], mcrelief=str(out / 'veiled.mcrelief'),
