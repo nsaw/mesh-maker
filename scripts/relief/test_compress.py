@@ -155,6 +155,14 @@ class CompressTests(unittest.TestCase):
                 self.assertLess(abs(c - 40), 6)              # the bump stays left of centre
         self.assertEqual(stats['base_radius'], 5)            # 0.5 in at 10 samples per inch
         self.assertAlmostEqual(stats['spacing'], 4.2 / 120)
+        o = workflow.parse_args(['f.glb', '--preset', 'silk-tilt25', '--out', 'o', '--relief', 'gradient', '--relief-base-radius', '1'])
+        self.assertEqual(workflow.relief_heights(veiled, bare, workflow.relief_config(o), 4.2)[4]['base_radius'], 10)
+        # Linear spans the deepest visible point, which is on the bare figure here, to the frontmost veil.
+        h = workflow.relief_heights(veiled, bare, dict(method='linear'), 4.2)[0]
+        lo, hi = np.nanmin(bare), np.nanmax(veiled)
+        want = workflow.BACK + workflow.SPAN * (veiled[20, 90] - lo) / (hi - lo)
+        self.assertAlmostEqual(float(h[20, 90]), want, places=7)
+        self.assertGreater(float(h[inside].min()), workflow.BACK + 0.1 * workflow.SPAN)   # nothing sits on the backing
         with self.assertRaises(ValueError):
             workflow.relief_heights(np.full((R, C), np.nan), bare, dict(method='linear'), 4.2)
 
