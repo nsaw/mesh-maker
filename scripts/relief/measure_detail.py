@@ -29,6 +29,7 @@ def main():
     fg = np.isfinite(veiled); per_in = (veiled.shape[1] - 1) / 12
     r = round(0.17 * per_in)
     inner = fg & (_box(fg.astype(float), np.ones(fg.shape), r) > 1 - 1e-9)   # whole (2r+1) square is foreground
+    if not inner.any(): sys.exit('no foreground window of %d samples fits inside the outline' % (2 * r + 1))
     def detail(h):
         return float(np.sqrt(np.mean((h - _box(h, fg.astype(float), r // 2))[inner] ** 2)))
     runs = [('linear', dict(method='linear'))]
