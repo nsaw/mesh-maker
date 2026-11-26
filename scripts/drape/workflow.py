@@ -49,9 +49,9 @@ def parse_args(argv=None):
     a.add_argument('--left-quarter-wind', type=float, default=0.0, metavar='STRENGTH', help='Opt-in local wind, calibrated on silk-gathered (tested: 250, 750)')
     a.add_argument('--wind-profile', help='Editable force-volume JSON; default is the measured Venus region')
     a.add_argument('--relief', choices=['linear', 'gradient'], default='linear', help='depth-to-height mapping; see above')
-    a.add_argument('--relief-alpha', type=float, default=4.0, help='gradient only: log compression strength')
-    a.add_argument('--relief-edge-slope', type=float, default=8.0, help='gradient only: slopes above this are cliffs and dropped')
-    a.add_argument('--relief-base-radius', type=float, default=0.5, metavar='IN', help='gradient only: panel inches; coarser shape is compressed, finer kept')
+    a.add_argument('--relief-alpha', type=float, help='gradient only: log compression strength')
+    a.add_argument('--relief-edge-slope', type=float, help='gradient only: slopes above this are cliffs and dropped')
+    a.add_argument('--relief-base-radius', type=float, metavar='IN', help='gradient only: panel inches; coarser shape is compressed, finer kept')
     a.add_argument('--blender', default='/Applications/Blender.app/Contents/MacOS/Blender'); a.add_argument('--no-stl', action='store_true')
     return a.parse_args(argv)
 
@@ -96,15 +96,39 @@ def build_config(o):
         args['quartering_wind'] = dict(strength=o.left_quarter_wind, profile=profile)
     return args
 
+RELIEF_DEFAULTS = dict(alpha=4.0, edge_slope=8.0, base_radius_in=0.5)
+
 def relief_config(o):
+    given = dict(alpha=o.relief_alpha, edge_slope=o.relief_edge_slope, base_radius_in=o.relief_base_radius)
     if o.relief == 'linear':
-        if (o.relief_alpha, o.relief_edge_slope, o.relief_base_radius) != (4.0, 8.0, 0.5):
+        if any(v is not None for v in given.values()):
             raise ValueError('--relief-alpha, --relief-edge-slope and --relief-base-radius need --relief gradient')
         return dict(method='linear')
-    for name, v in (('relief-alpha', o.relief_alpha), ('relief-edge-slope', o.relief_edge_slope), ('relief-base-radius', o.relief_base_radius)):
-        if not finite(v) or v <= 0: raise ValueError(f'--{name} must be finite and positive')
-    if o.relief_base_radius > 6: raise ValueError('--relief-base-radius is in panel inches and the panel is 12 in wide')
-    return dict(method='gradient', alpha=o.relief_alpha, edge_slope=o.relief_edge_slope, base_radius_in=o.relief_base_radius)
+    c = {k: RELIEF_DEFAULTS[k] if v is None else v for k, v in given.items()}
+    for name, k in (('relief-alpha', 'alpha'), ('relief-edge-slope', 'edge_slope'), ('relief-base-radius', 'base_radius_in')):
+        if not finite(c[k]) or c[k] <= 0: raise ValueError(f'--{name} must be finite and positive')
+    if c['base_radius_in'] > 6: raise ValueError('--relief-base-radius is in panel inches and the panel is 12 in wide')
+    return dict(method='gradient', **c)
+
+def relief_heights(veiled, bare, relief, frame_width):
+    """Panel heights in metres (float32), the foreground mask, the depth range and the gradient stats.
+
+    veiled/bare: the 1601 x 1201 frontmost depths, larger = nearer, NaN = miss. Linear spans the deepest
+    visible point (figure or veil) to the frontmost point over SPAN, so veil hanging behind the figure never
+    maps below BACK. Gradient compresses with compress.bas_relief and maps its 0..max onto the same span.
+    """
+    import numpy as np
+    fg = np.isfinite(veiled)
+    if not fg.any(): raise ValueError('nothing in the relief window: adjust --frame-width or the figure placement')
+    lo, hi = float(np.nanmin(np.fmin(bare, veiled))), float(np.nanmax(veiled))
+    if not hi > lo: raise ValueError(f'degenerate depth range ({lo} to {hi}): check the figure placement')
+    if relief['method'] == 'linear':
+        return np.where(fg, BACK + SPAN * (veiled - lo) / (hi - lo), BACK).astype(np.float32), fg, lo, hi, {}
+    from compress import bas_relief
+    cols = veiled.shape[1] - 1                      # samples are square: frame_width over 1200 steps = 12 in
+    u, stats = bas_relief(veiled, frame_width / cols, relief['alpha'], relief['edge_slope'],
+                          max(1, round(relief['base_radius_in'] * cols / 12)))
+    return np.where(fg, BACK + SPAN * u / stats['height_max'], BACK).astype(np.float32), fg, lo, hi, stats
 
 def main():
     import numpy as np
@@ -125,24 +149,11 @@ def main():
         sys.exit(f'Blender step failed (exit {r.returncode}); see {out / "blender.log"}')
 
     veiled, bare = np.load(out / 'veiled-depth.npy'), np.load(out / 'bare-depth.npy')
-    fg = np.isfinite(veiled)
-    if not fg.any(): sys.exit('nothing in the relief window: adjust --frame-width or the figure placement')
-    lo, hi = float(np.nanmin(np.fmin(bare, veiled))), float(np.nanmax(veiled))
-    if not hi > lo: sys.exit(f'degenerate depth range ({lo} to {hi}): check the figure placement')
-    if relief['method'] == 'linear':
-        # The deepest visible point (figure or veil) to the frontmost point spans 0.625 in,
-        # so veil hanging behind the figure never maps below the 0.125 in backing (or below 0).
-        h = np.where(fg, BACK + SPAN * (veiled - lo) / (hi - lo), BACK).astype(np.float32)
-    else:
-        from compress import bas_relief
-        try:
-            samples_per_in = (veiled.shape[1] - 1) / 12
-            u, stats = bas_relief(veiled, args['frame_width'] / (veiled.shape[1] - 1), relief['alpha'], relief['edge_slope'],
-                                  max(1, round(relief['base_radius_in'] * samples_per_in)))
-        except ValueError as error:
-            sys.exit(f'relief compression failed: {error}')
-        relief.update(stats)
-        h = np.where(fg, BACK + SPAN * u / stats['height_max'], BACK).astype(np.float32)
+    try:
+        h, fg, lo, hi, stats = relief_heights(veiled, bare, relief, args['frame_width'])
+    except ValueError as error:
+        sys.exit(f'relief mapping failed: {error}')
+    relief.update(stats)
     np.save(out / 'veiled-height-m.npy', h); np.save(out / 'mask.npy', fg)
     W, H = 12 * IN, 16 * IN
     subprocess.run([sys.executable, str(REPO / 'scripts/relief/npy_to_mcrelief.py'), str(out / 'veiled-height-m.npy'), str(out / 'veiled.mcrelief'),

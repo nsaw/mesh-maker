@@ -16,21 +16,27 @@ the caller maps 0..max onto its backing and relief depth.
 
 --base-radius N compresses only the large-scale part of each slope (its mean over a (2N+1)-sample
 square) and keeps the rest, in place of the unsharp-masking detail step in Weyrich et al. Without it
-steep small features lose the most: on the gathered Venus drape (2026-11-19) plain log compression cut
-fine-detail RMS to 0.67x of the linear mapping.
+steep small features lose the most: on the 2026-10-21 gathered Venus bake, plain log compression at
+alpha 4 kept 0.47x of the linear mapping's fine detail and the 0.5 in base split kept 1.60x
+(scripts/relief/measure_detail.py).
 """
 import argparse, json, sys
 import numpy as np
 
 def _slopes(depth, mask, spacing, edge_slope):
-    """Forward-difference slopes between neighbouring foreground samples; 0 elsewhere and at cliffs."""
+    """Forward-difference slopes between neighbouring foreground samples.
+
+    Returns (gx, gy, kx, ky, cliffs): kx/ky mark the edges kept (both ends foreground, slope no
+    steeper than edge_slope); gx/gy are 0 on every other edge.
+    """
     gx = np.zeros_like(depth); gy = np.zeros_like(depth)
-    both_x = mask[:, 1:] & mask[:, :-1]; both_y = mask[1:, :] & mask[:-1, :]
-    gx[:, :-1] = np.where(both_x, np.diff(np.where(mask, depth, 0.0), axis=1), 0.0) / spacing
-    gy[:-1, :] = np.where(both_y, np.diff(np.where(mask, depth, 0.0), axis=0), 0.0) / spacing
-    cliffs = int((np.abs(gx) > edge_slope).sum() + (np.abs(gy) > edge_slope).sum())
-    gx[np.abs(gx) > edge_slope] = 0.0; gy[np.abs(gy) > edge_slope] = 0.0
-    return gx, gy, cliffs
+    d = np.where(mask, depth, 0.0)
+    gx[:, :-1] = np.diff(d, axis=1) / spacing; gy[:-1, :] = np.diff(d, axis=0) / spacing
+    kx = np.zeros(mask.shape, bool); kx[:, :-1] = mask[:, 1:] & mask[:, :-1]
+    ky = np.zeros(mask.shape, bool); ky[:-1, :] = mask[1:, :] & mask[:-1, :]
+    cx, cy = kx & (np.abs(gx) > edge_slope), ky & (np.abs(gy) > edge_slope)
+    kx &= ~cx; ky &= ~cy
+    return np.where(kx, gx, 0.0), np.where(ky, gy, 0.0), kx, ky, int(cx.sum() + cy.sum())
 
 def _box(a, w, r):
     """Weighted mean of `a` over a (2r+1)-square window, weights `w` (0 outside the foreground)."""
@@ -111,19 +117,19 @@ def bas_relief(depth, spacing, alpha=4.0, edge_slope=8.0, base_radius=None):
     if not (np.isfinite(spacing) and spacing > 0): raise ValueError('spacing must be finite and positive')
     if not (np.isfinite(alpha) and alpha > 0): raise ValueError('alpha must be finite and positive')
     if not (np.isfinite(edge_slope) and edge_slope > 0): raise ValueError('edge-slope must be finite and positive')
-    if base_radius is not None and not (isinstance(base_radius, (int, np.integer)) and base_radius >= 1):
+    if base_radius is not None and (isinstance(base_radius, (bool, np.bool_)) or not (isinstance(base_radius, (int, np.integer)) and base_radius >= 1)):
         raise ValueError('base radius must be a whole number of samples, at least 1')
     mask = np.isfinite(depth)
     if not mask.any(): raise ValueError('depth has no foreground')
-    gx, gy, cliffs = _slopes(depth, mask, spacing, edge_slope)
+    gx, gy, kx, ky, cliffs = _slopes(depth, mask, spacing, edge_slope)
     if base_radius is None:
         gx, gy = _attenuate(gx, alpha), _attenuate(gy, alpha)
     else:
-        wx = np.zeros(mask.shape); wx[:, :-1] = mask[:, 1:] & mask[:, :-1]
-        wy = np.zeros(mask.shape); wy[:-1, :] = mask[1:, :] & mask[:-1, :]
-        lx, ly = _box(gx, wx, base_radius), _box(gy, wy, base_radius)
-        gx = np.where(wx > 0, _attenuate(lx, alpha) + gx - lx, 0.0)
-        gy = np.where(wy > 0, _attenuate(ly, alpha) + gy - ly, 0.0)
+        # Dropped cliffs are excluded from the base mean and stay exactly 0: a cliff edge carries no
+        # slope, so it must not pick up the base correction att(l) - l and carve a step of its own.
+        lx, ly = _box(gx, kx.astype(float), base_radius), _box(gy, ky.astype(float), base_radius)
+        gx = np.where(kx, _attenuate(lx, alpha) + gx - lx, 0.0)
+        gy = np.where(ky, _attenuate(ly, alpha) + gy - ly, 0.0)
     gx, gy = gx * spacing, gy * spacing
     if mask.all():  # no background to anchor to: plain Neumann solve, lowest point at 0
         u = poisson_neumann(gx, gy); u -= u.min(); iters, res = 0, 0.0

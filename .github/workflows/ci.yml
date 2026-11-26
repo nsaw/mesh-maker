@@ -47,6 +47,11 @@ jobs:
 
       - run: npm ci
       - run: python3 -m unittest discover -s scripts/drape -p 'test_*.py'
+      - name: Bas-relief solver tests (NumPy)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/relief-venv"
+          "$RUNNER_TEMP/relief-venv/bin/python" -m pip install --quiet numpy==2.5.5
+          cd scripts/relief && "$RUNNER_TEMP/relief-venv/bin/python" test_compress.py
       - run: python3 scripts/test-review-provenance.py
       - run: npm run lint
       - run: npm run typecheck

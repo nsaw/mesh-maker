@@ -144,12 +144,13 @@ backing and the depth goes to form and folds instead of the silhouette wall. `dr
 `relief.mapping` records the settings, solver iterations, and how much foreground the solve put
 below the backing (clamped to it).
 
-Measured on the 2026-11-19 gathered Venus drape (no new bake), as RMS of features under about
-0.17 inch, at least 0.17 inch inside the outline, relative to linear: alpha 4 gave 1.53x, alpha 8
-gave 2.15x. Without the base split, alpha 4 gave 0.72x, because cloth folds are steep and plain
-log compression flattens them first. The solve takes about 50 s at full resolution, and 1.3 to 2.0
-percent of the foreground was clamped at the backing. Run `scripts/relief/compress.py` on an
-existing `veiled-depth.npy` to try settings without re-baking.
+Measured on the 2026-10-21 gathered Venus bake (`.codex/benchmarks/workflow-quarter-wind-pr/gathered`,
+local only), with `python3 scripts/relief/measure_detail.py <drape dir>`: fine detail (height minus its
+mean over a 0.17 inch square, at least 0.17 inch inside the outline) relative to linear was 1.60x at
+alpha 4 and 2.23x at alpha 8. Without the base split it was 0.47x at alpha 4, because cloth folds are
+steep and plain log compression flattens them first. Each solve took about 42 s at full resolution,
+and 1.1 percent (alpha 4) to 1.7 percent (alpha 8) of the foreground was clamped at the backing.
+Run `scripts/relief/compress.py` on an existing `veiled-depth.npy` to try settings without re-baking.
 `export_figure.py` separately produces `.mcfig` placement for the web app; it does not export
 these new Blender material or force controls.
 
@@ -164,7 +165,7 @@ Fast configuration and force-volume tests run without Blender, NumPy or Pillow:
 python3 -m unittest discover -s scripts/drape -p 'test_*.py'
 ```
 
-The bas-relief solver tests need NumPy and are not in CI (no CI job installs NumPy):
+The bas-relief solver tests need NumPy; CI runs them in a venv with `numpy==2.5.5`:
 
 ```bash
 (cd scripts/relief && python3 test_compress.py)
