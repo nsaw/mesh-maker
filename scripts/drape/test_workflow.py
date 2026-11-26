@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from quartering_wind import validate_profile
-from workflow import build_config, parse_args
+from workflow import build_config, parse_args, relief_config
 
 HERE = Path(__file__).resolve().parent
 
@@ -105,6 +105,24 @@ class WorkflowTests(unittest.TestCase):
             change(profile)
             with self.subTest(profile=profile), self.assertRaises(ValueError):
                 validate_profile(profile, c)
+
+    def test_relief_defaults_to_linear_and_gradient_options_are_checked(self):
+        base = ['venus-de-milo-smk.glb', '--preset', 'silk-tilt25', '--out', 'out']
+        self.assertEqual(relief_config(parse_args(base)), {'method': 'linear'})
+        self.assertEqual(relief_config(parse_args(base + ['--relief', 'gradient'])),
+                         {'method': 'gradient', 'alpha': 4.0, 'edge_slope': 8.0, 'base_radius_in': 0.5})
+        self.assertEqual(relief_config(parse_args(base + ['--relief', 'gradient', '--relief-alpha', '2', '--relief-edge-slope', '5', '--relief-base-radius', '1'])),
+                         {'method': 'gradient', 'alpha': 2.0, 'edge_slope': 5.0, 'base_radius_in': 1.0})
+        for extra in [['--relief-alpha', '2'], ['--relief-edge-slope', '5'], ['--relief-base-radius', '1'],
+                      ['--relief', 'gradient', '--relief-base-radius', '0'], ['--relief', 'gradient', '--relief-base-radius', '7'],
+                      ['--relief', 'gradient', '--relief-alpha', '0'], ['--relief', 'gradient', '--relief-alpha', 'nan'],
+                      ['--relief', 'gradient', '--relief-edge-slope', '-1'], ['--relief', 'gradient', '--relief-edge-slope', 'inf']]:
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                relief_config(parse_args(base + extra))
+
+    def test_relief_flags_do_not_reach_blender(self):
+        c = build_config(parse_args(['venus-de-milo-smk.glb', '--preset', 'silk-tilt25', '--out', 'out', '--relief', 'gradient']))
+        self.assertFalse(any(k.startswith('relief') for k in c))
 
 
 if __name__ == '__main__':
